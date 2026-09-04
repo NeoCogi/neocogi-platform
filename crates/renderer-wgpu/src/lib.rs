@@ -920,6 +920,7 @@ where
                         // draw explicitly restores the complete pipeline and resource state.
                         pass.set_pipeline(&self.pipeline);
                         pass.set_bind_group(0, bind_group, &[]);
+                        pass.set_viewport(0.0, 0.0, self.config.width as f32, self.config.height as f32, 0.0, 1.0);
                         pass.set_vertex_buffer(0, self.staging_vertex_buffer.slice(draw.vertex_offset..(draw.vertex_offset + draw.vertex_size)));
                         pass.draw(0..draw.vertex_count, 0..1);
                     }
