@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 //
 // Copyright 2022-Present (c) Raja Lehtihet & Wael El Oraiby
 //
@@ -164,97 +163,6 @@ impl VulkanApplicationRenderer for () {
         match *command {}
     }
 }
-
-mod vk_builder {
-    use super::vk;
-
-    pub trait BuilderExt: Sized {
-        fn builder() -> Self;
-        fn build(self) -> Self {
-            self
-        }
-    }
-
-    macro_rules! impl_lifetime {
-        ($($ty:ident),+ $(,)?) => {
-            $(
-                impl<'a> BuilderExt for vk::$ty<'a> {
-                    fn builder() -> Self { Self::default() }
-                }
-            )+
-        };
-    }
-
-    macro_rules! impl_plain {
-        ($($ty:ty),+ $(,)?) => {
-            $(
-                impl BuilderExt for $ty {
-                    fn builder() -> Self { Self::default() }
-                }
-            )+
-        };
-    }
-
-    impl_lifetime!(
-        ApplicationInfo,
-        InstanceCreateInfo,
-        DeviceQueueCreateInfo,
-        DeviceCreateInfo,
-        SwapchainCreateInfoKHR,
-        ImageViewCreateInfo,
-        SubpassDescription,
-        RenderPassCreateInfo,
-        FramebufferCreateInfo,
-        CommandPoolCreateInfo,
-        CommandBufferAllocateInfo,
-        FenceCreateInfo,
-        SubmitInfo,
-        PresentInfoKHR,
-        CommandBufferBeginInfo,
-        RenderPassBeginInfo,
-        DescriptorSetLayoutBinding,
-        DescriptorSetLayoutCreateInfo,
-        PipelineLayoutCreateInfo,
-        BufferMemoryBarrier,
-        PipelineShaderStageCreateInfo,
-        PipelineVertexInputStateCreateInfo,
-        PipelineInputAssemblyStateCreateInfo,
-        PipelineRasterizationStateCreateInfo,
-        PipelineMultisampleStateCreateInfo,
-        PipelineColorBlendStateCreateInfo,
-        PipelineDynamicStateCreateInfo,
-        PipelineViewportStateCreateInfo,
-        PipelineDepthStencilStateCreateInfo,
-        GraphicsPipelineCreateInfo,
-        SamplerCreateInfo,
-        DescriptorPoolCreateInfo,
-        DescriptorSetAllocateInfo,
-        ShaderModuleCreateInfo,
-        BufferCreateInfo,
-        MemoryAllocateInfo,
-        ImageCreateInfo,
-        WriteDescriptorSet,
-        ImageMemoryBarrier,
-    );
-
-    impl_plain!(
-        vk::PhysicalDeviceFeatures,
-        vk::AttachmentDescription,
-        vk::SubpassDependency,
-        vk::PushConstantRange,
-        vk::VertexInputBindingDescription,
-        vk::VertexInputAttributeDescription,
-        vk::PipelineColorBlendAttachmentState,
-        vk::DescriptorPoolSize,
-        vk::DescriptorImageInfo,
-        vk::Viewport,
-        vk::Rect2D,
-        vk::BufferImageCopy,
-        vk::ImageSubresourceLayers,
-        vk::ImageSubresourceRange,
-    );
-}
-use vk_builder::BuilderExt;
 
 const UI_VERT_SPV: &[u8] = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/shaders/ui.vert.spv"));
 const UI_FRAG_SPV: &[u8] = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/shaders/ui.frag.spv"));
@@ -927,20 +835,17 @@ impl MappedBuffer {
     }
 }
 
-struct PendingCopy {
-    src: vk::Buffer,
-    dst: vk::Buffer,
-    src_offset: vk::DeviceSize,
-    dst_offset: vk::DeviceSize,
-    size: vk::DeviceSize,
-}
-
+/// Owned image allocation and view with the layout tracked by transfer recording.
 struct ImageResource {
+    /// Device image destroyed before its backing allocation is freed.
     image: vk::Image,
+    /// Allocation bound to `image` for its entire lifetime.
     memory: vk::DeviceMemory,
+    /// View used by descriptors or framebuffer attachments.
     view: vk::ImageView,
+    /// Pixel extent used when recording uploads.
     extent: vk::Extent2D,
-    format: vk::Format,
+    /// Last layout established by the backend's recorded transitions.
     layout: vk::ImageLayout,
 }
 
@@ -948,13 +853,6 @@ struct ImageResource {
 fn vk_trace_enabled() -> bool {
     false
 }
-
-/// Returns whether diagnostic Vulkan frame dumping is enabled for this build.
-fn vk_dump_enabled() -> bool {
-    false
-}
-
-// No-op toggles removed; keep environment helpers minimal.
 
 macro_rules! vk_trace {
     ($($arg:tt)*) => {
@@ -1234,26 +1132,24 @@ impl UiResources {
     }
 
     fn create_descriptor_set_layout(device: &ash::Device) -> Result<vk::DescriptorSetLayout> {
-        let binding = vk::DescriptorSetLayoutBinding::builder()
+        let binding = vk::DescriptorSetLayoutBinding::default()
             .binding(0)
             .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
             .descriptor_count(1)
-            .stage_flags(vk::ShaderStageFlags::FRAGMENT)
-            .build();
+            .stage_flags(vk::ShaderStageFlags::FRAGMENT);
         let bindings = [binding];
-        let info = vk::DescriptorSetLayoutCreateInfo::builder().bindings(&bindings);
+        let info = vk::DescriptorSetLayoutCreateInfo::default().bindings(&bindings);
         unsafe { device.create_descriptor_set_layout(&info, None) }.map_err(|err| format!("create_descriptor_set_layout failed: {err:?}"))
     }
 
     fn create_pipeline_layout(device: &ash::Device, descriptor_set_layout: vk::DescriptorSetLayout) -> Result<vk::PipelineLayout> {
         let set_layouts = [descriptor_set_layout];
-        let push_constant_range = vk::PushConstantRange::builder()
+        let push_constant_range = vk::PushConstantRange::default()
             .stage_flags(vk::ShaderStageFlags::VERTEX)
             .offset(0)
-            .size((std::mem::size_of::<f32>() * 16) as u32)
-            .build();
+            .size((std::mem::size_of::<f32>() * 16) as u32);
         let push_ranges = [push_constant_range];
-        let info = vk::PipelineLayoutCreateInfo::builder()
+        let info = vk::PipelineLayoutCreateInfo::default()
             .set_layouts(&set_layouts)
             .push_constant_ranges(&push_ranges);
         unsafe { device.create_pipeline_layout(&info, None) }.map_err(|err| format!("create_pipeline_layout failed: {err:?}"))
@@ -1271,62 +1167,56 @@ impl UiResources {
         });
         let entry = c"main";
         let stage_infos = [
-            vk::PipelineShaderStageCreateInfo::builder()
+            vk::PipelineShaderStageCreateInfo::default()
                 .stage(vk::ShaderStageFlags::VERTEX)
                 .module(*vert_module.get())
-                .name(entry)
-                .build(),
-            vk::PipelineShaderStageCreateInfo::builder()
+                .name(entry),
+            vk::PipelineShaderStageCreateInfo::default()
                 .stage(vk::ShaderStageFlags::FRAGMENT)
                 .module(*frag_module.get())
-                .name(entry)
-                .build(),
+                .name(entry),
         ];
 
-        let binding_desc = vk::VertexInputBindingDescription::builder()
+        let binding_desc = vk::VertexInputBindingDescription::default()
             .binding(0)
             .stride(std::mem::size_of::<Vertex>() as u32)
-            .input_rate(vk::VertexInputRate::VERTEX)
-            .build();
+            .input_rate(vk::VertexInputRate::VERTEX);
         let binding_descs = [binding_desc];
 
-        let attr_pos = vk::VertexInputAttributeDescription::builder()
+        let attr_pos = vk::VertexInputAttributeDescription::default()
             .binding(0)
             .location(0)
             .format(vk::Format::R32G32_SFLOAT)
-            .offset(0)
-            .build();
-        let attr_tex = vk::VertexInputAttributeDescription::builder()
+            .offset(0);
+        let attr_tex = vk::VertexInputAttributeDescription::default()
             .binding(0)
             .location(1)
             .format(vk::Format::R32G32_SFLOAT)
-            .offset(8)
-            .build();
-        let attr_color = vk::VertexInputAttributeDescription::builder()
+            .offset(8);
+        let attr_color = vk::VertexInputAttributeDescription::default()
             .binding(0)
             .location(2)
             .format(vk::Format::R8G8B8A8_UNORM)
-            .offset(16)
-            .build();
+            .offset(16);
         let attribute_descs = [attr_pos, attr_tex, attr_color];
 
-        let vertex_input_state = vk::PipelineVertexInputStateCreateInfo::builder()
+        let vertex_input_state = vk::PipelineVertexInputStateCreateInfo::default()
             .vertex_binding_descriptions(&binding_descs)
             .vertex_attribute_descriptions(&attribute_descs);
 
-        let input_assembly = vk::PipelineInputAssemblyStateCreateInfo::builder()
+        let input_assembly = vk::PipelineInputAssemblyStateCreateInfo::default()
             .topology(vk::PrimitiveTopology::TRIANGLE_LIST)
             .primitive_restart_enable(false);
 
-        let rasterization = vk::PipelineRasterizationStateCreateInfo::builder()
+        let rasterization = vk::PipelineRasterizationStateCreateInfo::default()
             .polygon_mode(vk::PolygonMode::FILL)
             .cull_mode(vk::CullModeFlags::NONE)
             .front_face(vk::FrontFace::CLOCKWISE)
             .line_width(1.0);
 
-        let multisample = vk::PipelineMultisampleStateCreateInfo::builder().rasterization_samples(vk::SampleCountFlags::TYPE_1);
+        let multisample = vk::PipelineMultisampleStateCreateInfo::default().rasterization_samples(vk::SampleCountFlags::TYPE_1);
 
-        let blend_attachment = vk::PipelineColorBlendAttachmentState::builder()
+        let blend_attachment = vk::PipelineColorBlendAttachmentState::default()
             .blend_enable(true)
             .src_color_blend_factor(vk::BlendFactor::SRC_ALPHA)
             .dst_color_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
@@ -1334,23 +1224,22 @@ impl UiResources {
             .src_alpha_blend_factor(vk::BlendFactor::ONE)
             .dst_alpha_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
             .alpha_blend_op(vk::BlendOp::ADD)
-            .color_write_mask(vk::ColorComponentFlags::R | vk::ColorComponentFlags::G | vk::ColorComponentFlags::B | vk::ColorComponentFlags::A)
-            .build();
+            .color_write_mask(vk::ColorComponentFlags::R | vk::ColorComponentFlags::G | vk::ColorComponentFlags::B | vk::ColorComponentFlags::A);
         let blend_attachments = [blend_attachment];
-        let color_blend = vk::PipelineColorBlendStateCreateInfo::builder()
+        let color_blend = vk::PipelineColorBlendStateCreateInfo::default()
             .attachments(&blend_attachments)
             .logic_op_enable(false);
 
-        let depth_stencil = vk::PipelineDepthStencilStateCreateInfo::builder()
+        let depth_stencil = vk::PipelineDepthStencilStateCreateInfo::default()
             .depth_test_enable(false)
             .depth_write_enable(false);
 
         let dynamic_states = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
-        let dynamic_state = vk::PipelineDynamicStateCreateInfo::builder().dynamic_states(&dynamic_states);
+        let dynamic_state = vk::PipelineDynamicStateCreateInfo::default().dynamic_states(&dynamic_states);
 
-        let viewport_state = vk::PipelineViewportStateCreateInfo::builder().viewport_count(1).scissor_count(1);
+        let viewport_state = vk::PipelineViewportStateCreateInfo::default().viewport_count(1).scissor_count(1);
 
-        let pipeline_info = vk::GraphicsPipelineCreateInfo::builder()
+        let pipeline_info = vk::GraphicsPipelineCreateInfo::default()
             .stages(&stage_infos)
             .vertex_input_state(&vertex_input_state)
             .input_assembly_state(&input_assembly)
@@ -1363,13 +1252,13 @@ impl UiResources {
             .layout(pipeline_layout)
             .render_pass(ctx.render_pass)
             .subpass(0);
-        let pipeline = create_single_graphics_pipeline(device, pipeline_info.build())?;
+        let pipeline = create_single_graphics_pipeline(device, pipeline_info)?;
 
         Ok(pipeline)
     }
 
     fn create_sampler(device: &ash::Device) -> Result<vk::Sampler> {
-        let info = vk::SamplerCreateInfo::builder()
+        let info = vk::SamplerCreateInfo::default()
             .mag_filter(vk::Filter::NEAREST)
             .min_filter(vk::Filter::NEAREST)
             .address_mode_u(vk::SamplerAddressMode::CLAMP_TO_EDGE)
@@ -1380,14 +1269,13 @@ impl UiResources {
     }
 
     fn create_descriptor_pool(device: &ash::Device) -> Result<vk::DescriptorPool> {
-        let pool_size = vk::DescriptorPoolSize::builder()
+        let pool_size = vk::DescriptorPoolSize::default()
             .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-            .descriptor_count(MAX_DESCRIPTOR_SETS)
-            .build();
+            .descriptor_count(MAX_DESCRIPTOR_SETS);
         let pool_sizes = [pool_size];
         // External texture sets have independent lifetimes, so the pool must permit reclaiming
         // each set instead of monotonically consuming `MAX_DESCRIPTOR_SETS` until recreation.
-        let info = vk::DescriptorPoolCreateInfo::builder()
+        let info = vk::DescriptorPoolCreateInfo::default()
             .flags(DESCRIPTOR_POOL_FLAGS)
             .pool_sizes(&pool_sizes)
             .max_sets(MAX_DESCRIPTOR_SETS);
@@ -1396,7 +1284,7 @@ impl UiResources {
 
     fn allocate_descriptor_set(device: &ash::Device, pool: vk::DescriptorPool, layout: vk::DescriptorSetLayout) -> Result<vk::DescriptorSet> {
         let layouts = [layout];
-        let info = vk::DescriptorSetAllocateInfo::builder().descriptor_pool(pool).set_layouts(&layouts);
+        let info = vk::DescriptorSetAllocateInfo::default().descriptor_pool(pool).set_layouts(&layouts);
         let sets = unsafe { device.allocate_descriptor_sets(&info) }.map_err(|err| format!("allocate_descriptor_sets failed: {err:?}"))?;
         Ok(sets[0])
     }
@@ -1414,7 +1302,7 @@ impl UiResources {
     fn create_shader_module(device: &ash::Device, code: &[u8]) -> Result<vk::ShaderModule> {
         let mut cursor = Cursor::new(code);
         let spv = read_spv(&mut cursor).map_err(|err| format!("read_spv failed: {err:?}"))?;
-        let info = vk::ShaderModuleCreateInfo::builder().code(&spv);
+        let info = vk::ShaderModuleCreateInfo::default().code(&spv);
         unsafe { device.create_shader_module(&info, None) }.map_err(|err| format!("create_shader_module failed: {err:?}"))
     }
 
@@ -1458,18 +1346,16 @@ impl UiResources {
     }
 
     fn update_descriptor(&self, device: &ash::Device, descriptor_set: vk::DescriptorSet, atlas: &ImageResource) {
-        let image_info = vk::DescriptorImageInfo::builder()
+        let image_info = vk::DescriptorImageInfo::default()
             .sampler(self.sampler)
             .image_view(atlas.view)
-            .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-            .build();
+            .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
         let image_infos = [image_info];
-        let writes = [vk::WriteDescriptorSet::builder()
+        let writes = [vk::WriteDescriptorSet::default()
             .dst_set(descriptor_set)
             .dst_binding(0)
             .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-            .image_info(&image_infos)
-            .build()];
+            .image_info(&image_infos)];
         unsafe {
             device.update_descriptor_sets(&writes, &[]);
         }
@@ -1763,7 +1649,8 @@ impl Drop for VulkanBootstrap {
 pub(crate) struct VulkanContext {
     // `VulkanContext` owns the actual Vulkan objects and implements the frame graph used by the
     // example renderer: acquire -> upload/record -> submit -> present -> recreate on demand.
-    entry: Entry,
+    /// Keeps Vulkan entry points available until explicit GPU destruction in `Drop` completes.
+    _entry: Entry,
     instance: ash::Instance,
     surface_loader: Surface,
     surface: vk::SurfaceKHR,
@@ -1824,11 +1711,10 @@ impl VulkanContext {
         let raw_display_handle = display_handle.into();
         let raw_window_handle = window_handle.into();
 
-        let app_info = vk::ApplicationInfo::builder()
+        let app_info = vk::ApplicationInfo::default()
             .application_name(app_name)
             .engine_name(engine_name)
-            .api_version(vk::API_VERSION_1_1)
-            .build();
+            .api_version(vk::API_VERSION_1_1);
 
         let mut extension_names = ash_window_handle::enumerate_required_extensions(raw_display_handle)
             .map_err(|err| format!("enumerate_required_extensions failed: {err:?}"))?
@@ -1838,10 +1724,9 @@ impl VulkanContext {
             extension_names.push(surface_extension);
         }
 
-        let instance_info = vk::InstanceCreateInfo::builder()
+        let instance_info = vk::InstanceCreateInfo::default()
             .application_info(&app_info)
-            .enabled_extension_names(&extension_names)
-            .build();
+            .enabled_extension_names(&extension_names);
         let instance = unsafe { entry.create_instance(&instance_info, None) }.map_err(|err| format!("create_instance failed: {err:?}"))?;
         let mut bootstrap = VulkanBootstrap::new(instance);
 
@@ -1863,7 +1748,7 @@ impl VulkanContext {
         let swapchain_loader = Swapchain::new(&instance, &device);
 
         let mut ctx = Self {
-            entry,
+            _entry: entry,
             instance,
             surface_loader,
             surface,
@@ -1972,21 +1857,19 @@ impl VulkanContext {
         let queue_infos: Vec<_> = unique_indices
             .iter()
             .map(|index| {
-                vk::DeviceQueueCreateInfo::builder()
+                vk::DeviceQueueCreateInfo::default()
                     .queue_family_index(*index)
                     .queue_priorities(std::slice::from_ref(&queue_priority))
-                    .build()
             })
             .collect();
 
         let device_extensions = [khr::swapchain::NAME.as_ptr()];
 
-        let device_features = vk::PhysicalDeviceFeatures::builder().build();
-        let device_info = vk::DeviceCreateInfo::builder()
+        let device_features = vk::PhysicalDeviceFeatures::default();
+        let device_info = vk::DeviceCreateInfo::default()
             .queue_create_infos(&queue_infos)
             .enabled_extension_names(&device_extensions)
-            .enabled_features(&device_features)
-            .build();
+            .enabled_features(&device_features);
 
         unsafe { instance.create_device(physical_device, &device_info, None) }.map_err(|err| format!("create_device failed: {err:?}"))
     }
@@ -2066,7 +1949,7 @@ impl VulkanContext {
 
         let queue_family_indices = [self.queue_indices.graphics_family, self.queue_indices.present_family];
 
-        let mut create_info = vk::SwapchainCreateInfoKHR::builder()
+        let mut create_info = vk::SwapchainCreateInfoKHR::default()
             .surface(self.surface)
             .min_image_count(image_count)
             .image_format(surface_format.format)
@@ -2123,7 +2006,7 @@ impl VulkanContext {
                 base_array_layer: 0,
                 layer_count: 1,
             };
-            let view_info = vk::ImageViewCreateInfo::builder()
+            let view_info = vk::ImageViewCreateInfo::default()
                 .image(image)
                 .view_type(vk::ImageViewType::TYPE_2D)
                 .format(self.swapchain_format)
@@ -2141,7 +2024,7 @@ impl VulkanContext {
 
     /// Builds the shared render pass used for UI and application graphics.
     fn create_render_pass(&self) -> Result<vk::RenderPass> {
-        let color_attachment = vk::AttachmentDescription::builder()
+        let color_attachment = vk::AttachmentDescription::default()
             .format(self.swapchain_format)
             .samples(vk::SampleCountFlags::TYPE_1)
             .load_op(vk::AttachmentLoadOp::CLEAR)
@@ -2149,15 +2032,14 @@ impl VulkanContext {
             .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
             .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
             .initial_layout(vk::ImageLayout::UNDEFINED)
-            .final_layout(vk::ImageLayout::PRESENT_SRC_KHR)
-            .build();
+            .final_layout(vk::ImageLayout::PRESENT_SRC_KHR);
 
         let color_attachment_ref = vk::AttachmentReference {
             attachment: 0,
             layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
         };
 
-        let depth_attachment = vk::AttachmentDescription::builder()
+        let depth_attachment = vk::AttachmentDescription::default()
             .format(self.depth_format)
             .samples(vk::SampleCountFlags::TYPE_1)
             .load_op(vk::AttachmentLoadOp::CLEAR)
@@ -2165,31 +2047,30 @@ impl VulkanContext {
             .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
             .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
             .initial_layout(vk::ImageLayout::UNDEFINED)
-            .final_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
-            .build();
+            .final_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
         let depth_attachment_ref = vk::AttachmentReference {
             attachment: 1,
             layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
         };
 
-        let subpass = vk::SubpassDescription::builder()
+        let subpass = vk::SubpassDescription::default()
             .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
             .color_attachments(std::slice::from_ref(&color_attachment_ref))
-            .depth_stencil_attachment(&depth_attachment_ref)
-            .build();
+            .depth_stencil_attachment(&depth_attachment_ref);
 
-        let dependency = vk::SubpassDependency::builder()
+        let dependency = vk::SubpassDependency::default()
             .src_subpass(vk::SUBPASS_EXTERNAL)
             .dst_subpass(0)
             .src_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
             .src_access_mask(vk::AccessFlags::empty())
             .dst_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT | vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS)
-            .dst_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_READ | vk::AccessFlags::COLOR_ATTACHMENT_WRITE | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE)
-            .build();
+            .dst_access_mask(
+                vk::AccessFlags::COLOR_ATTACHMENT_READ | vk::AccessFlags::COLOR_ATTACHMENT_WRITE | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
+            );
 
         let attachments = [color_attachment, depth_attachment];
         let subpasses = [subpass];
-        let render_pass_info = vk::RenderPassCreateInfo::builder()
+        let render_pass_info = vk::RenderPassCreateInfo::default()
             .attachments(&attachments)
             .subpasses(&subpasses)
             .dependencies(std::slice::from_ref(&dependency));
@@ -2203,7 +2084,7 @@ impl VulkanContext {
         for (index, &view) in self.swapchain_image_views.iter().enumerate() {
             let depth_view = self.depth_images.get(index).map(|image| image.view).unwrap_or(vk::ImageView::null());
             let attachments = [view, depth_view];
-            let framebuffer_info = vk::FramebufferCreateInfo::builder()
+            let framebuffer_info = vk::FramebufferCreateInfo::default()
                 .render_pass(self.render_pass)
                 .attachments(&attachments)
                 .width(self.extent.width)
@@ -2220,7 +2101,7 @@ impl VulkanContext {
 
     /// Creates the shared command pool used for graphics and transient copy work.
     fn create_command_pool(&self) -> Result<vk::CommandPool> {
-        let pool_info = vk::CommandPoolCreateInfo::builder()
+        let pool_info = vk::CommandPoolCreateInfo::default()
             .queue_family_index(self.queue_indices.graphics_family)
             .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER);
         unsafe { self.device.create_command_pool(&pool_info, None) }.map_err(|err| format!("create_command_pool failed: {err:?}"))
@@ -2228,7 +2109,7 @@ impl VulkanContext {
 
     /// Allocates one graphics command buffer per swapchain image.
     fn allocate_command_buffers(&mut self) -> Result<()> {
-        let alloc_info = vk::CommandBufferAllocateInfo::builder()
+        let alloc_info = vk::CommandBufferAllocateInfo::default()
             .command_pool(self.command_pool)
             .level(vk::CommandBufferLevel::PRIMARY)
             .command_buffer_count(self.framebuffers.len() as u32);
@@ -2243,7 +2124,7 @@ impl VulkanContext {
 
     /// Allocates reusable transfer command buffers, one per frame-in-flight slot.
     fn allocate_transfer_command_buffers(&mut self) -> Result<()> {
-        let alloc_info = vk::CommandBufferAllocateInfo::builder()
+        let alloc_info = vk::CommandBufferAllocateInfo::default()
             .command_pool(self.command_pool)
             .level(vk::CommandBufferLevel::PRIMARY)
             .command_buffer_count(self.max_frames_in_flight as u32);
@@ -2261,7 +2142,7 @@ impl VulkanContext {
     /// Creates per-frame semaphores and fences used by acquire, transfer, and present.
     fn create_sync_objects(&mut self) -> Result<()> {
         let semaphore_info = vk::SemaphoreCreateInfo::default();
-        let fence_info = vk::FenceCreateInfo::builder().flags(vk::FenceCreateFlags::SIGNALED).build();
+        let fence_info = vk::FenceCreateInfo::default().flags(vk::FenceCreateFlags::SIGNALED);
 
         // Build a complete replacement set under guards. A failure in any frame slot destroys all
         // semaphores/fences created for earlier slots and preserves the installed set.
@@ -2463,12 +2344,12 @@ impl VulkanContext {
         }
         let signal_semaphores = [self.render_finished_semaphores[frame]];
 
-        let submit_info = vk::SubmitInfo::builder()
+        let submit_info = vk::SubmitInfo::default()
             .wait_semaphores(&wait_semaphores)
             .wait_dst_stage_mask(&wait_stages)
             .command_buffers(std::slice::from_ref(&command_buffer))
             .signal_semaphores(&signal_semaphores);
-        let submit_infos = [submit_info.build()];
+        let submit_infos = [submit_info];
 
         unsafe {
             // Keep the fence signaled throughout every fallible CPU recording and transfer-submit
@@ -2483,12 +2364,11 @@ impl VulkanContext {
 
         let swapchains = [self.swapchain];
         let image_indices = [image_index];
-        let present_info = vk::PresentInfoKHR::builder()
+        let present_info = vk::PresentInfoKHR::default()
             .wait_semaphores(&signal_semaphores)
             .swapchains(&swapchains)
             .image_indices(&image_indices);
 
-        let present_info = present_info.build();
         let present_result = unsafe { self.swapchain_loader.queue_present(self.present_queue, &present_info) };
         match present_result {
             Ok(present_suboptimal) => {
@@ -2582,7 +2462,7 @@ impl VulkanContext {
         // GPU command recording is intentionally linear: begin render pass, replay the queued UI /
         // custom jobs in order, then end the pass. The `commands` vec is drained here so the
         // higher-level renderer can reuse its allocation next frame.
-        let begin_info = vk::CommandBufferBeginInfo::builder();
+        let begin_info = vk::CommandBufferBeginInfo::default();
         unsafe {
             self.device
                 .begin_command_buffer(command_buffer, &begin_info)
@@ -2621,7 +2501,7 @@ impl VulkanContext {
             depth_stencil: vk::ClearDepthStencilValue { depth: 1.0, stencil: 0 },
         };
         let clear_values = [clear_value, depth_clear];
-        let render_pass_info = vk::RenderPassBeginInfo::builder()
+        let render_pass_info = vk::RenderPassBeginInfo::default()
             .render_pass(self.render_pass)
             .framebuffer(self.framebuffers[image_index as usize])
             .render_area(vk::Rect2D {
@@ -2847,7 +2727,7 @@ impl VulkanContext {
 
     /// Creates a Vulkan buffer and allocates/binds memory matching the requested usage.
     fn create_buffer(&self, size: vk::DeviceSize, usage: vk::BufferUsageFlags, properties: vk::MemoryPropertyFlags) -> Result<Buffer> {
-        let info = vk::BufferCreateInfo::builder().size(size).usage(usage).sharing_mode(vk::SharingMode::EXCLUSIVE);
+        let info = vk::BufferCreateInfo::default().size(size).usage(usage).sharing_mode(vk::SharingMode::EXCLUSIVE);
         // Vulkan buffer creation is not atomic: the raw buffer and its allocation are separate
         // objects. Guard each immediately, and commit neither until binding succeeds.
         let buffer = ResourceGuard::new(
@@ -2856,7 +2736,7 @@ impl VulkanContext {
         );
         let requirements = unsafe { self.device.get_buffer_memory_requirements(*buffer.get()) };
         let memory_type = self.find_memory_type(requirements.memory_type_bits, properties)?;
-        let alloc_info = vk::MemoryAllocateInfo::builder()
+        let alloc_info = vk::MemoryAllocateInfo::default()
             .allocation_size(requirements.size)
             .memory_type_index(memory_type);
         let memory = ResourceGuard::new(
@@ -2898,7 +2778,7 @@ impl VulkanContext {
     fn create_image_resource(&self, width: u32, height: u32) -> Result<ImageResource> {
         let format = vk::Format::R8G8B8A8_UNORM;
         let extent3d = vk::Extent3D { width, height, depth: 1 };
-        let image_info = vk::ImageCreateInfo::builder()
+        let image_info = vk::ImageCreateInfo::default()
             .image_type(vk::ImageType::TYPE_2D)
             .format(format)
             .extent(extent3d)
@@ -2917,7 +2797,7 @@ impl VulkanContext {
         );
         let requirements = unsafe { self.device.get_image_memory_requirements(*image.get()) };
         let memory_type = self.find_memory_type(requirements.memory_type_bits, vk::MemoryPropertyFlags::DEVICE_LOCAL)?;
-        let alloc = vk::MemoryAllocateInfo::builder()
+        let alloc = vk::MemoryAllocateInfo::default()
             .allocation_size(requirements.size)
             .memory_type_index(memory_type);
         let memory = ResourceGuard::new(
@@ -2926,16 +2806,15 @@ impl VulkanContext {
         );
         unsafe { self.device.bind_image_memory(*image.get(), *memory.get(), 0) }.map_err(|err| format!("bind_image_memory failed: {err:?}"))?;
 
-        let view_info = vk::ImageViewCreateInfo::builder()
+        let view_info = vk::ImageViewCreateInfo::default()
             .image(*image.get())
             .view_type(vk::ImageViewType::TYPE_2D)
             .format(format)
             .subresource_range(
-                vk::ImageSubresourceRange::builder()
+                vk::ImageSubresourceRange::default()
                     .aspect_mask(vk::ImageAspectFlags::COLOR)
                     .level_count(1)
-                    .layer_count(1)
-                    .build(),
+                    .layer_count(1),
             );
         let view = ResourceGuard::new(
             unsafe { self.device.create_image_view(&view_info, None) }.map_err(|err| format!("create_image_view failed: {err:?}"))?,
@@ -2947,7 +2826,6 @@ impl VulkanContext {
             memory: memory.into_inner(),
             view: view.into_inner(),
             extent: vk::Extent2D { width, height },
-            format,
             layout: vk::ImageLayout::UNDEFINED,
         })
     }
@@ -2969,7 +2847,7 @@ impl VulkanContext {
     /// Creates one depth attachment image and transitions it into attachment layout.
     fn create_depth_attachment(&self, extent: vk::Extent2D) -> Result<ImageResource> {
         let format = self.depth_format;
-        let image_info = vk::ImageCreateInfo::builder()
+        let image_info = vk::ImageCreateInfo::default()
             .image_type(vk::ImageType::TYPE_2D)
             .format(format)
             .extent(vk::Extent3D {
@@ -2990,7 +2868,7 @@ impl VulkanContext {
         );
         let requirements = unsafe { self.device.get_image_memory_requirements(*image.get()) };
         let memory_type = self.find_memory_type(requirements.memory_type_bits, vk::MemoryPropertyFlags::DEVICE_LOCAL)?;
-        let alloc = vk::MemoryAllocateInfo::builder()
+        let alloc = vk::MemoryAllocateInfo::default()
             .allocation_size(requirements.size)
             .memory_type_index(memory_type);
         let memory = ResourceGuard::new(
@@ -3015,11 +2893,11 @@ impl VulkanContext {
             );
         })?;
 
-        let view_info = vk::ImageViewCreateInfo::builder()
+        let view_info = vk::ImageViewCreateInfo::default()
             .image(*image.get())
             .view_type(vk::ImageViewType::TYPE_2D)
             .format(format)
-            .subresource_range(vk::ImageSubresourceRange::builder().aspect_mask(aspect).level_count(1).layer_count(1).build());
+            .subresource_range(vk::ImageSubresourceRange::default().aspect_mask(aspect).level_count(1).layer_count(1));
         let view = ResourceGuard::new(
             unsafe { self.device.create_image_view(&view_info, None) }.map_err(|err| format!("create_image_view failed: {err:?}"))?,
             |view| unsafe { self.device.destroy_image_view(view, None) },
@@ -3030,7 +2908,6 @@ impl VulkanContext {
             memory: memory.into_inner(),
             view: view.into_inner(),
             extent,
-            format,
             layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
         })
     }
@@ -3050,19 +2927,13 @@ impl VulkanContext {
                 vk::ImageLayout::TRANSFER_DST_OPTIMAL,
                 vk::ImageAspectFlags::COLOR,
             );
-            let region = vk::BufferImageCopy::builder()
-                .image_subresource(
-                    vk::ImageSubresourceLayers::builder()
-                        .aspect_mask(vk::ImageAspectFlags::COLOR)
-                        .layer_count(1)
-                        .build(),
-                )
+            let region = vk::BufferImageCopy::default()
+                .image_subresource(vk::ImageSubresourceLayers::default().aspect_mask(vk::ImageAspectFlags::COLOR).layer_count(1))
                 .image_extent(vk::Extent3D {
                     width: image.extent.width,
                     height: image.extent.height,
                     depth: 1,
-                })
-                .build();
+                });
             let regions = [region];
             unsafe {
                 self.device
@@ -3079,20 +2950,6 @@ impl VulkanContext {
         })
     }
 
-    fn copy_buffer(&self, command_buffer: vk::CommandBuffer, src: &Buffer, dst: &Buffer, size: u64) {
-        let regions = [vk::BufferCopy { src_offset: 0, dst_offset: 0, size }];
-        unsafe {
-            self.device.cmd_copy_buffer(command_buffer, src.buffer, dst.buffer, &regions);
-        }
-    }
-
-    fn copy_buffer_with_offset(&self, command_buffer: vk::CommandBuffer, src: &Buffer, dst: &Buffer, dst_offset: u64, size: u64) {
-        let regions = [vk::BufferCopy { src_offset: 0, dst_offset, size }];
-        unsafe {
-            self.device.cmd_copy_buffer(command_buffer, src.buffer, dst.buffer, &regions);
-        }
-    }
-
     /// Begins or reuses the current frame's transfer command buffer.
     fn begin_transfer_command_buffer(&mut self) -> Result<vk::CommandBuffer> {
         let frame = self.current_frame;
@@ -3101,7 +2958,7 @@ impl VulkanContext {
         }
         let command_buffer = self.transfer_command_buffers[frame];
         if !self.transfer_recording.get(frame).copied().unwrap_or(false) {
-            let begin_info = vk::CommandBufferBeginInfo::builder().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
+            let begin_info = vk::CommandBufferBeginInfo::default().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
             unsafe {
                 self.device
                     .begin_command_buffer(command_buffer, &begin_info)
@@ -3166,7 +3023,7 @@ impl VulkanContext {
         let semaphore = self.transfer_complete_semaphores.get(frame).copied().ok_or("missing transfer semaphore")?;
         let command_buffers = [command_buffer];
         let signal = [semaphore];
-        let submit_info = vk::SubmitInfo::builder().command_buffers(&command_buffers).signal_semaphores(&signal).build();
+        let submit_info = vk::SubmitInfo::default().command_buffers(&command_buffers).signal_semaphores(&signal);
         unsafe {
             self.device
                 .queue_submit(self.graphics_queue, &[submit_info], vk::Fence::null())
@@ -3201,15 +3058,14 @@ impl VulkanContext {
         if size == 0 {
             return;
         }
-        let barrier = vk::BufferMemoryBarrier::builder()
+        let barrier = vk::BufferMemoryBarrier::default()
             .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
             .dst_access_mask(dst_access)
             .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
             .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
             .buffer(buffer)
             .offset(offset)
-            .size(size)
-            .build();
+            .size(size);
         let barriers = [barrier];
         unsafe {
             self.device.cmd_pipeline_barrier(
@@ -3278,7 +3134,7 @@ impl VulkanContext {
 
     /// Runs a one-off command buffer for setup work like image layout transitions.
     fn single_time_commands<F: FnOnce(vk::CommandBuffer)>(&self, f: F) -> Result<()> {
-        let alloc_info = vk::CommandBufferAllocateInfo::builder()
+        let alloc_info = vk::CommandBufferAllocateInfo::default()
             .command_pool(self.command_pool)
             .level(vk::CommandBufferLevel::PRIMARY)
             .command_buffer_count(1);
@@ -3288,7 +3144,7 @@ impl VulkanContext {
         let command_buffer = ResourceGuard::new(command_buffer, |command_buffer| unsafe {
             self.device.free_command_buffers(self.command_pool, &[command_buffer])
         });
-        let begin_info = vk::CommandBufferBeginInfo::builder().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
+        let begin_info = vk::CommandBufferBeginInfo::default().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
         unsafe {
             self.device
                 .begin_command_buffer(*command_buffer.get(), &begin_info)
@@ -3301,8 +3157,8 @@ impl VulkanContext {
                 .map_err(|err| format!("end_command_buffer failed: {err:?}"))?;
         }
         let command_buffers = [*command_buffer.get()];
-        let submit_info = vk::SubmitInfo::builder().command_buffers(&command_buffers);
-        let submit_infos = [submit_info.build()];
+        let submit_info = vk::SubmitInfo::default().command_buffers(&command_buffers);
+        let submit_infos = [submit_info];
         unsafe {
             self.device
                 .queue_submit(self.graphics_queue, &submit_infos, vk::Fence::null())
@@ -3344,22 +3200,15 @@ impl VulkanContext {
             ),
         };
 
-        let barrier = vk::ImageMemoryBarrier::builder()
+        let barrier = vk::ImageMemoryBarrier::default()
             .old_layout(old_layout)
             .new_layout(new_layout)
             .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
             .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
             .image(image)
-            .subresource_range(
-                vk::ImageSubresourceRange::builder()
-                    .aspect_mask(aspect_mask)
-                    .level_count(1)
-                    .layer_count(1)
-                    .build(),
-            )
+            .subresource_range(vk::ImageSubresourceRange::default().aspect_mask(aspect_mask).level_count(1).layer_count(1))
             .src_access_mask(src_access)
-            .dst_access_mask(dst_access)
-            .build();
+            .dst_access_mask(dst_access);
 
         unsafe {
             self.device
