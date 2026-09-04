@@ -46,12 +46,17 @@
 //! This module implements the `RendererBackend` trait, texture uploads, UI batching, swapchain handling,
 //! and optional custom mesh rendering for the demo application.
 
-use std::{collections::HashMap, convert::TryFrom, io::Cursor, mem, ptr};
+use std::{
+    collections::HashMap,
+    convert::{Infallible, TryFrom},
+    io::Cursor,
+    mem, ptr,
+};
 
 use ash::{khr, util::read_spv, vk, Entry};
 use microui_redux::{
     prelude::*,
-    render::{TextureError, Vertex},
+    render::{CustomRenderArgs, TextureError, Vertex},
 };
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use sdl2::video::Window;
@@ -61,6 +66,99 @@ use microui_redux_renderer_common::{CustomRenderArea, MeshSubmission, MeshVertex
 type Result<T> = std::result::Result<T, String>;
 type Surface = khr::surface::Instance;
 type Swapchain = khr::swapchain::Device;
+
+/// Result returned by application-owned Vulkan preparation and recording operations.
+pub type VulkanApplicationResult<T> = std::result::Result<T, String>;
+
+/// Vulkan capabilities available while an application renderer prepares one frame.
+///
+/// Preparation happens after the current frame-in-flight fence has completed and before the
+/// graphics command buffer begins recording. The application may create or resize persistent GPU
+/// resources and update host-visible allocations without depending on private backend structures.
+pub struct VulkanApplicationPrepareContext<'a> {
+    /// Logical device that owns application-created pipelines, buffers, images, and descriptors.
+    pub device: &'a ash::Device,
+    /// Render pass used for ordered UI and application graphics commands in this frame.
+    pub render_pass: vk::RenderPass,
+    /// Swapchain color format required by compatible application pipelines and attachments.
+    pub color_format: vk::Format,
+    /// Depth format attached to the shared render pass.
+    pub depth_format: vk::Format,
+    /// Physical dimensions of the current swapchain target.
+    pub extent: vk::Extent2D,
+    /// Reusable frame-in-flight slot whose fence has completed before preparation begins.
+    pub frame_index: usize,
+    /// Number of independently synchronized frame slots owned by the backend.
+    pub frames_in_flight: usize,
+    /// Physical-device memory capabilities used by application buffer and image allocation.
+    pub memory_properties: vk::PhysicalDeviceMemoryProperties,
+    /// Monotonic generation changed after every successful swapchain/render-pass rebuild.
+    pub swapchain_generation: u64,
+}
+
+/// Vulkan recording capabilities lent to one ordered application command.
+///
+/// The command buffer is already inside the shared graphics render pass. Applications may bind
+/// arbitrary compatible pipelines and native resources, use the supplied UI geometry to establish
+/// viewport/scissor state, and issue direct or indirect graphics commands. Acquisition, render-pass
+/// ownership, synchronization, submission, and presentation remain backend responsibilities.
+pub struct VulkanApplicationRenderContext<'a> {
+    /// Logical device used to record native commands.
+    pub device: &'a ash::Device,
+    /// Active primary graphics command buffer inside the backend-owned render pass.
+    pub command_buffer: vk::CommandBuffer,
+    /// Current physical render-target dimensions.
+    pub extent: vk::Extent2D,
+    /// Logical microui frame width used when scaling UI rectangles to the native target.
+    pub logical_width: u32,
+    /// Logical microui frame height used when scaling UI rectangles to the native target.
+    pub logical_height: u32,
+}
+
+/// Strongly typed application-rendering extension hosted by the Vulkan backend.
+///
+/// The associated command remains concrete inside the frame command enum. An application with
+/// several operations uses its own ordinary enum, matching the same typed construction pattern as
+/// the retained event system instead of erasing payloads through `Any` or downcasting.
+pub trait VulkanApplicationRenderer: 'static {
+    /// Concrete application operation retained until the acquired frame is recorded.
+    type Command: 'static;
+
+    /// Creates and updates application GPU resources required by this frame's commands.
+    ///
+    /// Commands are supplied in relative application order. The default implementation supports
+    /// renderers whose persistent resources need no per-frame preparation.
+    fn prepare(&mut self, _context: VulkanApplicationPrepareContext<'_>, _commands: &[&Self::Command]) -> VulkanApplicationResult<()> {
+        Ok(())
+    }
+
+    /// Records one application command at its exact painter-order position.
+    ///
+    /// Resource mutation belongs in `prepare`; recording uses an immutable receiver so pipelines
+    /// and buffers remain stable throughout command-buffer construction.
+    fn render(
+        &self,
+        context: VulkanApplicationRenderContext<'_>,
+        args: CustomRenderArgs,
+        command_index: usize,
+        command: &Self::Command,
+    ) -> VulkanApplicationResult<()>;
+}
+
+impl VulkanApplicationRenderer for () {
+    type Command = Infallible;
+
+    /// Proves exhaustively that the UI-only renderer cannot receive an application command.
+    fn render(
+        &self,
+        _context: VulkanApplicationRenderContext<'_>,
+        _args: CustomRenderArgs,
+        _command_index: usize,
+        command: &Self::Command,
+    ) -> VulkanApplicationResult<()> {
+        match *command {}
+    }
+}
 
 mod vk_builder {
     use super::vk;
@@ -269,38 +367,47 @@ impl AcquiredFrameState {
     }
 }
 
-pub struct VulkanRenderer {
-    // `VulkanRenderer` is the microui `RendererBackend` implementation. It batches UI quads
-    // into `vertices`, records custom render jobs into `commands`, and delegates all Vulkan object
-    // lifetime and frame submission concerns to `VulkanContext`.
+/// Microui Vulkan backend parameterized by one concrete application renderer.
+///
+/// UI commands and application commands share a typed, ordered frame stream. The application
+/// owns its pipelines and native resources while this backend retains swapchain acquisition,
+/// render-pass ownership, synchronization, submission, and presentation.
+pub struct VulkanRenderer<Application = ()>
+where
+    Application: VulkanApplicationRenderer,
+{
+    /// Font atlas sampled by the backend-owned UI pipeline.
     atlas: AtlasHandle,
+    /// User textures whose descriptors are compatible with the current UI render resources.
     textures: HashMap<TextureId, VulkanTexture>,
+    /// Native Vulkan state owned exclusively by the backend.
     context: VulkanContext,
+    /// Last swapchain generation for which user texture descriptors were rebound.
     last_swapchain_generation: u64,
+    /// CPU-side UI vertices accumulated during the current microui frame.
     vertices: Vec<Vertex>,
-    commands: Vec<FrameCommand>,
+    /// Painter-ordered UI and application operations retained until frame recording.
+    commands: Vec<FrameCommand<Application::Command>>,
+    /// Concrete application renderer that prepares resources and records native commands.
+    application: Application,
+    /// End of the UI vertex prefix already represented by a `DrawTo` command.
     current_batch_end: usize,
+    /// Color cleared at the beginning of the shared graphics render pass.
     clear_color: Color,
+    /// Logical microui frame width used when scaling application rectangles.
     width: u32,
+    /// Logical microui frame height used when scaling application rectangles.
     height: u32,
+    /// Monotonic logical frame counter retained for diagnostics and future frame policies.
     frame_index: u64,
     /// Permanent high-level latch set after device loss or an abandoned acquired frame.
     disabled: bool,
 }
 
-trait VulkanFrameOps {
-    fn begin(&mut self, width: i32, height: i32, clr: Color) -> Result<()>;
-    fn push_quad_vertices(&mut self, v0: &Vertex, v1: &Vertex, v2: &Vertex, v3: &Vertex);
-    fn push_triangle_vertices(&mut self, v0: &Vertex, v1: &Vertex, v2: &Vertex);
-    fn flush(&mut self);
-    fn finish(&mut self, acquired: AcquiredVulkanFrame);
-    /// Uploads pixels using the immutable dimensions carried by the renderer-issued ID.
-    fn create_texture(&mut self, id: TextureId, pixels: &[u8]) -> std::result::Result<(), TextureError>;
-    fn destroy_texture(&mut self, id: TextureId);
-    fn draw_texture(&mut self, id: TextureId, vertices: [Vertex; 4]);
-}
-
-impl VulkanRenderer {
+impl<Application> VulkanRenderer<Application>
+where
+    Application: VulkanApplicationRenderer,
+{
     /// Closes the current UI vertex batch so later commands preserve draw ordering.
     fn flush_ui_batch(&mut self) {
         // Custom render jobs must preserve ordering relative to the UI that came before them. The
@@ -312,8 +419,8 @@ impl VulkanRenderer {
         }
     }
 
-    /// Creates the high-level Vulkan renderer and its backing Vulkan context.
-    pub fn new(window: &Window, atlas: AtlasHandle, width: u32, height: u32) -> Result<Self> {
+    /// Creates a Vulkan backend around the application's concrete native renderer.
+    pub fn new_with_application(window: &Window, atlas: AtlasHandle, width: u32, height: u32, application: Application) -> Result<Self> {
         let mut context = VulkanContext::new(window, width, height)?;
         context.upload_atlas(&atlas)?;
         let swapchain_generation = context.swapchain_generation();
@@ -325,6 +432,7 @@ impl VulkanRenderer {
             last_swapchain_generation: swapchain_generation,
             vertices: Vec::new(),
             commands: Vec::new(),
+            application,
             current_batch_end: 0,
             clear_color: color(0, 0, 0, 255),
             width,
@@ -384,15 +492,10 @@ impl VulkanRenderer {
         Ok(())
     }
 
-    /// Queues a backend-specific custom render job after flushing earlier UI geometry.
-    pub(crate) fn enqueue_custom_render<C: VulkanCustomRenderer + 'static>(&mut self, area: CustomRenderArea, cmd: C) {
+    /// Queues one typed application operation after closing the preceding UI batch.
+    fn enqueue_application(&mut self, args: CustomRenderArgs, command: Application::Command) {
         self.flush_ui_batch();
-        self.commands.push(FrameCommand::Custom(CustomRenderJob {
-            area,
-            kind: "custom",
-            callback: Box::new(cmd),
-            budget: FrameResourceBudget::default(),
-        }));
+        self.commands.push(FrameCommand::Application { args, command });
     }
 
     /// Converts a microui clear color into the Vulkan clear value used for the render pass.
@@ -406,7 +509,17 @@ impl VulkanRenderer {
     }
 }
 
-impl VulkanFrameOps for VulkanRenderer {
+impl VulkanRenderer<()> {
+    /// Creates a UI-only Vulkan backend with an uninhabited application command type.
+    pub fn new(window: &Window, atlas: AtlasHandle, width: u32, height: u32) -> Result<Self> {
+        Self::new_with_application(window, atlas, width, height, ())
+    }
+}
+
+impl<Application> VulkanRenderer<Application>
+where
+    Application: VulkanApplicationRenderer,
+{
     /// Starts a new frame, syncing window size and swapchain generation.
     fn begin(&mut self, width: i32, height: i32, clr: Color) -> Result<()> {
         // `begin` only resets CPU-side batching state and keeps the GPU-side context synchronized
@@ -456,7 +569,7 @@ impl VulkanFrameOps for VulkanRenderer {
         let mut commands = std::mem::take(&mut self.commands);
         // `draw_frame` consumes the queued UI/custom jobs and may drain `commands`; taking the vec
         // avoids reallocating a fresh command buffer every frame.
-        if let Err(err) = self.context.draw_frame(
+        let result = self.context.draw_frame(
             acquired,
             Self::color_to_vk_clear(self.clear_color),
             &self.vertices,
@@ -464,7 +577,9 @@ impl VulkanFrameOps for VulkanRenderer {
             self.height,
             self.frame_index,
             &mut commands,
-        ) {
+            &mut self.application,
+        );
+        if let Err(err) = result {
             eprintln!("[microui-redux][vulkan] draw_frame failed: {err}");
             if self.context.is_unusable() {
                 self.disabled = true;
@@ -533,23 +648,20 @@ impl VulkanFrameOps for VulkanRenderer {
         let area = CustomRenderArea { rect: area_rect, clip: area_rect };
 
         // The Context executor owns the pre-texture ordering boundary.
-        self.commands.push(FrameCommand::Custom(CustomRenderJob {
+        self.commands.push(FrameCommand::Texture {
             area,
-            kind: "texture",
-            callback: Box::new(TextureDrawCommand {
+            command: TextureDrawCommand {
                 vertices: quad,
                 descriptor_set: descriptor,
-            }),
-            budget: FrameResourceBudget {
-                ui_vertices: 6,
-                mesh_vertices: 0,
-                mesh_indices: 0,
             },
-        }));
+        });
     }
 }
 
-impl Drop for VulkanRenderer {
+impl<Application> Drop for VulkanRenderer<Application>
+where
+    Application: VulkanApplicationRenderer,
+{
     /// Destroys user images while the context/device they depend on are still alive.
     fn drop(&mut self) {
         // `VulkanContext::drop` also waits, but renderer-owned images must be released before the
@@ -564,46 +676,68 @@ impl Drop for VulkanRenderer {
 }
 
 #[must_use = "the Vulkan frame is finalized when dropped"]
-pub struct VulkanFrame<'a> {
-    backend: &'a mut VulkanRenderer,
+/// Acquired Vulkan frame that accepts UI operations and typed application commands.
+pub struct VulkanFrame<'a, Application = ()>
+where
+    Application: VulkanApplicationRenderer,
+{
+    /// Backend borrowed for the complete acquire-to-present transaction.
+    backend: &'a mut VulkanRenderer<Application>,
+    /// Acquired swapchain image consumed exactly once during frame finalization.
     acquired: Option<AcquiredVulkanFrame>,
 }
 
-impl VulkanFrame<'_> {
+impl<Application> VulkanFrame<'_, Application>
+where
+    Application: VulkanApplicationRenderer,
+{
+    /// Adds pre-transformed colored UI vertices at the current painter-order position.
     pub fn enqueue_colored_vertices(&mut self, area: CustomRenderArea, vertices: Vec<Vertex>) {
         self.backend.enqueue_colored_vertices(area, vertices);
     }
 
+    /// Adds the legacy demo mesh operation pending migration into the application renderer.
     pub fn enqueue_mesh_draw(&mut self, area: CustomRenderArea, submission: MeshSubmission) {
         self.backend.enqueue_mesh_draw(area, submission);
     }
+
+    /// Adds one concrete application operation at the current painter-order position.
+    pub fn enqueue_application(&mut self, args: CustomRenderArgs, command: Application::Command) {
+        self.backend.enqueue_application(args, command);
+    }
 }
 
-impl RendererFrame for VulkanFrame<'_> {
+impl<Application> RendererFrame for VulkanFrame<'_, Application>
+where
+    Application: VulkanApplicationRenderer,
+{
     fn push_quad(&mut self, vertices: [Vertex; 4]) {
-        VulkanFrameOps::push_quad_vertices(self.backend, &vertices[0], &vertices[1], &vertices[2], &vertices[3]);
+        self.backend.push_quad_vertices(&vertices[0], &vertices[1], &vertices[2], &vertices[3]);
     }
 
     fn push_triangle(&mut self, vertices: [Vertex; 3]) {
-        VulkanFrameOps::push_triangle_vertices(self.backend, &vertices[0], &vertices[1], &vertices[2]);
+        self.backend.push_triangle_vertices(&vertices[0], &vertices[1], &vertices[2]);
     }
 
     fn flush(&mut self) {
-        VulkanFrameOps::flush(self.backend);
+        self.backend.flush();
     }
 
     fn draw_texture(&mut self, id: TextureId, vertices: [Vertex; 4]) {
-        VulkanFrameOps::draw_texture(self.backend, id, vertices);
+        self.backend.draw_texture(id, vertices);
     }
 }
 
-impl Drop for VulkanFrame<'_> {
+impl<Application> Drop for VulkanFrame<'_, Application>
+where
+    Application: VulkanApplicationRenderer,
+{
     fn drop(&mut self) {
         let Some(acquired) = self.acquired.take() else {
             return;
         };
         if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            VulkanFrameOps::finish(self.backend, acquired);
+            self.backend.finish(acquired);
         }))
         .is_err()
         {
@@ -616,8 +750,14 @@ impl Drop for VulkanFrame<'_> {
     }
 }
 
-impl RendererBackend for VulkanRenderer {
-    type Frame<'a> = VulkanFrame<'a>;
+impl<Application> RendererBackend for VulkanRenderer<Application>
+where
+    Application: VulkanApplicationRenderer,
+{
+    type Frame<'a>
+        = VulkanFrame<'a, Application>
+    where
+        Application: 'a;
 
     fn get_atlas(&self) -> AtlasHandle {
         self.atlas.clone()
@@ -633,7 +773,7 @@ impl RendererBackend for VulkanRenderer {
 
     fn frame(&mut self, info: FrameInfo) -> std::result::Result<Self::Frame<'_>, FrameError> {
         let dimensions = info.dimensions();
-        VulkanFrameOps::begin(self, dimensions.width, dimensions.height, info.clear()).map_err(FrameError::new)?;
+        self.begin(dimensions.width, dimensions.height, info.clear()).map_err(FrameError::new)?;
         let acquired = self
             .context
             .acquire_frame(dimensions.width as u32, dimensions.height as u32)
@@ -642,16 +782,20 @@ impl RendererBackend for VulkanRenderer {
     }
 
     fn create_texture(&mut self, id: TextureId, pixels: &[u8]) -> std::result::Result<(), TextureError> {
-        // Preserve the typed texture failure exposed by the frame-ops boundary verbatim.
-        VulkanFrameOps::create_texture(self, id, pixels)
+        // Preserve the typed texture failure returned by the inherent native upload helper.
+        self.create_texture(id, pixels)
     }
 
     fn destroy_texture(&mut self, id: TextureId) {
-        VulkanFrameOps::destroy_texture(self, id);
+        self.destroy_texture(id);
     }
 }
 
-impl VulkanRenderer {
+impl<Application> VulkanRenderer<Application>
+where
+    Application: VulkanApplicationRenderer,
+{
+    /// Queues pre-transformed colored vertices after closing the preceding UI batch.
     pub fn enqueue_colored_vertices(&mut self, area: CustomRenderArea, vertices: Vec<Vertex>) {
         if self.disabled {
             return;
@@ -664,19 +808,13 @@ impl VulkanRenderer {
             None => return,
         };
         self.flush_ui_batch();
-        let ui_vertices = vertices.len();
-        self.commands.push(FrameCommand::Custom(CustomRenderJob {
+        self.commands.push(FrameCommand::Colored {
             area,
-            kind: "colored",
-            callback: Box::new(ColoredVerticesCommand { vertices, descriptor_set }),
-            budget: FrameResourceBudget {
-                ui_vertices,
-                mesh_vertices: 0,
-                mesh_indices: 0,
-            },
-        }));
+            command: ColoredVerticesCommand { vertices, descriptor_set },
+        });
     }
 
+    /// Queues the legacy demo mesh after closing the preceding UI batch.
     pub fn enqueue_mesh_draw(&mut self, area: CustomRenderArea, submission: MeshSubmission) {
         if self.disabled {
             return;
@@ -684,19 +822,11 @@ impl VulkanRenderer {
         if submission.mesh.is_empty() {
             return;
         }
-        let mesh_vertices = submission.mesh.vertices().len();
-        let mesh_indices = submission.mesh.indices().len();
         self.flush_ui_batch();
-        self.commands.push(FrameCommand::Custom(CustomRenderJob {
+        self.commands.push(FrameCommand::Mesh {
             area,
-            kind: "mesh",
-            callback: Box::new(MeshDrawCommand { submission }),
-            budget: FrameResourceBudget {
-                ui_vertices: 0,
-                mesh_vertices,
-                mesh_indices,
-            },
-        }));
+            command: MeshDrawCommand { submission },
+        });
     }
 }
 
@@ -838,28 +968,12 @@ struct ImageResource {
     layout: vk::ImageLayout,
 }
 
-pub(crate) trait VulkanCustomRenderer: Send {
-    fn record(&mut self, ctx: &mut VulkanContext, command_buffer: vk::CommandBuffer, extent: vk::Extent2D, area: &CustomRenderArea);
-}
-
-#[derive(Clone, Copy, Default)]
-struct FrameResourceBudget {
-    ui_vertices: usize,
-    mesh_vertices: usize,
-    mesh_indices: usize,
-}
-
-struct CustomRenderJob {
-    area: CustomRenderArea,
-    kind: &'static str,
-    callback: Box<dyn VulkanCustomRenderer>,
-    budget: FrameResourceBudget,
-}
-
+/// Returns whether verbose Vulkan tracing is enabled for this build.
 fn vk_trace_enabled() -> bool {
     false
 }
 
+/// Returns whether diagnostic Vulkan frame dumping is enabled for this build.
 fn vk_dump_enabled() -> bool {
     false
 }
@@ -874,56 +988,67 @@ macro_rules! vk_trace {
     };
 }
 
-enum FrameCommand {
+/// One painter-ordered operation retained until the acquired frame is recorded.
+///
+/// Backend-owned variants remain concrete so their upload requirements and recording behavior are
+/// visible to the compiler. `Application` embeds the renderer's associated command directly; no
+/// boxed callbacks, `Any` payloads, or runtime type recovery are involved.
+enum FrameCommand<ApplicationCommand> {
+    /// Draws UI vertices from the preceding cursor through this exclusive end index.
     DrawTo(usize),
-    Custom(CustomRenderJob),
+    /// Draws a backend-owned sampled texture through the UI pipeline.
+    Texture {
+        /// Logical bounds and clip rectangle supplied to viewport/scissor conversion.
+        area: CustomRenderArea,
+        /// Concrete textured-vertex payload and descriptor binding.
+        command: TextureDrawCommand,
+    },
+    /// Draws pre-transformed colored vertices through the UI pipeline.
+    Colored {
+        /// Logical bounds and clip rectangle supplied to viewport/scissor conversion.
+        area: CustomRenderArea,
+        /// Concrete colored-vertex payload and atlas descriptor binding.
+        command: ColoredVerticesCommand,
+    },
+    /// Draws the legacy demo mesh until mesh ownership moves into the demo renderer.
+    Mesh {
+        /// Logical viewport and clip rectangle for the mesh draw.
+        area: CustomRenderArea,
+        /// Concrete mesh submission retained by the frame.
+        command: MeshDrawCommand,
+    },
+    /// Delegates one application-owned command to the concrete native renderer.
+    Application {
+        /// Standard custom-render geometry and clip information from microui.
+        args: CustomRenderArgs,
+        /// Application operation whose type is fixed by the backend generic parameter.
+        command: ApplicationCommand,
+    },
 }
 
+/// Backend-owned textured geometry ready for the shared UI pipeline.
 struct TextureDrawCommand {
+    /// Six triangle-list vertices produced from the submitted quad.
     vertices: Vec<Vertex>,
+    /// Descriptor set referencing the texture selected by the microui texture handle.
     descriptor_set: vk::DescriptorSet,
 }
 
+/// Backend-owned untextured geometry ready for the shared UI pipeline.
 struct ColoredVerticesCommand {
+    /// Triangle-list vertices already expressed in logical microui coordinates.
     vertices: Vec<Vertex>,
+    /// Atlas descriptor retained because the shared fragment shader expects a sampled binding.
     descriptor_set: vk::DescriptorSet,
 }
 
+/// Temporary backend mesh command retained only until the demo renderer owns mesh rendering.
 struct MeshDrawCommand {
+    /// Immutable mesh buffers and per-draw transform matrices.
     submission: MeshSubmission,
 }
 
-impl VulkanCustomRenderer for TextureDrawCommand {
-    fn record(&mut self, ctx: &mut VulkanContext, command_buffer: vk::CommandBuffer, _extent: vk::Extent2D, area: &CustomRenderArea) {
-        if let Err(err) = ctx.draw_vertices_with_descriptor(
-            command_buffer,
-            &self.vertices,
-            ctx.logical_width.max(1),
-            ctx.logical_height.max(1),
-            self.descriptor_set,
-            Some(area),
-        ) {
-            eprintln!("[microui-redux][vulkan] texture draw failed: {err}");
-        }
-    }
-}
-
-impl VulkanCustomRenderer for ColoredVerticesCommand {
-    fn record(&mut self, ctx: &mut VulkanContext, command_buffer: vk::CommandBuffer, _extent: vk::Extent2D, area: &CustomRenderArea) {
-        if let Err(err) = ctx.draw_custom_vertices(command_buffer, &self.vertices, area, self.descriptor_set) {
-            eprintln!("[microui-redux][vulkan] solid draw failed: {err}");
-        }
-    }
-}
-
-impl VulkanCustomRenderer for MeshDrawCommand {
-    fn record(&mut self, ctx: &mut VulkanContext, command_buffer: vk::CommandBuffer, _extent: vk::Extent2D, area: &CustomRenderArea) {
-        if let Err(err) = ctx.record_mesh(command_buffer, &self.submission, area) {
-            eprintln!("[microui-redux][vulkan] mesh draw failed: {err}");
-        }
-    }
-}
-
+/// Computes the integer bounds of pre-clipped vertices for viewport/scissor bookkeeping.
 fn rect_from_vertices(vertices: &[Vertex]) -> Recti {
     let mut min_x = f32::MAX;
     let mut min_y = f32::MAX;
@@ -2795,7 +2920,7 @@ impl VulkanContext {
 
     /// Executes one complete Vulkan frame from an acquired image through submit and present.
     #[allow(clippy::too_many_arguments)] // Frame recording keeps Vulkan state explicit at the call boundary.
-    fn draw_frame(
+    fn draw_frame<Application>(
         &mut self,
         acquired: AcquiredVulkanFrame,
         clear_value: vk::ClearValue,
@@ -2803,12 +2928,16 @@ impl VulkanContext {
         width: u32,
         height: u32,
         _frame_index: u64,
-        commands: &mut Vec<FrameCommand>,
-    ) -> Result<()> {
+        commands: &mut Vec<FrameCommand<Application::Command>>,
+        application: &mut Application,
+    ) -> Result<()>
+    where
+        Application: VulkanApplicationRenderer,
+    {
         // Every exit after successful acquisition passes through the lifecycle commit below. Any
         // error permanently latches the context before the caller can attempt another frame with a
         // signaled acquire semaphore, an unpresented image, or an unsignaled unsubmitted fence.
-        let result = self.draw_acquired_frame(acquired, clear_value, vertices, width, height, _frame_index, commands);
+        let result = self.draw_acquired_frame(acquired, clear_value, vertices, width, height, _frame_index, commands, application);
 
         // Success proves graphics submission and presentation consumed the acquired resources.
         // Every error latches Fatal, including record, transfer, fence-reset, submit, present, and
@@ -2818,7 +2947,7 @@ impl VulkanContext {
 
     /// Performs the fallible native work for one already-acquired swapchain image.
     #[allow(clippy::too_many_arguments)] // Frame recording keeps Vulkan state explicit at the call boundary.
-    fn draw_acquired_frame(
+    fn draw_acquired_frame<Application>(
         &mut self,
         acquired: AcquiredVulkanFrame,
         clear_value: vk::ClearValue,
@@ -2826,8 +2955,12 @@ impl VulkanContext {
         width: u32,
         height: u32,
         _frame_index: u64,
-        commands: &mut Vec<FrameCommand>,
-    ) -> Result<()> {
+        commands: &mut Vec<FrameCommand<Application::Command>>,
+        application: &mut Application,
+    ) -> Result<()>
+    where
+        Application: VulkanApplicationRenderer,
+    {
         if self.device_lost {
             return Err("device is lost; VulkanContext is disabled".into());
         }
@@ -2846,11 +2979,47 @@ impl VulkanContext {
         }
         self.preflight_frame_resources(vertices, commands.as_slice())?;
 
+        // Application resources are prepared only after this frame slot's fence has completed.
+        // The borrowed command list exposes the concrete payloads without transferring ownership
+        // or weakening their types before command-buffer recording.
+        let application_commands: Vec<&Application::Command> = commands
+            .iter()
+            .filter_map(|command| match command {
+                FrameCommand::Application { command, .. } => Some(command),
+                _ => None,
+            })
+            .collect();
+        let memory_properties = unsafe { self.instance.get_physical_device_memory_properties(self.physical_device) };
+        application.prepare(
+            VulkanApplicationPrepareContext {
+                device: &self.device,
+                render_pass: self.render_pass,
+                color_format: self.swapchain_format,
+                depth_format: self.depth_format,
+                extent: self.extent,
+                frame_index: frame,
+                frames_in_flight: self.max_frames_in_flight,
+                memory_properties,
+                swapchain_generation: self.swapchain_generation,
+            },
+            &application_commands,
+        )?;
+
         let mut swapchain_needs_recreate = suboptimal;
 
         // UI drawing and custom rendering share one graphics command buffer per acquired image.
         let command_buffer = self.command_buffers[image_index as usize];
-        self.record_command_buffer(command_buffer, image_index, clear_value, vertices, width, height, _frame_index, commands)?;
+        self.record_command_buffer(
+            command_buffer,
+            image_index,
+            clear_value,
+            vertices,
+            width,
+            height,
+            _frame_index,
+            commands,
+            application,
+        )?;
         let transfer_semaphore = self.submit_transfer_commands()?;
 
         let mut wait_semaphores = vec![self.image_available_semaphores[frame]];
@@ -2917,29 +3086,37 @@ impl VulkanContext {
     }
 
     /// Estimates this frame's upload budget and grows GPU/staging buffers before recording begins.
-    fn preflight_frame_resources(&mut self, vertices: &[Vertex], commands: &[FrameCommand]) -> Result<()> {
+    fn preflight_frame_resources<ApplicationCommand>(&mut self, vertices: &[Vertex], commands: &[FrameCommand<ApplicationCommand>]) -> Result<()> {
         // Pre-compute the worst-case upload budget for this frame before any command buffer
         // recording begins. That keeps the actual record path free of buffer growth decisions.
-        let mut budget = FrameResourceBudget::default();
+        let mut ui_vertices = 0usize;
+        let mut mesh_vertices = 0usize;
+        let mut mesh_indices = 0usize;
         let mut cursor = 0usize;
         for command in commands {
             match command {
                 FrameCommand::DrawTo(end_index) => {
                     let end = (*end_index).min(vertices.len());
                     if end > cursor {
-                        budget.ui_vertices = budget.ui_vertices.saturating_add(end - cursor);
+                        ui_vertices = ui_vertices.saturating_add(end - cursor);
                     }
                     cursor = end;
                 }
-                FrameCommand::Custom(job) => {
-                    budget.ui_vertices = budget.ui_vertices.saturating_add(job.budget.ui_vertices);
-                    budget.mesh_vertices = budget.mesh_vertices.saturating_add(job.budget.mesh_vertices);
-                    budget.mesh_indices = budget.mesh_indices.saturating_add(job.budget.mesh_indices);
+                FrameCommand::Texture { command, .. } => {
+                    ui_vertices = ui_vertices.saturating_add(command.vertices.len());
                 }
+                FrameCommand::Colored { command, .. } => {
+                    ui_vertices = ui_vertices.saturating_add(command.vertices.len());
+                }
+                FrameCommand::Mesh { command, .. } => {
+                    mesh_vertices = mesh_vertices.saturating_add(command.submission.mesh.vertices().len());
+                    mesh_indices = mesh_indices.saturating_add(command.submission.mesh.indices().len());
+                }
+                FrameCommand::Application { .. } => {}
             }
         }
         if cursor < vertices.len() {
-            budget.ui_vertices = budget.ui_vertices.saturating_add(vertices.len() - cursor);
+            ui_vertices = ui_vertices.saturating_add(vertices.len() - cursor);
         }
 
         let to_bytes = |count: usize, element_size: usize| -> Result<vk::DeviceSize> {
@@ -2948,16 +3125,16 @@ impl VulkanContext {
         };
 
         let frame = self.current_frame;
-        let ui_bytes = to_bytes(budget.ui_vertices, std::mem::size_of::<Vertex>())?;
+        let ui_bytes = to_bytes(ui_vertices, std::mem::size_of::<Vertex>())?;
         if let Some(mut ui) = self.ui.take() {
             let result = ui.prepare_frame(self, frame, ui_bytes);
             self.ui = Some(ui);
             result?;
         }
 
-        if budget.mesh_vertices > 0 && budget.mesh_indices > 0 {
-            let mesh_vertex_bytes = to_bytes(budget.mesh_vertices, std::mem::size_of::<MeshVertex>())?;
-            let mesh_index_bytes = to_bytes(budget.mesh_indices, std::mem::size_of::<u32>())?;
+        if mesh_vertices > 0 && mesh_indices > 0 {
+            let mesh_vertex_bytes = to_bytes(mesh_vertices, std::mem::size_of::<MeshVertex>())?;
+            let mesh_index_bytes = to_bytes(mesh_indices, std::mem::size_of::<u32>())?;
             let mut mesh = match self.mesh.take() {
                 Some(existing) => existing,
                 None => MeshResources::new(self)?,
@@ -2972,7 +3149,7 @@ impl VulkanContext {
 
     /// Records the graphics command buffer by replaying queued UI and custom commands in order.
     #[allow(clippy::too_many_arguments)] // Command recording keeps Vulkan state explicit at the call boundary.
-    fn record_command_buffer(
+    fn record_command_buffer<Application>(
         &mut self,
         command_buffer: vk::CommandBuffer,
         image_index: u32,
@@ -2981,8 +3158,12 @@ impl VulkanContext {
         width: u32,
         height: u32,
         _frame_index: u64,
-        commands: &mut Vec<FrameCommand>,
-    ) -> Result<()> {
+        commands: &mut Vec<FrameCommand<Application::Command>>,
+        application: &Application,
+    ) -> Result<()>
+    where
+        Application: VulkanApplicationRenderer,
+    {
         // GPU command recording is intentionally linear: begin render pass, replay the queued UI /
         // custom jobs in order, then end the pass. The `commands` vec is drained here so the
         // higher-level renderer can reuse its allocation next frame.
@@ -3014,9 +3195,10 @@ impl VulkanContext {
         let frame_width = width.max(1);
         let frame_height = height.max(1);
         let mut cursor = 0;
-        // UI resources must be moved out to satisfy the callback borrow pattern. Run recording in
-        // a local transaction, then restore the aggregate before propagating any error; destroying
-        // it here would also be unsafe while another frame may still reference its pipeline.
+        let mut application_index = 0usize;
+        // UI resources move out temporarily because their record helpers also borrow the context.
+        // Every branch restores that aggregate before calling another backend helper, keeping one
+        // linear and statically dispatched replay path.
         let mut ui = self.ui.take();
         let record_result: Result<()> = (|| {
             for command in commands.drain(..) {
@@ -3031,15 +3213,48 @@ impl VulkanContext {
                             cursor = end;
                         }
                     }
-                    FrameCommand::Custom(mut job) => {
-                        // Custom callbacks may need mutable access to the context and its helper
-                        // recorders. Temporarily returning UI resources to `self` avoids nested
-                        // mutable borrows while keeping command ordering intact.
+                    FrameCommand::Texture { area, command } => {
                         if let Some(ui_resources) = ui.take() {
                             self.ui = Some(ui_resources);
                         }
-                        job.callback.record(self, command_buffer, self.extent, &job.area);
+                        self.draw_vertices_with_descriptor(
+                            command_buffer,
+                            &command.vertices,
+                            frame_width,
+                            frame_height,
+                            command.descriptor_set,
+                            Some(&area),
+                        )?;
                         ui = self.ui.take();
+                    }
+                    FrameCommand::Colored { area, command } => {
+                        if let Some(ui_resources) = ui.take() {
+                            self.ui = Some(ui_resources);
+                        }
+                        self.draw_custom_vertices(command_buffer, &command.vertices, &area, command.descriptor_set)?;
+                        ui = self.ui.take();
+                    }
+                    FrameCommand::Mesh { area, command } => {
+                        if let Some(ui_resources) = ui.take() {
+                            self.ui = Some(ui_resources);
+                        }
+                        self.record_mesh(command_buffer, &command.submission, &area)?;
+                        ui = self.ui.take();
+                    }
+                    FrameCommand::Application { args, command } => {
+                        application.render(
+                            VulkanApplicationRenderContext {
+                                device: &self.device,
+                                command_buffer,
+                                extent: self.extent,
+                                logical_width: frame_width,
+                                logical_height: frame_height,
+                            },
+                            args,
+                            application_index,
+                            &command,
+                        )?;
+                        application_index += 1;
                     }
                 }
             }
