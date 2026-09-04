@@ -33,11 +33,11 @@
 //! This module implements the `RendererBackend` trait, texture uploads, UI batching, and optional custom
 //! mesh rendering for the demo application.
 
-use std::{collections::HashMap, mem, slice};
+use std::{collections::HashMap, convert::Infallible, mem, slice};
 
 use microui_redux::{
     prelude::*,
-    render::{TextureError, Vertex},
+    render::{CustomRenderArgs, TextureError, Vertex},
 };
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use rs_math3d::{Vec3f, Vec4f};
@@ -45,6 +45,81 @@ use sdl2::video::Window;
 use wgpu::util::DeviceExt;
 
 use microui_redux_renderer_common::{CustomRenderArea, MeshSubmission};
+
+/// Depth format attached to frames that may contain application rendering.
+///
+/// Keeping this value public lets an application renderer build a compatible graphics pipeline
+/// without copying a private backend choice. UI pipelines leave depth testing disabled, while
+/// application pipelines may use the attachment for ordinary three-dimensional visibility.
+pub const APPLICATION_DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth24Plus;
+
+/// Native WGPU capabilities available while application resources are prepared for one frame.
+///
+/// Preparation runs before the shared render pass begins. Applications may upload buffers through
+/// `queue` and may encode transfer or compute work through `encoder`; this prevents the extension
+/// API from collapsing custom rendering into CPU-generated UI triangles.
+pub struct WgpuApplicationPrepareContext<'a> {
+    /// Logical device that owns every application-created pipeline and GPU resource.
+    pub device: &'a wgpu::Device,
+    /// Submission queue used for immediate buffer and texture uploads.
+    pub queue: &'a wgpu::Queue,
+    /// Command encoder preceding the frame's ordered graphics pass.
+    pub encoder: &'a mut wgpu::CommandEncoder,
+    /// Surface color format that application graphics pipelines must target.
+    pub color_format: wgpu::TextureFormat,
+    /// Current physical target width in pixels.
+    pub width: u32,
+    /// Current physical target height in pixels.
+    pub height: u32,
+}
+
+/// Strongly typed application-rendering extension hosted by the WGPU backend.
+///
+/// The associated command is retained in the same concrete frame command stream as UI batches.
+/// No `Any`, downcast, or string command identifier is involved. Applications that need several
+/// operations should model them as an ordinary enum and match that enum in `prepare` and `render`.
+pub trait WgpuApplicationRenderer: 'static {
+    /// Concrete application operation stored between frame construction and GPU recording.
+    type Command: 'static;
+
+    /// Creates or updates GPU resources needed by the ordered commands in the current frame.
+    ///
+    /// `commands` contains application commands only, in the same relative order in which
+    /// `render` will receive them. The default implementation supports renderers whose resources
+    /// are fully persistent and need no per-frame preparation.
+    fn prepare(&mut self, _context: WgpuApplicationPrepareContext<'_>, _commands: &[&Self::Command]) -> Result<(), String> {
+        Ok(())
+    }
+
+    /// Records one application command into the active surface render pass.
+    ///
+    /// The pass already contains the color and depth attachments. Implementations set their own
+    /// pipeline, bind groups, viewport, scissor, vertex/index buffers, and draw state. The immutable
+    /// receiver is intentional: all allocation and mutation happens during `prepare`, allowing GPU
+    /// resources borrowed by a WGPU render pass to remain stable for the pass lifetime.
+    fn render<'pass>(
+        &'pass self,
+        pass: &mut wgpu::RenderPass<'pass>,
+        args: CustomRenderArgs,
+        command_index: usize,
+        command: &'pass Self::Command,
+    ) -> Result<(), String>;
+}
+
+impl WgpuApplicationRenderer for () {
+    type Command = Infallible;
+
+    /// Proves that a UI-only renderer can never receive an application command.
+    fn render<'pass>(
+        &'pass self,
+        _pass: &mut wgpu::RenderPass<'pass>,
+        _args: CustomRenderArgs,
+        _command_index: usize,
+        command: &'pass Self::Command,
+    ) -> Result<(), String> {
+        match *command {}
+    }
+}
 
 // WGPU backend overview:
 // - UI/custom draws are described as `RenderCommand`s while building the frame.
@@ -82,13 +157,15 @@ struct Uniforms {
 }
 
 #[allow(clippy::enum_variant_names)] // The prefix makes queued draw operations explicit at use sites.
-enum RenderCommand {
+enum RenderCommand<ApplicationCommand> {
     // Draw the queued UI vertices up to this index with the atlas texture.
     DrawUiTo(usize),
     // Draw a textured quad using a user-managed texture id.
     DrawTexture { id: TextureId, vertices: Vec<GpuVertex> },
     // Draw arbitrary colored triangles (still sampled from white atlas texel).
     DrawColored { area: CustomRenderArea, vertices: Vec<GpuVertex> },
+    // Execute one application-owned command at this exact painter-order position.
+    Application { args: CustomRenderArgs, command: ApplicationCommand },
 }
 
 struct GpuTexture {
@@ -97,11 +174,22 @@ struct GpuTexture {
     bind_group: wgpu::BindGroup,
 }
 
+/// Depth texture retained beside the surface configuration that determines its dimensions.
+struct DepthTarget {
+    /// Owning texture; the view alone does not keep the native allocation alive.
+    _texture: wgpu::Texture,
+    /// View attached to the shared render pass for application depth testing.
+    view: wgpu::TextureView,
+}
+
 /// WGPU renderer backend for microui.
 ///
 /// The renderer batches all per-frame geometry into a single staging vertex buffer and
 /// replays a lightweight command list (`RenderCommand`) to switch texture/scissor state.
-pub struct WgpuRenderer {
+pub struct WgpuRenderer<Application = ()>
+where
+    Application: WgpuApplicationRenderer,
+{
     atlas: AtlasHandle,
     textures: HashMap<TextureId, GpuTexture>,
 
@@ -117,9 +205,11 @@ pub struct WgpuRenderer {
     sampler: wgpu::Sampler,
     uniform_buffer: wgpu::Buffer,
     atlas_texture: GpuTexture,
+    /// Depth target recreated transactionally whenever the surface dimensions change.
+    depth_target: DepthTarget,
 
     ui_vertices: Vec<GpuVertex>,
-    commands: Vec<RenderCommand>,
+    commands: Vec<RenderCommand<Application::Command>>,
     current_batch_end: usize,
 
     staging_vertex_buffer: wgpu::Buffer,
@@ -128,21 +218,14 @@ pub struct WgpuRenderer {
     width: u32,
     height: u32,
     clear_color: Color,
+    /// Concrete application GPU renderer that owns all non-UI pipelines and resources.
+    application: Application,
 }
 
-trait WgpuFrameOps {
-    fn begin(&mut self, width: i32, height: i32, clr: Color);
-    fn push_quad_vertices(&mut self, v0: &Vertex, v1: &Vertex, v2: &Vertex, v3: &Vertex);
-    fn push_triangle_vertices(&mut self, v0: &Vertex, v1: &Vertex, v2: &Vertex);
-    fn flush(&mut self);
-    fn finish(&mut self, frame: wgpu::SurfaceTexture);
-    /// Uploads pixels using the immutable dimensions carried by the renderer-issued ID.
-    fn create_texture(&mut self, id: TextureId, pixels: &[u8]) -> Result<(), TextureError>;
-    fn destroy_texture(&mut self, id: TextureId);
-    fn draw_texture(&mut self, id: TextureId, vertices: [Vertex; 4]);
-}
-
-impl WgpuRenderer {
+impl<Application> WgpuRenderer<Application>
+where
+    Application: WgpuApplicationRenderer,
+{
     /// Acquires the native surface texture before any display-list execution begins.
     fn acquire_surface_frame(&mut self) -> Result<wgpu::SurfaceTexture, FrameError> {
         match self.surface.get_current_texture() {
@@ -275,7 +358,32 @@ impl WgpuRenderer {
             self.config.width = width;
             self.config.height = height;
             self.surface.configure(&self.device, &self.config);
+            // The depth allocation must exactly match the newly configured surface. Replacing the
+            // complete owner keeps the old view alive until the new texture and view both exist.
+            self.depth_target = Self::create_depth_target(&self.device, width, height);
         }
+    }
+
+    /// Allocates the depth attachment shared by UI and application rendering for one surface size.
+    fn create_depth_target(device: &wgpu::Device, width: u32, height: u32) -> DepthTarget {
+        // FrameInfo rejects non-positive logical dimensions, but construction and surface recovery
+        // still defensively clamp native allocations to WGPU's non-zero texture requirement.
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("microui.application.depth"),
+            size: wgpu::Extent3d {
+                width: width.max(1),
+                height: height.max(1),
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: APPLICATION_DEPTH_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        DepthTarget { _texture: texture, view }
     }
 
     /// Grows the shared staging vertex buffer to fit a full frame upload.
@@ -445,8 +553,8 @@ impl WgpuRenderer {
         (pipeline, bind_group_layout, sampler)
     }
 
-    /// Creates the wgpu renderer, surface configuration, pipeline, and persistent atlas texture.
-    pub fn new(window: &Window, atlas: AtlasHandle, width: u32, height: u32) -> Result<Self, String> {
+    /// Creates the WGPU renderer with one concrete application-rendering extension.
+    pub fn new_with_application(window: &Window, atlas: AtlasHandle, width: u32, height: u32, application: Application) -> Result<Self, String> {
         // SDL owns the native window/display handles; wgpu only borrows them to create the surface.
         let instance = wgpu::Instance::default();
 
@@ -520,6 +628,7 @@ impl WgpuRenderer {
             atlas.height() as u32,
             Some(Self::slice_as_bytes(&atlas_pixels)),
         )?;
+        let depth_target = Self::create_depth_target(&device, config.width, config.height);
 
         let initial_capacity = 64 * 1024;
         let staging_vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -545,6 +654,7 @@ impl WgpuRenderer {
             sampler,
             uniform_buffer,
             atlas_texture,
+            depth_target,
 
             ui_vertices: Vec::new(),
             commands: Vec::new(),
@@ -556,8 +666,17 @@ impl WgpuRenderer {
             width,
             height,
             clear_color: color(0, 0, 0, 255),
+            application,
         };
         Ok(renderer)
+    }
+
+    /// Queues one concrete application command after closing the preceding UI batch.
+    pub fn enqueue_application(&mut self, args: CustomRenderArgs, command: Application::Command) {
+        // The command stays typed inside `RenderCommand<Application::Command>` until the frame is
+        // prepared and recorded. No allocation or dynamic dispatch is needed at this boundary.
+        self.flush_ui_batch();
+        self.commands.push(RenderCommand::Application { args, command });
     }
 
     /// Queues arbitrary colored triangles that should still respect the UI clip space.
@@ -659,7 +778,17 @@ impl WgpuRenderer {
     }
 }
 
-impl WgpuFrameOps for WgpuRenderer {
+impl WgpuRenderer<()> {
+    /// Creates a UI-only WGPU renderer with an uninhabited application command type.
+    pub fn new(window: &Window, atlas: AtlasHandle, width: u32, height: u32) -> Result<Self, String> {
+        Self::new_with_application(window, atlas, width, height, ())
+    }
+}
+
+impl<Application> WgpuRenderer<Application>
+where
+    Application: WgpuApplicationRenderer,
+{
     /// Starts a new frame by resetting CPU-side queues, syncing surface size, and updating uniforms.
     fn begin(&mut self, width: i32, height: i32, clr: Color) {
         // Reset per-frame CPU-side command/vertex queues.
@@ -703,6 +832,35 @@ impl WgpuFrameOps for WgpuRenderer {
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("microui.encoder") });
 
+        // Give the concrete application renderer one preparation phase before any render-pass
+        // resource is borrowed. It may create pipelines, resize buffers, upload data, or encode
+        // compute/transfer work needed by the application commands in this frame.
+        let application_commands = self
+            .commands
+            .iter()
+            .filter_map(|command| match command {
+                RenderCommand::Application { command, .. } => Some(command),
+                RenderCommand::DrawUiTo(_) | RenderCommand::DrawTexture { .. } | RenderCommand::DrawColored { .. } => None,
+            })
+            .collect::<Vec<_>>();
+        let application_ready = self
+            .application
+            .prepare(
+                WgpuApplicationPrepareContext {
+                    device: &self.device,
+                    queue: &self.queue,
+                    encoder: &mut encoder,
+                    color_format: self.config.format,
+                    width: self.config.width,
+                    height: self.config.height,
+                },
+                &application_commands,
+            )
+            .map_err(|error| {
+                eprintln!("[microui-redux][wgpu] application frame preparation failed: {error}");
+            })
+            .is_ok();
+
         struct PreparedDraw {
             vertex_offset: u64,
             vertex_size: u64,
@@ -717,8 +875,9 @@ impl WgpuFrameOps for WgpuRenderer {
         }
 
         let mut ui_start = 0usize;
-        // Build a concrete list of draw ranges backed by one packed upload buffer.
-        let mut prepared_draws: Vec<PreparedDraw> = Vec::new();
+        // Keep one optional prepared draw beside every original command. Application commands have
+        // no UI upload, but their vacant slot preserves exact interleaving during replay.
+        let mut prepared_draws: Vec<Option<PreparedDraw>> = Vec::with_capacity(self.commands.len());
         let mut packed_upload: Vec<u8> = Vec::new();
 
         for cmd in &self.commands {
@@ -726,6 +885,7 @@ impl WgpuFrameOps for WgpuRenderer {
                 RenderCommand::DrawUiTo(end) => {
                     let end = (*end).min(self.ui_vertices.len());
                     if end <= ui_start {
+                        prepared_draws.push(None);
                         continue;
                     }
                     let verts = &self.ui_vertices[ui_start..end];
@@ -734,6 +894,7 @@ impl WgpuFrameOps for WgpuRenderer {
                 }
                 RenderCommand::DrawTexture { id, vertices } => {
                     if !self.textures.contains_key(id) {
+                        prepared_draws.push(None);
                         continue;
                     }
                     (vertices.as_slice(), DrawSource::Texture(*id), None)
@@ -741,13 +902,19 @@ impl WgpuFrameOps for WgpuRenderer {
                 RenderCommand::DrawColored { area, vertices } => {
                     let scissor = Self::clip_to_scissor(area.clip, self.config.width, self.config.height);
                     if scissor.is_none() {
+                        prepared_draws.push(None);
                         continue;
                     }
                     (vertices.as_slice(), DrawSource::Atlas, scissor)
                 }
+                RenderCommand::Application { .. } => {
+                    prepared_draws.push(None);
+                    continue;
+                }
             };
 
             if vertices.is_empty() {
+                prepared_draws.push(None);
                 continue;
             }
 
@@ -757,13 +924,13 @@ impl WgpuFrameOps for WgpuRenderer {
             let vertex_offset = packed_upload.len() as u64;
             let vertex_size = bytes.len() as u64;
             packed_upload.extend_from_slice(bytes);
-            prepared_draws.push(PreparedDraw {
+            prepared_draws.push(Some(PreparedDraw {
                 vertex_offset,
                 vertex_size,
                 vertex_count: vertices.len() as u32,
                 source,
                 scissor,
-            });
+            }));
         }
 
         if !packed_upload.is_empty() {
@@ -790,35 +957,59 @@ impl WgpuFrameOps for WgpuRenderer {
                         store: wgpu::StoreOp::Store,
                     },
                 })],
-                depth_stencil_attachment: None,
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &self.depth_target.view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
                 timestamp_writes: None,
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            pass.set_pipeline(&self.pipeline);
             pass.set_scissor_rect(0, 0, self.config.width, self.config.height);
 
-            for draw in prepared_draws.iter() {
-                if let Some((x, y, w, h)) = draw.scissor {
-                    pass.set_scissor_rect(x, y, w, h);
-                } else {
-                    pass.set_scissor_rect(0, 0, self.config.width, self.config.height);
-                }
-
-                let bind_group = match draw.source {
-                    DrawSource::Atlas => &self.atlas_texture.bind_group,
-                    DrawSource::Texture(id) => {
-                        let Some(texture) = self.textures.get(&id) else {
+            let mut application_index = 0usize;
+            for (command, prepared) in self.commands.iter().zip(prepared_draws.iter()) {
+                match command {
+                    RenderCommand::Application { args, command } => {
+                        if application_ready && let Err(error) = self.application.render(&mut pass, *args, application_index, command) {
+                            // Recording failures are local to the application command. The WGPU
+                            // frame remains structurally valid and later UI commands still run.
+                            eprintln!("[microui-redux][wgpu] application render command failed: {error}");
+                        }
+                        application_index += 1;
+                    }
+                    RenderCommand::DrawUiTo(_) | RenderCommand::DrawTexture { .. } | RenderCommand::DrawColored { .. } => {
+                        let Some(draw) = prepared else {
                             continue;
                         };
-                        &texture.bind_group
-                    }
-                };
+                        if let Some((x, y, w, h)) = draw.scissor {
+                            pass.set_scissor_rect(x, y, w, h);
+                        } else {
+                            pass.set_scissor_rect(0, 0, self.config.width, self.config.height);
+                        }
 
-                pass.set_bind_group(0, bind_group, &[]);
-                // Each draw references its own sub-range inside the shared staging buffer.
-                pass.set_vertex_buffer(0, self.staging_vertex_buffer.slice(draw.vertex_offset..(draw.vertex_offset + draw.vertex_size)));
-                pass.draw(0..draw.vertex_count, 0..1);
+                        let bind_group = match draw.source {
+                            DrawSource::Atlas => &self.atlas_texture.bind_group,
+                            DrawSource::Texture(id) => {
+                                let Some(texture) = self.textures.get(&id) else {
+                                    continue;
+                                };
+                                &texture.bind_group
+                            }
+                        };
+
+                        // Application rendering may have replaced every pass binding, so each UI
+                        // draw explicitly restores the complete pipeline and resource state.
+                        pass.set_pipeline(&self.pipeline);
+                        pass.set_bind_group(0, bind_group, &[]);
+                        pass.set_vertex_buffer(0, self.staging_vertex_buffer.slice(draw.vertex_offset..(draw.vertex_offset + draw.vertex_size)));
+                        pass.draw(0..draw.vertex_count, 0..1);
+                    }
+                }
             }
         }
 
@@ -866,12 +1057,27 @@ impl WgpuFrameOps for WgpuRenderer {
 }
 
 #[must_use = "the WGPU frame is finalized when dropped"]
-pub struct WgpuFrame<'a> {
-    backend: &'a mut WgpuRenderer,
+pub struct WgpuFrame<'a, Application = ()>
+where
+    Application: WgpuApplicationRenderer,
+{
+    /// Exclusive backend borrow carrying the concrete application renderer type.
+    backend: &'a mut WgpuRenderer<Application>,
+    /// Surface image presented exactly once when this frame is finalized.
     surface_frame: Option<wgpu::SurfaceTexture>,
 }
 
-impl WgpuFrame<'_> {
+impl<Application> WgpuFrame<'_, Application>
+where
+    Application: WgpuApplicationRenderer,
+{
+    /// Inserts one typed application command at the current display-list position.
+    pub fn enqueue_application(&mut self, args: CustomRenderArgs, command: Application::Command) {
+        // The backend owns ordering and defers native recording until all resource requirements are
+        // known; the application payload itself remains concrete throughout that delay.
+        self.backend.enqueue_application(args, command);
+    }
+
     pub fn enqueue_colored_vertices(&mut self, area: CustomRenderArea, vertices: Vec<Vertex>) {
         self.backend.enqueue_colored_vertices(area, vertices);
     }
@@ -881,31 +1087,37 @@ impl WgpuFrame<'_> {
     }
 }
 
-impl RendererFrame for WgpuFrame<'_> {
+impl<Application> RendererFrame for WgpuFrame<'_, Application>
+where
+    Application: WgpuApplicationRenderer,
+{
     fn push_quad(&mut self, vertices: [Vertex; 4]) {
-        WgpuFrameOps::push_quad_vertices(self.backend, &vertices[0], &vertices[1], &vertices[2], &vertices[3]);
+        self.backend.push_quad_vertices(&vertices[0], &vertices[1], &vertices[2], &vertices[3]);
     }
 
     fn push_triangle(&mut self, vertices: [Vertex; 3]) {
-        WgpuFrameOps::push_triangle_vertices(self.backend, &vertices[0], &vertices[1], &vertices[2]);
+        self.backend.push_triangle_vertices(&vertices[0], &vertices[1], &vertices[2]);
     }
 
     fn flush(&mut self) {
-        WgpuFrameOps::flush(self.backend);
+        self.backend.flush();
     }
 
     fn draw_texture(&mut self, id: TextureId, vertices: [Vertex; 4]) {
-        WgpuFrameOps::draw_texture(self.backend, id, vertices);
+        self.backend.draw_texture(id, vertices);
     }
 }
 
-impl Drop for WgpuFrame<'_> {
+impl<Application> Drop for WgpuFrame<'_, Application>
+where
+    Application: WgpuApplicationRenderer,
+{
     fn drop(&mut self) {
         let Some(surface_frame) = self.surface_frame.take() else {
             return;
         };
         if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            WgpuFrameOps::finish(self.backend, surface_frame);
+            self.backend.finish(surface_frame);
         }))
         .is_err()
         {
@@ -914,8 +1126,14 @@ impl Drop for WgpuFrame<'_> {
     }
 }
 
-impl RendererBackend for WgpuRenderer {
-    type Frame<'a> = WgpuFrame<'a>;
+impl<Application> RendererBackend for WgpuRenderer<Application>
+where
+    Application: WgpuApplicationRenderer,
+{
+    type Frame<'a>
+        = WgpuFrame<'a, Application>
+    where
+        Application: 'a;
 
     fn get_atlas(&self) -> AtlasHandle {
         self.atlas.clone()
@@ -943,7 +1161,7 @@ impl RendererBackend for WgpuRenderer {
 
     fn frame(&mut self, info: FrameInfo) -> Result<Self::Frame<'_>, FrameError> {
         let dimensions = info.dimensions();
-        WgpuFrameOps::begin(self, dimensions.width, dimensions.height, info.clear());
+        self.begin(dimensions.width, dimensions.height, info.clear());
         let surface_frame = self.acquire_surface_frame()?;
         Ok(WgpuFrame {
             backend: self,
@@ -952,12 +1170,12 @@ impl RendererBackend for WgpuRenderer {
     }
 
     fn create_texture(&mut self, id: TextureId, pixels: &[u8]) -> Result<(), TextureError> {
-        // The frame-ops layer already classified helper failures as backend texture errors.
-        WgpuFrameOps::create_texture(self, id, pixels)
+        // The inherent upload helper classifies native failures as backend texture errors.
+        self.create_texture(id, pixels)
     }
 
     fn destroy_texture(&mut self, id: TextureId) {
-        WgpuFrameOps::destroy_texture(self, id);
+        self.destroy_texture(id);
     }
 }
 
