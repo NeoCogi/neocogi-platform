@@ -43,10 +43,7 @@ use microui_redux::{
 use glow::*;
 use rs_math3d::{Vec3f, Vec4f};
 
-use super::{
-    mesh::{CustomRenderArea, MeshSubmission},
-    resource_guard::ResourceGuard,
-};
+use microui_redux_renderer_common::{CustomRenderArea, MeshSubmission, resource_guard::ResourceGuard};
 
 // GL backend overview:
 // - Regular UI quads are accumulated into CPU-side vertex/index buffers and emitted in one batch

@@ -56,10 +56,7 @@ use microui_redux::{
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use sdl2::video::Window;
 
-use super::{
-    mesh::{CustomRenderArea, MeshSubmission, MeshVertex},
-    resource_guard::ResourceGuard,
-};
+use microui_redux_renderer_common::{CustomRenderArea, MeshSubmission, MeshVertex, resource_guard::ResourceGuard};
 
 type Result<T> = std::result::Result<T, String>;
 type Surface = khr::surface::Instance;
@@ -156,10 +153,10 @@ mod vk_builder {
 }
 use vk_builder::BuilderExt;
 
-const UI_VERT_SPV: &[u8] = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/shaders/vulkan/ui.vert.spv"));
-const UI_FRAG_SPV: &[u8] = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/shaders/vulkan/ui.frag.spv"));
-const MESH_VERT_SPV: &[u8] = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/shaders/vulkan/mesh.vert.spv"));
-const MESH_FRAG_SPV: &[u8] = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/shaders/vulkan/mesh.frag.spv"));
+const UI_VERT_SPV: &[u8] = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/shaders/ui.vert.spv"));
+const UI_FRAG_SPV: &[u8] = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/shaders/ui.frag.spv"));
+const MESH_VERT_SPV: &[u8] = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/shaders/mesh.vert.spv"));
+const MESH_FRAG_SPV: &[u8] = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/shaders/mesh.frag.spv"));
 
 /// Creates exactly one graphics pipeline and destroys any handles returned alongside an error.
 ///

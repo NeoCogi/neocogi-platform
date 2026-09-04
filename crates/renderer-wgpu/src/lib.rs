@@ -44,7 +44,7 @@ use rs_math3d::{Vec3f, Vec4f};
 use sdl2::video::Window;
 use wgpu::util::DeviceExt;
 
-use super::mesh::{CustomRenderArea, MeshSubmission};
+use microui_redux_renderer_common::{CustomRenderArea, MeshSubmission};
 
 // WGPU backend overview:
 // - UI/custom draws are described as `RenderCommand`s while building the frame.

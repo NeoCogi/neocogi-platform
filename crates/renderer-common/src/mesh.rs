@@ -28,38 +28,61 @@
 // POSSIBILITY OF SUCH DAMAGE.
 //
 
-//! Backend-neutral color primitives.
+#![allow(dead_code)]
+//! Shared mesh buffer and submission helpers for renderer examples.
 
-#[derive(Default, Copy, Clone)]
+use std::sync::Arc;
+
+use microui_redux::prelude::*;
+
 #[repr(C)]
-/// Simple RGBA color stored with 8-bit components.
-pub struct Color {
-    /// Red channel.
-    pub r: u8,
-    /// Green channel.
-    pub g: u8,
-    /// Blue channel.
-    pub b: u8,
-    /// Alpha channel.
-    pub a: u8,
+#[derive(Clone, Copy, Default)]
+/// CPU-side vertex used by mesh submissions in the demo path.
+pub struct MeshVertex {
+    pub position: [f32; 3],
+    pub normal: [f32; 3],
+    pub uv: [f32; 2],
 }
 
-#[cfg(feature = "theme-json")]
-impl<'de> serde::Deserialize<'de> for Color {
-    /// Decodes the schema's compact `[red, green, blue, alpha]` byte representation.
-    fn deserialize<Deserializer>(deserializer: Deserializer) -> Result<Self, Deserializer::Error>
-    where
-        Deserializer: serde::Deserializer<'de>,
-    {
-        // Delegate length and byte-range validation to Serde's fixed array implementation. The
-        // conversion then constructs the exact renderer value without an intermediate theme-only
-        // color type or a field-by-field loader mapping.
-        let [r, g, b, a] = <[u8; 4] as serde::Deserialize>::deserialize(deserializer)?;
-        Ok(Self { r, g, b, a })
+#[derive(Clone)]
+/// Shared mesh storage so callers can cheaply clone submissions across frames.
+pub struct MeshBuffers {
+    vertices: Arc<[MeshVertex]>,
+    indices: Arc<[u32]>,
+}
+
+impl MeshBuffers {
+    pub fn from_vecs(vertices: Vec<MeshVertex>, indices: Vec<u32>) -> Self {
+        Self {
+            vertices: vertices.into(),
+            indices: indices.into(),
+        }
+    }
+
+    pub fn vertices(&self) -> &[MeshVertex] {
+        &self.vertices
+    }
+
+    pub fn indices(&self) -> &[u32] {
+        &self.indices
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.vertices.is_empty() || self.indices.is_empty()
     }
 }
 
-/// Convenience constructor for [`Color`].
-pub fn color(r: u8, g: u8, b: u8, a: u8) -> Color {
-    Color { r, g, b, a }
+#[derive(Clone)]
+/// A single mesh draw request transformed by caller-provided matrices.
+pub struct MeshSubmission {
+    pub mesh: MeshBuffers,
+    pub pvm: Mat4f,
+    pub view_model: Mat4f,
+}
+
+#[derive(Clone, Copy)]
+/// Target rectangle and clip rectangle for custom non-UI draws.
+pub struct CustomRenderArea {
+    pub rect: Recti,
+    pub clip: Recti,
 }
