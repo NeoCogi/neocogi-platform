@@ -46,9 +46,8 @@ use microui_redux_renderer_support::resource_guard::ResourceGuard;
 // GL backend overview:
 // - Regular UI quads are accumulated into CPU-side vertex/index buffers and emitted in one batch
 //   from `flush`.
-// - Special-case draws (external textures, solid custom vertices, mesh demos) flush the UI batch
-//   first, then issue immediate GL commands so ordering stays correct without a larger command
-//   graph.
+// - Backend texture draws and solid custom vertices flush the UI batch first; application GPU
+//   commands use the same ordering boundary through the concrete application renderer.
 // - Each immutable atlas texture is uploaded transactionally at construction or theme selection.
 
 /// Native frame capabilities lent to one application-renderer command.
