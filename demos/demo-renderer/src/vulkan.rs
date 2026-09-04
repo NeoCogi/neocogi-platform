@@ -438,7 +438,7 @@ fn opengl_to_vulkan_clip_matrix() -> Mat4f {
     )
 }
 
-/// Vertex SPIR-V currently shared with the transitional backend copy until cleanup moves assets.
-const MESH_VERTEX_SPV: &[u8] = include_bytes!("../../../crates/renderer-vulkan/shaders/mesh.vert.spv");
-/// Fragment SPIR-V currently shared with the transitional backend copy until cleanup moves assets.
-const MESH_FRAGMENT_SPV: &[u8] = include_bytes!("../../../crates/renderer-vulkan/shaders/mesh.frag.spv");
+/// Demo-owned vertex SPIR-V embedded into the Vulkan application renderer.
+const MESH_VERTEX_SPV: &[u8] = include_bytes!("../shaders/mesh.vert.spv");
+/// Demo-owned fragment SPIR-V embedded into the Vulkan application renderer.
+const MESH_FRAGMENT_SPV: &[u8] = include_bytes!("../shaders/mesh.frag.spv");

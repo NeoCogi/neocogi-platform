@@ -40,11 +40,8 @@ use microui_redux::{
     render::{CustomRenderArgs, TextureError, Vertex},
 };
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
-use rs_math3d::{Vec3f, Vec4f};
 use sdl2::video::Window;
 use wgpu::util::DeviceExt;
-
-use microui_redux_renderer_common::{CustomRenderArea, MeshSubmission};
 
 /// Depth format attached to frames that may contain application rendering.
 ///
@@ -157,15 +154,31 @@ struct Uniforms {
 }
 
 #[allow(clippy::enum_variant_names)] // The prefix makes queued draw operations explicit at use sites.
+/// Painter-ordered backend and application operations retained until the WGPU pass is recorded.
 enum RenderCommand<ApplicationCommand> {
-    // Draw the queued UI vertices up to this index with the atlas texture.
+    /// Draws queued UI vertices through this exclusive index with the atlas texture.
     DrawUiTo(usize),
-    // Draw a textured quad using a user-managed texture id.
-    DrawTexture { id: TextureId, vertices: Vec<GpuVertex> },
-    // Draw arbitrary colored triangles (still sampled from white atlas texel).
-    DrawColored { area: CustomRenderArea, vertices: Vec<GpuVertex> },
-    // Execute one application-owned command at this exact painter-order position.
-    Application { args: CustomRenderArgs, command: ApplicationCommand },
+    /// Draws a pre-clipped quad using a backend-owned texture.
+    DrawTexture {
+        /// Opaque texture capability resolved through the backend texture map.
+        id: TextureId,
+        /// Six GPU vertices forming the already-clipped quad.
+        vertices: Vec<GpuVertex>,
+    },
+    /// Draws arbitrary colored triangles through the UI pipeline.
+    DrawColored {
+        /// Authoritative logical clip converted to a render-pass scissor during preparation.
+        clip: Recti,
+        /// Pre-transformed triangle-list vertices uploaded with the UI batch.
+        vertices: Vec<GpuVertex>,
+    },
+    /// Executes one application-owned command at this exact painter-order position.
+    Application {
+        /// Widget geometry and final clip supplied by microui's display-list executor.
+        args: CustomRenderArgs,
+        /// Concrete application payload fixed by the renderer generic parameter.
+        command: ApplicationCommand,
+    },
 }
 
 struct GpuTexture {
@@ -239,18 +252,6 @@ where
             }
             status => Err(FrameError::new(format!("failed to acquire WGPU frame: {status:?}"))),
         }
-    }
-
-    /// Returns the atlas UV used as a solid-white sample for colored primitive draws.
-    fn white_uv_center(&self) -> Vec2f {
-        // Colored primitives sample the center of the white icon in the atlas and rely on
-        // vertex color for final shading.
-        let rect = self.atlas.get_icon_rect(self.atlas.white_icon());
-        let dim = self.atlas.get_texture_dimension();
-        let rect_min = Vec2f::new(rect.x as f32, rect.y as f32);
-        let rect_extent = Vec2f::new(rect.width as f32, rect.height as f32);
-        let texture_extent = Vec2f::new(dim.width as f32, dim.height as f32);
-        (rect_min + rect_extent * 0.5) / texture_extent
     }
 
     /// Reinterprets a plain-old-data value as a byte slice for queue/buffer uploads.
@@ -680,101 +681,14 @@ where
     }
 
     /// Queues arbitrary colored triangles that should still respect the UI clip space.
-    pub fn enqueue_colored_vertices(&mut self, area: CustomRenderArea, vertices: Vec<Vertex>) {
+    pub fn enqueue_colored_vertices(&mut self, args: CustomRenderArgs, vertices: Vec<Vertex>) {
         if vertices.is_empty() {
             return;
         }
         self.flush_ui_batch();
         // Colored draws still use the atlas bind group; their UVs point at the white icon center.
         let vertices = vertices.iter().map(GpuVertex::from_vertex).collect();
-        self.commands.push(RenderCommand::DrawColored { area, vertices });
-    }
-
-    /// Converts a mesh submission into colored screen-space triangles and reuses the colored path.
-    pub fn enqueue_mesh_draw(&mut self, area: CustomRenderArea, submission: MeshSubmission) {
-        if submission.mesh.is_empty() {
-            return;
-        }
-        if area.rect.width <= 0 || area.rect.height <= 0 {
-            return;
-        }
-
-        // Like the GL fallback path, this demo renderer shades from normals on the CPU and then
-        // draws the result as ordinary colored triangles.
-        let white_uv = self.white_uv_center();
-
-        #[derive(Clone)]
-        struct Tri {
-            depth: f32,
-            verts: [Vertex; 3],
-        }
-
-        let mut tris: Vec<Tri> = Vec::with_capacity(submission.mesh.indices().len() / 3);
-        let mesh = &submission.mesh;
-        let pvm = &submission.pvm;
-
-        // Interpret only complete index triples; an incomplete tail cannot describe a triangle
-        // and is ignored exactly as it was by the former `chunks_exact` traversal.
-        let (triangles, _) = mesh.indices().as_chunks::<3>();
-        for tri in triangles {
-            let idxs = [tri[0] as usize, tri[1] as usize, tri[2] as usize];
-            let mut clip_space = [Vec4f::default(); 3];
-
-            for (dst, src_idx) in clip_space.iter_mut().zip(&idxs) {
-                let v = &mesh.vertices()[*src_idx];
-                *dst = *pvm * Vec4f::new(v.position[0], v.position[1], v.position[2], 1.0);
-            }
-
-            let a = clip_space[0];
-            let b = clip_space[1];
-            let c = clip_space[2];
-            let ab = Vec3f::new(b.x - a.x, b.y - a.y, b.z - a.z);
-            let ac = Vec3f::new(c.x - a.x, c.y - a.y, c.z - a.z);
-            let cross = Vec3f::cross(&ab, &ac);
-            // Simple back-face culling in clip space to reduce overdraw.
-            if cross.z <= 0.0 {
-                continue;
-            }
-
-            let mut verts = [Vertex::new(Vec2f::default(), white_uv, color4b(0, 0, 0, 255)); 3];
-            let mut depth_acc = 0.0;
-            let mut valid = true;
-
-            for ((clip, src_idx), out_v) in clip_space.iter().zip(&idxs).zip(verts.iter_mut()) {
-                if clip.w.abs() < 1e-5 {
-                    valid = false;
-                    break;
-                }
-                // Manual viewport transform into the caller-provided render area.
-                let ndc = Vec3f::new(clip.x / clip.w, clip.y / clip.w, clip.z / clip.w);
-                depth_acc += ndc.z;
-                let sx = area.rect.x as f32 + (ndc.x * 0.5 + 0.5) * area.rect.width as f32;
-                let sy = area.rect.y as f32 + (-ndc.y * 0.5 + 0.5) * area.rect.height as f32;
-
-                let v = &mesh.vertices()[*src_idx];
-                let normal = Vec3f::new(v.normal[0], v.normal[1], v.normal[2]);
-                let color = (normal * 0.5) + Vec3f::new(0.5, 0.5, 0.5);
-                let r = (color.x.clamp(0.0, 1.0) * 255.0) as u8;
-                let g = (color.y.clamp(0.0, 1.0) * 255.0) as u8;
-                let b = (color.z.clamp(0.0, 1.0) * 255.0) as u8;
-
-                *out_v = Vertex::new(Vec2f::new(sx, sy), white_uv, color4b(r, g, b, 255));
-            }
-
-            if valid {
-                tris.push(Tri { depth: depth_acc / 3.0, verts });
-            }
-        }
-
-        // Painter's algorithm ordering, sufficient for demo meshes without depth buffer.
-        tris.sort_by(|a, b| b.depth.partial_cmp(&a.depth).unwrap_or(std::cmp::Ordering::Equal));
-
-        let mut verts: Vec<Vertex> = Vec::with_capacity(tris.len() * 3);
-        for tri in tris {
-            verts.extend_from_slice(&tri.verts);
-        }
-
-        self.enqueue_colored_vertices(area, verts);
+        self.commands.push(RenderCommand::DrawColored { clip: args.view, vertices });
     }
 }
 
@@ -899,8 +813,8 @@ where
                     }
                     (vertices.as_slice(), DrawSource::Texture(*id), None)
                 }
-                RenderCommand::DrawColored { area, vertices } => {
-                    let scissor = Self::clip_to_scissor(area.clip, self.config.width, self.config.height);
+                RenderCommand::DrawColored { clip, vertices } => {
+                    let scissor = Self::clip_to_scissor(*clip, self.config.width, self.config.height);
                     if scissor.is_none() {
                         prepared_draws.push(None);
                         continue;
@@ -1078,12 +992,9 @@ where
         self.backend.enqueue_application(args, command);
     }
 
-    pub fn enqueue_colored_vertices(&mut self, area: CustomRenderArea, vertices: Vec<Vertex>) {
-        self.backend.enqueue_colored_vertices(area, vertices);
-    }
-
-    pub fn enqueue_mesh_draw(&mut self, area: CustomRenderArea, submission: MeshSubmission) {
-        self.backend.enqueue_mesh_draw(area, submission);
+    /// Queues pre-transformed colored vertices using microui's authoritative custom-render clip.
+    pub fn enqueue_colored_vertices(&mut self, args: CustomRenderArgs, vertices: Vec<Vertex>) {
+        self.backend.enqueue_colored_vertices(args, vertices);
     }
 }
 

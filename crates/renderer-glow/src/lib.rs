@@ -41,9 +41,7 @@ use microui_redux::{
     render::{CustomRenderArgs, TextureError, Vertex},
 };
 use glow::*;
-use rs_math3d::{Vec3f, Vec4f};
-
-use microui_redux_renderer_common::{CustomRenderArea, MeshSubmission, resource_guard::ResourceGuard};
+use microui_redux_renderer_support::resource_guard::ResourceGuard;
 
 // GL backend overview:
 // - Regular UI quads are accumulated into CPU-side vertex/index buffers and emitted in one batch
@@ -195,17 +193,6 @@ where
             }
             Ok(texture.into_inner())
         }
-    }
-
-    /// Returns the atlas UV used as a "white texel" when drawing solid-colored primitives.
-    fn white_uv_center(&self) -> Vec2f {
-        let atlas = self.get_atlas();
-        let rect = atlas.get_icon_rect(atlas.white_icon());
-        let dim = atlas.get_texture_dimension();
-        let rect_min = Vec2f::new(rect.x as f32, rect.y as f32);
-        let rect_extent = Vec2f::new(rect.width as f32, rect.height as f32);
-        let texture_extent = Vec2f::new(dim.width as f32, dim.height as f32);
-        (rect_min + rect_extent * 0.5) / texture_extent
     }
 
     /// Converts a UI clip rectangle into GL scissor coordinates with bottom-left origin.
@@ -665,12 +652,9 @@ where
         }
     }
 
-    pub fn enqueue_colored_vertices(&mut self, area: CustomRenderArea, vertices: Vec<Vertex>) {
-        self.backend.enqueue_colored_vertices(area, vertices);
-    }
-
-    pub fn enqueue_mesh_draw(&mut self, area: CustomRenderArea, submission: MeshSubmission) {
-        self.backend.enqueue_mesh_draw(area, submission);
+    /// Draws pre-transformed colored vertices using the custom operation's authoritative clip.
+    pub fn enqueue_colored_vertices(&mut self, args: CustomRenderArgs, vertices: Vec<Vertex>) {
+        self.backend.enqueue_colored_vertices(args, vertices);
     }
 }
 
@@ -755,9 +739,9 @@ impl<Application> GLRenderer<Application>
 where
     Application: GlApplicationRenderer,
 {
-    /// Draws arbitrary colored triangles while preserving the clip rectangle carried by `area`.
-    pub fn enqueue_colored_vertices(&mut self, area: CustomRenderArea, vertices: Vec<Vertex>) {
-        self.draw_colored_vertices(area.clip, vertices.as_slice());
+    /// Draws arbitrary colored triangles while preserving microui's authoritative final clip.
+    pub fn enqueue_colored_vertices(&mut self, args: CustomRenderArgs, vertices: Vec<Vertex>) {
+        self.draw_colored_vertices(args.view, vertices.as_slice());
     }
 
     /// Draws arbitrary colored triangles by sampling a white atlas texel and modulating by vertex color.
@@ -820,90 +804,6 @@ where
             // Restore full-frame scissor so later UI draws do not inherit this clip.
             gl.scissor(0, 0, self.width as i32, self.height as i32);
         }
-    }
-
-    /// Converts a mesh submission into colored screen-space triangles and reuses the colored-vertex path.
-    pub fn enqueue_mesh_draw(&mut self, _area: CustomRenderArea, _submission: MeshSubmission) {
-        if _submission.mesh.is_empty() {
-            return;
-        }
-        // Early exit if the rect is empty; nothing to draw.
-        if _area.rect.width <= 0 || _area.rect.height <= 0 {
-            return;
-        }
-        // The demo mesh path shades from normals on the CPU and samples a white atlas texel.
-        let white_uv = self.white_uv_center();
-        #[derive(Clone)]
-        struct Tri {
-            depth: f32,
-            verts: [Vertex; 3],
-        }
-        let mut tris: Vec<Tri> = Vec::with_capacity(_submission.mesh.indices().len() / 3);
-
-        let mesh = &_submission.mesh;
-        let pvm = &_submission.pvm;
-        let indices = mesh.indices();
-        let positions = mesh.vertices();
-
-        // Interpret only complete index triples; an incomplete tail cannot describe a triangle
-        // and is ignored exactly as it was by the former `chunks_exact` traversal.
-        let (triangles, _) = indices.as_chunks::<3>();
-        for tri in triangles {
-            let idxs = [tri[0] as usize, tri[1] as usize, tri[2] as usize];
-            let mut clip_space = [Vec4f::default(); 3];
-            for (dst, src_idx) in clip_space.iter_mut().zip(&idxs) {
-                let v = &positions[*src_idx];
-                *dst = *pvm * Vec4f::new(v.position[0], v.position[1], v.position[2], 1.0);
-            }
-            // Basic backface culling in clip space keeps the software path inexpensive.
-            let a = clip_space[0];
-            let b = clip_space[1];
-            let c = clip_space[2];
-            let ab = Vec3f::new(b.x - a.x, b.y - a.y, b.z - a.z);
-            let ac = Vec3f::new(c.x - a.x, c.y - a.y, c.z - a.z);
-            let cross = Vec3f::cross(&ab, &ac);
-            if cross.z <= 0.0 {
-                continue;
-            }
-
-            let mut verts = [Vertex::new(Vec2f::default(), white_uv, color4b(0, 0, 0, 255)); 3];
-            let mut depth_acc = 0.0;
-            let mut valid = true;
-
-            for ((clip, src_idx), out_v) in clip_space.iter().zip(&idxs).zip(verts.iter_mut()) {
-                if clip.w.abs() < 1e-5 {
-                    valid = false;
-                    break;
-                }
-                let ndc = Vec3f::new(clip.x / clip.w, clip.y / clip.w, clip.z / clip.w);
-                depth_acc += ndc.z;
-                let sx = _area.rect.x as f32 + (ndc.x * 0.5 + 0.5) * _area.rect.width as f32;
-                let sy = _area.rect.y as f32 + (-ndc.y * 0.5 + 0.5) * _area.rect.height as f32;
-
-                let v = &positions[*src_idx];
-                let normal = Vec3f::new(v.normal[0], v.normal[1], v.normal[2]);
-                let color = (normal * 0.5) + Vec3f::new(0.5, 0.5, 0.5);
-                let r = (color.x.clamp(0.0, 1.0) * 255.0) as u8;
-                let g = (color.y.clamp(0.0, 1.0) * 255.0) as u8;
-                let b = (color.z.clamp(0.0, 1.0) * 255.0) as u8;
-
-                *out_v = Vertex::new(Vec2f::new(sx, sy), white_uv, color4b(r, g, b, 255));
-            }
-
-            if valid {
-                tris.push(Tri { depth: depth_acc / 3.0, verts });
-            }
-        }
-
-        // Painter's algorithm is sufficient here because the GL UI pass does not keep a depth buffer.
-        tris.sort_by(|a, b| b.depth.partial_cmp(&a.depth).unwrap_or(std::cmp::Ordering::Equal));
-
-        let mut verts: Vec<Vertex> = Vec::with_capacity(tris.len() * 3);
-        for tri in tris {
-            verts.extend_from_slice(&tri.verts);
-        }
-
-        self.draw_colored_vertices(_area.clip, verts.as_slice());
     }
 }
 

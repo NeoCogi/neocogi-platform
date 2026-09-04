@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/microui-redux", "crates/renderer-common", "crates/renderer-glow", "crates/renderer-webgl-canvas", "crates/renderer-vulkan", "crates/renderer-wgpu", "demos/demo-assets", "demos/demo-host", "demos/demo-renderer", "demos/demo-full", "demos/basic"]
+members = ["crates/microui-redux", "crates/renderer-support", "crates/renderer-glow", "crates/renderer-webgl-canvas", "crates/renderer-vulkan", "crates/renderer-wgpu", "demos/demo-assets", "demos/demo-host", "demos/demo-renderer", "demos/demo-full", "demos/basic"]
 default-members = ["crates/microui-redux"]
 
 [workspace.package]
@@ -15,7 +15,7 @@ microui-redux = { path = "crates/microui-redux", version = "0.8.0", default-feat
 microui-redux-demo-assets = { path = "demos/demo-assets", default-features = false }
 microui-redux-demo-host = { path = "demos/demo-host", default-features = false }
 microui-redux-demo-renderer = { path = "demos/demo-renderer", default-features = false }
-microui-redux-renderer-common = { path = "crates/renderer-common" }
+microui-redux-renderer-support = { path = "crates/renderer-support" }
 microui-redux-renderer-glow = { path = "crates/renderer-glow" }
 microui-redux-renderer-webgl-canvas = { path = "crates/renderer-webgl-canvas" }
 microui-redux-renderer-vulkan = { path = "crates/renderer-vulkan" }

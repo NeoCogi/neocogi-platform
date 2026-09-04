@@ -37,14 +37,13 @@
 //   transfer command buffers, synchronized with semaphores/barriers instead of queue_wait_idle.
 // - Custom draw uploads share the same staging path as UI vertices so we issue one batched
 //   transfer stream per frame.
-// - Mesh vertex/index data lives in device-local memory and is refreshed via staging uploads.
 // - Texture descriptors are recreated automatically after swapchain rebuilds. The immutable atlas
 //   image survives those rebuilds and is rebound without another pixel upload.
 //
 //! Vulkan renderer backend used by examples.
 //!
 //! This module implements the `RendererBackend` trait, texture uploads, UI batching, swapchain handling,
-//! and optional custom mesh rendering for the demo application.
+//! and typed native application rendering.
 
 use std::{
     collections::HashMap,
@@ -61,7 +60,7 @@ use microui_redux::{
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use sdl2::video::Window;
 
-use microui_redux_renderer_common::{CustomRenderArea, MeshSubmission, MeshVertex, resource_guard::ResourceGuard};
+use microui_redux_renderer_support::resource_guard::ResourceGuard;
 
 type Result<T> = std::result::Result<T, String>;
 type Surface = khr::surface::Instance;
@@ -253,8 +252,6 @@ use vk_builder::BuilderExt;
 
 const UI_VERT_SPV: &[u8] = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/shaders/ui.vert.spv"));
 const UI_FRAG_SPV: &[u8] = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/shaders/ui.frag.spv"));
-const MESH_VERT_SPV: &[u8] = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/shaders/mesh.vert.spv"));
-const MESH_FRAG_SPV: &[u8] = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/shaders/mesh.frag.spv"));
 
 /// Creates exactly one graphics pipeline and destroys any handles returned alongside an error.
 ///
@@ -642,14 +639,13 @@ where
         let mut quad = Vec::with_capacity(6);
         quad.extend_from_slice(&[vertices[0], vertices[1], vertices[2], vertices[0], vertices[2], vertices[3]]);
 
-        // The Context executor already clipped the quad and adjusted UVs, so the texture command's draw area
-        // is just the submitted geometry bounds used to preserve ordering.
-        let area_rect = rect_from_vertices(&vertices);
-        let area = CustomRenderArea { rect: area_rect, clip: area_rect };
+        // The Context executor already clipped the quad and adjusted UVs, so its submitted bounds
+        // are also the exact scissor required by this texture command.
+        let clip = rect_from_vertices(&vertices);
 
         // The Context executor owns the pre-texture ordering boundary.
         self.commands.push(FrameCommand::Texture {
-            area,
+            clip,
             command: TextureDrawCommand {
                 vertices: quad,
                 descriptor_set: descriptor,
@@ -691,14 +687,9 @@ impl<Application> VulkanFrame<'_, Application>
 where
     Application: VulkanApplicationRenderer,
 {
-    /// Adds pre-transformed colored UI vertices at the current painter-order position.
-    pub fn enqueue_colored_vertices(&mut self, area: CustomRenderArea, vertices: Vec<Vertex>) {
-        self.backend.enqueue_colored_vertices(area, vertices);
-    }
-
-    /// Adds the legacy demo mesh operation pending migration into the application renderer.
-    pub fn enqueue_mesh_draw(&mut self, area: CustomRenderArea, submission: MeshSubmission) {
-        self.backend.enqueue_mesh_draw(area, submission);
+    /// Adds pre-transformed colored UI vertices using microui's authoritative final clip.
+    pub fn enqueue_colored_vertices(&mut self, args: CustomRenderArgs, vertices: Vec<Vertex>) {
+        self.backend.enqueue_colored_vertices(args, vertices);
     }
 
     /// Adds one concrete application operation at the current painter-order position.
@@ -796,7 +787,7 @@ where
     Application: VulkanApplicationRenderer,
 {
     /// Queues pre-transformed colored vertices after closing the preceding UI batch.
-    pub fn enqueue_colored_vertices(&mut self, area: CustomRenderArea, vertices: Vec<Vertex>) {
+    pub fn enqueue_colored_vertices(&mut self, args: CustomRenderArgs, vertices: Vec<Vertex>) {
         if self.disabled {
             return;
         }
@@ -809,23 +800,8 @@ where
         };
         self.flush_ui_batch();
         self.commands.push(FrameCommand::Colored {
-            area,
+            clip: args.view,
             command: ColoredVerticesCommand { vertices, descriptor_set },
-        });
-    }
-
-    /// Queues the legacy demo mesh after closing the preceding UI batch.
-    pub fn enqueue_mesh_draw(&mut self, area: CustomRenderArea, submission: MeshSubmission) {
-        if self.disabled {
-            return;
-        }
-        if submission.mesh.is_empty() {
-            return;
-        }
-        self.flush_ui_batch();
-        self.commands.push(FrameCommand::Mesh {
-            area,
-            command: MeshDrawCommand { submission },
         });
     }
 }
@@ -998,24 +974,17 @@ enum FrameCommand<ApplicationCommand> {
     DrawTo(usize),
     /// Draws a backend-owned sampled texture through the UI pipeline.
     Texture {
-        /// Logical bounds and clip rectangle supplied to viewport/scissor conversion.
-        area: CustomRenderArea,
+        /// Final logical clip supplied to scissor conversion.
+        clip: Recti,
         /// Concrete textured-vertex payload and descriptor binding.
         command: TextureDrawCommand,
     },
     /// Draws pre-transformed colored vertices through the UI pipeline.
     Colored {
-        /// Logical bounds and clip rectangle supplied to viewport/scissor conversion.
-        area: CustomRenderArea,
+        /// Final logical clip supplied to scissor conversion.
+        clip: Recti,
         /// Concrete colored-vertex payload and atlas descriptor binding.
         command: ColoredVerticesCommand,
-    },
-    /// Draws the legacy demo mesh until mesh ownership moves into the demo renderer.
-    Mesh {
-        /// Logical viewport and clip rectangle for the mesh draw.
-        area: CustomRenderArea,
-        /// Concrete mesh submission retained by the frame.
-        command: MeshDrawCommand,
     },
     /// Delegates one application-owned command to the concrete native renderer.
     Application {
@@ -1040,12 +1009,6 @@ struct ColoredVerticesCommand {
     vertices: Vec<Vertex>,
     /// Atlas descriptor retained because the shared fragment shader expects a sampled binding.
     descriptor_set: vk::DescriptorSet,
-}
-
-/// Temporary backend mesh command retained only until the demo renderer owns mesh rendering.
-struct MeshDrawCommand {
-    /// Immutable mesh buffers and per-draw transform matrices.
-    submission: MeshSubmission,
 }
 
 /// Computes the integer bounds of pre-clipped vertices for viewport/scissor bookkeeping.
@@ -1108,34 +1071,6 @@ fn ui_full_viewport(extent: vk::Extent2D) -> vk::Viewport {
         min_depth: 0.0,
         max_depth: 1.0,
     }
-}
-
-fn mesh_viewport_from_rect(rect: Recti, surface_width: u32, surface_height: u32) -> Option<vk::Viewport> {
-    let clamped = clamp_rect_to_surface(rect, surface_width, surface_height);
-    if clamped.width <= 0 || clamped.height <= 0 {
-        return None;
-    }
-    let x = clamped.x.max(0) as f32;
-    let y = clamped.y.max(0) as f32;
-    Some(vk::Viewport {
-        x,
-        y,
-        width: clamped.width as f32,
-        height: clamped.height as f32,
-        min_depth: 0.0,
-        max_depth: 1.0,
-    })
-}
-
-fn opengl_to_vulkan_clip_matrix() -> Mat4f {
-    // Converts OpenGL-style clip space (Y up, Z in [-1, 1]) to Vulkan clip space
-    // (Y down, Z in [0, 1]).
-    Mat4f::new(
-        1.0, 0.0, 0.0, 0.0, //
-        0.0, -1.0, 0.0, 0.0, //
-        0.0, 0.0, 0.5, 0.0, //
-        0.0, 0.0, 0.5, 1.0, //
-    )
 }
 
 impl ImageResource {
@@ -1623,9 +1558,9 @@ impl UiResources {
         width: u32,
         height: u32,
         descriptor_set: vk::DescriptorSet,
-        area: Option<&CustomRenderArea>,
+        clip: Option<Recti>,
     ) -> Result<()> {
-        self.record_with_descriptor(ctx, command_buffer, vertices, width, height, descriptor_set, area)
+        self.record_with_descriptor(ctx, command_buffer, vertices, width, height, descriptor_set, clip)
     }
 
     #[allow(clippy::too_many_arguments)] // Mirrors the explicit Vulkan draw state passed to record.
@@ -1637,7 +1572,7 @@ impl UiResources {
         width: u32,
         height: u32,
         descriptor_set: vk::DescriptorSet,
-        area: Option<&CustomRenderArea>,
+        clip: Option<Recti>,
     ) -> Result<()> {
         if vertices.is_empty() {
             return Ok(());
@@ -1672,7 +1607,7 @@ impl UiResources {
                 let viewport = ui_full_viewport(ctx.extent);
                 ctx.device.cmd_set_viewport(command_buffer, 0, &[viewport]);
 
-                let logical_clip = area.map(|a| a.clip).unwrap_or(rect(0, 0, width as i32, height as i32));
+                let logical_clip = clip.unwrap_or(rect(0, 0, width as i32, height as i32));
                 let clip_rect = ctx.scale_rect(logical_clip);
                 let clamped = clamp_rect_to_surface(clip_rect, ctx.extent.width, ctx.extent.height);
                 let scissor = rect_to_vk(clamped, ctx.extent.width, ctx.extent.height);
@@ -1745,471 +1680,6 @@ impl UiResources {
     }
 }
 
-struct MeshResources {
-    pipeline_layout: vk::PipelineLayout,
-    pipeline: vk::Pipeline,
-    vertex_buffer: Option<Buffer>,
-    index_buffer: Option<Buffer>,
-    vertex_staging: Option<MappedBuffer>,
-    index_staging: Option<MappedBuffer>,
-    vertex_offset: vk::DeviceSize,
-    vertex_staging_offset: vk::DeviceSize,
-    index_offset: vk::DeviceSize,
-    index_staging_offset: vk::DeviceSize,
-    retired_vertex_buffers: Vec<Vec<Buffer>>,
-    retired_index_buffers: Vec<Vec<Buffer>>,
-    retired_vertex_staging: Vec<Vec<MappedBuffer>>,
-    retired_index_staging: Vec<Vec<MappedBuffer>>,
-    depth_enabled: bool,
-}
-
-impl MeshResources {
-    const MIN_VERTEX_CAPACITY: vk::DeviceSize = 1_u64 << 20;
-    const MIN_INDEX_CAPACITY: vk::DeviceSize = 64_u64 << 10;
-    const MIN_VERTEX_STAGING_CAPACITY: vk::DeviceSize = 64_u64 << 10;
-    const MIN_INDEX_STAGING_CAPACITY: vk::DeviceSize = 32_u64 << 10;
-
-    fn grow_capacity(current: Option<vk::DeviceSize>, required: vk::DeviceSize, min: vk::DeviceSize) -> vk::DeviceSize {
-        if required == 0 {
-            return min.max(1);
-        }
-        let mut size = current.unwrap_or(min).max(min).max(1);
-        while size < required {
-            size = match size.checked_mul(2) {
-                Some(next) => next,
-                None => return required,
-            };
-        }
-        size
-    }
-
-    fn new(ctx: &VulkanContext) -> Result<Self> {
-        let depth_enabled = true;
-        let device = &ctx.device;
-        let push_range = vk::PushConstantRange::builder()
-            .stage_flags(vk::ShaderStageFlags::VERTEX)
-            .offset(0)
-            .size((std::mem::size_of::<f32>() * 32) as u32)
-            .build();
-        let layout_info = vk::PipelineLayoutCreateInfo::builder().push_constant_ranges(std::slice::from_ref(&push_range));
-        // Keep the layout and temporary shader modules owned until the graphics pipeline is
-        // complete. Any intermediate driver failure then unwinds through the exact destructors.
-        let pipeline_layout = ResourceGuard::new(
-            unsafe { device.create_pipeline_layout(&layout_info, None) }.map_err(|err| format!("create_pipeline_layout failed: {err:?}"))?,
-            |layout| unsafe { device.destroy_pipeline_layout(layout, None) },
-        );
-
-        let vert_module = ResourceGuard::new(Self::create_shader_module(device, MESH_VERT_SPV)?, |module| unsafe {
-            device.destroy_shader_module(module, None)
-        });
-        let frag_module = ResourceGuard::new(Self::create_shader_module(device, MESH_FRAG_SPV)?, |module| unsafe {
-            device.destroy_shader_module(module, None)
-        });
-        let entry = c"main";
-        let stages = [
-            vk::PipelineShaderStageCreateInfo::builder()
-                .stage(vk::ShaderStageFlags::VERTEX)
-                .module(*vert_module.get())
-                .name(entry)
-                .build(),
-            vk::PipelineShaderStageCreateInfo::builder()
-                .stage(vk::ShaderStageFlags::FRAGMENT)
-                .module(*frag_module.get())
-                .name(entry)
-                .build(),
-        ];
-
-        let binding = vk::VertexInputBindingDescription::builder()
-            .binding(0)
-            .stride(std::mem::size_of::<MeshVertex>() as u32)
-            .input_rate(vk::VertexInputRate::VERTEX)
-            .build();
-        let attributes = [
-            vk::VertexInputAttributeDescription::builder()
-                .binding(0)
-                .location(0)
-                .format(vk::Format::R32G32B32_SFLOAT)
-                .offset(0)
-                .build(),
-            vk::VertexInputAttributeDescription::builder()
-                .binding(0)
-                .location(1)
-                .format(vk::Format::R32G32B32_SFLOAT)
-                .offset(12)
-                .build(),
-            vk::VertexInputAttributeDescription::builder()
-                .binding(0)
-                .location(2)
-                .format(vk::Format::R32G32_SFLOAT)
-                .offset(24)
-                .build(),
-        ];
-        let vertex_input = vk::PipelineVertexInputStateCreateInfo::builder()
-            .vertex_binding_descriptions(std::slice::from_ref(&binding))
-            .vertex_attribute_descriptions(&attributes);
-
-        let input_assembly = vk::PipelineInputAssemblyStateCreateInfo::builder().topology(vk::PrimitiveTopology::TRIANGLE_LIST);
-        let viewport_state = vk::PipelineViewportStateCreateInfo::builder().viewport_count(1).scissor_count(1);
-
-        let rasterization = vk::PipelineRasterizationStateCreateInfo::builder()
-            .cull_mode(vk::CullModeFlags::NONE)
-            .front_face(vk::FrontFace::COUNTER_CLOCKWISE)
-            .polygon_mode(vk::PolygonMode::FILL)
-            .line_width(1.0);
-
-        let multisample = vk::PipelineMultisampleStateCreateInfo::builder().rasterization_samples(vk::SampleCountFlags::TYPE_1);
-
-        let depth_stencil = if depth_enabled {
-            vk::PipelineDepthStencilStateCreateInfo::builder()
-                .depth_test_enable(true)
-                .depth_write_enable(true)
-                .depth_compare_op(vk::CompareOp::LESS_OR_EQUAL)
-        } else {
-            vk::PipelineDepthStencilStateCreateInfo::builder()
-                .depth_test_enable(false)
-                .depth_write_enable(false)
-        };
-
-        let color_attachment = vk::PipelineColorBlendAttachmentState::builder()
-            .color_write_mask(vk::ColorComponentFlags::R | vk::ColorComponentFlags::G | vk::ColorComponentFlags::B | vk::ColorComponentFlags::A)
-            .blend_enable(false)
-            .build();
-        let color_blend = vk::PipelineColorBlendStateCreateInfo::builder().attachments(std::slice::from_ref(&color_attachment));
-        let dynamic_states = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
-        let dynamic_state = vk::PipelineDynamicStateCreateInfo::builder().dynamic_states(&dynamic_states);
-
-        let pipeline_info = vk::GraphicsPipelineCreateInfo::builder()
-            .stages(&stages)
-            .vertex_input_state(&vertex_input)
-            .input_assembly_state(&input_assembly)
-            .viewport_state(&viewport_state)
-            .rasterization_state(&rasterization)
-            .multisample_state(&multisample)
-            .depth_stencil_state(&depth_stencil)
-            .color_blend_state(&color_blend)
-            .dynamic_state(&dynamic_state)
-            .layout(*pipeline_layout.get())
-            .render_pass(ctx.render_pass)
-            .subpass(0);
-
-        let pipeline = ResourceGuard::new(create_single_graphics_pipeline(device, pipeline_info.build())?, |pipeline| unsafe {
-            device.destroy_pipeline(pipeline, None)
-        });
-
-        // Allocate frame bins before committing either driver handle, preserving unwind safety
-        // even if host allocation panics while the aggregate is being assembled.
-        let retired_vertex_buffers = (0..ctx.max_frames_in_flight).map(|_| Vec::new()).collect();
-        let retired_index_buffers = (0..ctx.max_frames_in_flight).map(|_| Vec::new()).collect();
-        let retired_vertex_staging = (0..ctx.max_frames_in_flight).map(|_| Vec::new()).collect();
-        let retired_index_staging = (0..ctx.max_frames_in_flight).map(|_| Vec::new()).collect();
-
-        Ok(Self {
-            pipeline_layout: pipeline_layout.into_inner(),
-            pipeline: pipeline.into_inner(),
-            vertex_buffer: None,
-            index_buffer: None,
-            vertex_staging: None,
-            index_staging: None,
-            vertex_offset: 0,
-            vertex_staging_offset: 0,
-            index_offset: 0,
-            index_staging_offset: 0,
-            retired_vertex_buffers,
-            retired_index_buffers,
-            retired_vertex_staging,
-            retired_index_staging,
-            depth_enabled,
-        })
-    }
-
-    fn destroy(&mut self, device: &ash::Device) {
-        if let Some(mut buffer) = self.vertex_buffer.take() {
-            buffer.destroy(device);
-        }
-        if let Some(mut buffer) = self.index_buffer.take() {
-            buffer.destroy(device);
-        }
-        if let Some(mut buffer) = self.vertex_staging.take() {
-            buffer.destroy(device);
-        }
-        if let Some(mut buffer) = self.index_staging.take() {
-            buffer.destroy(device);
-        }
-        for frame in &mut self.retired_vertex_buffers {
-            for mut buffer in frame.drain(..) {
-                buffer.destroy(device);
-            }
-        }
-        for frame in &mut self.retired_index_buffers {
-            for mut buffer in frame.drain(..) {
-                buffer.destroy(device);
-            }
-        }
-        for frame in &mut self.retired_vertex_staging {
-            for mut buffer in frame.drain(..) {
-                buffer.destroy(device);
-            }
-        }
-        for frame in &mut self.retired_index_staging {
-            for mut buffer in frame.drain(..) {
-                buffer.destroy(device);
-            }
-        }
-        unsafe {
-            device.destroy_pipeline(self.pipeline, None);
-            device.destroy_pipeline_layout(self.pipeline_layout, None);
-        }
-        self.pipeline = vk::Pipeline::null();
-        self.pipeline_layout = vk::PipelineLayout::null();
-    }
-
-    fn ensure_vertex_buffer(&mut self, ctx: &VulkanContext, frame: usize, required_total: vk::DeviceSize) -> Result<()> {
-        let current_capacity = self.vertex_buffer.as_ref().map(|buf| buf.size);
-        let needs_realloc = current_capacity.map(|cap| cap < required_total).unwrap_or(true);
-        if needs_realloc {
-            if frame >= self.retired_vertex_buffers.len() {
-                return Err(format!("invalid frame index for mesh retired vertex buffers: {}", frame));
-            }
-            let new_capacity = Self::grow_capacity(current_capacity, required_total, Self::MIN_VERTEX_CAPACITY);
-            let buffer = ctx.create_buffer(
-                new_capacity,
-                vk::BufferUsageFlags::VERTEX_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
-                vk::MemoryPropertyFlags::DEVICE_LOCAL,
-            )?;
-            if let Some(previous) = self.vertex_buffer.replace(buffer) {
-                self.retired_vertex_buffers[frame].push(previous);
-            }
-            self.vertex_offset = 0;
-        }
-        Ok(())
-    }
-
-    fn ensure_index_buffer(&mut self, ctx: &VulkanContext, frame: usize, required_total: vk::DeviceSize) -> Result<()> {
-        let current_capacity = self.index_buffer.as_ref().map(|buf| buf.size);
-        let needs_realloc = current_capacity.map(|cap| cap < required_total).unwrap_or(true);
-        if needs_realloc {
-            if frame >= self.retired_index_buffers.len() {
-                return Err(format!("invalid frame index for mesh retired index buffers: {}", frame));
-            }
-            let new_capacity = Self::grow_capacity(current_capacity, required_total, Self::MIN_INDEX_CAPACITY);
-            let buffer = ctx.create_buffer(
-                new_capacity,
-                vk::BufferUsageFlags::INDEX_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
-                vk::MemoryPropertyFlags::DEVICE_LOCAL,
-            )?;
-            if let Some(previous) = self.index_buffer.replace(buffer) {
-                self.retired_index_buffers[frame].push(previous);
-            }
-            self.index_offset = 0;
-        }
-        Ok(())
-    }
-
-    fn ensure_vertex_staging_buffer(&mut self, ctx: &VulkanContext, frame: usize, required_total: vk::DeviceSize) -> Result<()> {
-        let current_capacity = self.vertex_staging.as_ref().map(|buf| buf.size());
-        let needs_realloc = current_capacity.map(|cap| cap < required_total).unwrap_or(true);
-        if needs_realloc {
-            if frame >= self.retired_vertex_staging.len() {
-                return Err(format!("invalid frame index for mesh retired vertex staging buffers: {}", frame));
-            }
-            let new_capacity = Self::grow_capacity(current_capacity, required_total, Self::MIN_VERTEX_STAGING_CAPACITY);
-            let buffer = ctx.create_buffer(
-                new_capacity,
-                vk::BufferUsageFlags::TRANSFER_SRC,
-                vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
-            )?;
-            let mapped = MappedBuffer::new(buffer, &ctx.device)?;
-            if let Some(previous) = self.vertex_staging.replace(mapped) {
-                self.retired_vertex_staging[frame].push(previous);
-            }
-            self.vertex_staging_offset = 0;
-        }
-        Ok(())
-    }
-
-    fn ensure_index_staging_buffer(&mut self, ctx: &VulkanContext, frame: usize, required_total: vk::DeviceSize) -> Result<()> {
-        let current_capacity = self.index_staging.as_ref().map(|buf| buf.size());
-        let needs_realloc = current_capacity.map(|cap| cap < required_total).unwrap_or(true);
-        if needs_realloc {
-            if frame >= self.retired_index_staging.len() {
-                return Err(format!("invalid frame index for mesh retired index staging buffers: {}", frame));
-            }
-            let new_capacity = Self::grow_capacity(current_capacity, required_total, Self::MIN_INDEX_STAGING_CAPACITY);
-            let buffer = ctx.create_buffer(
-                new_capacity,
-                vk::BufferUsageFlags::TRANSFER_SRC,
-                vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
-            )?;
-            let mapped = MappedBuffer::new(buffer, &ctx.device)?;
-            if let Some(previous) = self.index_staging.replace(mapped) {
-                self.retired_index_staging[frame].push(previous);
-            }
-            self.index_staging_offset = 0;
-        }
-        Ok(())
-    }
-
-    fn cleanup_retired(&mut self, frame: usize, device: &ash::Device) {
-        if let Some(buffers) = self.retired_vertex_buffers.get_mut(frame) {
-            for mut buffer in buffers.drain(..) {
-                buffer.destroy(device);
-            }
-        }
-        if let Some(buffers) = self.retired_index_buffers.get_mut(frame) {
-            for mut buffer in buffers.drain(..) {
-                buffer.destroy(device);
-            }
-        }
-        if let Some(buffers) = self.retired_vertex_staging.get_mut(frame) {
-            for mut buffer in buffers.drain(..) {
-                buffer.destroy(device);
-            }
-        }
-        if let Some(buffers) = self.retired_index_staging.get_mut(frame) {
-            for mut buffer in buffers.drain(..) {
-                buffer.destroy(device);
-            }
-        }
-    }
-
-    fn reset_upload_state(&mut self, frame: usize, device: &ash::Device) {
-        self.vertex_offset = 0;
-        self.vertex_staging_offset = 0;
-        self.index_offset = 0;
-        self.index_staging_offset = 0;
-        self.cleanup_retired(frame, device);
-    }
-
-    fn prepare_frame(&mut self, ctx: &VulkanContext, frame: usize, required_vertex_bytes: vk::DeviceSize, required_index_bytes: vk::DeviceSize) -> Result<()> {
-        self.ensure_vertex_buffer(ctx, frame, required_vertex_bytes)?;
-        self.ensure_index_buffer(ctx, frame, required_index_bytes)?;
-        self.ensure_vertex_staging_buffer(ctx, frame, required_vertex_bytes)?;
-        self.ensure_index_staging_buffer(ctx, frame, required_index_bytes)?;
-        Ok(())
-    }
-
-    fn record(&mut self, ctx: &mut VulkanContext, command_buffer: vk::CommandBuffer, submission: &MeshSubmission, area: &CustomRenderArea) -> Result<()> {
-        if submission.mesh.is_empty() {
-            return Ok(());
-        }
-
-        let extent = ctx.extent;
-        let clip_rect = scale_rect_to_surface(area.clip, ctx.logical_width, ctx.logical_height, extent.width, extent.height);
-        let clip_rect = clamp_rect_to_surface(clip_rect, extent.width, extent.height);
-        if clip_rect.width <= 0 || clip_rect.height <= 0 {
-            return Ok(());
-        }
-
-        let vertex_bytes = unsafe {
-            std::slice::from_raw_parts(
-                submission.mesh.vertices().as_ptr() as *const u8,
-                std::mem::size_of_val(submission.mesh.vertices()),
-            )
-        };
-        let index_bytes = unsafe {
-            std::slice::from_raw_parts(
-                submission.mesh.indices().as_ptr() as *const u8,
-                std::mem::size_of_val(submission.mesh.indices()),
-            )
-        };
-        let frame = ctx.current_frame;
-        let vertex_copy_size = vertex_bytes.len() as u64;
-        let index_copy_size = index_bytes.len() as u64;
-        let vertex_dst_offset = self.vertex_offset;
-        let index_dst_offset = self.index_offset;
-        self.ensure_vertex_buffer(ctx, frame, vertex_dst_offset + vertex_copy_size)?;
-        self.ensure_index_buffer(ctx, frame, index_dst_offset + index_copy_size)?;
-        self.ensure_vertex_staging_buffer(ctx, frame, self.vertex_staging_offset + vertex_copy_size)?;
-        self.ensure_index_staging_buffer(ctx, frame, self.index_staging_offset + index_copy_size)?;
-
-        if let (Some(staging), Some(buffer)) = (self.vertex_staging.as_ref(), self.vertex_buffer.as_ref()) {
-            staging.write(self.vertex_staging_offset, vertex_bytes)?;
-            ctx.record_transfer_copy(
-                staging.vk_buffer(),
-                self.vertex_staging_offset,
-                buffer.buffer,
-                vertex_dst_offset,
-                vertex_copy_size,
-                vk::AccessFlags::VERTEX_ATTRIBUTE_READ,
-            )?;
-        }
-        if let (Some(staging), Some(buffer)) = (self.index_staging.as_ref(), self.index_buffer.as_ref()) {
-            staging.write(self.index_staging_offset, index_bytes)?;
-            ctx.record_transfer_copy(
-                staging.vk_buffer(),
-                self.index_staging_offset,
-                buffer.buffer,
-                index_dst_offset,
-                index_copy_size,
-                vk::AccessFlags::INDEX_READ,
-            )?;
-        }
-
-        self.vertex_offset += vertex_copy_size;
-        self.vertex_staging_offset += vertex_copy_size;
-        self.index_offset += index_copy_size;
-        self.index_staging_offset += index_copy_size;
-
-        let viewport_rect = scale_rect_to_surface(area.rect, ctx.logical_width, ctx.logical_height, extent.width, extent.height);
-        let viewport = match mesh_viewport_from_rect(viewport_rect, extent.width, extent.height) {
-            Some(vp) => vp,
-            None => return Ok(()),
-        };
-        let scissor = rect_to_vk(clip_rect, extent.width, extent.height);
-        vk_trace!(
-            "[microui-redux][vk-trace][mesh] area.rect={:?} area.clip={:?} viewport=({:.1},{:.1},{:.1},{:.1}) scissor=(offset=({}, {}), extent=({}, {}))",
-            area.rect,
-            area.clip,
-            viewport.x,
-            viewport.y,
-            viewport.width,
-            viewport.height,
-            scissor.offset.x,
-            scissor.offset.y,
-            scissor.extent.width,
-            scissor.extent.height
-        );
-
-        unsafe {
-            ctx.device.cmd_bind_pipeline(command_buffer, vk::PipelineBindPoint::GRAPHICS, self.pipeline);
-            if let Some(buffer) = self.vertex_buffer.as_ref() {
-                ctx.device.cmd_bind_vertex_buffers(command_buffer, 0, &[buffer.buffer], &[vertex_dst_offset]);
-            }
-            if let Some(buffer) = self.index_buffer.as_ref() {
-                ctx.device
-                    .cmd_bind_index_buffer(command_buffer, buffer.buffer, index_dst_offset, vk::IndexType::UINT32);
-            }
-            ctx.device.cmd_set_viewport(command_buffer, 0, &[viewport]);
-            ctx.device.cmd_set_scissor(command_buffer, 0, &[scissor]);
-            log_viewport_scissor("mesh", area.rect, &viewport, &scissor);
-        }
-
-        let mut push_data = [0.0f32; 32];
-        unsafe {
-            let pvm_vk = Mat4f::mul_matrix_matrix(&opengl_to_vulkan_clip_matrix(), &submission.pvm);
-            let pvm_slice = std::slice::from_raw_parts(pvm_vk.col.as_ptr() as *const f32, 16);
-            let view_slice = std::slice::from_raw_parts(submission.view_model.col.as_ptr() as *const f32, 16);
-            push_data[..16].copy_from_slice(pvm_slice);
-            push_data[16..].copy_from_slice(view_slice);
-        }
-        let push_bytes = unsafe { std::slice::from_raw_parts(push_data.as_ptr() as *const u8, push_data.len() * std::mem::size_of::<f32>()) };
-
-        unsafe {
-            ctx.device
-                .cmd_push_constants(command_buffer, self.pipeline_layout, vk::ShaderStageFlags::VERTEX, 0, push_bytes);
-            ctx.device.cmd_draw_indexed(command_buffer, submission.mesh.indices().len() as u32, 1, 0, 0, 0);
-        }
-
-        Ok(())
-    }
-
-    fn create_shader_module(device: &ash::Device, code: &[u8]) -> Result<vk::ShaderModule> {
-        let mut cursor = Cursor::new(code);
-        let spv = read_spv(&mut cursor).map_err(|err| format!("read_spv failed: {err:?}"))?;
-        let info = vk::ShaderModuleCreateInfo::builder().code(&spv);
-        unsafe { device.create_shader_module(&info, None) }.map_err(|err| format!("create_shader_module failed: {err:?}"))
-    }
-}
 /// Owns the native objects acquired before a full [`VulkanContext`] can exist.
 ///
 /// `VulkanContext::drop` cannot help while instance/surface/device creation is only partially
@@ -2328,7 +1798,6 @@ pub(crate) struct VulkanContext {
     acquired_frame_state: AcquiredFrameState,
     ui: Option<UiResources>,
     depth_images: Vec<ImageResource>,
-    mesh: Option<MeshResources>,
     swapchain_generation: u64,
     device_lost: bool,
 }
@@ -2418,7 +1887,6 @@ impl VulkanContext {
             acquired_frame_state: AcquiredFrameState::Ready,
             ui: None,
             depth_images: Vec::new(),
-            mesh: None,
             logical_width: width,
             logical_height: height,
             swapchain_generation: 0,
@@ -2662,7 +2130,7 @@ impl VulkanContext {
         Ok(())
     }
 
-    /// Builds the render pass used for UI and mesh drawing.
+    /// Builds the shared render pass used for UI and application graphics.
     fn create_render_pass(&self) -> Result<vk::RenderPass> {
         let color_attachment = vk::AttachmentDescription::builder()
             .format(self.swapchain_format)
@@ -2848,9 +2316,6 @@ impl VulkanContext {
         unsafe {
             // Only swapchain-dependent resources are destroyed here. The permanent command pool,
             // device, queues, and synchronization objects live until `Drop`.
-            if let Some(mut mesh) = self.mesh.take() {
-                mesh.destroy(&self.device);
-            }
             for &framebuffer in &self.framebuffers {
                 self.device.destroy_framebuffer(framebuffer, None);
             }
@@ -2974,9 +2439,6 @@ impl VulkanContext {
         // are likewise only reclaimed once this frame slot is no longer in flight.
         self.reset_transfer_state(frame)?;
         self.reset_ui_offset(frame);
-        if let Some(ref mut mesh) = self.mesh {
-            mesh.reset_upload_state(frame, &self.device);
-        }
         self.preflight_frame_resources(vertices, commands.as_slice())?;
 
         // Application resources are prepared only after this frame slot's fence has completed.
@@ -3090,8 +2552,6 @@ impl VulkanContext {
         // Pre-compute the worst-case upload budget for this frame before any command buffer
         // recording begins. That keeps the actual record path free of buffer growth decisions.
         let mut ui_vertices = 0usize;
-        let mut mesh_vertices = 0usize;
-        let mut mesh_indices = 0usize;
         let mut cursor = 0usize;
         for command in commands {
             match command {
@@ -3107,10 +2567,6 @@ impl VulkanContext {
                 }
                 FrameCommand::Colored { command, .. } => {
                     ui_vertices = ui_vertices.saturating_add(command.vertices.len());
-                }
-                FrameCommand::Mesh { command, .. } => {
-                    mesh_vertices = mesh_vertices.saturating_add(command.submission.mesh.vertices().len());
-                    mesh_indices = mesh_indices.saturating_add(command.submission.mesh.indices().len());
                 }
                 FrameCommand::Application { .. } => {}
             }
@@ -3129,18 +2585,6 @@ impl VulkanContext {
         if let Some(mut ui) = self.ui.take() {
             let result = ui.prepare_frame(self, frame, ui_bytes);
             self.ui = Some(ui);
-            result?;
-        }
-
-        if mesh_vertices > 0 && mesh_indices > 0 {
-            let mesh_vertex_bytes = to_bytes(mesh_vertices, std::mem::size_of::<MeshVertex>())?;
-            let mesh_index_bytes = to_bytes(mesh_indices, std::mem::size_of::<u32>())?;
-            let mut mesh = match self.mesh.take() {
-                Some(existing) => existing,
-                None => MeshResources::new(self)?,
-            };
-            let result = mesh.prepare_frame(self, frame, mesh_vertex_bytes, mesh_index_bytes);
-            self.mesh = Some(mesh);
             result?;
         }
 
@@ -3213,32 +2657,18 @@ impl VulkanContext {
                             cursor = end;
                         }
                     }
-                    FrameCommand::Texture { area, command } => {
+                    FrameCommand::Texture { clip, command } => {
                         if let Some(ui_resources) = ui.take() {
                             self.ui = Some(ui_resources);
                         }
-                        self.draw_vertices_with_descriptor(
-                            command_buffer,
-                            &command.vertices,
-                            frame_width,
-                            frame_height,
-                            command.descriptor_set,
-                            Some(&area),
-                        )?;
+                        self.draw_vertices_with_descriptor(command_buffer, &command.vertices, frame_width, frame_height, command.descriptor_set, Some(clip))?;
                         ui = self.ui.take();
                     }
-                    FrameCommand::Colored { area, command } => {
+                    FrameCommand::Colored { clip, command } => {
                         if let Some(ui_resources) = ui.take() {
                             self.ui = Some(ui_resources);
                         }
-                        self.draw_custom_vertices(command_buffer, &command.vertices, &area, command.descriptor_set)?;
-                        ui = self.ui.take();
-                    }
-                    FrameCommand::Mesh { area, command } => {
-                        if let Some(ui_resources) = ui.take() {
-                            self.ui = Some(ui_resources);
-                        }
-                        self.record_mesh(command_buffer, &command.submission, &area)?;
+                        self.draw_custom_vertices(command_buffer, &command.vertices, clip, command.descriptor_set)?;
                         ui = self.ui.take();
                     }
                     FrameCommand::Application { args, command } => {
@@ -3371,13 +2801,7 @@ impl VulkanContext {
     }
 
     /// Records a custom UI draw using an explicit descriptor set instead of the shared atlas.
-    fn draw_custom_vertices(
-        &mut self,
-        command_buffer: vk::CommandBuffer,
-        vertices: &[Vertex],
-        area: &CustomRenderArea,
-        descriptor_set: vk::DescriptorSet,
-    ) -> Result<()> {
+    fn draw_custom_vertices(&mut self, command_buffer: vk::CommandBuffer, vertices: &[Vertex], clip: Recti, descriptor_set: vk::DescriptorSet) -> Result<()> {
         let mut ui = match self.ui.take() {
             Some(ui) => ui,
             None => return Ok(()),
@@ -3389,7 +2813,7 @@ impl VulkanContext {
             self.logical_width,
             self.logical_height,
             descriptor_set,
-            Some(area),
+            Some(clip),
         );
         self.ui = Some(ui);
         result
@@ -3411,25 +2835,14 @@ impl VulkanContext {
         width: u32,
         height: u32,
         descriptor_set: vk::DescriptorSet,
-        area: Option<&CustomRenderArea>,
+        clip: Option<Recti>,
     ) -> Result<()> {
         let mut ui = match self.ui.take() {
             Some(ui) => ui,
             None => return Ok(()),
         };
-        let result = ui.record_with_descriptor(self, command_buffer, vertices, width, height, descriptor_set, area);
+        let result = ui.record_with_descriptor(self, command_buffer, vertices, width, height, descriptor_set, clip);
         self.ui = Some(ui);
-        result
-    }
-
-    /// Records a 3D mesh submission against the shared mesh pipeline resources.
-    fn record_mesh(&mut self, command_buffer: vk::CommandBuffer, submission: &MeshSubmission, area: &CustomRenderArea) -> Result<()> {
-        let mut resources = match self.mesh.take() {
-            Some(resources) => resources,
-            None => MeshResources::new(self)?,
-        };
-        let result = resources.record(self, command_buffer, submission, area);
-        self.mesh = Some(resources);
         result
     }
 

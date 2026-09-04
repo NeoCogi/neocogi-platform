@@ -10,5 +10,4 @@ repository.workspace = true
 [dependencies]
 glow.workspace = true
 microui-redux.workspace = true
-microui-redux-renderer-common.workspace = true
-rs-math3d.workspace = true
+microui-redux-renderer-support.workspace = true
