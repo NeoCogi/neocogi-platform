@@ -541,7 +541,16 @@ where
                 unclipped_depth: false,
                 conservative: false,
             },
-            depth_stencil: None,
+            // The shared pass always carries the application depth target. WGPU requires every
+            // pipeline used in that pass to declare a compatible attachment format even when UI
+            // rendering deliberately performs no depth reads or writes.
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: APPLICATION_DEPTH_FORMAT,
+                depth_write_enabled: Some(false),
+                depth_compare: Some(wgpu::CompareFunction::Always),
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
             multisample: wgpu::MultisampleState {
                 count: 1,
                 mask: !0,
