@@ -127,6 +127,23 @@ fn pixel(gl: &glow::Context, x: i32, y: i32) -> [u8; 4] {
     bytes
 }
 
+/// Concrete failure injection for the active GL application command boundary.
+#[derive(Default)]
+struct FailingApplication {
+    /// Commands actually executed, excluding commands ignored after the first failure.
+    calls: usize,
+}
+
+impl GlApplicationRenderer for FailingApplication {
+    /// The requested error text; a second command must not replace the first failure.
+    type Command = &'static str;
+
+    fn render(&mut self, _: GlApplicationRenderContext<'_>, message: Self::Command) -> Result<(), String> {
+        self.calls += 1;
+        Err(message.to_owned())
+    }
+}
+
 /// Validates rendered pixels, not a mock's agreement with the implementation's call sequence.
 #[test]
 #[ignore = "requires a native GL ES 3 driver; run with SDL_VIDEODRIVER=offscreen"]
@@ -168,4 +185,32 @@ fn ui_draws_clears_and_uploads_survive_application_gl_state() {
     renderer.begin(8, 8, color(0, 0, 0, 255));
     renderer.draw_vertices(renderer.tex_o, &vertices, Some(&[0, 1, 2, 2, 3, 0]), renderer.full_clip());
     assert_eq!(pixel(&gl, 4, 4), [255, 0, 0, 255]);
+
+    // The public frame contract must distinguish abandonment from explicit completion. A pending
+    // quad is CPU-only until finish; dropping it must leave the cleared framebuffer untouched.
+    let info = FrameInfo::try_new(Dimensioni::new(8, 8), color(0, 0, 0, 255)).unwrap();
+    let mut frame = renderer.frame(info).unwrap();
+    frame.push_quad(vertices);
+    drop(frame);
+    assert_eq!(pixel(&gl, 4, 4), [0, 0, 0, 255]);
+    let mut frame = renderer.frame(info).unwrap();
+    frame.push_quad(vertices);
+    frame.finish().unwrap();
+    assert_eq!(pixel(&gl, 4, 4), [255, 0, 0, 255]);
+
+    let mut failing = GLRenderer::new_with_application(gl.clone(), atlas(), 8, 8, FailingApplication::default()).unwrap();
+    let args = CustomRenderArgs {
+        dimensions: info.dimensions(),
+        content_area: Recti::new(0, 0, 8, 8),
+        view: Recti::new(0, 0, 8, 8),
+    };
+    let mut frame = failing.frame(info).unwrap();
+    frame.enqueue_application(args, "first failure");
+    frame.enqueue_application(args, "later failure");
+    frame.push_quad(vertices);
+    assert_eq!(frame.finish(), Err(FrameError::new("first failure")));
+    assert_eq!(failing.application.calls, 1);
+    assert_eq!(pixel(&gl, 4, 4), [0, 0, 0, 255]);
+    // Failure is frame-local on GL; the next acquired frame can complete normally.
+    failing.frame(info).unwrap().finish().unwrap();
 }

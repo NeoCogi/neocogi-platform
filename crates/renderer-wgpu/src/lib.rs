@@ -75,6 +75,8 @@ pub struct WgpuApplicationPrepareContext<'a> {
 /// The associated command is retained in the same concrete frame command stream as UI batches.
 /// No `Any`, downcast, or string command identifier is involved. Applications that need several
 /// operations should model them as an ordinary enum and match that enum in `prepare` and `render`.
+/// Errors from either phase are returned by `RendererFrame::finish`, abandoning the frame encoder.
+/// Earlier queue uploads remain observable; frame failure does not roll back resource mutations.
 pub trait WgpuApplicationRenderer: 'static {
     /// Concrete application operation stored between frame construction and GPU recording.
     type Command: 'static;
@@ -759,7 +761,7 @@ where
     }
 
     /// Uploads all queued vertices, records the render pass, and presents an acquired surface frame.
-    fn finish(&mut self, frame: wgpu::SurfaceTexture) {
+    fn finish(&mut self, frame: wgpu::SurfaceTexture) -> Result<(), FrameError> {
         self.flush_ui_batch();
         let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
         let mut encoder = self
@@ -777,8 +779,7 @@ where
                 RenderCommand::DrawUiTo(_) | RenderCommand::DrawTexture { .. } | RenderCommand::DrawColored { .. } => None,
             })
             .collect::<Vec<_>>();
-        let application_ready = self
-            .application
+        self.application
             .prepare(
                 WgpuApplicationPrepareContext {
                     device: &self.device,
@@ -790,10 +791,7 @@ where
                 },
                 &application_commands,
             )
-            .map_err(|error| {
-                eprintln!("[microui-redux][wgpu] application frame preparation failed: {error}");
-            })
-            .is_ok();
+            .map_err(FrameError::new)?;
 
         struct PreparedDraw {
             vertex_offset: u64,
@@ -909,11 +907,8 @@ where
             for (command, prepared) in self.commands.iter().zip(prepared_draws.iter()) {
                 match command {
                     RenderCommand::Application { args, command } => {
-                        if application_ready && let Err(error) = self.application.render(&mut pass, *args, application_index, command) {
-                            // Recording failures are local to the application command. The WGPU
-                            // frame remains structurally valid and later UI commands still run.
-                            eprintln!("[microui-redux][wgpu] application render command failed: {error}");
-                        }
+                        // A failed command abandons this encoder instead of presenting a partial frame.
+                        self.application.render(&mut pass, *args, application_index, command).map_err(FrameError::new)?;
                         application_index += 1;
                     }
                     RenderCommand::DrawUiTo(_) | RenderCommand::DrawTexture { .. } | RenderCommand::DrawColored { .. } => {
@@ -950,6 +945,7 @@ where
 
         self.queue.submit(Some(encoder.finish()));
         self.queue.present(frame);
+        Ok(())
     }
 
     /// Creates a backend-owned sampled texture and its bind group.
@@ -991,7 +987,7 @@ where
     }
 }
 
-#[must_use = "the WGPU frame is finalized when dropped"]
+#[must_use = "call finish to submit the WGPU frame and observe errors"]
 pub struct WgpuFrame<'a, Application = ()>
 where
     Application: WgpuApplicationRenderer,
@@ -1023,6 +1019,12 @@ impl<Application> RendererFrame for WgpuFrame<'_, Application>
 where
     Application: WgpuApplicationRenderer,
 {
+    /// Consumes the surface image only through an explicit, observable submit/present operation.
+    fn finish(mut self) -> Result<(), FrameError> {
+        let frame = self.surface_frame.take().expect("an active frame owns its surface image");
+        self.backend.finish(frame)
+    }
+
     fn push_quad(&mut self, vertices: [Vertex; 4]) {
         self.backend.push_quad_vertices(&vertices[0], &vertices[1], &vertices[2], &vertices[3]);
     }
@@ -1045,16 +1047,11 @@ where
     Application: WgpuApplicationRenderer,
 {
     fn drop(&mut self) {
-        let Some(surface_frame) = self.surface_frame.take() else {
-            return;
-        };
-        if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            self.backend.finish(surface_frame);
-        }))
-        .is_err()
-        {
-            eprintln!("[microui-redux][wgpu] frame finalization panicked");
-        }
+        // WGPU releases an unpresented surface image on drop. No encoder is submitted here,
+        // including when application code panics while recording or preparing the frame.
+        self.backend.commands.clear();
+        self.backend.ui_vertices.clear();
+        self.backend.current_batch_end = 0;
     }
 }
 

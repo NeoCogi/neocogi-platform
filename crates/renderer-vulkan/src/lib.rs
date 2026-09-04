@@ -131,6 +131,7 @@ pub trait VulkanApplicationRenderer: 'static {
     ///
     /// Commands are supplied in relative application order. The default implementation supports
     /// renderers whose persistent resources need no per-frame preparation.
+    /// Failure is returned by `RendererFrame::finish` and makes the acquired renderer unusable.
     fn prepare(&mut self, _context: VulkanApplicationPrepareContext<'_>, _commands: &[&Self::Command]) -> VulkanApplicationResult<()> {
         Ok(())
     }
@@ -139,6 +140,7 @@ pub trait VulkanApplicationRenderer: 'static {
     ///
     /// Resource mutation belongs in `prepare`; recording uses an immutable receiver so pipelines
     /// and buffers remain stable throughout command-buffer construction.
+    /// Failure is returned by `RendererFrame::finish`; acquired synchronization cannot be reused.
     fn render(
         &self,
         context: VulkanApplicationRenderContext<'_>,
@@ -559,13 +561,13 @@ where
     }
 
     /// Finalizes the frame by submitting the queued UI and custom commands to Vulkan.
-    fn finish(&mut self, acquired: AcquiredVulkanFrame) {
+    fn finish(&mut self, acquired: AcquiredVulkanFrame) -> Result<()> {
         self.flush_ui_batch();
         if self.disabled {
             self.commands.clear();
             self.vertices.clear();
             self.current_batch_end = 0;
-            return;
+            return Err(String::from("Vulkan renderer is disabled after an unrecoverable frame failure"));
         }
         let mut commands = std::mem::take(&mut self.commands);
         // `draw_frame` consumes the queued UI/custom jobs and may drain `commands`; taking the vec
@@ -579,17 +581,13 @@ where
             &mut commands,
             &mut self.application,
         );
-        if let Err(err) = result {
-            eprintln!("[microui-redux][vulkan] draw_frame failed: {err}");
-            if self.context.is_unusable() {
-                self.disabled = true;
-                eprintln!("[microui-redux][vulkan] acquired frame became unrecoverable; disabling Vulkan rendering for the rest of this run");
-            }
-        }
+        // draw_frame latches post-acquire failure; preserve that state before returning the error.
+        self.disabled |= self.context.is_unusable();
         commands.clear();
         self.commands = commands;
         self.vertices.clear();
         self.current_batch_end = 0;
+        result
     }
 
     /// Creates a backend-owned sampled texture and tracks it by `TextureId`.
@@ -674,7 +672,7 @@ where
     }
 }
 
-#[must_use = "the Vulkan frame is finalized when dropped"]
+#[must_use = "call finish to submit the Vulkan frame and observe errors"]
 /// Acquired Vulkan frame that accepts UI operations and typed application commands.
 pub struct VulkanFrame<'a, Application = ()>
 where
@@ -705,6 +703,12 @@ impl<Application> RendererFrame for VulkanFrame<'_, Application>
 where
     Application: VulkanApplicationRenderer,
 {
+    /// Completes the acquired transaction; Drop still guards against any unwinding escape.
+    fn finish(mut self) -> std::result::Result<(), FrameError> {
+        let acquired = self.acquired.take().expect("an active Vulkan frame owns its acquired image");
+        self.backend.finish(acquired).map_err(FrameError::new)
+    }
+
     fn push_quad(&mut self, vertices: [Vertex; 4]) {
         self.backend.push_quad_vertices(&vertices[0], &vertices[1], &vertices[2], &vertices[3]);
     }
@@ -727,20 +731,13 @@ where
     Application: VulkanApplicationRenderer,
 {
     fn drop(&mut self) {
-        let Some(acquired) = self.acquired.take() else {
-            return;
-        };
-        if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            self.backend.finish(acquired);
-        }))
-        .is_err()
-        {
-            // A panic can occur after acquire or native recording. Latch both layers before
-            // unwinding is swallowed so no later frame reuses the outstanding image or sync slot.
-            self.backend.context.abandon_acquired_frame();
-            self.backend.disabled = true;
-            eprintln!("[microui-redux][vulkan] frame finalization panicked");
-        }
+        // Success has already restored Ready. Any other escape, including a panic after taking
+        // the token in finish, must forbid reuse of the potentially signaled acquire semaphore.
+        self.backend.context.abandon_acquired_frame();
+        self.backend.disabled |= self.backend.context.is_unusable();
+        self.backend.commands.clear();
+        self.backend.vertices.clear();
+        self.backend.current_batch_end = 0;
     }
 }
 

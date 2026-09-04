@@ -89,6 +89,7 @@ pub trait GlApplicationRenderer: 'static {
     /// scoped operations such as queries/transform feedback, and restore extension-specific state
     /// outside this GL ES 3 / WebGL 2 contract before returning. They must not delete or modify
     /// backend-owned resources. The backend renders UI to the default window/canvas framebuffer.
+    /// An error is retained for `RendererFrame::finish`; later commands in that frame are skipped.
     fn render(&mut self, context: GlApplicationRenderContext<'_>, command: Self::Command) -> Result<(), String>;
 }
 
@@ -625,13 +626,16 @@ where
     }
 }
 
-#[must_use = "the OpenGL frame is finalized when dropped"]
+/// Immediate GL frame whose pending batch must be completed explicitly.
+#[must_use = "call finish to complete the OpenGL frame and observe errors"]
 pub struct GlFrame<'a, Application = ()>
 where
     Application: GlApplicationRenderer,
 {
     /// Exclusive renderer borrow that prevents a second frame from being acquired concurrently.
     backend: &'a mut GLRenderer<Application>,
+    /// First application failure, returned by finish; later commands are ignored.
+    error: Option<FrameError>,
 }
 
 impl<Application> GlFrame<'_, Application>
@@ -640,6 +644,9 @@ where
 {
     /// Flushes preceding UI work and executes one typed application GPU command immediately.
     pub fn enqueue_application(&mut self, args: CustomRenderArgs, command: Application::Command) {
+        if self.error.is_some() {
+            return;
+        }
         // GL records directly into the current context. Closing the UI batch here preserves the
         // display-list order established by Context before application state changes GL bindings.
         self.backend.flush();
@@ -649,15 +656,15 @@ where
             args,
         };
         if let Err(error) = self.backend.application.render(context, command) {
-            // RendererFrame finalization cannot return an error after acquisition, so retain the
-            // existing backend policy of reporting command-local failures and completing the frame.
-            eprintln!("[microui-redux][glow] application render command failed: {error}");
+            self.error = Some(FrameError::new(error));
         }
     }
 
     /// Draws pre-transformed colored vertices using the custom operation's authoritative clip.
     pub fn enqueue_colored_vertices(&mut self, args: CustomRenderArgs, vertices: Vec<Vertex>) {
-        self.backend.enqueue_colored_vertices(args, vertices);
+        if self.error.is_none() {
+            self.backend.enqueue_colored_vertices(args, vertices);
+        }
     }
 }
 
@@ -665,20 +672,37 @@ impl<Application> RendererFrame for GlFrame<'_, Application>
 where
     Application: GlApplicationRenderer,
 {
+    /// Flushes the final batch only if all earlier application commands succeeded.
+    fn finish(mut self) -> Result<(), FrameError> {
+        if let Some(error) = self.error.take() {
+            return Err(error);
+        }
+        self.backend.end();
+        Ok(())
+    }
+
     fn push_quad(&mut self, vertices: [Vertex; 4]) {
-        self.backend.push_quad_vertices(&vertices[0], &vertices[1], &vertices[2], &vertices[3]);
+        if self.error.is_none() {
+            self.backend.push_quad_vertices(&vertices[0], &vertices[1], &vertices[2], &vertices[3]);
+        }
     }
 
     fn push_triangle(&mut self, vertices: [Vertex; 3]) {
-        self.backend.push_triangle_vertices(&vertices[0], &vertices[1], &vertices[2]);
+        if self.error.is_none() {
+            self.backend.push_triangle_vertices(&vertices[0], &vertices[1], &vertices[2]);
+        }
     }
 
     fn flush(&mut self) {
-        self.backend.flush();
+        if self.error.is_none() {
+            self.backend.flush();
+        }
     }
 
     fn draw_texture(&mut self, id: TextureId, vertices: [Vertex; 4]) {
-        self.backend.draw_texture(id, vertices);
+        if self.error.is_none() {
+            self.backend.draw_texture(id, vertices);
+        }
     }
 }
 
@@ -687,13 +711,10 @@ where
     Application: GlApplicationRenderer,
 {
     fn drop(&mut self) {
-        if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            self.backend.end();
-        }))
-        .is_err()
-        {
-            eprintln!("[microui-redux][glow] frame finalization panicked");
-        }
+        // Immediate draws cannot be undone; discard only the remaining CPU batch. In particular,
+        // unwinding through a custom renderer must not call GL or submit more application work.
+        self.backend.verts.clear();
+        self.backend.indices.clear();
     }
 }
 
@@ -725,7 +746,7 @@ where
     fn frame(&mut self, info: FrameInfo) -> Result<Self::Frame<'_>, FrameError> {
         let dimensions = info.dimensions();
         self.begin(dimensions.width, dimensions.height, info.clear());
-        Ok(GlFrame { backend: self })
+        Ok(GlFrame { backend: self, error: None })
     }
 
     fn create_texture(&mut self, id: TextureId, pixels: &[u8]) -> Result<(), TextureError> {
