@@ -43,6 +43,9 @@ use microui_redux::{
 use glow::*;
 use microui_redux_renderer_support::resource_guard::ResourceGuard;
 
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod tests;
+
 // GL backend overview:
 // - Regular UI quads are accumulated into CPU-side vertex/index buffers and emitted in one batch
 //   from `flush`.
@@ -80,8 +83,12 @@ pub trait GlApplicationRenderer: 'static {
 
     /// Executes one command after the preceding UI batch has been flushed.
     ///
-    /// Implementations may change arbitrary GL state. Every later microui batch establishes all
-    /// state it consumes, so application code does not need to restore the UI program or buffers.
+    /// Later UI draws restore their framebuffer, viewport, scissor, color writes, blending, depth,
+    /// stencil, rasterization enables, program, texture/sampler, and private vertex layout. Pixel
+    /// uploads likewise reset unpack state. Implementations must use their own GPU objects, finish
+    /// scoped operations such as queries/transform feedback, and restore extension-specific state
+    /// outside this GL ES 3 / WebGL 2 contract before returning. They must not delete or modify
+    /// backend-owned resources. The backend renders UI to the default window/canvas framebuffer.
     fn render(&mut self, context: GlApplicationRenderContext<'_>, command: Self::Command) -> Result<(), String>;
 }
 
@@ -130,6 +137,8 @@ where
     verts: Vec<Vertex>,
     indices: Vec<u16>,
 
+    /// Private vertex array isolates UI attributes from application vertex layouts.
+    vao: VertexArray,
     vbo: Buffer,
     ibo: Buffer,
     tex_o: Texture,
@@ -149,6 +158,128 @@ impl<Application> GLRenderer<Application>
 where
     Application: GlApplicationRenderer,
 {
+    /// Returns the full default framebuffer in the UI's top-left coordinates.
+    fn full_clip(&self) -> Recti {
+        Recti::new(0, 0, self.width as i32, self.height as i32)
+    }
+
+    /// Establishes the window/canvas target and complete color-write region for draws and clears.
+    fn bind_target(&self, clip: Recti) {
+        // The backend owns presentation to the default framebuffer. An application may leave an
+        // offscreen FBO bound; neither the next UI draw nor the next frame clear may inherit it.
+        unsafe {
+            self.gl.bind_framebuffer(glow::DRAW_FRAMEBUFFER, None);
+            self.gl.draw_buffers(&[glow::BACK]);
+            self.gl.viewport(0, 0, self.width as i32, self.height as i32);
+            self.gl.color_mask(true, true, true, true);
+            self.gl.disable(glow::RASTERIZER_DISCARD);
+            self.gl.disable(glow::DITHER);
+            self.gl.enable(glow::SCISSOR_TEST);
+            let (x, y, width, height) = self.scissor_from_ui(clip).unwrap_or((0, 0, 0, 0));
+            self.gl.scissor(x, y, width, height);
+        }
+    }
+
+    /// Resets pixel-unpack inputs before any tightly packed CPU RGBA upload.
+    fn prepare_upload(gl: &glow::Context) {
+        // Selecting the unit precedes binding a texture. A stale unpack buffer would reinterpret
+        // a CPU slice as a buffer offset; stale strides/skips would change its addressed byte range.
+        unsafe {
+            gl.active_texture(glow::TEXTURE0);
+            gl.bind_buffer(glow::PIXEL_UNPACK_BUFFER, None);
+            gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 1);
+            for parameter in [
+                glow::UNPACK_ROW_LENGTH,
+                glow::UNPACK_IMAGE_HEIGHT,
+                glow::UNPACK_SKIP_PIXELS,
+                glow::UNPACK_SKIP_ROWS,
+                glow::UNPACK_SKIP_IMAGES,
+            ] {
+                gl.pixel_store_i32(parameter, 0);
+            }
+            #[cfg(target_arch = "wasm32")]
+            {
+                // Browser unpack conversion flags must not alter already-decoded RGBA bytes.
+                // Glow exposes pixelStorei but omits these WebGL-only enum constants.
+                const UNPACK_FLIP_Y_WEBGL: u32 = 0x9240;
+                const UNPACK_PREMULTIPLY_ALPHA_WEBGL: u32 = 0x9241;
+                const UNPACK_COLORSPACE_CONVERSION_WEBGL: u32 = 0x9243;
+                gl.pixel_store_i32(UNPACK_FLIP_Y_WEBGL, 0);
+                gl.pixel_store_i32(UNPACK_PREMULTIPLY_ALPHA_WEBGL, 0);
+                gl.pixel_store_i32(UNPACK_COLORSPACE_CONVERSION_WEBGL, glow::NONE as i32);
+            }
+        }
+    }
+
+    /// Draws all UI geometry through one complete GL ES 3 / WebGL 2 state definition.
+    ///
+    /// `indices` selects indexed quads/triangles or a non-indexed colored triangle stream. The
+    /// private VAO prevents application layouts from leaking into these identical Vertex records.
+    fn draw_vertices(&self, texture: Texture, vertices: &[Vertex], indices: Option<&[u16]>, clip: Recti) {
+        if vertices.is_empty() || indices.is_some_and(<[u16]>::is_empty) || clip.width <= 0 || clip.height <= 0 {
+            return;
+        }
+        self.bind_target(clip);
+        let gl = &self.gl;
+        unsafe {
+            gl.enable(glow::BLEND);
+            gl.blend_equation(glow::FUNC_ADD);
+            gl.blend_func(glow::SRC_ALPHA, glow::ONE_MINUS_SRC_ALPHA);
+            for capability in [
+                glow::CULL_FACE,
+                glow::DEPTH_TEST,
+                glow::STENCIL_TEST,
+                glow::RASTERIZER_DISCARD,
+                glow::SAMPLE_ALPHA_TO_COVERAGE,
+                glow::SAMPLE_COVERAGE,
+                glow::POLYGON_OFFSET_FILL,
+            ] {
+                gl.disable(capability);
+            }
+            gl.depth_mask(false);
+            gl.use_program(Some(self.program));
+            gl.active_texture(glow::TEXTURE0);
+            gl.bind_sampler(0, None);
+            gl.bind_texture(glow::TEXTURE_2D, Some(texture));
+            let sampler = gl.get_uniform_location(self.program, "uTexture").unwrap();
+            gl.uniform_1_i32(Some(&sampler), 0);
+            let transform = gl.get_uniform_location(self.program, "uTransform").unwrap();
+            let matrix = ortho4(0.0, self.width as f32, self.height as f32, 0.0, -1.0, 1.0);
+            let matrix = slice::from_raw_parts(matrix.col.as_ptr().cast::<f32>(), 16);
+            gl.uniform_matrix_4_f32_slice(Some(&transform), false, matrix);
+
+            gl.bind_vertex_array(Some(self.vao));
+            gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.vbo));
+            gl.bind_buffer(glow::ELEMENT_ARRAY_BUFFER, Some(self.ibo));
+            // Vertex is repr(C), has a validated 20-byte layout, and is read only for this call.
+            let bytes = slice::from_raw_parts(vertices.as_ptr().cast::<u8>(), std::mem::size_of_val(vertices));
+            gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, bytes, glow::DYNAMIC_DRAW);
+            for (name, count, kind, normalized, offset) in [
+                ("vertexPosition", 2, glow::FLOAT, false, 0),
+                ("vertexTexCoord", 2, glow::FLOAT, false, 8),
+                ("vertexColor", 4, glow::UNSIGNED_BYTE, true, 16),
+            ] {
+                let attribute = gl.get_attrib_location(self.program, name).unwrap();
+                gl.enable_vertex_attrib_array(attribute);
+                gl.vertex_attrib_divisor(attribute, 0);
+                gl.vertex_attrib_pointer_f32(attribute, count, kind, normalized, 20, offset);
+            }
+            if let Some(indices) = indices {
+                let bytes = slice::from_raw_parts(indices.as_ptr().cast::<u8>(), std::mem::size_of_val(indices));
+                gl.buffer_data_u8_slice(glow::ELEMENT_ARRAY_BUFFER, bytes, glow::DYNAMIC_DRAW);
+                gl.draw_elements(glow::TRIANGLES, indices.len() as i32, glow::UNSIGNED_SHORT, 0);
+            } else {
+                gl.draw_arrays(glow::TRIANGLES, 0, vertices.len() as i32);
+            }
+            // Leave no private VAO/program selected when application code next receives the context.
+            gl.bind_vertex_array(None);
+            gl.bind_buffer(glow::ARRAY_BUFFER, None);
+            gl.bind_texture(glow::TEXTURE_2D, None);
+            gl.use_program(None);
+            debug_assert_eq!(gl.get_error(), glow::NO_ERROR);
+        }
+    }
+
     /// Creates and fully uploads one atlas texture without changing the renderer's active atlas.
     ///
     /// Keeping allocation behind this helper gives atlas replacement a transaction boundary: the
@@ -163,11 +294,10 @@ where
                     .map_err(|error| AtlasUploadError::new(format!("failed to create replacement atlas texture: {error}")))?,
                 move |texture| texture_gl.delete_texture(texture),
             );
+            Self::prepare_upload(&self.gl);
             self.gl.bind_texture(glow::TEXTURE_2D, Some(*texture.get()));
             self.gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MIN_FILTER, glow::NEAREST as i32);
             self.gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, glow::NEAREST as i32);
-            self.gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 1);
-            self.gl.pixel_store_i32(glow::PACK_ALIGNMENT, 1);
             atlas.apply_pixels(|width, height, pixels| {
                 let bytes = slice::from_raw_parts(pixels.as_ptr().cast::<u8>(), pixels.len() * 4);
                 self.gl.tex_image_2d(
@@ -200,7 +330,7 @@ where
             return None;
         }
         let x = clip.x;
-        let y = (self.height as i32).saturating_sub(clip.y + clip.height);
+        let y = (self.height as i32).saturating_sub(clip.y.saturating_add(clip.height));
         Some((x, y, clip.width, clip.height))
     }
 
@@ -219,7 +349,7 @@ where
     ) -> Result<Self, String> {
         assert_eq!(core::mem::size_of::<Vertex>(), 20);
         unsafe {
-            // Each driver object stays guarded until all four persistent resources exist. Any
+            // Each driver object stays guarded until all persistent resources exist. Any
             // later GL/shader error therefore releases everything acquired earlier instead of
             // leaking a partially constructed renderer.
             let texture_gl = gl.clone();
@@ -228,14 +358,13 @@ where
                 move |texture| texture_gl.delete_texture(texture),
             );
             debug_assert!(gl.get_error() == 0);
+            Self::prepare_upload(&gl);
             gl.bind_texture(glow::TEXTURE_2D, Some(*atlas_texture.get()));
             debug_assert!(gl.get_error() == 0);
             gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MIN_FILTER, glow::NEAREST as i32);
             debug_assert!(gl.get_error() == 0);
             gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, glow::NEAREST as i32);
             debug_assert!(gl.get_error() == 0);
-            gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 1);
-            gl.pixel_store_i32(glow::PACK_ALIGNMENT, 1);
 
             atlas.apply_pixels(|width, height, pixels| {
                 let pixel_slice = slice::from_raw_parts(pixels.as_ptr().cast::<u8>(), pixels.len() * 4);
@@ -257,6 +386,11 @@ where
             }
             gl.bind_texture(glow::TEXTURE_2D, None);
 
+            let array_gl = gl.clone();
+            let vertex_array = ResourceGuard::new(
+                gl.create_vertex_array().map_err(|error| format!("failed to create UI vertex array: {error}"))?,
+                move |array| array_gl.delete_vertex_array(array),
+            );
             let vertex_gl = gl.clone();
             let vertex_buffer = ResourceGuard::new(
                 gl.create_buffer().map_err(|err| format!("failed to create vertex buffer: {err}"))?,
@@ -276,6 +410,7 @@ where
 
             // Construction is now infallible, so transfer all guarded handles together to the
             // renderer's deterministic `Drop` implementation.
+            let vao = vertex_array.into_inner();
             let tex_o = atlas_texture.into_inner();
             let vbo = vertex_buffer.into_inner();
             let ibo = index_buffer.into_inner();
@@ -286,6 +421,7 @@ where
                 verts: Vec::new(),
                 indices: Vec::new(),
 
+                vao,
                 vbo,
                 ibo,
                 tex_o,
@@ -335,89 +471,10 @@ where
 {
     /// Flushes the accumulated UI quad batch through the shared atlas pipeline.
     fn flush(&mut self) {
-        if self.verts.is_empty() || self.indices.is_empty() {
-            return;
-        }
-
-        let gl = &self.gl;
-        unsafe {
-            // Configure fixed-function state for alpha-blended 2D UI.
-            gl.viewport(0, 0, self.width as i32, self.height as i32);
-            gl.scissor(0, 0, self.width as i32, self.height as i32);
-            gl.enable(glow::BLEND);
-            debug_assert!(gl.get_error() == 0);
-            gl.blend_func(glow::SRC_ALPHA, glow::ONE_MINUS_SRC_ALPHA);
-            debug_assert!(gl.get_error() == 0);
-            gl.disable(glow::CULL_FACE);
-            debug_assert!(gl.get_error() == 0);
-            gl.disable(glow::DEPTH_TEST);
-            debug_assert!(gl.get_error() == 0);
-            gl.enable(glow::SCISSOR_TEST);
-            debug_assert!(gl.get_error() == 0);
-
-            // Bind the shared UI shader program.
-            gl.use_program(Some(self.program));
-            debug_assert!(gl.get_error() == 0);
-
-            // Bind the atlas texture on texture unit 0.
-            gl.bind_texture(glow::TEXTURE_2D, Some(self.tex_o));
-            gl.active_texture(glow::TEXTURE0);
-            let tex_uniform_id = gl.get_uniform_location(self.program, "uTexture").unwrap();
-            gl.uniform_1_i32(Some(&tex_uniform_id), 0);
-            debug_assert_eq!(gl.get_error(), 0);
-
-            // Upload the orthographic transform that maps UI pixel coordinates into clip space.
-            let viewport = gl.get_uniform_location(self.program, "uTransform").unwrap();
-            let tm = ortho4(0.0, self.width as f32, self.height as f32, 0.0, -1.0, 1.0);
-            let tm_ptr = tm.col.as_ptr() as *const _ as *const f32;
-            let slice = std::slice::from_raw_parts(tm_ptr, 16);
-            gl.uniform_matrix_4_f32_slice(Some(&viewport), false, slice);
-            debug_assert_eq!(gl.get_error(), 0);
-
-            // Resolve attribute locations and bind the shared vertex/index buffers.
-            let pos_attrib_id = gl.get_attrib_location(self.program, "vertexPosition").unwrap();
-            let tex_attrib_id = gl.get_attrib_location(self.program, "vertexTexCoord").unwrap();
-            let col_attrib_id = gl.get_attrib_location(self.program, "vertexColor").unwrap();
-            gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.vbo));
-            gl.bind_buffer(glow::ELEMENT_ARRAY_BUFFER, Some(self.ibo));
-            debug_assert!(gl.get_error() == 0);
-
-            // Stream the current CPU-side batch into the GL buffers.
-            let vertices_u8: &[u8] = core::slice::from_raw_parts(self.verts.as_ptr() as *const u8, self.verts.len() * core::mem::size_of::<Vertex>());
-            gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, vertices_u8, glow::DYNAMIC_DRAW);
-            debug_assert!(gl.get_error() == 0);
-
-            // Indices are streamed separately because the UI batch is stored as de-duplicated quads.
-            let indices_u8: &[u8] = core::slice::from_raw_parts(self.indices.as_ptr() as *const u8, self.indices.len() * core::mem::size_of::<u16>());
-            gl.buffer_data_u8_slice(glow::ELEMENT_ARRAY_BUFFER, indices_u8, glow::DYNAMIC_DRAW);
-            debug_assert!(gl.get_error() == 0);
-
-            // Vertex layout matches `Vertex { pos, uv, color }`.
-            gl.enable_vertex_attrib_array(pos_attrib_id);
-            gl.enable_vertex_attrib_array(tex_attrib_id);
-            gl.enable_vertex_attrib_array(col_attrib_id);
-            debug_assert!(gl.get_error() == 0);
-
-            gl.vertex_attrib_pointer_f32(pos_attrib_id, 2, glow::FLOAT, false, 20, 0);
-            gl.vertex_attrib_pointer_f32(tex_attrib_id, 2, glow::FLOAT, false, 20, 8);
-            gl.vertex_attrib_pointer_f32(col_attrib_id, 4, glow::UNSIGNED_BYTE, true, 20, 16);
-            debug_assert!(gl.get_error() == 0);
-
-            // One indexed draw submits the whole accumulated batch.
-            gl.draw_elements(glow::TRIANGLES, self.indices.len() as i32, glow::UNSIGNED_SHORT, 0);
-            debug_assert!(gl.get_error() == 0);
-
-            gl.disable_vertex_attrib_array(pos_attrib_id);
-            gl.disable_vertex_attrib_array(tex_attrib_id);
-            gl.disable_vertex_attrib_array(col_attrib_id);
-            debug_assert!(gl.get_error() == 0);
-            gl.use_program(None);
-            debug_assert!(gl.get_error() == 0);
-
-            // The batch was consumed; start clean next frame / next flush.
-            self.verts.clear();
-            self.indices.clear();
-        }
+        // Indexed atlas, standalone texture, and colored draws share all consumed GL state.
+        self.draw_vertices(self.tex_o, &self.verts, Some(&self.indices), self.full_clip());
+        self.verts.clear();
+        self.indices.clear();
     }
 
     /// Appends one quad to the UI batch, flushing first if the `u16` index budget would overflow.
@@ -463,8 +520,7 @@ where
         self.height = height as u32;
         let gl = &self.gl;
         unsafe {
-            gl.viewport(0, 0, self.width as i32, self.height as i32);
-            gl.scissor(0, 0, self.width as i32, self.height as i32);
+            self.bind_target(self.full_clip());
             gl.clear_color(clr.r as f32 / 255.0, clr.g as f32 / 255.0, clr.b as f32 / 255.0, clr.a as f32 / 255.0);
             gl.clear(glow::COLOR_BUFFER_BIT);
             debug_assert!(gl.get_error() == 0);
@@ -497,9 +553,8 @@ where
                     .map_err(|err| TextureError::backend(format!("failed to create texture: {err}")))?,
                 move |texture| texture_gl.delete_texture(texture),
             );
+            Self::prepare_upload(gl);
             gl.bind_texture(glow::TEXTURE_2D, Some(*texture.get()));
-            gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 1);
-            gl.pixel_store_i32(glow::PACK_ALIGNMENT, 1);
             gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MIN_FILTER, glow::NEAREST as i32);
             gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, glow::NEAREST as i32);
             gl.tex_image_2d(
@@ -543,62 +598,10 @@ where
 
     /// Draws one pre-clipped textured quad using a backend-owned texture outside the atlas batch.
     fn draw_texture(&mut self, id: TextureId, vertices: [Vertex; 4]) {
-        let tex = match self.textures.get(&id) {
-            Some(tex) => *tex,
-            None => return,
-        };
-        // External textures cannot be folded into the atlas batch because they change the bound
-        // GL texture object. The Context executor has already clipped the vertices, so the one-off draw uses
-        // the full framebuffer scissor and relies on the submitted quad geometry for clipping.
-        let gl = &self.gl;
-        unsafe {
-            gl.viewport(0, 0, self.width as i32, self.height as i32);
-            gl.scissor(0, 0, self.width as i32, self.height as i32);
-            gl.enable(glow::BLEND);
-            gl.blend_func(glow::SRC_ALPHA, glow::ONE_MINUS_SRC_ALPHA);
-            gl.disable(glow::CULL_FACE);
-            gl.disable(glow::DEPTH_TEST);
-            gl.enable(glow::SCISSOR_TEST);
-
-            gl.use_program(Some(self.program));
-            gl.bind_texture(glow::TEXTURE_2D, Some(tex));
-            gl.active_texture(glow::TEXTURE0);
-            let tex_uniform_id = gl.get_uniform_location(self.program, "uTexture").unwrap();
-            gl.uniform_1_i32(Some(&tex_uniform_id), 0);
-
-            let viewport = gl.get_uniform_location(self.program, "uTransform").unwrap();
-            let tm = ortho4(0.0, self.width as f32, self.height as f32, 0.0, -1.0, 1.0);
-            let tm_ptr = tm.col.as_ptr() as *const _ as *const f32;
-            let slice = std::slice::from_raw_parts(tm_ptr, 16);
-            gl.uniform_matrix_4_f32_slice(Some(&viewport), false, slice);
-
-            let pos_attrib_id = gl.get_attrib_location(self.program, "vertexPosition").unwrap();
-            let tex_attrib_id = gl.get_attrib_location(self.program, "vertexTexCoord").unwrap();
-            let col_attrib_id = gl.get_attrib_location(self.program, "vertexColor").unwrap();
-            gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.vbo));
-            gl.bind_buffer(glow::ELEMENT_ARRAY_BUFFER, Some(self.ibo));
-
-            let vertices_u8: &[u8] = core::slice::from_raw_parts(vertices.as_ptr() as *const u8, vertices.len() * core::mem::size_of::<Vertex>());
-            gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, vertices_u8, glow::DYNAMIC_DRAW);
-
-            // Expand the quad into two triangles in-place.
-            let indices: [u16; 6] = [0, 1, 2, 2, 3, 0];
-            let indices_u8: &[u8] = core::slice::from_raw_parts(indices.as_ptr() as *const u8, indices.len() * core::mem::size_of::<u16>());
-            gl.buffer_data_u8_slice(glow::ELEMENT_ARRAY_BUFFER, indices_u8, glow::DYNAMIC_DRAW);
-
-            gl.enable_vertex_attrib_array(pos_attrib_id);
-            gl.enable_vertex_attrib_array(tex_attrib_id);
-            gl.enable_vertex_attrib_array(col_attrib_id);
-            gl.vertex_attrib_pointer_f32(pos_attrib_id, 2, glow::FLOAT, false, 20, 0);
-            gl.vertex_attrib_pointer_f32(tex_attrib_id, 2, glow::FLOAT, false, 20, 8);
-            gl.vertex_attrib_pointer_f32(col_attrib_id, 4, glow::UNSIGNED_BYTE, true, 20, 16);
-
-            gl.draw_elements(glow::TRIANGLES, 6, glow::UNSIGNED_SHORT, 0);
-
-            gl.disable_vertex_attrib_array(pos_attrib_id);
-            gl.disable_vertex_attrib_array(tex_attrib_id);
-            gl.disable_vertex_attrib_array(col_attrib_id);
-            gl.use_program(None);
+        // Changing texture is a painter-order boundary even for direct frame callers.
+        self.flush();
+        if let Some(&texture) = self.textures.get(&id) {
+            self.draw_vertices(texture, &vertices, Some(&[0, 1, 2, 2, 3, 0]), self.full_clip());
         }
     }
 }
@@ -613,6 +616,7 @@ where
             for (_, texture) in self.textures.drain() {
                 self.gl.delete_texture(texture);
             }
+            self.gl.delete_vertex_array(self.vao);
             self.gl.delete_program(self.program);
             self.gl.delete_buffer(self.ibo);
             self.gl.delete_buffer(self.vbo);
@@ -745,64 +749,9 @@ where
 
     /// Draws arbitrary colored triangles by sampling a white atlas texel and modulating by vertex color.
     fn draw_colored_vertices(&mut self, clip: Recti, vertices: &[Vertex]) {
-        if vertices.is_empty() {
-            return;
-        }
         self.flush();
-        let gl = &self.gl;
-        unsafe {
-            gl.viewport(0, 0, self.width as i32, self.height as i32);
-            if let Some((sx, sy, sw, sh)) = self.scissor_from_ui(clip) {
-                // Custom colored draws still respect the logical UI clip rectangle.
-                gl.scissor(sx, sy, sw, sh);
-            }
-            gl.enable(glow::BLEND);
-            gl.blend_func(glow::SRC_ALPHA, glow::ONE_MINUS_SRC_ALPHA);
-            gl.disable(glow::CULL_FACE);
-            gl.disable(glow::DEPTH_TEST);
-            gl.enable(glow::SCISSOR_TEST);
-
-            gl.use_program(Some(self.program));
-            // Sample the atlas so the shader path stays identical to normal UI; UVs point at white.
-            gl.bind_texture(glow::TEXTURE_2D, Some(self.tex_o));
-            gl.active_texture(glow::TEXTURE0);
-            if let Some(tex_uniform_id) = gl.get_uniform_location(self.program, "uTexture") {
-                gl.uniform_1_i32(Some(&tex_uniform_id), 0);
-            }
-
-            if let Some(viewport) = gl.get_uniform_location(self.program, "uTransform") {
-                let tm = ortho4(0.0, self.width as f32, self.height as f32, 0.0, -1.0, 1.0);
-                let tm_ptr = tm.col.as_ptr() as *const _ as *const f32;
-                let slice = std::slice::from_raw_parts(tm_ptr, 16);
-                gl.uniform_matrix_4_f32_slice(Some(&viewport), false, slice);
-            }
-
-            let pos_attrib_id = gl.get_attrib_location(self.program, "vertexPosition").unwrap();
-            let tex_attrib_id = gl.get_attrib_location(self.program, "vertexTexCoord").unwrap();
-            let col_attrib_id = gl.get_attrib_location(self.program, "vertexColor").unwrap();
-            gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.vbo));
-            // Colored draws are emitted with non-indexed triangles, so only ARRAY_BUFFER is needed.
-            gl.bind_buffer(glow::ELEMENT_ARRAY_BUFFER, None);
-
-            let vertices_u8: &[u8] = core::slice::from_raw_parts(vertices.as_ptr() as *const u8, std::mem::size_of_val(vertices));
-            gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, vertices_u8, glow::DYNAMIC_DRAW);
-
-            gl.enable_vertex_attrib_array(pos_attrib_id);
-            gl.enable_vertex_attrib_array(tex_attrib_id);
-            gl.enable_vertex_attrib_array(col_attrib_id);
-            gl.vertex_attrib_pointer_f32(pos_attrib_id, 2, glow::FLOAT, false, 20, 0);
-            gl.vertex_attrib_pointer_f32(tex_attrib_id, 2, glow::FLOAT, false, 20, 8);
-            gl.vertex_attrib_pointer_f32(col_attrib_id, 4, glow::UNSIGNED_BYTE, true, 20, 16);
-
-            gl.draw_arrays(glow::TRIANGLES, 0, vertices.len() as i32);
-
-            gl.disable_vertex_attrib_array(pos_attrib_id);
-            gl.disable_vertex_attrib_array(tex_attrib_id);
-            gl.disable_vertex_attrib_array(col_attrib_id);
-            gl.use_program(None);
-            // Restore full-frame scissor so later UI draws do not inherit this clip.
-            gl.scissor(0, 0, self.width as i32, self.height as i32);
-        }
+        // These UVs sample the white atlas texel, using the identical shader and vertex layout.
+        self.draw_vertices(self.tex_o, vertices, None, clip);
     }
 }
 

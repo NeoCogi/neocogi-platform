@@ -11,3 +11,7 @@ repository.workspace = true
 glow.workspace = true
 microui-redux.workspace = true
 microui-redux-renderer-support.workspace = true
+
+# Native GPU regression tests can run with SDL's Mesa-compatible offscreen video driver.
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+sdl2.workspace = true
