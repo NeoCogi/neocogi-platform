@@ -380,6 +380,8 @@ where
     atlas: AtlasHandle,
     /// User textures whose descriptors are compatible with the current UI render resources.
     textures: HashMap<TextureId, VulkanTexture>,
+    /// Concrete application renderer dropped before the logical device that owns its resources.
+    application: Application,
     /// Native Vulkan state owned exclusively by the backend.
     context: VulkanContext,
     /// Last swapchain generation for which user texture descriptors were rebound.
@@ -388,8 +390,6 @@ where
     vertices: Vec<Vertex>,
     /// Painter-ordered UI and application operations retained until frame recording.
     commands: Vec<FrameCommand<Application::Command>>,
-    /// Concrete application renderer that prepares resources and records native commands.
-    application: Application,
     /// End of the UI vertex prefix already represented by a `DrawTo` command.
     current_batch_end: usize,
     /// Color cleared at the beginning of the shared graphics render pass.

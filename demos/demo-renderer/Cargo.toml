@@ -1,0 +1,25 @@
+[package]
+name = "microui-redux-demo-renderer"
+version = "0.0.0"
+publish = false
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+default = []
+glow = ["dep:glow", "dep:microui-redux-renderer-glow"]
+webgl = ["glow"]
+vulkan = ["dep:ash", "dep:microui-redux-renderer-vulkan"]
+wgpu = ["dep:microui-redux-renderer-wgpu", "dep:wgpu"]
+
+[dependencies]
+ash = { workspace = true, optional = true }
+glow = { workspace = true, optional = true }
+microui-redux.workspace = true
+microui-redux-renderer-glow = { workspace = true, optional = true }
+microui-redux-renderer-vulkan = { workspace = true, optional = true }
+microui-redux-renderer-wgpu = { workspace = true, optional = true }
+rs-math3d.workspace = true
+wgpu = { workspace = true, optional = true }

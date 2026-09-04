@@ -60,8 +60,11 @@ use microui_redux_renderer_common::{CustomRenderArea, MeshSubmission, resource_g
 /// textures, and fixed-function state. It cannot retain the context wrapper because the wrapper's
 /// lifetime is tied to the active microui backend frame.
 pub struct GlApplicationRenderContext<'a> {
-    /// Glow context owned by the concrete backend and valid for the active frame.
-    pub gl: &'a glow::Context,
+    /// Shared Glow context owned by the concrete backend and valid for the active frame.
+    ///
+    /// The shared owner lets lazily created application resources retain the context needed for
+    /// deterministic native-handle destruction without transferring backend ownership.
+    pub gl: &'a Arc<glow::Context>,
     /// Complete drawable size used to translate microui's top-left coordinate space when needed.
     pub framebuffer_size: (u32, u32),
     /// Authoritative widget allocation and final clip supplied by microui's display-list executor.
