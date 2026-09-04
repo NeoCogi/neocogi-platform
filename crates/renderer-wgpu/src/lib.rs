@@ -233,6 +233,12 @@ where
     clear_color: Color,
     /// Concrete application GPU renderer that owns all non-UI pipelines and resources.
     application: Application,
+    /// Shared SDL owner of the native window and video subsystem used by `surface`.
+    ///
+    /// Keep this last: Rust drops fields in declaration order, so every GPU surface/resource is
+    /// released before the final native-window owner can disappear. SDL's clone shares its
+    /// existing window context; it does not allocate a second native window.
+    _window: Window,
 }
 
 impl<Application> WgpuRenderer<Application>
@@ -564,8 +570,11 @@ where
     }
 
     /// Creates the WGPU renderer with one concrete application-rendering extension.
+    ///
+    /// Retains an SDL window clone, so dropping the caller's window before the renderer is safe.
     pub fn new_with_application(window: &Window, atlas: AtlasHandle, width: u32, height: u32, application: Application) -> Result<Self, String> {
-        // SDL owns the native window/display handles; wgpu only borrows them to create the surface.
+        // Declare the native owner before GPU locals so failure unwinding also drops surfaces first.
+        let window = window.clone();
         let instance = wgpu::Instance::default();
 
         let raw_window_handle = window
@@ -577,7 +586,8 @@ where
             .map_err(|err| format!("failed to get raw display handle: {err}"))?
             .as_raw();
 
-        // We intentionally build from raw handles because the SDL window owns the native handles.
+        // SAFETY: the local SDL owner keeps both raw handles alive on all construction paths. On
+        // success it moves into the renderer's last field, outliving the stored 'static surface.
         let surface = unsafe {
             instance
                 .create_surface_unsafe(wgpu::SurfaceTargetUnsafe::RawHandle {
@@ -677,6 +687,7 @@ where
             height,
             clear_color: color(0, 0, 0, 255),
             application,
+            _window: window,
         };
         Ok(renderer)
     }

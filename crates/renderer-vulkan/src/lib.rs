@@ -1803,11 +1803,19 @@ pub(crate) struct VulkanContext {
     depth_images: Vec<ImageResource>,
     swapchain_generation: u64,
     device_lost: bool,
+    /// Shared SDL native-window/video owner, retained until after Vulkan surface destruction.
+    ///
+    /// `Drop` destroys GPU objects before Rust drops fields. This last field also preserves that
+    /// order if additional owning fields are introduced; an SDL clone shares the existing window.
+    _window: Window,
 }
 
 impl VulkanContext {
     /// Creates the Vulkan instance/device state and the first set of swapchain-dependent resources.
     fn new(window: &Window, width: u32, height: u32) -> Result<Self> {
+        // Retain before creating GPU locals: constructor failures unwind those before this owner,
+        // and success transfers it into the context until after explicit surface destruction.
+        let window = window.clone();
         // Context creation front-loads the permanent objects: instance/device/queues, the shared
         // command pool, and the initial swapchain-dependent resources.
         let entry = Entry::linked();
@@ -1894,6 +1902,7 @@ impl VulkanContext {
             logical_height: height,
             swapchain_generation: 0,
             device_lost: false,
+            _window: window,
         };
 
         ctx.command_pool = ctx.create_command_pool()?;
