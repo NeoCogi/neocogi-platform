@@ -11,7 +11,7 @@ use microui_redux::{
     render::{TextureError, Vertex},
 };
 use microui_redux_renderer_common::{CustomRenderArea, MeshSubmission};
-use microui_redux_renderer_glow::{GLRenderer, GlFrame};
+use microui_redux_renderer_glow::{GLRenderer, GlApplicationRenderer, GlFrame, NoGlApplicationRenderer};
 
 const VERTEX_SHADER: &str = "#version 300 es
 uniform highp mat4 uTransform;
@@ -41,24 +41,53 @@ void main()
 }";
 
 /// Renderer specialized for a browser WebGL 2 context attached to an HTML canvas.
-pub struct WebGlCanvasRenderer {
-    inner: GLRenderer,
+pub struct WebGlCanvasRenderer<Application = NoGlApplicationRenderer>
+where
+    Application: GlApplicationRenderer,
+{
+    /// Shared GL implementation parameterized by the application's concrete renderer type.
+    inner: GLRenderer<Application>,
 }
 
-impl WebGlCanvasRenderer {
+impl WebGlCanvasRenderer<NoGlApplicationRenderer> {
     /// Creates the renderer from the canvas's current WebGL 2 context.
     pub fn new(gl: Arc<glow::Context>, atlas: AtlasHandle, width: u32, height: u32) -> Result<Self, String> {
         GLRenderer::new_with_shaders(gl, atlas, width, height, VERTEX_SHADER, FRAGMENT_SHADER).map(|inner| Self { inner })
     }
 }
 
-/// Active WebGL canvas frame.
-#[must_use = "the WebGL canvas frame is finalized when dropped"]
-pub struct WebGlCanvasFrame<'a> {
-    inner: GlFrame<'a>,
+impl<Application> WebGlCanvasRenderer<Application>
+where
+    Application: GlApplicationRenderer,
+{
+    /// Creates a WebGL renderer with one strongly typed application GPU extension.
+    pub fn new_with_application(gl: Arc<glow::Context>, atlas: AtlasHandle, width: u32, height: u32, application: Application) -> Result<Self, String> {
+        // The wrapper selects only the UI shader dialect. Application shaders remain entirely
+        // owned by `Application` and are compiled through its native Glow context.
+        GLRenderer::new_with_application_and_shaders(gl, atlas, width, height, application, VERTEX_SHADER, FRAGMENT_SHADER).map(|inner| Self { inner })
+    }
 }
 
-impl WebGlCanvasFrame<'_> {
+/// Active WebGL canvas frame.
+#[must_use = "the WebGL canvas frame is finalized when dropped"]
+pub struct WebGlCanvasFrame<'a, Application = NoGlApplicationRenderer>
+where
+    Application: GlApplicationRenderer,
+{
+    /// Active shared GL frame carrying the same concrete application renderer type.
+    inner: GlFrame<'a, Application>,
+}
+
+impl<Application> WebGlCanvasFrame<'_, Application>
+where
+    Application: GlApplicationRenderer,
+{
+    /// Executes one application-owned WebGL command at the current display-list position.
+    pub fn enqueue_application(&mut self, args: microui_redux::render::CustomRenderArgs, command: Application::Command) {
+        // Delegation preserves the Glow implementation's mandatory UI flush and error reporting.
+        self.inner.enqueue_application(args, command);
+    }
+
     /// Queues colored custom geometry inside the supplied UI area.
     pub fn enqueue_colored_vertices(&mut self, area: CustomRenderArea, vertices: Vec<Vertex>) {
         self.inner.enqueue_colored_vertices(area, vertices);
@@ -70,7 +99,10 @@ impl WebGlCanvasFrame<'_> {
     }
 }
 
-impl RendererFrame for WebGlCanvasFrame<'_> {
+impl<Application> RendererFrame for WebGlCanvasFrame<'_, Application>
+where
+    Application: GlApplicationRenderer,
+{
     fn push_quad(&mut self, vertices: [Vertex; 4]) {
         self.inner.push_quad(vertices);
     }
@@ -88,8 +120,14 @@ impl RendererFrame for WebGlCanvasFrame<'_> {
     }
 }
 
-impl RendererBackend for WebGlCanvasRenderer {
-    type Frame<'a> = WebGlCanvasFrame<'a>;
+impl<Application> RendererBackend for WebGlCanvasRenderer<Application>
+where
+    Application: GlApplicationRenderer,
+{
+    type Frame<'a>
+        = WebGlCanvasFrame<'a, Application>
+    where
+        Application: 'a;
 
     fn get_atlas(&self) -> AtlasHandle {
         self.inner.get_atlas()

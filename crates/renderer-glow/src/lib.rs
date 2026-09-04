@@ -34,11 +34,11 @@
 //! mesh rendering for the demo application.
 
 use core::slice;
-use std::{collections::HashMap, io, sync::Arc};
+use std::{collections::HashMap, convert::Infallible, io, sync::Arc};
 
 use microui_redux::{
     prelude::*,
-    render::{TextureError, Vertex},
+    render::{CustomRenderArgs, TextureError, Vertex},
 };
 use glow::*;
 use rs_math3d::{Vec3f, Vec4f};
@@ -53,9 +53,45 @@ use microui_redux_renderer_common::{CustomRenderArea, MeshSubmission, resource_g
 //   graph.
 // - Each immutable atlas texture is uploaded transactionally at construction or theme selection.
 
-pub(crate) trait GLCustomRenderer {
-    /// Records backend-specific GL commands inside the supplied logical/clip area.
-    fn record(&mut self, gl: &glow::Context, framebuffer_size: (u32, u32), area: &CustomRenderArea);
+/// Native frame capabilities lent to one application-renderer command.
+///
+/// This value deliberately exposes the graphics API rather than inventing a lowest-common-
+/// denominator drawing vocabulary. The application renderer may bind its own programs, buffers,
+/// textures, and fixed-function state. It cannot retain the context wrapper because the wrapper's
+/// lifetime is tied to the active microui backend frame.
+pub struct GlApplicationRenderContext<'a> {
+    /// Glow context owned by the concrete backend and valid for the active frame.
+    pub gl: &'a glow::Context,
+    /// Complete drawable size used to translate microui's top-left coordinate space when needed.
+    pub framebuffer_size: (u32, u32),
+    /// Authoritative widget allocation and final clip supplied by microui's display-list executor.
+    pub args: CustomRenderArgs,
+}
+
+/// Strongly typed application-rendering extension hosted by the Glow backend.
+///
+/// The associated command keeps every application payload concrete. A demo may use an enum when it
+/// has several operations, while an application with one operation may use a single struct. The
+/// backend never inspects that value and therefore never depends on application mesh, material, or
+/// scene types.
+pub trait GlApplicationRenderer: 'static {
+    /// Concrete command inserted into the active frame by application custom-render callbacks.
+    type Command: 'static;
+
+    /// Executes one command after the preceding UI batch has been flushed.
+    ///
+    /// Implementations may change arbitrary GL state. Every later microui batch establishes all
+    /// state it consumes, so application code does not need to restore the UI program or buffers.
+    fn render(&mut self, context: GlApplicationRenderContext<'_>, command: Self::Command) -> Result<(), String>;
+}
+
+impl GlApplicationRenderer for () {
+    type Command = Infallible;
+
+    /// Proves exhaustively that a UI-only renderer can never receive an application command.
+    fn render(&mut self, _context: GlApplicationRenderContext<'_>, command: Self::Command) -> Result<(), String> {
+        match command {}
+    }
 }
 
 const VERTEX_SHADER: &str = "#version 100
@@ -83,7 +119,10 @@ void main()
     gl_FragColor = col * vVertexColor;
 }";
 
-pub struct GLRenderer {
+pub struct GLRenderer<Application = ()>
+where
+    Application: GlApplicationRenderer,
+{
     // `GLRenderer` is deliberately simple: it keeps one shader program plus shared VBO/IBO state
     // for ordinary UI draws, and falls back to explicit immediate draw calls for custom work that
     // cannot be folded into the batch easily.
@@ -102,21 +141,14 @@ pub struct GLRenderer {
 
     atlas: AtlasHandle,
     textures: HashMap<TextureId, Texture>,
+    /// Application-owned native renderer invoked only for its concrete command type.
+    application: Application,
 }
 
-trait GlFrameOps {
-    fn begin(&mut self, width: i32, height: i32, clr: Color);
-    fn push_quad_vertices(&mut self, v0: &Vertex, v1: &Vertex, v2: &Vertex, v3: &Vertex);
-    fn push_triangle_vertices(&mut self, v0: &Vertex, v1: &Vertex, v2: &Vertex);
-    fn flush(&mut self);
-    fn end(&mut self);
-    /// Uploads pixels using the immutable dimensions carried by the renderer-issued ID.
-    fn create_texture(&mut self, id: TextureId, pixels: &[u8]) -> Result<(), TextureError>;
-    fn destroy_texture(&mut self, id: TextureId);
-    fn draw_texture(&mut self, id: TextureId, vertices: [Vertex; 4]);
-}
-
-impl GLRenderer {
+impl<Application> GLRenderer<Application>
+where
+    Application: GlApplicationRenderer,
+{
     /// Creates and fully uploads one atlas texture without changing the renderer's active atlas.
     ///
     /// Keeping allocation behind this helper gives atlas replacement a transaction boundary: the
@@ -183,19 +215,16 @@ impl GLRenderer {
         Some((x, y, clip.width, clip.height))
     }
 
-    pub fn new(gl: Arc<glow::Context>, atlas: AtlasHandle, width: u32, height: u32) -> Result<Self, String> {
-        Self::new_with_shaders(gl, atlas, width, height, VERTEX_SHADER, FRAGMENT_SHADER)
-    }
-
-    /// Creates a renderer using a caller-selected GLSL dialect.
+    /// Creates a renderer with one concrete application renderer and caller-selected UI shaders.
     ///
-    /// The WebGL/Canvas specialization uses this entry point with GLSL ES 3.00 shaders while
-    /// retaining the same batching and resource lifecycle as the native Glow renderer.
-    pub fn new_with_shaders(
+    /// Shader selection remains a construction detail of the UI backend; the application renderer
+    /// owns and compiles its own programs independently through the native context it receives.
+    pub fn new_with_application_and_shaders(
         gl: Arc<glow::Context>,
         atlas: AtlasHandle,
         width: u32,
         height: u32,
+        application: Application,
         vertex_shader: &str,
         fragment_shader: &str,
     ) -> Result<Self, String> {
@@ -277,12 +306,44 @@ impl GLRenderer {
                 height,
                 atlas,
                 textures: HashMap::new(),
+                application,
             })
         }
     }
+
+    /// Creates a native Glow renderer with one concrete application-rendering extension.
+    pub fn new_with_application(gl: Arc<glow::Context>, atlas: AtlasHandle, width: u32, height: u32, application: Application) -> Result<Self, String> {
+        // Native examples use the backend's standard GLSL dialect; only the application object is
+        // supplied by the caller.
+        Self::new_with_application_and_shaders(gl, atlas, width, height, application, VERTEX_SHADER, FRAGMENT_SHADER)
+    }
 }
 
-impl GlFrameOps for GLRenderer {
+impl GLRenderer<()> {
+    /// Creates a UI-only native Glow renderer.
+    pub fn new(gl: Arc<glow::Context>, atlas: AtlasHandle, width: u32, height: u32) -> Result<Self, String> {
+        Self::new_with_application(gl, atlas, width, height, ())
+    }
+
+    /// Creates a UI-only renderer using a caller-selected GLSL dialect.
+    ///
+    /// The WebGL canvas wrapper uses this constructor for its ES 3.00 UI shaders.
+    pub fn new_with_shaders(
+        gl: Arc<glow::Context>,
+        atlas: AtlasHandle,
+        width: u32,
+        height: u32,
+        vertex_shader: &str,
+        fragment_shader: &str,
+    ) -> Result<Self, String> {
+        Self::new_with_application_and_shaders(gl, atlas, width, height, (), vertex_shader, fragment_shader)
+    }
+}
+
+impl<Application> GLRenderer<Application>
+where
+    Application: GlApplicationRenderer,
+{
     /// Flushes the accumulated UI quad batch through the shared atlas pipeline.
     fn flush(&mut self) {
         if self.verts.is_empty() || self.indices.is_empty() {
@@ -553,7 +614,10 @@ impl GlFrameOps for GLRenderer {
     }
 }
 
-impl Drop for GLRenderer {
+impl<Application> Drop for GLRenderer<Application>
+where
+    Application: GlApplicationRenderer,
+{
     /// Releases every persistent GL object, including user textures that remain live at shutdown.
     fn drop(&mut self) {
         unsafe {
@@ -569,11 +633,35 @@ impl Drop for GLRenderer {
 }
 
 #[must_use = "the OpenGL frame is finalized when dropped"]
-pub struct GlFrame<'a> {
-    backend: &'a mut GLRenderer,
+pub struct GlFrame<'a, Application = ()>
+where
+    Application: GlApplicationRenderer,
+{
+    /// Exclusive renderer borrow that prevents a second frame from being acquired concurrently.
+    backend: &'a mut GLRenderer<Application>,
 }
 
-impl GlFrame<'_> {
+impl<Application> GlFrame<'_, Application>
+where
+    Application: GlApplicationRenderer,
+{
+    /// Flushes preceding UI work and executes one typed application GPU command immediately.
+    pub fn enqueue_application(&mut self, args: CustomRenderArgs, command: Application::Command) {
+        // GL records directly into the current context. Closing the UI batch here preserves the
+        // display-list order established by Context before application state changes GL bindings.
+        self.backend.flush();
+        let context = GlApplicationRenderContext {
+            gl: &self.backend.gl,
+            framebuffer_size: (self.backend.width, self.backend.height),
+            args,
+        };
+        if let Err(error) = self.backend.application.render(context, command) {
+            // RendererFrame finalization cannot return an error after acquisition, so retain the
+            // existing backend policy of reporting command-local failures and completing the frame.
+            eprintln!("[microui-redux][glow] application render command failed: {error}");
+        }
+    }
+
     pub fn enqueue_colored_vertices(&mut self, area: CustomRenderArea, vertices: Vec<Vertex>) {
         self.backend.enqueue_colored_vertices(area, vertices);
     }
@@ -583,28 +671,34 @@ impl GlFrame<'_> {
     }
 }
 
-impl RendererFrame for GlFrame<'_> {
+impl<Application> RendererFrame for GlFrame<'_, Application>
+where
+    Application: GlApplicationRenderer,
+{
     fn push_quad(&mut self, vertices: [Vertex; 4]) {
-        GlFrameOps::push_quad_vertices(self.backend, &vertices[0], &vertices[1], &vertices[2], &vertices[3]);
+        self.backend.push_quad_vertices(&vertices[0], &vertices[1], &vertices[2], &vertices[3]);
     }
 
     fn push_triangle(&mut self, vertices: [Vertex; 3]) {
-        GlFrameOps::push_triangle_vertices(self.backend, &vertices[0], &vertices[1], &vertices[2]);
+        self.backend.push_triangle_vertices(&vertices[0], &vertices[1], &vertices[2]);
     }
 
     fn flush(&mut self) {
-        GlFrameOps::flush(self.backend);
+        self.backend.flush();
     }
 
     fn draw_texture(&mut self, id: TextureId, vertices: [Vertex; 4]) {
-        GlFrameOps::draw_texture(self.backend, id, vertices);
+        self.backend.draw_texture(id, vertices);
     }
 }
 
-impl Drop for GlFrame<'_> {
+impl<Application> Drop for GlFrame<'_, Application>
+where
+    Application: GlApplicationRenderer,
+{
     fn drop(&mut self) {
         if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            GlFrameOps::end(self.backend);
+            self.backend.end();
         }))
         .is_err()
         {
@@ -613,8 +707,14 @@ impl Drop for GlFrame<'_> {
     }
 }
 
-impl RendererBackend for GLRenderer {
-    type Frame<'a> = GlFrame<'a>;
+impl<Application> RendererBackend for GLRenderer<Application>
+where
+    Application: GlApplicationRenderer,
+{
+    type Frame<'a>
+        = GlFrame<'a, Application>
+    where
+        Application: 'a;
 
     fn get_atlas(&self) -> AtlasHandle {
         self.atlas.clone()
@@ -634,28 +734,24 @@ impl RendererBackend for GLRenderer {
 
     fn frame(&mut self, info: FrameInfo) -> Result<Self::Frame<'_>, FrameError> {
         let dimensions = info.dimensions();
-        GlFrameOps::begin(self, dimensions.width, dimensions.height, info.clear());
+        self.begin(dimensions.width, dimensions.height, info.clear());
         Ok(GlFrame { backend: self })
     }
 
     fn create_texture(&mut self, id: TextureId, pixels: &[u8]) -> Result<(), TextureError> {
-        // Keep the public backend boundary typed; the frame-op layer has already translated each
-        // allocation or driver failure into the appropriate backend texture error.
-        GlFrameOps::create_texture(self, id, pixels)
+        // The inherent upload helper translates driver failures into the public texture error.
+        self.create_texture(id, pixels)
     }
 
     fn destroy_texture(&mut self, id: TextureId) {
-        GlFrameOps::destroy_texture(self, id);
+        self.destroy_texture(id);
     }
 }
 
-impl GLRenderer {
-    /// Flushes the UI batch and hands control to a backend-specific custom GL recorder.
-    pub(crate) fn enqueue_custom_render<C: GLCustomRenderer + 'static>(&mut self, area: CustomRenderArea, mut cmd: C) {
-        self.flush();
-        cmd.record(&self.gl, (self.width, self.height), &area);
-    }
-
+impl<Application> GLRenderer<Application>
+where
+    Application: GlApplicationRenderer,
+{
     /// Draws arbitrary colored triangles while preserving the clip rectangle carried by `area`.
     pub fn enqueue_colored_vertices(&mut self, area: CustomRenderArea, vertices: Vec<Vertex>) {
         self.draw_colored_vertices(area.clip, vertices.as_slice());
