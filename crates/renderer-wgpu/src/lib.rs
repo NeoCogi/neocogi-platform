@@ -183,9 +183,11 @@ enum RenderCommand<ApplicationCommand> {
     },
 }
 
+/// Complete sampled-texture owner published only after upload and binding validation succeed.
 struct GpuTexture {
-    // The texture must be kept alive as long as the bind group references its view.
+    /// Keeps the texture alive as long as the bind group references its view.
     _texture: wgpu::Texture,
+    /// Uniform, sampler, and validated texture-view bindings used by UI drawing.
     bind_group: wgpu::BindGroup,
 }
 
@@ -289,6 +291,18 @@ where
         if width == 0 || height == 0 {
             return Err("texture dimensions must be non-zero".into());
         }
+        let limit = device.limits().max_texture_dimension_2d;
+        if width > limit || height > limit {
+            return Err(format!("texture {width}x{height} exceeds the device's 2D dimension limit {limit}"));
+        }
+
+        // Capture all native creation/upload failures before publishing a texture owner. The
+        // native backend completes these scopes synchronously; no browser event loop is blocked.
+        let scopes = [
+            device.push_error_scope(wgpu::ErrorFilter::OutOfMemory),
+            device.push_error_scope(wgpu::ErrorFilter::Internal),
+            device.push_error_scope(wgpu::ErrorFilter::Validation),
+        ];
 
         // All UI/user textures share the same simple RGBA8 + nearest sampling setup.
         let texture = device.create_texture(&wgpu::TextureDescriptor {
@@ -342,6 +356,17 @@ where
             ],
         });
 
+        // Pop every scope in reverse order even when one failed, observing each result before
+        // later operations begin rather than silently discarding diagnostics through guard Drop.
+        let mut failure = None;
+        for scope in scopes.into_iter().rev() {
+            if let Some(error) = pollster::block_on(scope.pop()) {
+                failure.get_or_insert(error);
+            }
+        }
+        if let Some(error) = failure {
+            return Err(format!("WGPU texture creation or upload failed: {error}"));
+        }
         Ok(GpuTexture { _texture: texture, bind_group })
     }
 
@@ -950,6 +975,10 @@ where
 
     /// Creates a backend-owned sampled texture and its bind group.
     fn create_texture(&mut self, id: TextureId, pixels: &[u8]) -> Result<(), TextureError> {
+        // Reserve ownership storage before allocating native resources or replacing a live entry.
+        self.textures
+            .try_reserve(1)
+            .map_err(|error| TextureError::backend(format!("failed to reserve texture ownership entry: {error}")))?;
         // The opaque capability is the sole dimension source validated by the Context executor.
         let dimensions = id.size();
         // Keep the WGPU helper's useful string diagnostics local, then translate them at the
@@ -1154,3 +1183,6 @@ fn fs_main(input: VsOut) -> @location(0) vec4<f32> {
     return texel * input.color;
 }
 "#;
+
+#[cfg(test)]
+mod tests;
