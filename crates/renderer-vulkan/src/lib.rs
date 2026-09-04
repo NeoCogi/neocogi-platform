@@ -71,12 +71,16 @@ pub type VulkanApplicationResult<T> = std::result::Result<T, String>;
 
 /// Vulkan capabilities available while an application renderer prepares one frame.
 ///
-/// Preparation happens after the current frame-in-flight fence has completed and before the
-/// graphics command buffer begins recording. The application may create or resize persistent GPU
-/// resources and update host-visible allocations without depending on private backend structures.
+/// Preparation happens after the current frame-in-flight fence has completed and after the shared
+/// graphics command buffer has begun recording, but before its render pass begins. The application
+/// may create or resize persistent resources, update host-visible allocations, and record native
+/// transfer, compute, barrier, or other legal pre-pass GPU commands without depending on private
+/// backend structures.
 pub struct VulkanApplicationPrepareContext<'a> {
     /// Logical device that owns application-created pipelines, buffers, images, and descriptors.
     pub device: &'a ash::Device,
+    /// Active primary graphics command buffer outside any render pass.
+    pub command_buffer: vk::CommandBuffer,
     /// Render pass used for ordered UI and application graphics commands in this frame.
     pub render_pass: vk::RenderPass,
     /// Swapchain color format required by compatible application pipelines and attachments.
@@ -572,7 +576,6 @@ where
             &self.vertices,
             self.width,
             self.height,
-            self.frame_index,
             &mut commands,
             &mut self.application,
         );
@@ -2392,7 +2395,6 @@ impl VulkanContext {
         vertices: &[Vertex],
         width: u32,
         height: u32,
-        _frame_index: u64,
         commands: &mut Vec<FrameCommand<Application::Command>>,
         application: &mut Application,
     ) -> Result<()>
@@ -2402,7 +2404,7 @@ impl VulkanContext {
         // Every exit after successful acquisition passes through the lifecycle commit below. Any
         // error permanently latches the context before the caller can attempt another frame with a
         // signaled acquire semaphore, an unpresented image, or an unsignaled unsubmitted fence.
-        let result = self.draw_acquired_frame(acquired, clear_value, vertices, width, height, _frame_index, commands, application);
+        let result = self.draw_acquired_frame(acquired, clear_value, vertices, width, height, commands, application);
 
         // Success proves graphics submission and presentation consumed the acquired resources.
         // Every error latches Fatal, including record, transfer, fence-reset, submit, present, and
@@ -2419,7 +2421,6 @@ impl VulkanContext {
         vertices: &[Vertex],
         width: u32,
         height: u32,
-        _frame_index: u64,
         commands: &mut Vec<FrameCommand<Application::Command>>,
         application: &mut Application,
     ) -> Result<()>
@@ -2441,47 +2442,11 @@ impl VulkanContext {
         self.reset_ui_offset(frame);
         self.preflight_frame_resources(vertices, commands.as_slice())?;
 
-        // Application resources are prepared only after this frame slot's fence has completed.
-        // The borrowed command list exposes the concrete payloads without transferring ownership
-        // or weakening their types before command-buffer recording.
-        let application_commands: Vec<&Application::Command> = commands
-            .iter()
-            .filter_map(|command| match command {
-                FrameCommand::Application { command, .. } => Some(command),
-                _ => None,
-            })
-            .collect();
-        let memory_properties = unsafe { self.instance.get_physical_device_memory_properties(self.physical_device) };
-        application.prepare(
-            VulkanApplicationPrepareContext {
-                device: &self.device,
-                render_pass: self.render_pass,
-                color_format: self.swapchain_format,
-                depth_format: self.depth_format,
-                extent: self.extent,
-                frame_index: frame,
-                frames_in_flight: self.max_frames_in_flight,
-                memory_properties,
-                swapchain_generation: self.swapchain_generation,
-            },
-            &application_commands,
-        )?;
-
         let mut swapchain_needs_recreate = suboptimal;
 
         // UI drawing and custom rendering share one graphics command buffer per acquired image.
         let command_buffer = self.command_buffers[image_index as usize];
-        self.record_command_buffer(
-            command_buffer,
-            image_index,
-            clear_value,
-            vertices,
-            width,
-            height,
-            _frame_index,
-            commands,
-            application,
-        )?;
+        self.record_command_buffer(command_buffer, image_index, clear_value, vertices, width, height, frame, commands, application)?;
         let transfer_semaphore = self.submit_transfer_commands()?;
 
         let mut wait_semaphores = vec![self.image_available_semaphores[frame]];
@@ -2601,9 +2566,9 @@ impl VulkanContext {
         vertices: &[Vertex],
         width: u32,
         height: u32,
-        _frame_index: u64,
+        frame_slot: usize,
         commands: &mut Vec<FrameCommand<Application::Command>>,
-        application: &Application,
+        application: &mut Application,
     ) -> Result<()>
     where
         Application: VulkanApplicationRenderer,
@@ -2617,6 +2582,34 @@ impl VulkanContext {
                 .begin_command_buffer(command_buffer, &begin_info)
                 .map_err(|err| format!("begin_command_buffer failed: {err:?}"))?;
         }
+
+        // Application resources are prepared after this slot's fence has completed and while the
+        // primary graphics command buffer is active outside a render pass. In addition to ordinary
+        // CPU allocation and host writes, the application may record native transfer, compute, and
+        // barrier commands that must execute before its ordered graphics operations.
+        let application_commands: Vec<&Application::Command> = commands
+            .iter()
+            .filter_map(|command| match command {
+                FrameCommand::Application { command, .. } => Some(command),
+                _ => None,
+            })
+            .collect();
+        let memory_properties = unsafe { self.instance.get_physical_device_memory_properties(self.physical_device) };
+        application.prepare(
+            VulkanApplicationPrepareContext {
+                device: &self.device,
+                command_buffer,
+                render_pass: self.render_pass,
+                color_format: self.swapchain_format,
+                depth_format: self.depth_format,
+                extent: self.extent,
+                frame_index: frame_slot,
+                frames_in_flight: self.max_frames_in_flight,
+                memory_properties,
+                swapchain_generation: self.swapchain_generation,
+            },
+            &application_commands,
+        )?;
 
         let depth_clear = vk::ClearValue {
             depth_stencil: vk::ClearDepthStencilValue { depth: 1.0, stencil: 0 },
