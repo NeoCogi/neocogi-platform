@@ -65,7 +65,16 @@ impl GlMeshResources {
     /// Allocates the application pipeline and empty native buffers transactionally.
     fn new(gl: Arc<glow::Context>) -> Result<Self, String> {
         let program = create_program(&gl, MESH_VERTEX_SHADER, MESH_FRAGMENT_SHADER).map_err(|error| error.to_string())?;
-        let vertex_array = unsafe { gl.create_vertex_array().map_err(|error| format!("create mesh vertex array failed: {error}"))? };
+        let vertex_array = match unsafe { gl.create_vertex_array() } {
+            Ok(array) => array,
+            Err(error) => {
+                // The program already exists, but no resource owner can be published after this failure.
+                unsafe {
+                    gl.delete_program(program);
+                }
+                return Err(format!("create mesh vertex array failed: {error}"));
+            }
+        };
         let vertex_buffer = match unsafe { gl.create_buffer() } {
             Ok(buffer) => buffer,
             Err(error) => {

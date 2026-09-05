@@ -15,6 +15,7 @@ vulkan = ["dep:ash", "dep:microui-redux-renderer-vulkan"]
 wgpu = ["dep:microui-redux-renderer-wgpu", "dep:wgpu"]
 
 [dependencies]
+microui-demo-contracts.workspace = true
 ash = { workspace = true, optional = true }
 glow = { workspace = true, optional = true }
 microui-ui.workspace = true

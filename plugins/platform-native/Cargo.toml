@@ -1,0 +1,31 @@
+[package]
+name = "microui-plugin-platform-native"
+version = "0.9.0-alpha.0"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+crate-type = ["rlib", "cdylib"]
+
+[features]
+default = ["glow"]
+glow = ["dep:glow", "dep:microui-redux-renderer-glow", "microui-redux-demo-renderer/glow"]
+vulkan = ["dep:microui-redux-renderer-vulkan", "microui-redux-demo-renderer/vulkan"]
+wgpu = ["dep:microui-redux-renderer-wgpu", "microui-redux-demo-renderer/wgpu"]
+dynamic-plugin = []
+
+[dependencies]
+microui-contracts.workspace = true
+microui-ui.workspace = true
+microui-redux-renderer-glow = { workspace = true, optional = true }
+microui-redux-renderer-vulkan = { workspace = true, optional = true }
+microui-redux-renderer-wgpu = { workspace = true, optional = true }
+microui-redux-renderer-support.workspace = true
+microui-redux-demo-renderer.workspace = true
+microui-demo-contracts.workspace = true
+rs-math3d.workspace = true
+microui-redux-demo-assets = { workspace = true, features = ["prebuilt-atlas"] }
+nc-com = { workspace = true, features = ["macros", "std"] }
+sdl2.workspace = true
+glow = { workspace = true, optional = true }

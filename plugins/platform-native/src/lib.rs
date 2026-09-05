@@ -1,0 +1,308 @@
+//! Native SDL platform assembly with one build-selected Glow, Vulkan or WGPU backend.
+//! Native windows, GPU resources and application mesh rendering remain in this binary.
+#![deny(missing_docs)]
+use microui_contracts::*;
+use microui_demo_contracts::*;
+use microui_redux_demo_renderer::{MeshBuffers, MeshSubmission};
+use microui_redux_renderer_support::com::{PreparedFrame, Resources};
+use microui_ui::TextureId;
+use nc_com::{ComInterface, ComPtr, ComRef, IUnknown, INcStringAbi, NcString, NcCopyFromBufferOffset, NcStatus, NC_E_INVALID_ARG, com_class};
+use sdl2::{
+    event::{Event, WindowEvent},
+    keyboard::Keycode,
+    mouse::MouseButton,
+};
+use std::{
+    cell::{Cell, RefCell},
+    collections::{BTreeMap, HashMap, VecDeque},
+    rc::{Rc, Weak},
+};
+mod gpu;
+mod resources;
+use resources::{SceneRecord, TextureRecord};
+
+/// Prepared resources are concrete native records, never erased objects or callbacks.
+type Prepared = PreparedFrame<Rc<TextureRecord>, MeshSubmission>;
+
+#[derive(Default)]
+#[com_class(class_id(PLATFORM_CLASS), name = "microui.Platform", version = "0.9.0-alpha.0",
+    constructor(args = none, default), interfaces(IPlatform, IRenderDiagnostics))]
+/// Native bootstrap; initialization is fallible and no native subsystem crosses the COM boundary.
+pub struct Platform {
+    /// One SDL event pump shared by this platform's windows.
+    host: RefCell<Option<Rc<NativeHost>>>,
+    /// Owned detail from the most recent failed native construction.
+    diagnostic: RefCell<String>,
+}
+
+/// Native host lifetime and per-window event queues, owned entirely within this binary.
+struct NativeHost {
+    /// Pending events are routed by SDL window identity rather than consumed by another window.
+    queues: RefCell<BTreeMap<u32, VecDeque<Event>>>,
+    /// SDL permits one event pump; shared interior access rejects reentrant polling.
+    pump: RefCell<sdl2::EventPump>,
+    /// Video subsystem remains alive until all windows have been destroyed.
+    video: sdl2::VideoSubsystem,
+    /// Root SDL guard is dropped after the pump and video subsystem.
+    _sdl: sdl2::Sdl,
+}
+
+impl NativeHost {
+    /// Initializes native services once for this platform instance.
+    fn new() -> Result<Rc<Self>, String> {
+        let sdl = sdl2::init()?;
+        let video = sdl.video()?;
+        let pump = sdl.event_pump()?;
+        Ok(Rc::new(Self {
+            queues: RefCell::default(),
+            pump: RefCell::new(pump),
+            video,
+            _sdl: sdl,
+        }))
+    }
+    /// Routes native events to their own windows; global quit is broadcast to every live window.
+    fn poll(&self, id: u32) -> Result<Option<Event>, NcStatus> {
+        let mut queues = self.queues.try_borrow_mut().map_err(|_| UI_E_BUSY)?;
+        for event in self.pump.try_borrow_mut().map_err(|_| UI_E_BUSY)?.poll_iter() {
+            if matches!(event, Event::Quit { .. }) {
+                for queue in queues.values_mut() {
+                    queue.push_back(event.clone());
+                }
+            } else if let Some(queue) = event.get_window_id().and_then(|window| queues.get_mut(&window)) {
+                queue.push_back(event);
+            }
+        }
+        Ok(queues.get_mut(&id).and_then(VecDeque::pop_front))
+    }
+}
+
+impl IPlatform for Platform {
+    /// Validates input and publishes one complete native object only after the selected backend exists.
+    fn create_window(&self, title: NcCopyFromBufferOffset<'_, u8>, size: Size) -> Result<ComPtr<IPlatformWindowAbi>, NcStatus> {
+        if title.offset() != 0 || size.width <= 0 || size.height <= 0 {
+            return Err(NC_E_INVALID_ARG);
+        }
+        let title = std::str::from_utf8(title.as_slice()).map_err(|_| NC_E_INVALID_ARG)?;
+        Ok(NativeWindow::from_value(self.window(title, size)?)
+            .query()
+            .expect("native window declares IPlatformWindow"))
+    }
+}
+impl Platform {
+    /// Constructs the concrete native owner used by COM activation and native lifetime acceptance tests.
+    fn window(&self, title: &str, size: Size) -> Result<NativeWindow, NcStatus> {
+        let mut owner = self.host.try_borrow_mut().map_err(|_| UI_E_BUSY)?;
+        if owner.is_none() {
+            *owner = Some(NativeHost::new().map_err(|error| {
+                *self.diagnostic.borrow_mut() = error;
+                UI_E_RENDER
+            })?);
+        }
+        let host = owner.as_ref().expect("host initialized").clone();
+        drop(owner);
+        let gpu = gpu::Gpu::new(&host.video, title, size, microui_redux_demo_assets::load_atlas()).map_err(|error| {
+            *self.diagnostic.borrow_mut() = error;
+            UI_E_RENDER
+        })?;
+        let window = gpu.window();
+        host.queues.borrow_mut().insert(window.id(), VecDeque::new());
+        let device = Rc::new(Device {
+            render: RefCell::new(Some(RenderState { gpu, prepared: Prepared::default() })),
+            textures: RefCell::default(),
+            scenes: RefCell::default(),
+            retired: RefCell::default(),
+            diagnostic: RefCell::default(),
+            window,
+            host,
+        });
+        Ok(NativeWindow { device })
+    }
+}
+impl IRenderDiagnostics for Platform {
+    /// Copies construction detail; callers may retain the resulting immutable text independently.
+    fn diagnostic(&self) -> Result<ComPtr<INcStringAbi>, NcStatus> {
+        Ok(NcString::from_utf8_str(&self.diagnostic.borrow()))
+    }
+}
+
+/// Native renderer and reusable preparation storage are detached together across all foreign stream calls.
+struct RenderState {
+    /// Owns the native backend, its application renderer, context and presentation surface.
+    gpu: gpu::Gpu,
+    /// Resource references are cleared before restoring this state, preventing a Device ownership cycle.
+    prepared: Prepared,
+}
+
+/// Shared native lifetime retained by the window, every image and every editable scene.
+struct Device {
+    /// None throughout preparation and submission; reentrant GPU operations receive UI_E_BUSY.
+    render: RefCell<Option<RenderState>>,
+    /// Canonical COM identity maps contain weak native records and never own their COM objects.
+    textures: RefCell<HashMap<usize, Weak<TextureRecord>>>,
+    /// Application scenes use the same authentication rule as images.
+    scenes: RefCell<HashMap<usize, Weak<SceneRecord>>>,
+    /// Final texture releases during a detached frame wait until native execution has ended.
+    retired: RefCell<Vec<TextureId>>,
+    /// Owned detail survives failed preparation, upload, submission or presentation.
+    diagnostic: RefCell<String>,
+    /// Polling can access a live SDL owner even while renderer state is detached.
+    window: sdl2::video::Window,
+    /// SDL subsystems outlive the backend and every native window clone.
+    host: Rc<NativeHost>,
+}
+
+/// Private ownership transaction, never a RefCell guard held while foreign code runs.
+struct RenderAccess<'a> {
+    /// Native owner remains alive until restoration and pending destruction finish.
+    device: &'a Device,
+    /// Owned state is taken exactly once and restored by Drop on every Result path.
+    state: Option<RenderState>,
+}
+impl Device {
+    /// Takes the complete native state; nested render/upload attempts cannot borrow its internals.
+    fn access(&self) -> Result<RenderAccess<'_>, NcStatus> {
+        let state = self.render.try_borrow_mut().map_err(|_| UI_E_BUSY)?.take().ok_or(UI_E_BUSY)?;
+        Ok(RenderAccess { device: self, state: Some(state) })
+    }
+    /// Preserves native backend failure text rather than erasing it into a status alone.
+    fn failure(&self, error: impl std::fmt::Display) -> NcStatus {
+        *self.diagnostic.borrow_mut() = error.to_string();
+        UI_E_RENDER
+    }
+    /// Deletes immediately when idle; a live frame's ownership transaction drains the same queue on Drop.
+    fn retire(&self, id: TextureId) {
+        self.retired.borrow_mut().push(id);
+        if let Ok(access) = self.access() {
+            drop(access);
+        }
+    }
+}
+impl RenderAccess<'_> {
+    /// Gives local Rust execution exclusive access without lending it through a COM object.
+    fn state(&mut self) -> &mut RenderState {
+        self.state.as_mut().expect("live render transaction")
+    }
+}
+impl Drop for RenderAccess<'_> {
+    /// Release snapshots before native texture destruction and restore even after failed preparation/finish.
+    fn drop(&mut self) {
+        let mut state = self.state.take().expect("render transaction restored once");
+        state.prepared.clear();
+        if let Err(error) = state.gpu.retire(&mut self.device.retired.borrow_mut()) {
+            self.device.failure(error);
+        }
+        *self.device.render.borrow_mut() = Some(state);
+    }
+}
+impl Drop for Device {
+    /// Removes event routing only when all resources have relinquished the native owner.
+    fn drop(&mut self) {
+        self.host.queues.borrow_mut().remove(&self.window.id());
+    }
+}
+
+#[com_class(interfaces(IPlatformWindow, IRenderer, ITextureFactory, IDemoScenes, IRenderDiagnostics))]
+/// One COM identity exposes OS polling, rendering and concrete resource factories.
+struct NativeWindow {
+    /// Resources retain this same native owner after the public window interface is released.
+    device: Rc<Device>,
+}
+
+impl NativeWindow {
+    /// Scales logical SDL pointer coordinates into the drawable-pixel UI coordinate space.
+    fn pointer(&self, x: i32, y: i32) -> (i32, i32) {
+        let (lw, lh) = self.device.window.size();
+        let Size { width: dw, height: dh } = gpu::pixel_size(&self.device.window);
+        (
+            (i64::from(x) * i64::from(dw) / i64::from(lw.max(1))).clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32,
+            (i64::from(y) * i64::from(dh) / i64::from(lh.max(1))).clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32,
+        )
+    }
+}
+
+impl IPlatformWindow for NativeWindow {
+    /// Reports actual drawable size, independent of logical window scaling.
+    fn size(&self) -> Result<Size, NcStatus> {
+        Ok(gpu::pixel_size(&self.device.window))
+    }
+    /// Converts relevant events without lending SDL or Rust enum storage across COM.
+    fn poll(&self) -> Result<PlatformEvent, NcStatus> {
+        while let Some(event) = self.device.host.poll(self.device.window.id())? {
+            let (kind, x, y) = match event {
+                Event::Quit { .. } | Event::Window { win_event: WindowEvent::Close, .. } => (PlatformEventKind::QUIT, 0, 0),
+                Event::Window {
+                    win_event: WindowEvent::SizeChanged(..), ..
+                } => {
+                    let size = self.size()?;
+                    (PlatformEventKind::RESIZE, size.width, size.height)
+                }
+                Event::MouseMotion { x, y, .. } => {
+                    let (x, y) = self.pointer(x, y);
+                    (PlatformEventKind::POINTER_MOVE, x, y)
+                }
+                Event::MouseButtonDown { mouse_btn: MouseButton::Left, x, y, .. } => {
+                    let (x, y) = self.pointer(x, y);
+                    (PlatformEventKind::POINTER_DOWN, x, y)
+                }
+                Event::MouseButtonUp { mouse_btn: MouseButton::Left, x, y, .. } => {
+                    let (x, y) = self.pointer(x, y);
+                    (PlatformEventKind::POINTER_UP, x, y)
+                }
+                Event::KeyDown {
+                    keycode: Some(Keycode::Return | Keycode::Space),
+                    repeat: false,
+                    ..
+                } => (PlatformEventKind::ACTIVATE, 0, 0),
+                Event::KeyDown {
+                    keycode: Some(Keycode::Tab),
+                    repeat: false,
+                    ..
+                } => (PlatformEventKind::TAB, 0, 0),
+                _ => continue,
+            };
+            return Ok(PlatformEvent { kind, x, y });
+        }
+        Ok(PlatformEvent {
+            kind: PlatformEventKind::NONE,
+            x: 0,
+            y: 0,
+        })
+    }
+}
+
+impl IRenderer for NativeWindow {
+    /// Prepares the complete frame without borrowing native state, then executes and explicitly finishes it.
+    fn render(&self, info: RenderInfo, stream: ComRef<'_, IRenderStreamAbi>) -> Result<(), NcStatus> {
+        if info.size != self.size()? {
+            return Err(NC_E_INVALID_ARG);
+        }
+        let mut access = self.device.access()?;
+        let state = access.state();
+        state.prepared.read(info, stream, self).inspect_err(|error| {
+            *self.device.diagnostic.borrow_mut() = format!("frame preparation failed: {error}");
+        })?;
+        state.gpu.render(info, &state.prepared).map_err(|error| self.device.failure(error))
+    }
+}
+impl IRenderDiagnostics for NativeWindow {
+    /// Retains a copy so subsequent native failures cannot mutate an earlier diagnostic.
+    fn diagnostic(&self) -> Result<ComPtr<INcStringAbi>, NcStatus> {
+        Ok(NcString::from_utf8_str(&self.device.diagnostic.borrow()))
+    }
+}
+
+/// Queries canonical identity before borrowing any native registry; foreign QueryInterface may reenter.
+fn identity<I: ComInterface>(interface: &ComPtr<I>) -> Result<usize, NcStatus> {
+    let identity: ComPtr<IUnknown> = interface.query()?;
+    Ok(identity.as_ptr() as usize)
+}
+
+nc_com::plugin! {
+    plugin_id(auto_guid = "microui.plugin.platform.native"), name = "microui.plugin.platform.native", version = "0.9.0-alpha.0", classes = [Platform],
+}
+// Only the native assembly owns the dynamic entrypoint; browser assembly uses static descriptors.
+#[cfg(feature = "dynamic-plugin")]
+nc_com::export_plugin!();
+
+#[cfg(test)]
+mod tests;

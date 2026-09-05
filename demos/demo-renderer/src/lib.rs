@@ -22,17 +22,8 @@ pub use self::vulkan::DemoRenderer;
 #[cfg(all(not(feature = "webgl"), not(feature = "glow"), not(feature = "vulkan"), feature = "wgpu"))]
 pub use self::wgpu::DemoRenderer;
 
-/// One vertex in the full demo's three-dimensional mesh format.
-#[repr(C)]
-#[derive(Clone, Copy, Default)]
-pub struct MeshVertex {
-    /// Object-space position consumed by the mesh vertex shader.
-    pub position: [f32; 3],
-    /// Object-space normal transformed for the demo's directional lighting.
-    pub normal: [f32; 3],
-    /// Texture coordinate mixed into the procedural demo material.
-    pub uv: [f32; 2],
-}
+/// Canonical application vertex shared with the typed COM mesh upload contract.
+pub use microui_demo_contracts::MeshVertex;
 
 /// Immutable CPU mesh storage shared between retained demo state and frame commands.
 #[derive(Clone)]
