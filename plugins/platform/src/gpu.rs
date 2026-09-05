@@ -3,7 +3,7 @@ use super::*;
 use microui_ui::{
     AtlasHandle, TextureId,
     prelude::{Dimensioni, Recti, Vec2f, color4b},
-    render::{Color, CustomRenderArgs, FrameInfo, RendererBackend, RendererFrame, Vertex},
+    render::{Color, RenderItemArgs, FrameInfo, RendererBackend, RendererFrame, Vertex},
 };
 use microui_redux_demo_renderer::{DemoCommand, DemoRenderer};
 use microui_redux_renderer_support::com::Batch;
@@ -137,7 +137,7 @@ impl Gpu {
                 }
                 Batch::Texture { vertices, texture } => frame.draw_texture(texture.id, vertices.map(vertex)),
                 Batch::Item { rect, clip, item } => frame.enqueue_application(
-                    CustomRenderArgs {
+                    RenderItemArgs {
                         dimensions,
                         content_area: local_rect(*rect),
                         view: local_rect(*clip),

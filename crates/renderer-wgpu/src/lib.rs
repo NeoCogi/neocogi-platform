@@ -36,7 +36,7 @@ use std::{collections::HashMap, convert::Infallible, mem, slice};
 
 use microui_ui::{
     prelude::*,
-    render::{CustomRenderArgs, TextureError, Vertex},
+    render::{RenderItemArgs, TextureError, Vertex},
 };
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use sdl2::video::Window;
@@ -98,7 +98,7 @@ pub trait WgpuApplicationRenderer: 'static {
     fn render<'pass>(
         &'pass self,
         pass: &mut wgpu::RenderPass<'pass>,
-        args: CustomRenderArgs,
+        args: RenderItemArgs,
         command_index: usize,
         command: &'pass Self::Command,
     ) -> Result<(), String>;
@@ -111,7 +111,7 @@ impl WgpuApplicationRenderer for () {
     fn render<'pass>(
         &'pass self,
         _pass: &mut wgpu::RenderPass<'pass>,
-        _args: CustomRenderArgs,
+        _args: RenderItemArgs,
         _command_index: usize,
         command: &'pass Self::Command,
     ) -> Result<(), String> {
@@ -176,7 +176,7 @@ enum RenderCommand<ApplicationCommand> {
     /// Executes one application-owned command at this exact painter-order position.
     Application {
         /// Widget geometry and final clip supplied by microui's display-list executor.
-        args: CustomRenderArgs,
+        args: RenderItemArgs,
         /// Concrete application payload fixed by the renderer generic parameter.
         command: ApplicationCommand,
     },
@@ -719,7 +719,7 @@ where
     }
 
     /// Queues one concrete application command after closing the preceding UI batch.
-    pub fn enqueue_application(&mut self, args: CustomRenderArgs, command: Application::Command) {
+    pub fn enqueue_application(&mut self, args: RenderItemArgs, command: Application::Command) {
         // The command stays typed inside `RenderCommand<Application::Command>` until the frame is
         // prepared and recorded. No allocation or dynamic dispatch is needed at this boundary.
         self.flush_ui_batch();
@@ -727,7 +727,7 @@ where
     }
 
     /// Queues arbitrary colored triangles that should still respect the UI clip space.
-    pub fn enqueue_colored_vertices(&mut self, args: CustomRenderArgs, vertices: Vec<Vertex>) {
+    pub fn enqueue_colored_vertices(&mut self, args: RenderItemArgs, vertices: Vec<Vertex>) {
         if vertices.is_empty() {
             return;
         }
@@ -1031,14 +1031,14 @@ where
     Application: WgpuApplicationRenderer,
 {
     /// Inserts one typed application command at the current display-list position.
-    pub fn enqueue_application(&mut self, args: CustomRenderArgs, command: Application::Command) {
+    pub fn enqueue_application(&mut self, args: RenderItemArgs, command: Application::Command) {
         // The backend owns ordering and defers native recording until all resource requirements are
         // known; the application payload itself remains concrete throughout that delay.
         self.backend.enqueue_application(args, command);
     }
 
     /// Queues pre-transformed colored vertices using microui's authoritative custom-render clip.
-    pub fn enqueue_colored_vertices(&mut self, args: CustomRenderArgs, vertices: Vec<Vertex>) {
+    pub fn enqueue_colored_vertices(&mut self, args: RenderItemArgs, vertices: Vec<Vertex>) {
         self.backend.enqueue_colored_vertices(args, vertices);
     }
 }

@@ -65,7 +65,7 @@ impl WgpuApplicationRenderer for DemoRenderer {
     fn render<'pass>(
         &'pass self,
         pass: &mut wgpu::RenderPass<'pass>,
-        args: microui_ui::render::CustomRenderArgs,
+        args: microui_ui::render::RenderItemArgs,
         command_index: usize,
         _command: &'pass Self::Command,
     ) -> Result<(), String> {

@@ -81,7 +81,7 @@ impl VulkanApplicationRenderer for DemoRenderer {
     fn render(
         &self,
         context: VulkanApplicationRenderContext<'_>,
-        args: microui_ui::render::CustomRenderArgs,
+        args: microui_ui::render::RenderItemArgs,
         command_index: usize,
         command: &Self::Command,
     ) -> VulkanApplicationResult<()> {

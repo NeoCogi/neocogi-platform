@@ -3,7 +3,7 @@
 use std::rc::Rc;
 
 use glow::HasContext;
-use microui_ui::{prelude::Recti, render::CustomRenderArgs};
+use microui_ui::{prelude::Recti, render::RenderItemArgs};
 use microui_redux_renderer_glow::{GlApplicationRenderContext, GlApplicationRenderer, create_program};
 
 use crate::{DemoCommand, MeshSubmission, MeshVertex};
@@ -107,7 +107,7 @@ impl GlMeshResources {
     }
 
     /// Uploads one mesh and records a native indexed draw in the widget's viewport and clip.
-    fn draw(&mut self, framebuffer_size: (u32, u32), args: CustomRenderArgs, submission: &MeshSubmission) -> Result<(), String> {
+    fn draw(&mut self, framebuffer_size: (u32, u32), args: RenderItemArgs, submission: &MeshSubmission) -> Result<(), String> {
         if submission.mesh.is_empty() {
             return Ok(());
         }

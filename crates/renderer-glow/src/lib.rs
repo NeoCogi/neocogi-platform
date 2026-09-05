@@ -37,7 +37,7 @@ use std::{collections::HashMap, convert::Infallible, io, rc::Rc};
 
 use microui_ui::{
     prelude::*,
-    render::{CustomRenderArgs, TextureError, Vertex},
+    render::{RenderItemArgs, TextureError, Vertex},
 };
 use glow::*;
 use microui_redux_renderer_support::resource_guard::ResourceGuard;
@@ -67,7 +67,7 @@ pub struct GlApplicationRenderContext<'a> {
     /// Complete drawable size used to translate microui's top-left coordinate space when needed.
     pub framebuffer_size: (u32, u32),
     /// Authoritative widget allocation and final clip supplied by microui's display-list executor.
-    pub args: CustomRenderArgs,
+    pub args: RenderItemArgs,
 }
 
 /// Strongly typed application-rendering extension hosted by the Glow backend.
@@ -642,7 +642,7 @@ where
     Application: GlApplicationRenderer,
 {
     /// Flushes preceding UI work and executes one typed application GPU command immediately.
-    pub fn enqueue_application(&mut self, args: CustomRenderArgs, command: Application::Command) {
+    pub fn enqueue_application(&mut self, args: RenderItemArgs, command: Application::Command) {
         if self.error.is_some() {
             return;
         }
@@ -660,7 +660,7 @@ where
     }
 
     /// Draws pre-transformed colored vertices using the custom operation's authoritative clip.
-    pub fn enqueue_colored_vertices(&mut self, args: CustomRenderArgs, vertices: Vec<Vertex>) {
+    pub fn enqueue_colored_vertices(&mut self, args: RenderItemArgs, vertices: Vec<Vertex>) {
         if self.error.is_none() {
             self.backend.enqueue_colored_vertices(args, vertices);
         }
@@ -763,7 +763,7 @@ where
     Application: GlApplicationRenderer,
 {
     /// Draws arbitrary colored triangles while preserving microui's authoritative final clip.
-    pub fn enqueue_colored_vertices(&mut self, args: CustomRenderArgs, vertices: Vec<Vertex>) {
+    pub fn enqueue_colored_vertices(&mut self, args: RenderItemArgs, vertices: Vec<Vertex>) {
         self.draw_colored_vertices(args.view, vertices.as_slice());
     }
 

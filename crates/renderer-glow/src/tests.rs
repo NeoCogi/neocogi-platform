@@ -199,7 +199,7 @@ fn ui_draws_clears_and_uploads_survive_application_gl_state() {
     assert_eq!(pixel(&gl, 4, 4), [255, 0, 0, 255]);
 
     let mut failing = GLRenderer::new_with_application(gl.clone(), atlas(), 8, 8, FailingApplication::default()).unwrap();
-    let args = CustomRenderArgs {
+    let args = RenderItemArgs {
         dimensions: info.dimensions(),
         content_area: Recti::new(0, 0, 8, 8),
         view: Recti::new(0, 0, 8, 8),

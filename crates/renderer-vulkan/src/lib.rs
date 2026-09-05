@@ -54,7 +54,7 @@ use std::{
 use ash::{khr, util::read_spv, vk, Entry};
 use microui_ui::{
     prelude::*,
-    render::{CustomRenderArgs, TextureError, Vertex},
+    render::{RenderItemArgs, TextureError, Vertex},
 };
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use sdl2::video::Window;
@@ -143,7 +143,7 @@ pub trait VulkanApplicationRenderer: 'static {
     fn render(
         &self,
         context: VulkanApplicationRenderContext<'_>,
-        args: CustomRenderArgs,
+        args: RenderItemArgs,
         command_index: usize,
         command: &Self::Command,
     ) -> VulkanApplicationResult<()>;
@@ -156,7 +156,7 @@ impl VulkanApplicationRenderer for () {
     fn render(
         &self,
         _context: VulkanApplicationRenderContext<'_>,
-        _args: CustomRenderArgs,
+        _args: RenderItemArgs,
         _command_index: usize,
         command: &Self::Command,
     ) -> VulkanApplicationResult<()> {
@@ -404,7 +404,7 @@ where
     }
 
     /// Queues one typed application operation after closing the preceding UI batch.
-    fn enqueue_application(&mut self, args: CustomRenderArgs, command: Application::Command) {
+    fn enqueue_application(&mut self, args: RenderItemArgs, command: Application::Command) {
         self.flush_ui_batch();
         self.commands.push(FrameCommand::Application { args, command });
     }
@@ -597,12 +597,12 @@ where
     Application: VulkanApplicationRenderer,
 {
     /// Adds pre-transformed colored UI vertices using microui's authoritative final clip.
-    pub fn enqueue_colored_vertices(&mut self, args: CustomRenderArgs, vertices: Vec<Vertex>) {
+    pub fn enqueue_colored_vertices(&mut self, args: RenderItemArgs, vertices: Vec<Vertex>) {
         self.backend.enqueue_colored_vertices(args, vertices);
     }
 
     /// Adds one concrete application operation at the current painter-order position.
-    pub fn enqueue_application(&mut self, args: CustomRenderArgs, command: Application::Command) {
+    pub fn enqueue_application(&mut self, args: RenderItemArgs, command: Application::Command) {
         self.backend.enqueue_application(args, command);
     }
 }
@@ -695,7 +695,7 @@ where
     Application: VulkanApplicationRenderer,
 {
     /// Queues pre-transformed colored vertices after closing the preceding UI batch.
-    pub fn enqueue_colored_vertices(&mut self, args: CustomRenderArgs, vertices: Vec<Vertex>) {
+    pub fn enqueue_colored_vertices(&mut self, args: RenderItemArgs, vertices: Vec<Vertex>) {
         if self.disabled {
             return;
         }
@@ -887,7 +887,7 @@ enum FrameCommand<ApplicationCommand> {
     /// Delegates one application-owned command to the concrete native renderer.
     Application {
         /// Standard custom-render geometry and clip information from microui.
-        args: CustomRenderArgs,
+        args: RenderItemArgs,
         /// Application operation whose type is fixed by the backend generic parameter.
         command: ApplicationCommand,
     },
