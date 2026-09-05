@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/microui-redux", "crates/renderer-support", "crates/renderer-glow", "crates/renderer-webgl-canvas", "crates/renderer-vulkan", "crates/renderer-wgpu", "demos/demo-assets", "demos/demo-host", "demos/demo-renderer", "demos/demo-full", "demos/basic"]
+members = ["crates/microui-contracts", "crates/microui-redux", "crates/renderer-support", "crates/renderer-glow", "crates/renderer-webgl-canvas", "crates/renderer-vulkan", "crates/renderer-wgpu", "demos/demo-assets", "demos/demo-host", "demos/demo-renderer", "demos/demo-full", "demos/basic"]
 default-members = ["crates/microui-redux"]
 
 [workspace.package]
@@ -11,11 +11,12 @@ readme = "README.md"
 repository = "https://github.com/NeoCogi/microui-redux"
 
 [workspace.dependencies]
-nc-com-core = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "ab980805af44b8911a890cd1ad03ae209fd3a395", version = "0.1.0", default-features = false }
-nc-com-macros = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "ab980805af44b8911a890cd1ad03ae209fd3a395", version = "0.1.0", default-features = false }
-nc-com = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "ab980805af44b8911a890cd1ad03ae209fd3a395", version = "0.1.0", default-features = false }
-nc-com-runtime-sys = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "ab980805af44b8911a890cd1ad03ae209fd3a395", version = "0.1.0", default-features = false }
-nc-com-runtime = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "ab980805af44b8911a890cd1ad03ae209fd3a395", version = "0.1.0", default-features = false }
+microui-contracts = { path = "crates/microui-contracts" }
+nc-com-core = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "275845581ceb00cfee0e6fbd9fd721fa5d95756f", version = "0.1.0", default-features = false }
+nc-com-macros = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "275845581ceb00cfee0e6fbd9fd721fa5d95756f", version = "0.1.0", default-features = false }
+nc-com = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "275845581ceb00cfee0e6fbd9fd721fa5d95756f", version = "0.1.0", default-features = false }
+nc-com-runtime-sys = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "275845581ceb00cfee0e6fbd9fd721fa5d95756f", version = "0.1.0", default-features = false }
+nc-com-runtime = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "275845581ceb00cfee0e6fbd9fd721fa5d95756f", version = "0.1.0", default-features = false }
 proc-macro-crate = "3"
 proc-macro2 = "1"
 quote = "1"
