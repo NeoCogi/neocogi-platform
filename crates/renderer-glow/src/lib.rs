@@ -298,20 +298,19 @@ where
             self.gl.bind_texture(glow::TEXTURE_2D, Some(*texture.get()));
             self.gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MIN_FILTER, glow::NEAREST as i32);
             self.gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, glow::NEAREST as i32);
-            atlas.apply_pixels(|width, height, pixels| {
-                let bytes = slice::from_raw_parts(pixels.as_ptr().cast::<u8>(), pixels.len() * 4);
-                self.gl.tex_image_2d(
-                    glow::TEXTURE_2D,
-                    0,
-                    glow::RGBA as i32,
-                    width as i32,
-                    height as i32,
-                    0,
-                    glow::RGBA,
-                    glow::UNSIGNED_BYTE,
-                    PixelUnpackData::Slice(Some(bytes)),
-                );
-            });
+            let pixels = atlas.pixels();
+            let bytes = slice::from_raw_parts(pixels.as_ptr().cast::<u8>(), pixels.len() * 4);
+            self.gl.tex_image_2d(
+                glow::TEXTURE_2D,
+                0,
+                glow::RGBA as i32,
+                atlas.width() as i32,
+                atlas.height() as i32,
+                0,
+                glow::RGBA,
+                glow::UNSIGNED_BYTE,
+                PixelUnpackData::Slice(Some(bytes)),
+            );
             let error = self.gl.get_error();
             self.gl.bind_texture(glow::TEXTURE_2D, None);
             if error != glow::NO_ERROR {
@@ -366,20 +365,19 @@ where
             gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, glow::NEAREST as i32);
             debug_assert!(gl.get_error() == 0);
 
-            atlas.apply_pixels(|width, height, pixels| {
-                let pixel_slice = slice::from_raw_parts(pixels.as_ptr().cast::<u8>(), pixels.len() * 4);
-                gl.tex_image_2d(
-                    glow::TEXTURE_2D,
-                    0,
-                    glow::RGBA as i32,
-                    width as i32,
-                    height as i32,
-                    0,
-                    glow::RGBA,
-                    glow::UNSIGNED_BYTE,
-                    PixelUnpackData::Slice(Some(pixel_slice)),
-                );
-            });
+            let pixels = atlas.pixels();
+            let pixel_slice = slice::from_raw_parts(pixels.as_ptr().cast::<u8>(), pixels.len() * 4);
+            gl.tex_image_2d(
+                glow::TEXTURE_2D,
+                0,
+                glow::RGBA as i32,
+                atlas.width() as i32,
+                atlas.height() as i32,
+                0,
+                glow::RGBA,
+                glow::UNSIGNED_BYTE,
+                PixelUnpackData::Slice(Some(pixel_slice)),
+            );
             let atlas_error = gl.get_error();
             if atlas_error != glow::NO_ERROR {
                 return Err(format!("failed to upload immutable atlas texture: GL error 0x{atlas_error:04X}"));

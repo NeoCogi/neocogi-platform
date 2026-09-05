@@ -1308,19 +1308,12 @@ impl UiResources {
 
     /// Creates and uploads the immutable atlas image during renderer construction.
     fn upload_atlas(&mut self, ctx: &mut VulkanContext, atlas: &AtlasHandle) -> Result<()> {
-        let mut width = 0;
-        let mut height = 0;
-        let mut data = Vec::new();
-        atlas.apply_pixels(|w, h, pixels| {
-            width = w;
-            height = h;
-            let bytes = unsafe { std::slice::from_raw_parts(pixels.as_ptr() as *const u8, pixels.len() * 4) };
-            data.clear();
-            data.extend_from_slice(bytes);
-        });
-        if width == 0 || height == 0 {
-            return Ok(());
-        }
+        let width = atlas.width();
+        let height = atlas.height();
+        let pixels = atlas.pixels();
+        // SAFETY: Atlas stores contiguous four-byte RGBA pixels, and this immutable local
+        // borrow remains alive until the synchronous staging-buffer copy below completes.
+        let data = unsafe { std::slice::from_raw_parts(pixels.as_ptr().cast::<u8>(), pixels.len() * 4) };
 
         let width_u32 = u32::try_from(width).map_err(|_| "atlas width exceeds u32 range")?;
         let height_u32 = u32::try_from(height).map_err(|_| "atlas height exceeds u32 range")?;
@@ -1335,7 +1328,7 @@ impl UiResources {
                 vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
             )?
             .guarded(&ctx.device);
-        ctx.write_buffer(staging.get(), &data)?;
+        ctx.write_buffer(staging.get(), data)?;
         ctx.copy_buffer_to_image(staging.get(), atlas_image.get_mut())?;
         self.update_descriptor(&ctx.device, self.descriptor_set, atlas_image.get());
 

@@ -85,6 +85,11 @@ impl Gpu {
         self.window.gl_make_current(&self.context)?;
         Ok(())
     }
+    /// Uploads into this device's current context using the backend's existing atomic replacement.
+    pub(super) fn replace_atlas(&mut self, atlas: AtlasHandle) -> Result<(), String> {
+        self.current()?;
+        self.renderer.replace_atlas(atlas).map_err(|error| error.to_string())
+    }
     /// Executes only validated owned commands; no foreign method is invoked while a frame is acquired.
     pub(super) fn render(&mut self, info: RenderInfo, prepared: &Prepared) -> Result<(), String> {
         self.current()?;

@@ -25,7 +25,9 @@ microui-redux-renderer-support.workspace = true
 microui-redux-demo-renderer.workspace = true
 microui-demo-contracts.workspace = true
 rs-math3d.workspace = true
-microui-redux-demo-assets = { workspace = true, features = ["prebuilt-atlas"] }
 nc-com = { workspace = true, features = ["macros", "std"] }
 sdl2.workspace = true
 glow = { workspace = true, optional = true }
+
+[dev-dependencies]
+microui-redux-demo-assets = { workspace = true, features = ["prebuilt-atlas"] }

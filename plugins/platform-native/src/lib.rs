@@ -78,19 +78,26 @@ impl NativeHost {
 
 impl IPlatform for Platform {
     /// Validates input and publishes one complete native object only after the selected backend exists.
-    fn create_window(&self, title: NcCopyFromBufferOffset<'_, u8>, size: Size) -> Result<ComPtr<IPlatformWindowAbi>, NcStatus> {
+    fn create_window(
+        &self,
+        title: NcCopyFromBufferOffset<'_, u8>,
+        size: Size,
+        assets: ComRef<'_, IAssetBundleAbi>,
+    ) -> Result<ComPtr<IPlatformWindowAbi>, NcStatus> {
         if title.offset() != 0 || size.width <= 0 || size.height <= 0 {
             return Err(NC_E_INVALID_ARG);
         }
         let title = std::str::from_utf8(title.as_slice()).map_err(|_| NC_E_INVALID_ARG)?;
-        Ok(NativeWindow::from_value(self.window(title, size)?)
+        Ok(NativeWindow::from_value(self.window(title, size, assets)?)
             .query()
             .expect("native window declares IPlatformWindow"))
     }
 }
 impl Platform {
     /// Constructs the concrete native owner used by COM activation and native lifetime acceptance tests.
-    fn window(&self, title: &str, size: Size) -> Result<NativeWindow, NcStatus> {
+    fn window(&self, title: &str, size: Size, source: ComRef<'_, IAssetBundleAbi>) -> Result<NativeWindow, NcStatus> {
+        // Validate all foreign metadata before creating a native window or borrowing SDL ownership.
+        let assets = microui_ui::assets::ImportedAssets::read(source, None)?;
         let mut owner = self.host.try_borrow_mut().map_err(|_| UI_E_BUSY)?;
         if owner.is_none() {
             *owner = Some(NativeHost::new().map_err(|error| {
@@ -100,14 +107,18 @@ impl Platform {
         }
         let host = owner.as_ref().expect("host initialized").clone();
         drop(owner);
-        let gpu = gpu::Gpu::new(&host.video, title, size, microui_redux_demo_assets::load_atlas()).map_err(|error| {
+        let gpu = gpu::Gpu::new(&host.video, title, size, assets.bundle().atlas().clone()).map_err(|error| {
             *self.diagnostic.borrow_mut() = error;
             UI_E_RENDER
         })?;
         let window = gpu.window();
         host.queues.borrow_mut().insert(window.id(), VecDeque::new());
         let device = Rc::new(Device {
-            render: RefCell::new(Some(RenderState { gpu, prepared: Prepared::default() })),
+            render: RefCell::new(Some(RenderState {
+                gpu,
+                assets,
+                prepared: Prepared::default(),
+            })),
             textures: RefCell::default(),
             scenes: RefCell::default(),
             retired: RefCell::default(),
@@ -131,6 +142,22 @@ struct RenderState {
     gpu: gpu::Gpu,
     /// Resource references are cleared before restoring this state, preventing a Device ownership cycle.
     prepared: Prepared,
+    /// Current immutable resource revision; a same-pointer preparation performs no copies or upload.
+    assets: microui_ui::assets::ImportedAssets,
+}
+impl RenderState {
+    /// Builds and uploads a complete candidate before replacing the current resource reference.
+    fn prepare_assets(&mut self, source: ComRef<'_, IAssetBundleAbi>) -> Result<(), String> {
+        if self.assets.source().as_ptr() == source.as_ptr() {
+            return Ok(());
+        }
+        // Renderers may serve independent UIs, so a new catalog is valid here. Only UI replacement
+        // preserves application references and therefore requires the original catalog identity.
+        let next = microui_ui::assets::ImportedAssets::read(source, None).map_err(|status| status.to_string())?;
+        self.gpu.replace_atlas(next.bundle().atlas().clone())?;
+        self.assets = next;
+        Ok(())
+    }
 }
 
 /// Shared native lifetime retained by the window, every image and every editable scene.
@@ -271,8 +298,13 @@ impl IPlatformWindow for NativeWindow {
 }
 
 impl IRenderer for NativeWindow {
+    /// Takes owned device state so nested bundle methods cannot reenter native upload or submission.
+    fn prepare_assets(&self, assets: ComRef<'_, IAssetBundleAbi>) -> Result<(), NcStatus> {
+        let mut access = self.device.access()?;
+        access.state().prepare_assets(assets).map_err(|error| self.device.failure(error))
+    }
     /// Prepares the complete frame without borrowing native state, then executes and explicitly finishes it.
-    fn render(&self, info: RenderInfo, stream: ComRef<'_, IRenderStreamAbi>) -> Result<(), NcStatus> {
+    fn render(&self, info: RenderInfo, assets: ComRef<'_, IAssetBundleAbi>, stream: ComRef<'_, IRenderStreamAbi>) -> Result<(), NcStatus> {
         if info.size != self.size()? {
             return Err(NC_E_INVALID_ARG);
         }
@@ -281,6 +313,8 @@ impl IRenderer for NativeWindow {
         state.prepared.read(info, stream, self).inspect_err(|error| {
             *self.device.diagnostic.borrow_mut() = format!("frame preparation failed: {error}");
         })?;
+        // Reject malformed commands and foreign resource owners before changing GPU atlas state.
+        state.prepare_assets(assets).map_err(|error| self.device.failure(error))?;
         state.gpu.render(info, &state.prepared).map_err(|error| self.device.failure(error))
     }
 }

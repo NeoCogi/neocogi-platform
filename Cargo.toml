@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/microui-contracts", "plugins/ui", "plugins/platform-native", "crates/microui-redux", "crates/microui-ui", "crates/renderer-support", "crates/renderer-glow", "crates/renderer-webgl-canvas", "crates/renderer-vulkan", "crates/renderer-wgpu", "demos/demo-assets", "demos/demo-host", "demos/demo-renderer", "demos/demo-contracts", "demos/demo-full", "demos/basic"]
+members = ["crates/microui-contracts", "plugins/ui", "plugins/assets", "plugins/platform-native", "crates/microui-redux", "crates/microui-ui", "crates/renderer-support", "crates/renderer-glow", "crates/renderer-webgl-canvas", "crates/renderer-vulkan", "crates/renderer-wgpu", "demos/demo-assets", "demos/demo-host", "demos/demo-renderer", "demos/demo-contracts", "demos/demo-full", "demos/basic"]
 default-members = ["crates/microui-redux"]
 
 [workspace.package]

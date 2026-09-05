@@ -663,7 +663,7 @@ where
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
-        let atlas_pixels = atlas.pixels_clone();
+        let atlas_pixels = atlas.pixels();
         let atlas_texture = Self::create_gpu_texture(
             &device,
             &queue,
@@ -672,7 +672,7 @@ where
             &uniform_buffer,
             atlas.width() as u32,
             atlas.height() as u32,
-            Some(Self::slice_as_bytes(&atlas_pixels)),
+            Some(Self::slice_as_bytes(atlas_pixels)),
         )?;
         let depth_target = Self::create_depth_target(&device, config.width, config.height);
 
@@ -1099,7 +1099,7 @@ where
     fn replace_atlas(&mut self, atlas: AtlasHandle) -> Result<(), AtlasUploadError> {
         // Construct the complete sampled texture and bind group before publishing either field.
         // Dropping the old GpuTexture after assignment releases it only once the candidate exists.
-        let pixels = atlas.pixels_clone();
+        let pixels = atlas.pixels();
         let texture = Self::create_gpu_texture(
             &self.device,
             &self.queue,
@@ -1108,7 +1108,7 @@ where
             &self.uniform_buffer,
             atlas.width() as u32,
             atlas.height() as u32,
-            Some(Self::slice_as_bytes(&pixels)),
+            Some(Self::slice_as_bytes(pixels)),
         )
         .map_err(AtlasUploadError::new)?;
         self.atlas_texture = texture;

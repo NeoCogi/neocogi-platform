@@ -5,6 +5,8 @@ use nc_com::{NcCopyToBufferOffset, INcStringComPtrExt};
 
 /// Shared ordered stream fixture can inject native reentry and release a resource during bulk copying.
 struct Input {
+    /// Immutable atlas passed explicitly to every native render, including reentry probes.
+    assets: ComPtr<IAssetBundleAbi>,
     /// Complete copied geometry; three texture quads share the same native coordinate convention.
     vertices: Vec<RenderVertex>,
     /// Validated pointer-free painter order.
@@ -60,7 +62,12 @@ struct Stream {
 impl IRenderStream for Stream {
     /// Reentry and resource destruction happen while the renderer owns detached preparation storage.
     fn vertices(&self, _: u64, mut output: NcCopyToBufferOffset<'_, RenderVertex>) -> Result<u32, NcStatus> {
-        assert_eq!(self.input.renderer.render(info(), self.input.empty.as_com_ref()), Err(UI_E_BUSY));
+        assert_eq!(
+            self.input
+                .renderer
+                .render(info(), self.input.assets.as_com_ref(), self.input.empty.as_com_ref()),
+            Err(UI_E_BUSY)
+        );
         let factory: ComPtr<ITextureFactoryAbi> = self.input.renderer.query()?;
         assert_eq!(
             factory
@@ -174,7 +181,9 @@ fn mesh(scene: &ComPtr<IMeshSceneAbi>) {
 #[ignore = "requires a native SDL display; use SDL_VIDEODRIVER=offscreen for Glow or a native display for Vulkan/WGPU"]
 fn native_order_ownership_reentry_and_final_release() {
     let platform = Platform::default();
-    let native = platform.window("COM GPU acceptance", SIZE).unwrap();
+    let bundle = microui_ui::SkinBundle::from_atlas(microui_redux_demo_assets::load_atlas());
+    let assets = microui_ui::assets::export_bundle(&bundle).unwrap();
+    let native = platform.window("COM GPU acceptance", SIZE, assets.as_com_ref()).unwrap();
     let device = Rc::downgrade(&native.device);
     let unknown = NativeWindow::from_value(native);
     let renderer: ComPtr<IRendererAbi> = unknown.query().unwrap();
@@ -196,6 +205,7 @@ fn native_order_ownership_reentry_and_final_release() {
     let spare_key = identity(&spare).unwrap();
     let bounds = Rect { x: 0, y: 0, width: 64, height: 64 };
     let input = Rc::new(Input {
+        assets: assets.clone(),
         vertices: quad(bounds).into_iter().chain(quad(Rect { x: 28, y: 28, width: 8, height: 8 })).collect(),
         batches: vec![
             RenderBatch::Texture { first: 0 }.into(),
@@ -214,7 +224,7 @@ fn native_order_ownership_reentry_and_final_release() {
         reentries: Cell::new(0),
     });
     let stream: ComPtr<IRenderStreamAbi> = Stream::from_value(Stream { input: input.clone() }).query().unwrap();
-    renderer.render(info(), stream.as_com_ref()).unwrap();
+    renderer.render(info(), assets.as_com_ref(), stream.as_com_ref()).unwrap();
     assert_eq!(input.reentries.get(), 1);
     {
         let owner = device.upgrade().unwrap();
@@ -233,17 +243,35 @@ fn native_order_ownership_reentry_and_final_release() {
             assert_ne!(mesh_pixel, &[255, 0, 0, 255]);
         }
     }
+    // A structurally valid, shallow atlas exceeds every tested device's 2D texture width while
+    // remaining below the portable byte limit. Rejection must leave the previous GPU atlas usable.
+    let mut oversized = microui_ui::assets::export_bundle_data(&bundle).unwrap();
+    oversized.size = Size { width: 131072, height: 1 };
+    oversized.pixels.to_mut().fill(255);
+    for glyph in oversized.glyphs.to_mut() {
+        glyph.rect = Rect { x: 0, y: 0, width: 1, height: 1 };
+    }
+    for icon in oversized.icons.to_mut() {
+        icon.rect = Rect { x: 0, y: 0, width: 1, height: 1 };
+    }
+    let oversized = oversized.into_revision(assets.as_com_ref()).unwrap();
+    assert_eq!(renderer.prepare_assets(oversized.as_com_ref()), Err(UI_E_RENDER));
+    assert_eq!(
+        device.upgrade().unwrap().render.borrow().as_ref().unwrap().assets.source().as_ptr(),
+        assets.as_ptr()
+    );
+    renderer.render(info(), assets.as_com_ref(), stream.as_com_ref()).unwrap();
     // The foreign scene has a valid ABI but belongs to a different native window/context.
-    let foreign = platform.window("COM foreign resource owner", SIZE).unwrap();
+    let foreign = platform.window("COM foreign resource owner", SIZE, assets.as_com_ref()).unwrap();
     let foreign_device = Rc::downgrade(&foreign.device);
     let foreign_scene = IDemoScenes::create_scene(&foreign).unwrap();
     let foreign_texture = ITextureFactory::create_texture(&foreign, Size { width: 1, height: 1 }, NcCopyFromBufferOffset::new(0, &[0; 4])).unwrap();
     *input.foreign_texture.borrow_mut() = Some(foreign_texture);
-    assert_eq!(renderer.render(info(), stream.as_com_ref()), Err(UI_E_OWNER));
+    assert_eq!(renderer.render(info(), assets.as_com_ref(), stream.as_com_ref()), Err(UI_E_OWNER));
     let foreign_texture = input.foreign_texture.borrow_mut().take();
     drop(foreign_texture);
     *input.scene.borrow_mut() = foreign_scene.query().unwrap();
-    assert_eq!(renderer.render(info(), stream.as_com_ref()), Err(UI_E_OWNER));
+    assert_eq!(renderer.render(info(), assets.as_com_ref(), stream.as_com_ref()), Err(UI_E_OWNER));
     assert!(
         renderer
             .query::<IRenderDiagnosticsAbi>()
@@ -256,7 +284,7 @@ fn native_order_ownership_reentry_and_final_release() {
     );
     *input.scene.borrow_mut() = scene.query().unwrap();
     // A failed frame must not poison the next explicit native submission.
-    renderer.render(info(), stream.as_com_ref()).unwrap();
+    renderer.render(info(), assets.as_com_ref(), stream.as_com_ref()).unwrap();
     drop((foreign_scene, foreign));
     assert!(foreign_device.upgrade().is_none());
     drop((stream, input, scene, factory, scenes, renderer, unknown, platform));
