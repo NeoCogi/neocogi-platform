@@ -34,7 +34,7 @@
 
 use std::{collections::HashMap, convert::Infallible, mem, slice};
 
-use microui_redux::{
+use microui_ui::{
     prelude::*,
     render::{CustomRenderArgs, TextureError, Vertex},
 };

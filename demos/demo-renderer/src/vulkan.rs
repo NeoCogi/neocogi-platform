@@ -3,7 +3,7 @@
 use std::{io::Cursor, mem, ptr, slice};
 
 use ash::{util::read_spv, vk};
-use microui_redux::prelude::Recti;
+use microui_ui::prelude::Recti;
 use microui_redux_renderer_vulkan::{VulkanApplicationPrepareContext, VulkanApplicationRenderContext, VulkanApplicationRenderer, VulkanApplicationResult};
 use rs_math3d::Mat4f;
 
@@ -81,7 +81,7 @@ impl VulkanApplicationRenderer for DemoRenderer {
     fn render(
         &self,
         context: VulkanApplicationRenderContext<'_>,
-        args: microui_redux::render::CustomRenderArgs,
+        args: microui_ui::render::CustomRenderArgs,
         command_index: usize,
         command: &Self::Command,
     ) -> VulkanApplicationResult<()> {

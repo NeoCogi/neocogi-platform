@@ -35,7 +35,7 @@
 use core::slice;
 use std::{collections::HashMap, convert::Infallible, io, sync::Arc};
 
-use microui_redux::{
+use microui_ui::{
     prelude::*,
     render::{CustomRenderArgs, TextureError, Vertex},
 };

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/microui-contracts", "crates/microui-redux", "crates/renderer-support", "crates/renderer-glow", "crates/renderer-webgl-canvas", "crates/renderer-vulkan", "crates/renderer-wgpu", "demos/demo-assets", "demos/demo-host", "demos/demo-renderer", "demos/demo-full", "demos/basic"]
+members = ["crates/microui-contracts", "plugins/ui", "plugins/platform-glow", "crates/microui-redux", "crates/microui-ui", "crates/renderer-support", "crates/renderer-glow", "crates/renderer-webgl-canvas", "crates/renderer-vulkan", "crates/renderer-wgpu", "demos/demo-assets", "demos/demo-host", "demos/demo-renderer", "demos/demo-full", "demos/basic"]
 default-members = ["crates/microui-redux"]
 
 [workspace.package]
@@ -21,7 +21,8 @@ proc-macro-crate = "3"
 proc-macro2 = "1"
 quote = "1"
 syn = { version = "2", features = ["full", "extra-traits"] }
-microui-redux = { path = "crates/microui-redux", version = "0.8.0", default-features = false }
+microui-redux = { path = "crates/microui-redux", version = "0.9.0-alpha.0", default-features = false }
+microui-ui = { path = "crates/microui-ui", version = "0.9.0-alpha.0", default-features = false }
 microui-redux-demo-assets = { path = "demos/demo-assets", default-features = false }
 microui-redux-demo-host = { path = "demos/demo-host", default-features = false }
 microui-redux-demo-renderer = { path = "demos/demo-renderer", default-features = false }

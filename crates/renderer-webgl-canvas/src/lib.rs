@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use microui_redux::{
+use microui_ui::{
     prelude::{AtlasHandle, AtlasUploadError, FrameError, FrameInfo, RendererBackend, TextureId},
     render::TextureError,
 };

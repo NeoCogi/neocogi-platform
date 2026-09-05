@@ -17,7 +17,7 @@ wgpu = ["dep:microui-redux-renderer-wgpu", "dep:wgpu"]
 [dependencies]
 ash = { workspace = true, optional = true }
 glow = { workspace = true, optional = true }
-microui-redux.workspace = true
+microui-ui.workspace = true
 microui-redux-renderer-glow = { workspace = true, optional = true }
 microui-redux-renderer-vulkan = { workspace = true, optional = true }
 microui-redux-renderer-wgpu = { workspace = true, optional = true }

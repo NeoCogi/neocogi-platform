@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use glow::HasContext;
-use microui_redux::{prelude::Recti, render::CustomRenderArgs};
+use microui_ui::{prelude::Recti, render::CustomRenderArgs};
 use microui_redux_renderer_glow::{GlApplicationRenderContext, GlApplicationRenderer, create_program};
 
 use crate::{DemoCommand, MeshSubmission, MeshVertex};
