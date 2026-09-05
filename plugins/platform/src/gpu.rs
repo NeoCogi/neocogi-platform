@@ -135,7 +135,12 @@ impl Gpu {
                         frame.push_triangle(triangle.map(vertex));
                     }
                 }
-                Batch::Texture { vertices, texture } => frame.draw_texture(texture.id, vertices.map(vertex)),
+                Batch::Texture { vertices, texture } => {
+                    // Close preceding atlas geometry before recording the image. Explicit backends
+                    // otherwise submit that geometry later, painting backgrounds over the texture.
+                    frame.flush();
+                    frame.draw_texture(texture.id, vertices.map(vertex));
+                }
                 Batch::Item { rect, clip, item } => frame.enqueue_application(
                     RenderItemArgs {
                         dimensions,

@@ -7,7 +7,7 @@ use nc_com::{NcCopyToBufferOffset, INcStringComPtrExt};
 struct Input {
     /// Immutable atlas passed explicitly to every native render, including reentry probes.
     assets: ComPtr<IAssetBundleAbi>,
-    /// Complete copied geometry; three texture quads share the same native coordinate convention.
+    /// Atlas background and image quads share the same native coordinate convention.
     vertices: Vec<RenderVertex>,
     /// Validated pointer-free painter order.
     batches: Vec<RenderBatchAbi>,
@@ -100,14 +100,14 @@ impl IRenderStream for Stream {
     /// Overall batch indices select their exact image rather than using a separate untyped resource list.
     fn texture(&self, _: u64, index: u32) -> Result<ComPtr<ITextureAbi>, NcStatus> {
         match index {
-            0 => Ok(self.input.foreign_texture.borrow().as_ref().unwrap_or(&self.input.background).clone()),
-            2 => Ok(self.input.overlay.clone()),
+            1 => Ok(self.input.foreign_texture.borrow().as_ref().unwrap_or(&self.input.background).clone()),
+            3 => Ok(self.input.overlay.clone()),
             _ => Err(NC_E_INVALID_ARG),
         }
     }
     /// Cloning the known local scene has no application callback; replacement occurs only between renders.
     fn item(&self, _: u64, index: u32) -> Result<ComPtr<IRenderItemAbi>, NcStatus> {
-        if index != 1 {
+        if index != 2 {
             return Err(NC_E_INVALID_ARG);
         }
         Ok(self.input.scene.borrow().clone())
@@ -115,14 +115,14 @@ impl IRenderStream for Stream {
 }
 /// Small physical viewport keeps this GPU lifetime/order gate fast on software drivers too.
 const SIZE: Size = Size { width: 64, height: 64 };
-/// Exact info for background image, mesh and a small foreground image.
+/// Exact info for atlas background, background image, mesh and a small foreground image.
 fn info() -> RenderInfo {
     RenderInfo {
         size: SIZE,
         clear: 0xff000000,
         invocation: 1,
-        vertex_count: 8,
-        batch_count: 3,
+        vertex_count: 14,
+        batch_count: 4,
     }
 }
 /// Creates a clockwise full-image quad in the final UI vertex format.
@@ -204,13 +204,21 @@ fn native_order_ownership_reentry_and_final_release() {
         .unwrap();
     let spare_key = identity(&spare).unwrap();
     let bounds = Rect { x: 0, y: 0, width: 64, height: 64 };
+    // An opaque atlas backdrop must remain behind the images even when no custom item has
+    // flushed the atlas batch yet. The previous texture/item/texture fixture missed this boundary.
+    let backdrop = quad(bounds).map(|vertex| RenderVertex { u: 0., v: 0., rgba: 0xffff0000, ..vertex });
     let input = Rc::new(Input {
         assets: assets.clone(),
-        vertices: quad(bounds).into_iter().chain(quad(Rect { x: 28, y: 28, width: 8, height: 8 })).collect(),
+        vertices: [backdrop[0], backdrop[1], backdrop[2], backdrop[0], backdrop[2], backdrop[3]]
+            .into_iter()
+            .chain(quad(bounds))
+            .chain(quad(Rect { x: 28, y: 28, width: 8, height: 8 }))
+            .collect(),
         batches: vec![
-            RenderBatch::Texture { first: 0 }.into(),
+            RenderBatch::Atlas { first: 0, count: 6 }.into(),
+            RenderBatch::Texture { first: 6 }.into(),
             RenderBatch::Item { rect: bounds, clip: bounds }.into(),
-            RenderBatch::Texture { first: 4 }.into(),
+            RenderBatch::Texture { first: 10 }.into(),
         ],
         background: background.clone(),
         foreign_texture: RefCell::new(None),
