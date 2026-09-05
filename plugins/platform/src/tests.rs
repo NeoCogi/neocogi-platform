@@ -181,8 +181,7 @@ fn mesh(scene: &ComPtr<IMeshSceneAbi>) {
 #[ignore = "requires a native SDL display; use SDL_VIDEODRIVER=offscreen for Glow or a native display for Vulkan/WGPU"]
 fn native_order_ownership_reentry_and_final_release() {
     let platform = Platform::default();
-    let bundle = microui_ui::SkinBundle::from_atlas(microui_redux_demo_assets::load_atlas());
-    let assets = microui_ui::assets::export_bundle(&bundle).unwrap();
+    let assets = microui_redux_demo_assets::load_bundle().unwrap();
     let native = platform.window("COM GPU acceptance", SIZE, assets.as_com_ref()).unwrap();
     let device = Rc::downgrade(&native.device);
     let unknown = WindowObject::from_value(native);
@@ -246,7 +245,7 @@ fn native_order_ownership_reentry_and_final_release() {
     }
     // A structurally valid, shallow atlas exceeds every tested device's 2D texture width while
     // remaining below the portable byte limit. Rejection must leave the previous GPU atlas usable.
-    let mut oversized = microui_ui::assets::export_bundle_data(&bundle).unwrap();
+    let mut oversized = microui_redux_demo_assets::bundle_data().unwrap();
     oversized.size = Size { width: 131072, height: 1 };
     oversized.pixels.to_mut().fill(255);
     for glyph in oversized.glyphs.to_mut() {
