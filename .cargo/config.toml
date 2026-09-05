@@ -20,6 +20,8 @@ rustflags = [
     "-Clink-arg=-Wl,--gc-sections",
     "-Clink-arg=-Wl,--no-eh-frame-hdr",
     "-Clink-arg=-Wl,--build-id=none",
+    # Native COM packages resolve their one runtime beside the executable or plugin.
+    "-Clink-arg=-Wl,-rpath,$ORIGIN",
     "-Zlocation-detail=none",
     "-Zfmt-debug=none",
 ]
