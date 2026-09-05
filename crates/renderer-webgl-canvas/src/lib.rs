@@ -4,7 +4,7 @@
 //! type. Its command batching and GL resource implementation are shared with the native Glow
 //! renderer.
 
-use std::sync::Arc;
+use std::rc::Rc;
 
 use microui_ui::{
     prelude::{AtlasHandle, AtlasUploadError, FrameError, FrameInfo, RendererBackend, TextureId},
@@ -51,7 +51,7 @@ where
 
 impl WebGlCanvasRenderer<()> {
     /// Creates the renderer from the canvas's current WebGL 2 context.
-    pub fn new(gl: Arc<glow::Context>, atlas: AtlasHandle, width: u32, height: u32) -> Result<Self, String> {
+    pub fn new(gl: Rc<glow::Context>, atlas: AtlasHandle, width: u32, height: u32) -> Result<Self, String> {
         GLRenderer::new_with_shaders(gl, atlas, width, height, VERTEX_SHADER, FRAGMENT_SHADER).map(|inner| Self { inner })
     }
 }
@@ -61,7 +61,7 @@ where
     Application: GlApplicationRenderer,
 {
     /// Creates a WebGL renderer with one strongly typed application GPU extension.
-    pub fn new_with_application(gl: Arc<glow::Context>, atlas: AtlasHandle, width: u32, height: u32, application: Application) -> Result<Self, String> {
+    pub fn new_with_application(gl: Rc<glow::Context>, atlas: AtlasHandle, width: u32, height: u32, application: Application) -> Result<Self, String> {
         // The wrapper selects only the UI shader dialect. Application shaders remain entirely
         // owned by `Application` and are compiled through its native Glow context.
         GLRenderer::new_with_application_and_shaders(gl, atlas, width, height, application, VERTEX_SHADER, FRAGMENT_SHADER).map(|inner| Self { inner })

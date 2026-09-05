@@ -5,7 +5,7 @@ use super::*;
 /// Owns application-side objects used to leave deliberately hostile persistent GL state.
 struct ForeignState {
     /// The live test context used for setup and deterministic cleanup.
-    gl: Arc<glow::Context>,
+    gl: Rc<glow::Context>,
     /// Incomplete application target that must never receive a UI clear or draw.
     framebuffer: Framebuffer,
     /// Vertex layout unrelated to the backend's private layout.
@@ -20,7 +20,7 @@ struct ForeignState {
 
 impl ForeignState {
     /// Creates independent resources without borrowing or modifying any backend-owned object.
-    fn new(gl: Arc<glow::Context>) -> Self {
+    fn new(gl: Rc<glow::Context>) -> Self {
         unsafe {
             Self {
                 framebuffer: gl.create_framebuffer().unwrap(),
@@ -154,7 +154,7 @@ fn ui_draws_clears_and_uploads_survive_application_gl_state() {
     video.gl_attr().set_context_version(3, 0);
     let window = video.window("GL state regression", 8, 8).opengl().hidden().build().unwrap();
     let _context = window.gl_create_context().unwrap();
-    let gl = Arc::new(unsafe { glow::Context::from_loader_function(|name| video.gl_get_proc_address(name).cast()) });
+    let gl = Rc::new(unsafe { glow::Context::from_loader_function(|name| video.gl_get_proc_address(name).cast()) });
     let foreign = ForeignState::new(gl.clone());
     foreign.bind();
     let mut renderer = GLRenderer::new(gl.clone(), atlas(), 8, 8).unwrap();

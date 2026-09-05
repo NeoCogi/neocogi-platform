@@ -185,7 +185,7 @@ fn native_order_ownership_reentry_and_final_release() {
     let assets = microui_ui::assets::export_bundle(&bundle).unwrap();
     let native = platform.window("COM GPU acceptance", SIZE, assets.as_com_ref()).unwrap();
     let device = Rc::downgrade(&native.device);
-    let unknown = NativeWindow::from_value(native);
+    let unknown = WindowObject::from_value(native);
     input_delivery(&unknown, &device);
     let renderer: ComPtr<IRendererAbi> = unknown.query().unwrap();
     let factory: ComPtr<ITextureFactoryAbi> = unknown.query().unwrap();

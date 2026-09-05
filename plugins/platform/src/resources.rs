@@ -38,7 +38,7 @@ impl Drop for TextureRecord {
         self.device.retire(self.id);
     }
 }
-impl ITextureFactory for NativeWindow {
+impl ITextureFactory for WindowObject {
     /// Validates exact RGBA length through the common image policy, uploads, then publishes one capability.
     fn create_texture(&self, size: Size, pixels: NcCopyFromBufferOffset<'_, u8>) -> Result<ComPtr<ITextureAbi>, NcStatus> {
         if pixels.offset() != 0 {
@@ -144,7 +144,7 @@ impl Drop for Scene {
         self.record.device.scenes.borrow_mut().remove(&self.record.key.get());
     }
 }
-impl IDemoScenes for NativeWindow {
+impl IDemoScenes for WindowObject {
     /// Creates the actual empty application scene in this renderer's ownership domain.
     fn create_scene(&self) -> Result<ComPtr<IMeshSceneAbi>, NcStatus> {
         let _access = self.device.access()?;
@@ -164,7 +164,7 @@ impl IDemoScenes for NativeWindow {
         Ok(scene)
     }
 }
-impl Resources for NativeWindow {
+impl Resources for WindowObject {
     type Texture = Rc<TextureRecord>;
     type Item = MeshSubmission;
     /// Authentication never calls a resource-reported owner getter and never downcasts erased data.

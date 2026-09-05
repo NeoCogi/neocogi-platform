@@ -1,0 +1,15 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Browser input regression</title>
+<pre id="result">RUNNING</pre>
+<script type="module">
+// The test export exercises the installed Rust DOM listeners and throws on an assertion failure.
+import init, { run_browser_input_tests } from './input-test.js';
+try {
+    await init();
+    run_browser_input_tests();
+    document.getElementById('result').textContent = 'PASS';
+} catch (error) {
+    document.getElementById('result').textContent = `FAIL ${error.stack}`;
+}
+</script>

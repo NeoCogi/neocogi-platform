@@ -2,7 +2,7 @@
 use super::*;
 use microui_redux_renderer_support::wheel::{WheelAccumulator, WheelUnit};
 use sdl2::{
-    event::WindowEvent,
+    event::{Event, WindowEvent},
     keyboard::{Keycode, Mod},
     mouse::{MouseButton, MouseWheelDirection},
 };
@@ -168,18 +168,7 @@ fn modifiers(value: Mod) -> u8 {
         | u8::from(value.intersects(Mod::LGUIMOD | Mod::RGUIMOD)) << 3
 }
 
-/// Resets delivery authority on all exits without keeping a RefCell borrow during a callback.
-struct Polling<'a> {
-    /// Delivery flag whose owner remains borrowed until the current callback completes.
-    active: &'a Cell<bool>,
-}
-impl Drop for Polling<'_> {
-    fn drop(&mut self) {
-        self.active.set(false);
-    }
-}
-
-impl IPlatformWindow for NativeWindow {
+impl IPlatformWindow for WindowObject {
     /// Reports drawable pixels, which are also the coordinates used by every delivered pointer.
     fn size(&self) -> Result<Size, NcStatus> {
         Ok(gpu::pixel_size(&self.device.window))

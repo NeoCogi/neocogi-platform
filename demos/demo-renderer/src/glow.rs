@@ -1,6 +1,6 @@
 //! OpenGL ES 3 / WebGL 2 implementation of the full demo's mesh renderer.
 
-use std::sync::Arc;
+use std::rc::Rc;
 
 use glow::HasContext;
 use microui_ui::{prelude::Recti, render::CustomRenderArgs};
@@ -21,7 +21,7 @@ impl DemoRenderer {
     }
 
     /// Creates persistent GL resources against the active backend context when first needed.
-    fn resources(&mut self, gl: &Arc<glow::Context>) -> Result<&mut GlMeshResources, String> {
+    fn resources(&mut self, gl: &Rc<glow::Context>) -> Result<&mut GlMeshResources, String> {
         if self.resources.is_none() {
             self.resources = Some(GlMeshResources::new(gl.clone())?);
         }
@@ -50,7 +50,7 @@ impl GlApplicationRenderer for DemoRenderer {
 /// Persistent native handles used by the GL mesh path.
 struct GlMeshResources {
     /// Shared context retained so Drop can delete every application-owned native handle.
-    gl: Arc<glow::Context>,
+    gl: Rc<glow::Context>,
     /// Linked vertex/fragment program implementing transform and normal shading.
     program: glow::Program,
     /// Vertex array recording the demo mesh's attribute and buffer bindings.
@@ -63,7 +63,7 @@ struct GlMeshResources {
 
 impl GlMeshResources {
     /// Allocates the application pipeline and empty native buffers transactionally.
-    fn new(gl: Arc<glow::Context>) -> Result<Self, String> {
+    fn new(gl: Rc<glow::Context>) -> Result<Self, String> {
         let program = create_program(&gl, MESH_VERTEX_SHADER, MESH_FRAGMENT_SHADER).map_err(|error| error.to_string())?;
         let vertex_array = match unsafe { gl.create_vertex_array() } {
             Ok(array) => array,

@@ -33,7 +33,7 @@
 //! mesh rendering for the demo application.
 
 use core::slice;
-use std::{collections::HashMap, convert::Infallible, io, sync::Arc};
+use std::{collections::HashMap, convert::Infallible, io, rc::Rc};
 
 use microui_ui::{
     prelude::*,
@@ -63,7 +63,7 @@ pub struct GlApplicationRenderContext<'a> {
     ///
     /// The shared owner lets lazily created application resources retain the context needed for
     /// deterministic native-handle destruction without transferring backend ownership.
-    pub gl: &'a Arc<glow::Context>,
+    pub gl: &'a Rc<glow::Context>,
     /// Complete drawable size used to translate microui's top-left coordinate space when needed.
     pub framebuffer_size: (u32, u32),
     /// Authoritative widget allocation and final clip supplied by microui's display-list executor.
@@ -133,7 +133,9 @@ where
     // `GLRenderer` is deliberately simple: it keeps one shader program plus shared VBO/IBO state
     // for ordinary UI draws, and falls back to explicit immediate draw calls for custom work that
     // cannot be folded into the batch easily.
-    gl: Arc<glow::Context>,
+    // GL contexts and every resource user remain on their owning UI thread. Rc expresses that
+    // lifetime directly and also works for browser WebGL contexts, which are never Send/Sync.
+    gl: Rc<glow::Context>,
     verts: Vec<Vertex>,
     indices: Vec<u16>,
 
@@ -338,7 +340,7 @@ where
     /// Shader selection remains a construction detail of the UI backend; the application renderer
     /// owns and compiles its own programs independently through the native context it receives.
     pub fn new_with_application_and_shaders(
-        gl: Arc<glow::Context>,
+        gl: Rc<glow::Context>,
         atlas: AtlasHandle,
         width: u32,
         height: u32,
@@ -435,7 +437,7 @@ where
     }
 
     /// Creates a native Glow renderer with one concrete application-rendering extension.
-    pub fn new_with_application(gl: Arc<glow::Context>, atlas: AtlasHandle, width: u32, height: u32, application: Application) -> Result<Self, String> {
+    pub fn new_with_application(gl: Rc<glow::Context>, atlas: AtlasHandle, width: u32, height: u32, application: Application) -> Result<Self, String> {
         // Native examples use the backend's standard GLSL dialect; only the application object is
         // supplied by the caller.
         Self::new_with_application_and_shaders(gl, atlas, width, height, application, VERTEX_SHADER, FRAGMENT_SHADER)
@@ -444,7 +446,7 @@ where
 
 impl GLRenderer<()> {
     /// Creates a UI-only native Glow renderer.
-    pub fn new(gl: Arc<glow::Context>, atlas: AtlasHandle, width: u32, height: u32) -> Result<Self, String> {
+    pub fn new(gl: Rc<glow::Context>, atlas: AtlasHandle, width: u32, height: u32) -> Result<Self, String> {
         Self::new_with_application(gl, atlas, width, height, ())
     }
 
@@ -452,7 +454,7 @@ impl GLRenderer<()> {
     ///
     /// The WebGL canvas wrapper uses this constructor for its ES 3.00 UI shaders.
     pub fn new_with_shaders(
-        gl: Arc<glow::Context>,
+        gl: Rc<glow::Context>,
         atlas: AtlasHandle,
         width: u32,
         height: u32,
