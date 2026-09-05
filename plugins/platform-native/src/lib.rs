@@ -7,17 +7,14 @@ use microui_redux_demo_renderer::{MeshBuffers, MeshSubmission};
 use microui_redux_renderer_support::com::{PreparedFrame, Resources};
 use microui_ui::TextureId;
 use nc_com::{ComInterface, ComPtr, ComRef, IUnknown, INcStringAbi, NcString, NcCopyFromBufferOffset, NcStatus, NC_E_INVALID_ARG, com_class};
-use sdl2::{
-    event::{Event, WindowEvent},
-    keyboard::Keycode,
-    mouse::MouseButton,
-};
+use sdl2::event::Event;
 use std::{
     cell::{Cell, RefCell},
     collections::{BTreeMap, HashMap, VecDeque},
     rc::{Rc, Weak},
 };
 mod gpu;
+mod input;
 mod resources;
 use resources::{SceneRecord, TextureRecord};
 
@@ -69,6 +66,9 @@ impl NativeHost {
                     queue.push_back(event.clone());
                 }
             } else if let Some(queue) = event.get_window_id().and_then(|window| queues.get_mut(&window)) {
+                if matches!(event, Event::MouseMotion { .. }) && matches!(queue.back(), Some(Event::MouseMotion { .. })) {
+                    queue.pop_back();
+                }
                 queue.push_back(event);
             }
         }
@@ -126,7 +126,7 @@ impl Platform {
             window,
             host,
         });
-        Ok(NativeWindow { device })
+        Ok(NativeWindow { device, input: RefCell::default(), polling: Cell::new(false) })
     }
 }
 impl IRenderDiagnostics for Platform {
@@ -233,68 +233,10 @@ impl Drop for Device {
 struct NativeWindow {
     /// Resources retain this same native owner after the public window interface is released.
     device: Rc<Device>,
-}
-
-impl NativeWindow {
-    /// Scales logical SDL pointer coordinates into the drawable-pixel UI coordinate space.
-    fn pointer(&self, x: i32, y: i32) -> (i32, i32) {
-        let (lw, lh) = self.device.window.size();
-        let Size { width: dw, height: dh } = gpu::pixel_size(&self.device.window);
-        (
-            (i64::from(x) * i64::from(dw) / i64::from(lw.max(1))).clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32,
-            (i64::from(y) * i64::from(dh) / i64::from(lh.max(1))).clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32,
-        )
-    }
-}
-
-impl IPlatformWindow for NativeWindow {
-    /// Reports actual drawable size, independent of logical window scaling.
-    fn size(&self) -> Result<Size, NcStatus> {
-        Ok(gpu::pixel_size(&self.device.window))
-    }
-    /// Converts relevant events without lending SDL or Rust enum storage across COM.
-    fn poll(&self) -> Result<PlatformEvent, NcStatus> {
-        while let Some(event) = self.device.host.poll(self.device.window.id())? {
-            let (kind, x, y) = match event {
-                Event::Quit { .. } | Event::Window { win_event: WindowEvent::Close, .. } => (PlatformEventKind::QUIT, 0, 0),
-                Event::Window {
-                    win_event: WindowEvent::SizeChanged(..), ..
-                } => {
-                    let size = self.size()?;
-                    (PlatformEventKind::RESIZE, size.width, size.height)
-                }
-                Event::MouseMotion { x, y, .. } => {
-                    let (x, y) = self.pointer(x, y);
-                    (PlatformEventKind::POINTER_MOVE, x, y)
-                }
-                Event::MouseButtonDown { mouse_btn: MouseButton::Left, x, y, .. } => {
-                    let (x, y) = self.pointer(x, y);
-                    (PlatformEventKind::POINTER_DOWN, x, y)
-                }
-                Event::MouseButtonUp { mouse_btn: MouseButton::Left, x, y, .. } => {
-                    let (x, y) = self.pointer(x, y);
-                    (PlatformEventKind::POINTER_UP, x, y)
-                }
-                Event::KeyDown {
-                    keycode: Some(Keycode::Return | Keycode::Space),
-                    repeat: false,
-                    ..
-                } => (PlatformEventKind::ACTIVATE, 0, 0),
-                Event::KeyDown {
-                    keycode: Some(Keycode::Tab),
-                    repeat: false,
-                    ..
-                } => (PlatformEventKind::TAB, 0, 0),
-                _ => continue,
-            };
-            return Ok(PlatformEvent { kind, x, y });
-        }
-        Ok(PlatformEvent {
-            kind: PlatformEventKind::NONE,
-            x: 0,
-            y: 0,
-        })
-    }
+    /// Fractional wheel input belongs to this window and is reset on focus cancellation.
+    input: RefCell<input::InputState>,
+    /// Rejects recursive delivery even after native and queue borrows have been released.
+    polling: Cell<bool>,
 }
 
 impl IRenderer for NativeWindow {

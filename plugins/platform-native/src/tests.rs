@@ -186,6 +186,7 @@ fn native_order_ownership_reentry_and_final_release() {
     let native = platform.window("COM GPU acceptance", SIZE, assets.as_com_ref()).unwrap();
     let device = Rc::downgrade(&native.device);
     let unknown = NativeWindow::from_value(native);
+    input_delivery(&unknown, &device);
     let renderer: ComPtr<IRendererAbi> = unknown.query().unwrap();
     let factory: ComPtr<ITextureFactoryAbi> = unknown.query().unwrap();
     let scenes: ComPtr<IDemoScenesAbi> = unknown.query().unwrap();
@@ -291,4 +292,81 @@ fn native_order_ownership_reentry_and_final_release() {
     assert!(device.upgrade().is_some(), "image must retain window and context after public window release");
     drop(background);
     assert!(device.upgrade().is_none(), "no registry or idle prepared-frame cycle may retain the device");
+}
+
+#[com_class(interfaces(IInputSink))]
+/// Concrete destination observes delivery, optionally reentering the same native window once.
+struct InputProbe {
+    /// Reentry target belongs to this short-lived test sink, never to a platform registration.
+    window: Option<ComPtr<IPlatformWindowAbi>>,
+    /// A harmless destination allows nested polling without giving the probe a reference to itself.
+    empty: Option<ComPtr<IInputSinkAbi>>,
+    /// Copied attempted inputs remain visible after the sink is released.
+    received: Rc<RefCell<Vec<(UiInput, String)>>>,
+    /// Injects one delivery error so the remaining native queue can be checked independently.
+    fail: Cell<bool>,
+}
+impl IInputSink for InputProbe {
+    /// Records the attempted transition before checking recursive polling and returning the injected error.
+    fn input(&self, event: UiInputAbi, text: NcCopyFromBufferOffset<'_, u8>) -> Result<(), NcStatus> {
+        self.received
+            .borrow_mut()
+            .push((UiInput::try_from(event)?, std::str::from_utf8(text.as_slice()).unwrap().to_owned()));
+        if let Some(window) = &self.window {
+            assert_eq!(window.poll(self.empty.as_ref().unwrap().as_com_ref()), Err(UI_E_BUSY));
+        }
+        if self.fail.replace(false) { Err(NC_E_INVALID_ARG) } else { Ok(()) }
+    }
+}
+/// Runs inside the existing single SDL/GPU test thread; no parallel native event pump is constructed.
+fn input_delivery(unknown: &ComPtr<IUnknown>, device: &Weak<Device>) {
+    let window: ComPtr<IPlatformWindowAbi> = unknown.query().unwrap();
+    let received = Rc::new(RefCell::new(Vec::new()));
+    let empty: ComPtr<IInputSinkAbi> = InputProbe::from_value(InputProbe {
+        window: None,
+        empty: None,
+        received: received.clone(),
+        fail: Cell::new(false),
+    })
+    .query()
+    .unwrap();
+    // Drain construction/focus events before inserting a deterministic pair of Unicode commits.
+    while window.poll(empty.as_com_ref()).unwrap() == PollStatus::EVENT {}
+    received.borrow_mut().clear();
+    let owner = device.upgrade().unwrap();
+    let id = owner.window.id();
+    owner.host.queues.borrow_mut().get_mut(&id).unwrap().extend([
+        sdl2::event::Event::TextInput {
+            timestamp: 0,
+            window_id: id,
+            text: "first é".to_owned(),
+        },
+        sdl2::event::Event::TextInput {
+            timestamp: 0,
+            window_id: id,
+            text: "second ☃".to_owned(),
+        },
+    ]);
+    let sink: ComPtr<IInputSinkAbi> = InputProbe::from_value(InputProbe {
+        window: Some(window.clone()),
+        empty: Some(empty),
+        received: received.clone(),
+        fail: Cell::new(true),
+    })
+    .query()
+    .unwrap();
+    assert_eq!(window.poll(sink.as_com_ref()), Err(NC_E_INVALID_ARG));
+    assert_eq!(window.poll(sink.as_com_ref()), Ok(PollStatus::EVENT));
+    while window.poll(sink.as_com_ref()).unwrap() == PollStatus::EVENT {}
+    assert_eq!(
+        &*received.borrow(),
+        &[(UiInput::Text, "first é".to_owned()), (UiInput::Text, "second ☃".to_owned())]
+    );
+    assert_eq!(
+        window.text_input(TextInputArea::Area(Rect { x: 0, y: 0, width: -1, height: 1 }).into()),
+        Err(NC_E_INVALID_ARG)
+    );
+    drop(sink);
+    // No platform-owned sink reference remains after synchronous delivery.
+    assert_eq!(Rc::strong_count(&received), 1);
 }

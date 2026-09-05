@@ -7,3 +7,6 @@ pub mod com;
 
 #[doc(hidden)]
 pub mod resource_guard;
+
+/// Physical pixel wheel conversion shared by native and browser platform hosts.
+pub mod wheel;
