@@ -3,3 +3,6 @@
 *target/
 *.lock
 SDL2.*
+
+# COM compatibility fixtures deliberately pin producer dependencies.
+!crates/com/**/Cargo.lock

@@ -11,6 +11,15 @@ readme = "README.md"
 repository = "https://github.com/NeoCogi/microui-redux"
 
 [workspace.dependencies]
+nc-com-core = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "ab980805af44b8911a890cd1ad03ae209fd3a395", version = "0.1.0", default-features = false }
+nc-com-macros = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "ab980805af44b8911a890cd1ad03ae209fd3a395", version = "0.1.0", default-features = false }
+nc-com = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "ab980805af44b8911a890cd1ad03ae209fd3a395", version = "0.1.0", default-features = false }
+nc-com-runtime-sys = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "ab980805af44b8911a890cd1ad03ae209fd3a395", version = "0.1.0", default-features = false }
+nc-com-runtime = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "ab980805af44b8911a890cd1ad03ae209fd3a395", version = "0.1.0", default-features = false }
+proc-macro-crate = "3"
+proc-macro2 = "1"
+quote = "1"
+syn = { version = "2", features = ["full", "extra-traits"] }
 microui-redux = { path = "crates/microui-redux", version = "0.8.0", default-features = false }
 microui-redux-demo-assets = { path = "demos/demo-assets", default-features = false }
 microui-redux-demo-host = { path = "demos/demo-host", default-features = false }
