@@ -111,7 +111,7 @@ fn atlas() -> AtlasHandle {
         pixels: &[255; 4],
         icons: &icons,
         fonts: &fonts,
-        format: SourceFormat::Raw,
+
     })
     .unwrap()
 }
