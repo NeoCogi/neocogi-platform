@@ -656,10 +656,9 @@ where
         Application: 'a;
 
     fn replace_atlas(&mut self, atlas: ImageSource<'_>) -> std::result::Result<(), AtlasUploadError> {
-        // VulkanContext's atlas upload retains the old image until the candidate image, transfer,
-        // and descriptor update all succeed. Mirror that commit by replacing the CPU handle last.
+        // Keep the old GPU image until the candidate transfer and descriptor update succeed.
+        // The input bytes are borrowed only for this synchronous upload.
         self.context.upload_atlas(atlas).map_err(AtlasUploadError::new)?;
-
         Ok(())
     }
 
