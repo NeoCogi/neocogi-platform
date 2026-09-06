@@ -75,45 +75,9 @@ impl Drop for ForeignState {
 }
 
 /// Builds an entirely public, valid single-texel atlas for the renderer's sampling path.
-fn atlas() -> AtlasHandle {
-    let icons = [
-        "white",
-        "close",
-        "expand",
-        "collapse",
-        "check",
-        "expand_down",
-        "open_folder",
-        "closed_folder",
-        "file",
-    ]
-    .map(|name| (name, Recti::new(0, 0, 1, 1)));
-    let entries = [(
-        '_',
-        CharEntry {
-            offset: Vec2i::new(0, 0),
-            advance: Vec2i::new(1, 0),
-            rect: Recti::new(0, 0, 1, 1),
-        },
-    )];
-    let fonts = [(
-        "body",
-        FontEntry {
-            line_size: 10,
-            baseline: 8,
-            font_size: 10,
-            entries: &entries,
-        },
-    )];
-    AtlasHandle::try_from(&AtlasSource {
-        width: 1,
-        height: 1,
-        pixels: &[255; 4],
-        icons: &icons,
-        fonts: &fonts,
-
-    })
-    .unwrap()
+fn atlas() -> ImageSource<'static> {
+    // Rendering isolation tests need one white texel, not font/icon metadata or a UI skin.
+    ImageSource { width: 1, height: 1, pixels: &[255; 4] }
 }
 
 /// Reads the default framebuffer regardless of the application-side read-target binding.

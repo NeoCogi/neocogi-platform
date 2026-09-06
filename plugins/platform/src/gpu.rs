@@ -1,7 +1,7 @@
 //! Native GPU execution remains local to this plugin; only construction differs between selected backends.
 use super::*;
 use microui_ui::{
-    AtlasHandle, TextureId,
+    ImageSource, TextureId,
     prelude::{Dimensioni, Recti, Vec2f, color4b},
     render::{Color, RenderItemArgs, FrameInfo, RendererBackend, RendererFrame, Vertex},
 };
@@ -49,7 +49,7 @@ pub(super) struct Gpu {
 impl Gpu {
     /// Creates the chosen native window and backend in one fallible transaction.
     #[cfg(not(target_arch = "wasm32"))]
-    pub(super) fn new(video: &sdl2::VideoSubsystem, title: &str, size: Size, atlas: AtlasHandle) -> Result<Self, String> {
+    pub(super) fn new(video: &sdl2::VideoSubsystem, title: &str, size: Size, atlas: ImageSource<'_>) -> Result<Self, String> {
         #[cfg(feature = "glow")]
         {
             let attributes = video.gl_attr();
@@ -90,7 +90,7 @@ impl Gpu {
     }
     /// Creates the browser renderer using the same concrete UI and mesh execution path.
     #[cfg(target_arch = "wasm32")]
-    pub(super) fn from_canvas(window: Window, atlas: AtlasHandle) -> Result<Self, String> {
+    pub(super) fn from_canvas(window: Window, atlas: ImageSource<'_>) -> Result<Self, String> {
         use wasm_bindgen::JsCast;
         let webgl = window
             .get_context("webgl2")
@@ -117,7 +117,7 @@ impl Gpu {
         Ok(())
     }
     /// Uploads into this device's current context using the backend's existing atomic replacement.
-    pub(super) fn replace_atlas(&mut self, atlas: AtlasHandle) -> Result<(), String> {
+    pub(super) fn replace_atlas(&mut self, atlas: ImageSource<'_>) -> Result<(), String> {
         self.current()?;
         self.renderer.replace_atlas(atlas).map_err(|error| error.to_string())
     }

@@ -287,8 +287,6 @@ pub struct VulkanRenderer<Application = ()>
 where
     Application: VulkanApplicationRenderer,
 {
-    /// Font atlas sampled by the backend-owned UI pipeline.
-    atlas: AtlasHandle,
     /// User textures whose descriptors are compatible with the current UI render resources.
     textures: HashMap<TextureId, VulkanTexture>,
     /// Concrete application renderer dropped before the logical device that owns its resources.
@@ -331,13 +329,12 @@ where
     }
 
     /// Creates a Vulkan backend around the application's concrete native renderer.
-    pub fn new_with_application(window: &Window, atlas: AtlasHandle, width: u32, height: u32, application: Application) -> Result<Self> {
+    pub fn new_with_application(window: &Window, atlas: ImageSource<'_>, width: u32, height: u32, application: Application) -> Result<Self> {
         let mut context = VulkanContext::new(window, width, height)?;
-        context.upload_atlas(&atlas)?;
+        context.upload_atlas(atlas)?;
         let swapchain_generation = context.swapchain_generation();
 
         Ok(Self {
-            atlas,
             textures: HashMap::new(),
             context,
             last_swapchain_generation: swapchain_generation,
@@ -422,7 +419,7 @@ where
 
 impl VulkanRenderer<()> {
     /// Creates a UI-only Vulkan backend with an uninhabited application command type.
-    pub fn new(window: &Window, atlas: AtlasHandle, width: u32, height: u32) -> Result<Self> {
+    pub fn new(window: &Window, atlas: ImageSource<'_>, width: u32, height: u32) -> Result<Self> {
         Self::new_with_application(window, atlas, width, height, ())
     }
 }
@@ -658,15 +655,11 @@ where
     where
         Application: 'a;
 
-    fn get_atlas(&self) -> AtlasHandle {
-        self.atlas.clone()
-    }
-
-    fn replace_atlas(&mut self, atlas: AtlasHandle) -> std::result::Result<(), AtlasUploadError> {
+    fn replace_atlas(&mut self, atlas: ImageSource<'_>) -> std::result::Result<(), AtlasUploadError> {
         // VulkanContext's atlas upload retains the old image until the candidate image, transfer,
         // and descriptor update all succeed. Mirror that commit by replacing the CPU handle last.
-        self.context.upload_atlas(&atlas).map_err(AtlasUploadError::new)?;
-        self.atlas = atlas;
+        self.context.upload_atlas(atlas).map_err(AtlasUploadError::new)?;
+
         Ok(())
     }
 
@@ -1307,13 +1300,11 @@ impl UiResources {
     }
 
     /// Creates and uploads the immutable atlas image during renderer construction.
-    fn upload_atlas(&mut self, ctx: &mut VulkanContext, atlas: &AtlasHandle) -> Result<()> {
-        let width = atlas.width();
-        let height = atlas.height();
-        let pixels = atlas.pixels();
-        // SAFETY: Atlas stores contiguous four-byte RGBA pixels, and this immutable local
-        // borrow remains alive until the synchronous staging-buffer copy below completes.
-        let data = unsafe { std::slice::from_raw_parts(pixels.as_ptr().cast::<u8>(), pixels.len() * 4) };
+    fn upload_atlas(&mut self, ctx: &mut VulkanContext, atlas: ImageSource<'_>) -> Result<()> {
+        atlas.validate().map_err(|error| error.to_string())?;
+        let width = atlas.width;
+        let height = atlas.height;
+        let data = atlas.pixels;
 
         let width_u32 = u32::try_from(width).map_err(|_| "atlas width exceeds u32 range")?;
         let height_u32 = u32::try_from(height).map_err(|_| "atlas height exceeds u32 range")?;
@@ -2657,7 +2648,7 @@ impl VulkanContext {
         self.swapchain_generation
     }
     /// Uploads the shared immutable microui atlas into the current UI resources.
-    fn upload_atlas(&mut self, atlas: &AtlasHandle) -> Result<()> {
+    fn upload_atlas(&mut self, atlas: ImageSource<'_>) -> Result<()> {
         if let Some(mut ui) = self.ui.take() {
             let result = ui.upload_atlas(self, atlas);
             self.ui = Some(ui);

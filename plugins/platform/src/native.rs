@@ -50,8 +50,8 @@ impl NativeHost {
 impl Platform {
     /// Constructs the concrete native owner used by COM activation and native lifetime acceptance tests.
     pub(super) fn window(&self, title: &str, size: Size, source: ComRef<'_, IAssetBundleAbi>) -> Result<WindowObject, NcStatus> {
-        // Validate all foreign metadata before creating a native window or borrowing SDL ownership.
-        let assets = microui_ui::assets::ImportedAssets::read(source, None)?;
+        // Validate pixel storage before creating a native window or borrowing SDL ownership.
+        let pixels = AtlasPixels::read(source)?;
         let mut owner = self.host.try_borrow_mut().map_err(|_| UI_E_BUSY)?;
         if owner.is_none() {
             *owner = Some(NativeHost::new().map_err(|error| {
@@ -61,7 +61,7 @@ impl Platform {
         }
         let host = owner.as_ref().expect("host initialized").clone();
         drop(owner);
-        let gpu = gpu::Gpu::new(&host.video, title, size, assets.bundle().atlas().clone()).map_err(|error| {
+        let gpu = gpu::Gpu::new(&host.video, title, size, pixels.image()).map_err(|error| {
             *self.diagnostic.borrow_mut() = error;
             UI_E_RENDER
         })?;
@@ -70,7 +70,7 @@ impl Platform {
         let device = Rc::new(Device {
             render: RefCell::new(Some(RenderState {
                 gpu,
-                assets,
+                assets: source.add_ref(),
                 prepared: Prepared::default(),
             })),
             textures: RefCell::default(),

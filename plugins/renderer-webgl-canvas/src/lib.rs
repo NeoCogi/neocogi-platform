@@ -7,7 +7,7 @@
 use std::rc::Rc;
 
 use microui_ui::{
-    prelude::{AtlasHandle, AtlasUploadError, FrameError, FrameInfo, RendererBackend, TextureId},
+    prelude::{ImageSource, AtlasUploadError, FrameError, FrameInfo, RendererBackend, TextureId},
     render::TextureError,
 };
 use microui_redux_renderer_glow::{GLRenderer, GlFrame};
@@ -51,7 +51,7 @@ where
 
 impl WebGlCanvasRenderer<()> {
     /// Creates the renderer from the canvas's current WebGL 2 context.
-    pub fn new(gl: Rc<glow::Context>, atlas: AtlasHandle, width: u32, height: u32) -> Result<Self, String> {
+    pub fn new(gl: Rc<glow::Context>, atlas: ImageSource<'_>, width: u32, height: u32) -> Result<Self, String> {
         GLRenderer::new_with_shaders(gl, atlas, width, height, VERTEX_SHADER, FRAGMENT_SHADER).map(|inner| Self { inner })
     }
 }
@@ -61,7 +61,7 @@ where
     Application: GlApplicationRenderer,
 {
     /// Creates a WebGL renderer with one strongly typed application GPU extension.
-    pub fn new_with_application(gl: Rc<glow::Context>, atlas: AtlasHandle, width: u32, height: u32, application: Application) -> Result<Self, String> {
+    pub fn new_with_application(gl: Rc<glow::Context>, atlas: ImageSource<'_>, width: u32, height: u32, application: Application) -> Result<Self, String> {
         // The wrapper selects only the UI shader dialect. Application shaders remain entirely
         // owned by `Application` and are compiled through its native Glow context.
         GLRenderer::new_with_application_and_shaders(gl, atlas, width, height, application, VERTEX_SHADER, FRAGMENT_SHADER).map(|inner| Self { inner })
@@ -77,11 +77,7 @@ where
     where
         Application: 'a;
 
-    fn get_atlas(&self) -> AtlasHandle {
-        self.inner.get_atlas()
-    }
-
-    fn replace_atlas(&mut self, atlas: AtlasHandle) -> Result<(), AtlasUploadError> {
+    fn replace_atlas(&mut self, atlas: ImageSource<'_>) -> Result<(), AtlasUploadError> {
         self.inner.replace_atlas(atlas)
     }
 

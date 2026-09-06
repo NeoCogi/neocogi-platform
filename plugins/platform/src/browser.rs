@@ -7,15 +7,15 @@ impl Platform {
     /// Allocates an independent canvas for each COM window; no two devices accidentally share
     /// one WebGL context. Applications style canvas elements using ordinary page CSS.
     pub(super) fn window(&self, title: &str, size: Size, source: ComRef<'_, IAssetBundleAbi>) -> Result<WindowObject, NcStatus> {
-        let assets = microui_ui::assets::ImportedAssets::read(source, None)?;
-        self.canvas(title, size, assets).map_err(|error| {
+        let pixels = AtlasPixels::read(source)?;
+        self.canvas(title, size, source, pixels).map_err(|error| {
             *self.diagnostic.borrow_mut() = error;
             UI_E_RENDER
         })
     }
 
     /// Owns partial DOM construction so listener or GPU failures leave no orphan canvas in the page.
-    fn canvas(&self, title: &str, size: Size, assets: microui_ui::assets::ImportedAssets) -> Result<WindowObject, String> {
+    fn canvas(&self, title: &str, size: Size, source: ComRef<'_, IAssetBundleAbi>, pixels: AtlasPixels) -> Result<WindowObject, String> {
         let document = web_sys::window().and_then(|window| window.document()).ok_or("browser document unavailable")?;
         let canvas = document
             .create_element("canvas")
@@ -30,12 +30,12 @@ impl Platform {
         let mut pending = CanvasConstruction { canvas, committed: false };
         resize(&pending.canvas);
         let input = input::BrowserInputHost::new(&pending.canvas)?;
-        let gpu = gpu::Gpu::from_canvas(pending.canvas.clone(), assets.bundle().atlas().clone())?;
+        let gpu = gpu::Gpu::from_canvas(pending.canvas.clone(), pixels.image())?;
         let window = gpu.window();
         let device = Rc::new(Device {
             render: RefCell::new(Some(RenderState {
                 gpu,
-                assets,
+                assets: source.add_ref(),
                 prepared: Prepared::default(),
             })),
             textures: RefCell::default(),

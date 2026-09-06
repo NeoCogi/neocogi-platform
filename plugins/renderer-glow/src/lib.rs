@@ -150,7 +150,6 @@ where
     width: u32,
     height: u32,
 
-    atlas: AtlasHandle,
     textures: HashMap<TextureId, Texture>,
     /// Application-owned native renderer invoked only for its concrete command type.
     application: Application,
@@ -287,7 +286,8 @@ where
     /// Keeping allocation behind this helper gives atlas replacement a transaction boundary: the
     /// existing texture remains bound to future frames unless all GL setup and upload work for the
     /// candidate succeeds.
-    fn create_atlas_texture(&self, atlas: &AtlasHandle) -> Result<Texture, AtlasUploadError> {
+    fn create_atlas_texture(&self, atlas: ImageSource<'_>) -> Result<Texture, AtlasUploadError> {
+        atlas.validate().map_err(|error| AtlasUploadError::new(error.to_string()))?;
         unsafe {
             let texture_gl = self.gl.clone();
             let texture = ResourceGuard::new(
@@ -300,14 +300,13 @@ where
             self.gl.bind_texture(glow::TEXTURE_2D, Some(*texture.get()));
             self.gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MIN_FILTER, glow::NEAREST as i32);
             self.gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, glow::NEAREST as i32);
-            let pixels = atlas.pixels();
-            let bytes = slice::from_raw_parts(pixels.as_ptr().cast::<u8>(), pixels.len() * 4);
+            let bytes = atlas.pixels;
             self.gl.tex_image_2d(
                 glow::TEXTURE_2D,
                 0,
                 glow::RGBA as i32,
-                atlas.width() as i32,
-                atlas.height() as i32,
+                atlas.width as i32,
+                atlas.height as i32,
                 0,
                 glow::RGBA,
                 glow::UNSIGNED_BYTE,
@@ -341,13 +340,14 @@ where
     /// owns and compiles its own programs independently through the native context it receives.
     pub fn new_with_application_and_shaders(
         gl: Rc<glow::Context>,
-        atlas: AtlasHandle,
+        atlas: ImageSource<'_>,
         width: u32,
         height: u32,
         application: Application,
         vertex_shader: &str,
         fragment_shader: &str,
     ) -> Result<Self, String> {
+        atlas.validate().map_err(|error| error.to_string())?;
         assert_eq!(core::mem::size_of::<Vertex>(), 20);
         unsafe {
             // Each driver object stays guarded until all persistent resources exist. Any
@@ -367,14 +367,13 @@ where
             gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, glow::NEAREST as i32);
             debug_assert!(gl.get_error() == 0);
 
-            let pixels = atlas.pixels();
-            let pixel_slice = slice::from_raw_parts(pixels.as_ptr().cast::<u8>(), pixels.len() * 4);
+            let pixel_slice = atlas.pixels;
             gl.tex_image_2d(
                 glow::TEXTURE_2D,
                 0,
                 glow::RGBA as i32,
-                atlas.width() as i32,
-                atlas.height() as i32,
+                atlas.width as i32,
+                atlas.height as i32,
                 0,
                 glow::RGBA,
                 glow::UNSIGNED_BYTE,
@@ -429,7 +428,6 @@ where
 
                 width,
                 height,
-                atlas,
                 textures: HashMap::new(),
                 application,
             })
@@ -437,7 +435,7 @@ where
     }
 
     /// Creates a native Glow renderer with one concrete application-rendering extension.
-    pub fn new_with_application(gl: Rc<glow::Context>, atlas: AtlasHandle, width: u32, height: u32, application: Application) -> Result<Self, String> {
+    pub fn new_with_application(gl: Rc<glow::Context>, atlas: ImageSource<'_>, width: u32, height: u32, application: Application) -> Result<Self, String> {
         // Native examples use the backend's standard GLSL dialect; only the application object is
         // supplied by the caller.
         Self::new_with_application_and_shaders(gl, atlas, width, height, application, VERTEX_SHADER, FRAGMENT_SHADER)
@@ -446,7 +444,7 @@ where
 
 impl GLRenderer<()> {
     /// Creates a UI-only native Glow renderer.
-    pub fn new(gl: Rc<glow::Context>, atlas: AtlasHandle, width: u32, height: u32) -> Result<Self, String> {
+    pub fn new(gl: Rc<glow::Context>, atlas: ImageSource<'_>, width: u32, height: u32) -> Result<Self, String> {
         Self::new_with_application(gl, atlas, width, height, ())
     }
 
@@ -455,7 +453,7 @@ impl GLRenderer<()> {
     /// The WebGL canvas wrapper uses this constructor for its ES 3.00 UI shaders.
     pub fn new_with_shaders(
         gl: Rc<glow::Context>,
-        atlas: AtlasHandle,
+        atlas: ImageSource<'_>,
         width: u32,
         height: u32,
         vertex_shader: &str,
@@ -726,16 +724,12 @@ where
     where
         Application: 'a;
 
-    fn get_atlas(&self) -> AtlasHandle {
-        self.atlas.clone()
-    }
-
-    fn replace_atlas(&mut self, atlas: AtlasHandle) -> Result<(), AtlasUploadError> {
-        // Upload into a separate texture first. Only a complete candidate may displace the live GL
-        // object and matching CPU atlas capability.
-        let texture = self.create_atlas_texture(&atlas)?;
+    fn replace_atlas(&mut self, atlas: ImageSource<'_>) -> Result<(), AtlasUploadError> {
+        // Upload into a separate texture first. Only a complete candidate may displace the live
+        // GPU image; the borrowed CPU bytes are released by the caller after this method returns.
+        let texture = self.create_atlas_texture(atlas)?;
         let previous = std::mem::replace(&mut self.tex_o, texture);
-        self.atlas = atlas;
+
         unsafe {
             self.gl.delete_texture(previous);
         }

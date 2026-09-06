@@ -206,7 +206,6 @@ pub struct WgpuRenderer<Application = ()>
 where
     Application: WgpuApplicationRenderer,
 {
-    atlas: AtlasHandle,
     textures: HashMap<TextureId, GpuTexture>,
 
     _instance: wgpu::Instance,
@@ -598,7 +597,8 @@ where
     /// Creates the WGPU renderer with one concrete application-rendering extension.
     ///
     /// Retains an SDL window clone, so dropping the caller's window before the renderer is safe.
-    pub fn new_with_application(window: &Window, atlas: AtlasHandle, width: u32, height: u32, application: Application) -> Result<Self, String> {
+    pub fn new_with_application(window: &Window, atlas: ImageSource<'_>, width: u32, height: u32, application: Application) -> Result<Self, String> {
+        atlas.validate().map_err(|error| error.to_string())?;
         // Declare the native owner before GPU locals so failure unwinding also drops surfaces first.
         let window = window.clone();
         let instance = wgpu::Instance::default();
@@ -663,16 +663,16 @@ where
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
-        let atlas_pixels = atlas.pixels();
+        let atlas_pixels = atlas.pixels;
         let atlas_texture = Self::create_gpu_texture(
             &device,
             &queue,
             &bind_group_layout,
             &sampler,
             &uniform_buffer,
-            atlas.width() as u32,
-            atlas.height() as u32,
-            Some(Self::slice_as_bytes(atlas_pixels)),
+            atlas.width as u32,
+            atlas.height as u32,
+            Some(atlas_pixels),
         )?;
         let depth_target = Self::create_depth_target(&device, config.width, config.height);
 
@@ -685,7 +685,6 @@ where
         });
 
         let renderer = Self {
-            atlas,
             textures: HashMap::new(),
 
             _instance: instance,
@@ -740,7 +739,7 @@ where
 
 impl WgpuRenderer<()> {
     /// Creates a UI-only WGPU renderer with an uninhabited application command type.
-    pub fn new(window: &Window, atlas: AtlasHandle, width: u32, height: u32) -> Result<Self, String> {
+    pub fn new(window: &Window, atlas: ImageSource<'_>, width: u32, height: u32) -> Result<Self, String> {
         Self::new_with_application(window, atlas, width, height, ())
     }
 }
@@ -1092,27 +1091,24 @@ where
     where
         Application: 'a;
 
-    fn get_atlas(&self) -> AtlasHandle {
-        self.atlas.clone()
-    }
-
-    fn replace_atlas(&mut self, atlas: AtlasHandle) -> Result<(), AtlasUploadError> {
+    fn replace_atlas(&mut self, atlas: ImageSource<'_>) -> Result<(), AtlasUploadError> {
+        atlas.validate().map_err(|error| AtlasUploadError::new(error.to_string()))?;
         // Construct the complete sampled texture and bind group before publishing either field.
         // Dropping the old GpuTexture after assignment releases it only once the candidate exists.
-        let pixels = atlas.pixels();
+        let pixels = atlas.pixels;
         let texture = Self::create_gpu_texture(
             &self.device,
             &self.queue,
             &self.bind_group_layout,
             &self.sampler,
             &self.uniform_buffer,
-            atlas.width() as u32,
-            atlas.height() as u32,
-            Some(Self::slice_as_bytes(pixels)),
+            atlas.width as u32,
+            atlas.height as u32,
+            Some(pixels),
         )
         .map_err(AtlasUploadError::new)?;
         self.atlas_texture = texture;
-        self.atlas = atlas;
+
         Ok(())
     }
 

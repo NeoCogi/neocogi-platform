@@ -13,6 +13,8 @@ use std::{
     rc::{Rc, Weak},
 };
 mod gpu;
+mod pixels;
+use pixels::AtlasPixels;
 #[cfg(not(target_arch = "wasm32"))]
 mod input;
 #[cfg(not(target_arch = "wasm32"))]
@@ -73,19 +75,19 @@ struct RenderState {
     /// Resource references are cleared before restoring this state, preventing a Device ownership cycle.
     prepared: Prepared,
     /// Current immutable resource revision; a same-pointer preparation performs no copies or upload.
-    assets: microui_ui::assets::ImportedAssets,
+    assets: ComPtr<IAssetBundleAbi>,
 }
 impl RenderState {
-    /// Builds and uploads a complete candidate before replacing the current resource reference.
+    /// Copies and uploads candidate pixels before retaining the new revision identity.
     fn prepare_assets(&mut self, source: ComRef<'_, IAssetBundleAbi>) -> Result<(), String> {
-        if self.assets.source().as_ptr() == source.as_ptr() {
+        if self.assets.as_ptr() == source.as_ptr() {
             return Ok(());
         }
         // Renderers may serve independent UIs, so a new catalog is valid here. Only UI replacement
         // preserves application references and therefore requires the original catalog identity.
-        let next = microui_ui::assets::ImportedAssets::read(source, None).map_err(|status| status.to_string())?;
-        self.gpu.replace_atlas(next.bundle().atlas().clone())?;
-        self.assets = next;
+        let pixels = AtlasPixels::read(source).map_err(|status| status.to_string())?;
+        self.gpu.replace_atlas(pixels.image())?;
+        self.assets = source.add_ref();
         Ok(())
     }
 }

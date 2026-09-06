@@ -266,7 +266,7 @@ fn native_order_ownership_reentry_and_final_release() {
     let oversized = oversized.into_revision(assets.as_com_ref()).unwrap();
     assert_eq!(renderer.prepare_assets(oversized.as_com_ref()), Err(UI_E_RENDER));
     assert_eq!(
-        device.upgrade().unwrap().render.borrow().as_ref().unwrap().assets.source().as_ptr(),
+        device.upgrade().unwrap().render.borrow().as_ref().unwrap().assets.as_ptr(),
         assets.as_ptr()
     );
     renderer.render(info(), assets.as_com_ref(), stream.as_com_ref()).unwrap();
