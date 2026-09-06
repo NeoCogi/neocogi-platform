@@ -2,6 +2,7 @@
 //! Run explicitly with a usable SDL video driver; ordinary unit runs do not open OS windows.
 use super::*;
 use nc_com::{NcCopyToBufferOffset, INcStringComPtrExt};
+use rs_math3d::{Mat4f, Vec2f, Vec3f};
 
 /// Shared ordered stream fixture can inject native reentry and release a resource during bulk copying.
 struct Input {
@@ -77,8 +78,8 @@ impl IRenderStream for Stream {
         );
         assert_eq!(
             self.input.editing.set_transforms(SceneTransforms {
-                pvm: Matrix4::identity(),
-                view_model: Matrix4::identity()
+                pvm: Mat4f::identity(),
+                view_model: Mat4f::identity()
             }),
             Err(UI_E_BUSY)
         );
@@ -157,19 +158,19 @@ fn quad(rect: Rect) -> [RenderVertex; 4] {
 fn mesh(scene: &ComPtr<IMeshSceneAbi>) {
     let vertices = [
         MeshVertex {
-            position: [-0.9, -0.9, 0.].into(),
-            normal: [0., 0., 1.].into(),
-            uv: [0., 0.].into(),
+            position: Vec3f::new(-0.9, -0.9, 0.),
+            normal: Vec3f::new(0., 0., 1.),
+            uv: Vec2f::new(0., 0.),
         },
         MeshVertex {
-            position: [0.9, -0.9, 0.].into(),
-            normal: [0., 0., 1.].into(),
-            uv: [1., 0.].into(),
+            position: Vec3f::new(0.9, -0.9, 0.),
+            normal: Vec3f::new(0., 0., 1.),
+            uv: Vec2f::new(1., 0.),
         },
         MeshVertex {
-            position: [0., 0.9, 0.].into(),
-            normal: [0., 0., 1.].into(),
-            uv: [0.5, 1.].into(),
+            position: Vec3f::new(0., 0.9, 0.),
+            normal: Vec3f::new(0., 0., 1.),
+            uv: Vec2f::new(0.5, 1.),
         },
     ];
     scene

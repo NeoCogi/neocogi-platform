@@ -12,11 +12,11 @@ repository = "https://github.com/NeoCogi/microui-redux"
 
 [workspace.dependencies]
 microui-contracts = { path = "crates/microui-contracts" }
-nc-com-core = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "9fe797bc4ba1d3cc4b656ef348584a6436d3b59a", version = "0.1.0", default-features = false }
-nc-com-macros = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "9fe797bc4ba1d3cc4b656ef348584a6436d3b59a", version = "0.1.0", default-features = false }
-nc-com = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "9fe797bc4ba1d3cc4b656ef348584a6436d3b59a", version = "0.1.0", default-features = false }
-nc-com-runtime-sys = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "9fe797bc4ba1d3cc4b656ef348584a6436d3b59a", version = "0.1.0", default-features = false }
-nc-com-runtime = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "9fe797bc4ba1d3cc4b656ef348584a6436d3b59a", version = "0.1.0", default-features = false }
+nc-com-core = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "072ab0936c0edd7c751177149e67f0086dc413db", version = "0.1.0", default-features = false }
+nc-com-macros = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "072ab0936c0edd7c751177149e67f0086dc413db", version = "0.1.0", default-features = false }
+nc-com = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "072ab0936c0edd7c751177149e67f0086dc413db", version = "0.1.0", default-features = false }
+nc-com-runtime-sys = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "072ab0936c0edd7c751177149e67f0086dc413db", version = "0.1.0", default-features = false }
+nc-com-runtime = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "072ab0936c0edd7c751177149e67f0086dc413db", version = "0.1.0", default-features = false }
 proc-macro-crate = "3"
 proc-macro2 = "1"
 quote = "1"

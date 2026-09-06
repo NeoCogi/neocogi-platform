@@ -105,11 +105,8 @@ impl IMeshScene for Scene {
             || source_vertices.is_empty() != source_indices.is_empty()
             || source_indices.iter().any(|index| *index as usize >= source_vertices.len())
             || source_vertices.iter().any(|v| {
-                v.position
-                    .values()
+                [v.position.x, v.position.y, v.position.z, v.normal.x, v.normal.y, v.normal.z, v.uv.x, v.uv.y]
                     .iter()
-                    .chain(&v.normal.values())
-                    .chain(&v.uv.values())
                     .any(|x| !x.is_finite())
             })
         {
@@ -129,12 +126,18 @@ impl IMeshScene for Scene {
     /// Matrix replacement is one copied transaction and never changes the retained widget's geometry.
     fn set_transforms(&self, transforms: SceneTransforms) -> Result<(), NcStatus> {
         self.record.writable()?;
-        if transforms.pvm.values().iter().chain(&transforms.view_model.values()).any(|x| !x.is_finite()) {
+        if transforms
+            .pvm
+            .col
+            .iter()
+            .chain(&transforms.view_model.col)
+            .any(|v| [v.x, v.y, v.z, v.w].iter().any(|x| !x.is_finite()))
+        {
             return Err(NC_E_INVALID_ARG);
         }
         let mut submission = self.record.submission.borrow_mut();
-        submission.pvm = matrix(transforms.pvm.values());
-        submission.view_model = matrix(transforms.view_model.values());
+        submission.pvm = transforms.pvm;
+        submission.view_model = transforms.view_model;
         Ok(())
     }
 }
@@ -188,11 +191,4 @@ impl Resources for WindowObject {
             .ok_or(UI_E_OWNER)?;
         Ok(scene.submission.borrow().clone())
     }
-}
-
-/// Column-major conversion stays local; the ABI exposes no rs-math3d dependency.
-fn matrix(m: [f32; 16]) -> Mat4f {
-    Mat4f::new(
-        m[0], m[1], m[2], m[3], m[4], m[5], m[6], m[7], m[8], m[9], m[10], m[11], m[12], m[13], m[14], m[15],
-    )
 }

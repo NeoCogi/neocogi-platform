@@ -140,7 +140,7 @@ impl GlMeshResources {
             gl.bind_buffer(glow::ELEMENT_ARRAY_BUFFER, Some(self.index_buffer));
             gl.buffer_data_u8_slice(glow::ELEMENT_ARRAY_BUFFER, bytes(submission.mesh.indices()), glow::DYNAMIC_DRAW);
 
-            // MeshVertex is repr(C), so the explicit offsets match its three packed float arrays.
+            // MeshVertex and its rs-math3d vectors are repr(C), so these offsets match their float fields.
             gl.enable_vertex_attrib_array(0);
             gl.vertex_attrib_pointer_f32(0, 3, glow::FLOAT, false, std::mem::size_of::<MeshVertex>() as i32, 0);
             gl.enable_vertex_attrib_array(1);
