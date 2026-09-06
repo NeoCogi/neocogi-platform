@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/microui-contracts", "plugins/ui", "plugins/extension-example", "plugins/assets", "plugins/platform", "crates/microui-redux", "crates/microui-ui", "crates/renderer-support", "crates/renderer-glow", "crates/renderer-webgl-canvas", "crates/renderer-vulkan", "crates/renderer-wgpu", "demos/demo-assets", "demos/demo-host", "demos/demo-renderer", "demos/demo-contracts", "demos/demo-full", "demos/basic"]
+members = ["crates/microui-contracts", "plugins/ui", "plugins/extension-example", "plugins/assets", "plugins/platform", "plugins/renderer-support", "plugins/renderer-glow", "plugins/renderer-webgl-canvas", "plugins/renderer-vulkan", "plugins/renderer-wgpu", "crates/microui-redux", "crates/microui-ui", "demos/demo-assets", "demos/demo-host", "demos/demo-renderer", "demos/demo-contracts", "demos/demo-full", "demos/basic"]
 default-members = ["crates/microui-redux"]
 
 [workspace.package]
@@ -27,11 +27,11 @@ microui-redux-demo-assets = { path = "demos/demo-assets", default-features = fal
 microui-redux-demo-host = { path = "demos/demo-host", default-features = false }
 microui-demo-contracts = { path = "demos/demo-contracts" }
 microui-redux-demo-renderer = { path = "demos/demo-renderer", default-features = false }
-microui-redux-renderer-support = { path = "crates/renderer-support" }
-microui-redux-renderer-glow = { path = "crates/renderer-glow" }
-microui-redux-renderer-webgl-canvas = { path = "crates/renderer-webgl-canvas" }
-microui-redux-renderer-vulkan = { path = "crates/renderer-vulkan" }
-microui-redux-renderer-wgpu = { path = "crates/renderer-wgpu" }
+microui-redux-renderer-support = { path = "plugins/renderer-support" }
+microui-redux-renderer-glow = { path = "plugins/renderer-glow" }
+microui-redux-renderer-webgl-canvas = { path = "plugins/renderer-webgl-canvas" }
+microui-redux-renderer-vulkan = { path = "plugins/renderer-vulkan" }
+microui-redux-renderer-wgpu = { path = "plugins/renderer-wgpu" }
 
 ash = { version = "0.38", default-features = false, features = ["linked"] }
 ash-window-handle = { package = "ash-window", version = "0.13" }
