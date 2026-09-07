@@ -12,11 +12,11 @@ repository = "https://github.com/NeoCogi/microui-redux"
 
 [workspace.dependencies]
 microui-contracts = { path = "crates/microui-contracts" }
-nc-com-core = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "57244e7bbf6ef926c91ddc18f72055cc67d0bf5a", version = "0.1.0", default-features = false }
-nc-com-macros = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "57244e7bbf6ef926c91ddc18f72055cc67d0bf5a", version = "0.1.0", default-features = false }
-nc-com = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "57244e7bbf6ef926c91ddc18f72055cc67d0bf5a", version = "0.1.0", default-features = false }
-nc-com-runtime-sys = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "57244e7bbf6ef926c91ddc18f72055cc67d0bf5a", version = "0.1.0", default-features = false }
-nc-com-runtime = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "57244e7bbf6ef926c91ddc18f72055cc67d0bf5a", version = "0.1.0", default-features = false }
+nc-com-core = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "187886a214ea0b8ad45fd262df47d6e1ff988aaf", version = "0.1.0", default-features = false }
+nc-com-macros = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "187886a214ea0b8ad45fd262df47d6e1ff988aaf", version = "0.1.0", default-features = false }
+nc-com = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "187886a214ea0b8ad45fd262df47d6e1ff988aaf", version = "0.1.0", default-features = false }
+nc-com-runtime-sys = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "187886a214ea0b8ad45fd262df47d6e1ff988aaf", version = "0.1.0", default-features = false }
+nc-com-runtime = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "187886a214ea0b8ad45fd262df47d6e1ff988aaf", version = "0.1.0", default-features = false }
 proc-macro-crate = "3"
 proc-macro2 = "1"
 quote = "1"
@@ -66,3 +66,162 @@ strip = "symbols"
 [profile.min-size]
 inherits = "release"
 incremental = false
+
+# Native assemblies consumed by the installed cargo-nc-com command.
+[workspace.metadata.nc-com]
+default-assembly = "full"
+
+[workspace.metadata.nc-com.assemblies.full]
+application = { package = "microui-redux-demo-full", bin = "microui-redux-demo-full", default-features = false, features = ["glow"] }
+runtime = "nc-com-runtime"
+plugins = [
+    { package = "microui-plugin-ui", features = ["dynamic-plugin"] },
+    { package = "microui-plugin-platform", default-features = false, features = ["dynamic-plugin", "glow"] },
+    { package = "microui-plugin-assets", default-features = false, features = ["dynamic-plugin", "theme-json"] },
+]
+assets = [
+    { from = "themes", to = "themes" },
+    { from = "assets", to = "assets" },
+    { from = "demos/demo-full/assets/FACEPALM.png", to = "assets/FACEPALM.png" },
+]
+
+[workspace.metadata.nc-com.assemblies.full.variants.glow]
+application-features = ["glow"]
+component-features.microui-plugin-platform = ["dynamic-plugin", "glow"]
+
+[workspace.metadata.nc-com.assemblies.full.variants.vulkan]
+application-features = ["vulkan"]
+component-features.microui-plugin-platform = ["dynamic-plugin", "vulkan"]
+
+[workspace.metadata.nc-com.assemblies.full.variants.wgpu]
+application-features = ["wgpu"]
+component-features.microui-plugin-platform = ["dynamic-plugin", "wgpu"]
+
+[workspace.metadata.nc-com.assemblies.full.variants.embedded]
+add-application-features = ["embed-assets"]
+assets = []
+component-features.microui-plugin-assets = ["dynamic-plugin"]
+
+[workspace.metadata.nc-com.assemblies.simple]
+application = { package = "microui-redux-basic-demos", bin = "simple", default-features = false, features = ["glow"] }
+runtime = "nc-com-runtime"
+plugins = [
+    { package = "microui-plugin-ui", features = ["dynamic-plugin"] },
+    { package = "microui-plugin-platform", default-features = false, features = ["dynamic-plugin", "glow"] },
+    { package = "microui-plugin-assets", default-features = false, features = ["dynamic-plugin", "theme-json"] },
+]
+assets = [
+    { from = "themes", to = "themes" },
+    { from = "assets", to = "assets" },
+]
+
+[workspace.metadata.nc-com.assemblies.simple.variants.glow]
+application-features = ["glow"]
+component-features.microui-plugin-platform = ["dynamic-plugin", "glow"]
+
+[workspace.metadata.nc-com.assemblies.simple.variants.vulkan]
+application-features = ["vulkan"]
+component-features.microui-plugin-platform = ["dynamic-plugin", "vulkan"]
+
+[workspace.metadata.nc-com.assemblies.simple.variants.wgpu]
+application-features = ["wgpu"]
+component-features.microui-plugin-platform = ["dynamic-plugin", "wgpu"]
+
+[workspace.metadata.nc-com.assemblies.simple.variants.embedded]
+add-application-features = ["embed-assets"]
+assets = []
+omit-plugins = ["microui-plugin-assets"]
+
+[workspace.metadata.nc-com.assemblies.calculator]
+application = { package = "microui-redux-basic-demos", bin = "calculator", default-features = false, features = ["glow"] }
+runtime = "nc-com-runtime"
+plugins = [
+    { package = "microui-plugin-ui", features = ["dynamic-plugin"] },
+    { package = "microui-plugin-platform", default-features = false, features = ["dynamic-plugin", "glow"] },
+    { package = "microui-plugin-assets", default-features = false, features = ["dynamic-plugin", "theme-json"] },
+]
+assets = [
+    { from = "themes", to = "themes" },
+    { from = "assets", to = "assets" },
+]
+
+[workspace.metadata.nc-com.assemblies.calculator.variants.glow]
+application-features = ["glow"]
+component-features.microui-plugin-platform = ["dynamic-plugin", "glow"]
+
+[workspace.metadata.nc-com.assemblies.calculator.variants.vulkan]
+application-features = ["vulkan"]
+component-features.microui-plugin-platform = ["dynamic-plugin", "vulkan"]
+
+[workspace.metadata.nc-com.assemblies.calculator.variants.wgpu]
+application-features = ["wgpu"]
+component-features.microui-plugin-platform = ["dynamic-plugin", "wgpu"]
+
+[workspace.metadata.nc-com.assemblies.calculator.variants.embedded]
+add-application-features = ["embed-assets"]
+assets = []
+omit-plugins = ["microui-plugin-assets"]
+
+[workspace.metadata.nc-com.assemblies.backend-frame-cube]
+application = { package = "microui-redux-basic-demos", bin = "backend-frame-cube", default-features = false, features = ["glow"] }
+runtime = "nc-com-runtime"
+plugins = [
+    { package = "microui-plugin-ui", features = ["dynamic-plugin"] },
+    { package = "microui-plugin-platform", default-features = false, features = ["dynamic-plugin", "glow"] },
+    { package = "microui-plugin-assets", default-features = false, features = ["dynamic-plugin", "theme-json"] },
+]
+assets = [
+    { from = "themes", to = "themes" },
+    { from = "assets", to = "assets" },
+]
+
+[workspace.metadata.nc-com.assemblies.backend-frame-cube.variants.glow]
+application-features = ["glow"]
+component-features.microui-plugin-platform = ["dynamic-plugin", "glow"]
+
+[workspace.metadata.nc-com.assemblies.backend-frame-cube.variants.vulkan]
+application-features = ["vulkan"]
+component-features.microui-plugin-platform = ["dynamic-plugin", "vulkan"]
+
+[workspace.metadata.nc-com.assemblies.backend-frame-cube.variants.wgpu]
+application-features = ["wgpu"]
+component-features.microui-plugin-platform = ["dynamic-plugin", "wgpu"]
+
+[workspace.metadata.nc-com.assemblies.backend-frame-cube.variants.embedded]
+add-application-features = ["embed-assets"]
+assets = []
+omit-plugins = ["microui-plugin-assets"]
+
+[workspace.metadata.nc-com.assemblies.smoke]
+application = { package = "microui-demo-com", bin = "microui-demo-com", default-features = false, features = ["glow"] }
+runtime = "nc-com-runtime"
+plugins = [
+    { package = "microui-plugin-ui", features = ["dynamic-plugin"] },
+    { package = "microui-plugin-platform", default-features = false, features = ["dynamic-plugin", "glow"] },
+    { package = "microui-plugin-assets", default-features = false, features = ["dynamic-plugin", "theme-json"] },
+]
+assets = [
+    { from = "themes", to = "themes" },
+    { from = "assets", to = "assets" },
+]
+
+[workspace.metadata.nc-com.assemblies.smoke.variants.glow]
+application-features = ["glow"]
+component-features.microui-plugin-platform = ["dynamic-plugin", "glow"]
+
+[workspace.metadata.nc-com.assemblies.smoke.variants.vulkan]
+application-features = ["vulkan"]
+component-features.microui-plugin-platform = ["dynamic-plugin", "vulkan"]
+
+[workspace.metadata.nc-com.assemblies.smoke.variants.wgpu]
+application-features = ["wgpu"]
+component-features.microui-plugin-platform = ["dynamic-plugin", "wgpu"]
+
+[workspace.metadata.nc-com.assemblies.smoke.variants.embedded]
+add-application-features = ["embed-assets"]
+assets = []
+omit-plugins = ["microui-plugin-assets"]
+
+[workspace.metadata.nc-com.assemblies.smoke.variants.extension]
+add-application-features = ["extension"]
+additional-plugins = [{ package = "microui-plugin-extension-example", features = ["dynamic-plugin"] }]
