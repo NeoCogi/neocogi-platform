@@ -73,7 +73,7 @@ default-assembly = "full"
 
 [workspace.metadata.nc-com.assemblies.full]
 application = { package = "microui-redux-demo-full", bin = "microui-redux-demo-full", default-features = false, features = ["glow"] }
-runtime = "nc-com-runtime"
+runtime = { package = "nc-com-runtime", default-features = false }
 plugins = [
     { package = "microui-plugin-ui", features = ["dynamic-plugin"] },
     { package = "microui-plugin-platform", default-features = false, features = ["dynamic-plugin", "glow"] },
@@ -104,7 +104,7 @@ component-features.microui-plugin-assets = ["dynamic-plugin"]
 
 [workspace.metadata.nc-com.assemblies.simple]
 application = { package = "microui-redux-basic-demos", bin = "simple", default-features = false, features = ["glow"] }
-runtime = "nc-com-runtime"
+runtime = { package = "nc-com-runtime", default-features = false }
 plugins = [
     { package = "microui-plugin-ui", features = ["dynamic-plugin"] },
     { package = "microui-plugin-platform", default-features = false, features = ["dynamic-plugin", "glow"] },
@@ -134,7 +134,7 @@ omit-plugins = ["microui-plugin-assets"]
 
 [workspace.metadata.nc-com.assemblies.calculator]
 application = { package = "microui-redux-basic-demos", bin = "calculator", default-features = false, features = ["glow"] }
-runtime = "nc-com-runtime"
+runtime = { package = "nc-com-runtime", default-features = false }
 plugins = [
     { package = "microui-plugin-ui", features = ["dynamic-plugin"] },
     { package = "microui-plugin-platform", default-features = false, features = ["dynamic-plugin", "glow"] },
@@ -164,7 +164,7 @@ omit-plugins = ["microui-plugin-assets"]
 
 [workspace.metadata.nc-com.assemblies.backend-frame-cube]
 application = { package = "microui-redux-basic-demos", bin = "backend-frame-cube", default-features = false, features = ["glow"] }
-runtime = "nc-com-runtime"
+runtime = { package = "nc-com-runtime", default-features = false }
 plugins = [
     { package = "microui-plugin-ui", features = ["dynamic-plugin"] },
     { package = "microui-plugin-platform", default-features = false, features = ["dynamic-plugin", "glow"] },
@@ -194,7 +194,7 @@ omit-plugins = ["microui-plugin-assets"]
 
 [workspace.metadata.nc-com.assemblies.smoke]
 application = { package = "microui-demo-com", bin = "microui-demo-com", default-features = false, features = ["glow"] }
-runtime = "nc-com-runtime"
+runtime = { package = "nc-com-runtime", default-features = false }
 plugins = [
     { package = "microui-plugin-ui", features = ["dynamic-plugin"] },
     { package = "microui-plugin-platform", default-features = false, features = ["dynamic-plugin", "glow"] },
