@@ -33,10 +33,9 @@ use resources::{SceneRecord, TextureRecord};
 type Prepared = PreparedFrame<Rc<TextureRecord>, MeshSubmission>;
 
 #[derive(Default)]
-#[com_object(class_id(PLATFORM_CLASS), name = "microui.Platform", version = "0.9.0-alpha.0",
-    constructor(args = none, default), interfaces(IPlatform, IRenderDiagnostics))]
+#[com_object(microui_contracts::Platform)]
 /// Native bootstrap; initialization is fallible and no native subsystem crosses the COM boundary.
-pub struct Platform {
+pub struct PlatformObject {
     /// One SDL event pump shared by this platform's windows.
     #[cfg(not(target_arch = "wasm32"))]
     host: RefCell<Option<Rc<NativeHost>>>,
@@ -44,7 +43,11 @@ pub struct Platform {
     diagnostic: RefCell<String>,
 }
 
-impl IPlatform for Platform {
+impl Platform for PlatformObject {
+    /// Creates an empty platform root; native subsystem ownership begins with the first window.
+    fn new() -> Result<Self, NcStatus> {
+        Ok(Self::default())
+    }
     /// Validates input and publishes one complete native object only after the selected backend exists.
     fn create_window(
         &self,
@@ -61,7 +64,7 @@ impl IPlatform for Platform {
             .expect("native window declares IPlatformWindow"))
     }
 }
-impl IRenderDiagnostics for Platform {
+impl IRenderDiagnostics for PlatformObject {
     /// Copies construction detail; callers may retain the resulting immutable text independently.
     fn diagnostic(&self) -> Result<ComPtr<INcStringAbi>, NcStatus> {
         Ok(NcString::from_utf8_str(&self.diagnostic.borrow()))
@@ -215,7 +218,7 @@ fn identity<I: ComInterface>(interface: &ComPtr<I>) -> Result<usize, NcStatus> {
 }
 
 nc_com::plugin! {
-    plugin_id(auto_guid = "microui.plugin.platform"), name = "microui.plugin.platform", version = "0.9.0-alpha.0", classes = [Platform],
+    plugin_id(auto_guid = "microui.plugin.platform"), name = "microui.plugin.platform", version = "0.9.0-alpha.0", classes = [PlatformObject],
 }
 // Only the native assembly owns the dynamic entrypoint; browser assembly uses static descriptors.
 #[cfg(feature = "dynamic-plugin")]

@@ -146,9 +146,8 @@ fn static_com_editing_and_webgl() {
         assert_eq!(runtime.register_plugin_descriptor(crate::plugin_descriptor()), NC_OK);
     }
     assert!(runtime.require_interface_type::<UiRuntimeAbi>(UiRuntimeAbi::CLASS_ID).is_ok());
-    assert!(runtime.require_interface_type::<IPlatformAbi>(PLATFORM_CLASS).is_ok());
-    // SAFETY: The validated platform class declares the no-argument constructor contract.
-    let platform: ComPtr<IPlatformAbi> = runtime.construct_class_as(PLATFORM_CLASS, ()).unwrap();
+    assert!(runtime.require_interface_type::<PlatformAbi>(PlatformAbi::CLASS_ID).is_ok());
+    let platform: ComPtr<PlatformAbi> = runtime.construct(()).unwrap();
     let assets = microui_redux_demo_assets::load_bundle().unwrap();
     let native = platform
         .create_window(

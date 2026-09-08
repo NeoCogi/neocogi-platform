@@ -47,7 +47,7 @@ impl NativeHost {
     }
 }
 
-impl Platform {
+impl PlatformObject {
     /// Constructs the concrete native owner used by COM activation and native lifetime acceptance tests.
     pub(super) fn window(&self, title: &str, size: Size, source: ComRef<'_, IAssetBundleAbi>) -> Result<WindowObject, NcStatus> {
         // Validate pixel storage before creating a native window or borrowing SDL ownership.

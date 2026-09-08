@@ -3,7 +3,7 @@ use super::*;
 use wasm_bindgen::JsCast;
 use web_sys::HtmlCanvasElement;
 
-impl Platform {
+impl PlatformObject {
     /// Allocates an independent canvas for each COM window; no two devices accidentally share
     /// one WebGL context. Applications style canvas elements using ordinary page CSS.
     pub(super) fn window(&self, title: &str, size: Size, source: ComRef<'_, IAssetBundleAbi>) -> Result<WindowObject, NcStatus> {
