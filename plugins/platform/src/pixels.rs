@@ -38,7 +38,7 @@ mod tests {
     use super::*;
     use nc_com::NcCopyToBufferOffset;
 
-    #[com_class(interfaces(IAssetBundle))]
+    #[com_object(interfaces(IAssetBundle))]
     /// A pixel projection deliberately makes every UI metadata operation unavailable.
     struct PixelSource {
         /// Header dimensions exercised before any pixel copy.

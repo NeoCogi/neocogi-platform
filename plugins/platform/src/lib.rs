@@ -6,7 +6,7 @@ use microui_demo_contracts::*;
 use microui_redux_demo_renderer::{MeshBuffers, MeshSubmission};
 use microui_redux_renderer_support::com::{PreparedFrame, Resources};
 use microui_ui::TextureId;
-use nc_com::{ComInterface, ComPtr, ComRef, IUnknown, INcStringAbi, NcString, NcCopyFromBufferOffset, NcStatus, NC_E_INVALID_ARG, com_class};
+use nc_com::{ComInterface, ComPtr, ComRef, IUnknown, INcStringAbi, NcString, NcCopyFromBufferOffset, NcStatus, NC_E_INVALID_ARG, com_object};
 use std::{
     cell::{Cell, RefCell},
     collections::HashMap,
@@ -33,7 +33,7 @@ use resources::{SceneRecord, TextureRecord};
 type Prepared = PreparedFrame<Rc<TextureRecord>, MeshSubmission>;
 
 #[derive(Default)]
-#[com_class(class_id(PLATFORM_CLASS), name = "microui.Platform", version = "0.9.0-alpha.0",
+#[com_object(class_id(PLATFORM_CLASS), name = "microui.Platform", version = "0.9.0-alpha.0",
     constructor(args = none, default), interfaces(IPlatform, IRenderDiagnostics))]
 /// Native bootstrap; initialization is fallible and no native subsystem crosses the COM boundary.
 pub struct Platform {
@@ -154,7 +154,7 @@ impl Drop for RenderAccess<'_> {
         *self.device.render.borrow_mut() = Some(state);
     }
 }
-#[com_class(interfaces(IPlatformWindow, IRenderer, ITextureFactory, IDemoScenes, IRenderDiagnostics))]
+#[com_object(interfaces(IPlatformWindow, IRenderer, ITextureFactory, IDemoScenes, IRenderDiagnostics))]
 /// One COM identity exposes OS polling, rendering and concrete resource factories.
 struct WindowObject {
     /// Resources retain this same native owner after the public window interface is released.

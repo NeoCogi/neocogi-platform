@@ -1,6 +1,6 @@
 //! Boundary tests use real generated COM calls and concrete resource values, without requiring a GPU.
 use super::*;
-use nc_com::{com_class, NcCopyToBufferOffset};
+use nc_com::{com_object, NcCopyToBufferOffset};
 use std::{
     cell::{Cell, RefCell},
     rc::Rc,
@@ -20,7 +20,7 @@ struct Probe {
     /// Final resource releases prove complete cleanup after finish/error/abandonment.
     releases: Rc<Cell<u32>>,
 }
-#[com_class(interfaces(ITexture, IRenderItem))]
+#[com_object(interfaces(ITexture, IRenderItem))]
 /// One fake resource exposes both capabilities solely to count its actual COM lifetime.
 struct Resource {
     /// Shared final-release observation.
@@ -39,7 +39,7 @@ impl Drop for Resource {
         self.releases.set(self.releases.get() + 1);
     }
 }
-#[com_class(interfaces(IRenderStream))]
+#[com_object(interfaces(IRenderStream))]
 /// Foreign-style source owns its complete buffers and capabilities.
 struct Source {
     /// Geometry copied in one bulk operation.

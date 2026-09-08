@@ -33,7 +33,7 @@ struct Input {
     /// Confirms the source actually executed the nested operations.
     reentries: Cell<u32>,
 }
-#[com_class(interfaces(IRenderStream))]
+#[com_object(interfaces(IRenderStream))]
 /// A source owning no geometry models an empty frame for reentry attempts.
 struct Empty;
 impl IRenderStream for Empty {
@@ -54,7 +54,7 @@ impl IRenderStream for Empty {
         Err(NC_E_INVALID_ARG)
     }
 }
-#[com_class(interfaces(IRenderStream))]
+#[com_object(interfaces(IRenderStream))]
 /// Foreign-style input uses real generated vtable calls into the native implementation.
 struct Stream {
     /// Shared owned fixture data; no stack borrow crosses COM.
@@ -302,7 +302,7 @@ fn native_order_ownership_reentry_and_final_release() {
     assert!(device.upgrade().is_none(), "no registry or idle prepared-frame cycle may retain the device");
 }
 
-#[com_class(interfaces(IInputSink))]
+#[com_object(interfaces(IInputSink))]
 /// Concrete destination observes delivery, optionally reentering the same native window once.
 struct InputProbe {
     /// Reentry target belongs to this short-lived test sink, never to a platform registration.

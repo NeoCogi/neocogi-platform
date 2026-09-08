@@ -11,7 +11,7 @@ pub(super) struct TextureRecord {
     /// Registered canonical COM identity, installed before publication and removed on COM final release.
     key: Cell<usize>,
 }
-#[com_class(interfaces(ITexture))]
+#[com_object(interfaces(ITexture))]
 /// Immutable image capability; one allocation has one canonical identity in its native registry.
 struct Texture {
     /// A prepared draw can keep the native image alive after this COM allocation is released.
@@ -75,7 +75,7 @@ pub(super) struct SceneRecord {
     /// Mesh and matrices are atomically replaced and cheaply copied into prepared commands.
     submission: RefCell<MeshSubmission>,
 }
-#[com_class(interfaces(IMeshScene))]
+#[com_object(interfaces(IMeshScene))]
 /// One COM allocation exposes IMeshScene and its inherited IRenderItem capability.
 struct Scene {
     /// Immutable mesh allocations are shared with native frame commands through Arc.
