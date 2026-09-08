@@ -148,8 +148,8 @@ fn static_com_editing_and_webgl() {
     assert!(runtime.require_interface_type::<IUiProviderAbi>(UI_PROVIDER_CLASS).is_ok());
     assert!(runtime.require_interface_type::<IPlatformAbi>(PLATFORM_CLASS).is_ok());
     // SAFETY: These validated classes declare the no-argument constructor contract.
-    let provider: ComPtr<IUiProviderAbi> = unsafe { runtime.construct_class_as(UI_PROVIDER_CLASS, std::ptr::null_mut()).unwrap() };
-    let platform: ComPtr<IPlatformAbi> = unsafe { runtime.construct_class_as(PLATFORM_CLASS, std::ptr::null_mut()).unwrap() };
+    let provider: ComPtr<IUiProviderAbi> = runtime.construct_class_as(UI_PROVIDER_CLASS, ()).unwrap();
+    let platform: ComPtr<IPlatformAbi> = runtime.construct_class_as(PLATFORM_CLASS, ()).unwrap();
     let assets = microui_redux_demo_assets::load_bundle().unwrap();
     let native = platform
         .create_window(
