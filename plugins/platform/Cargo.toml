@@ -27,7 +27,7 @@ microui-redux-renderer-support.workspace = true
 microui-redux-demo-renderer.workspace = true
 microui-demo-contracts.workspace = true
 rs-math3d.workspace = true
-nc-com = { workspace = true, features = ["macros", "std"] }
+neocogi-com = { workspace = true, features = ["macros", "std"] }
 glow = { workspace = true, optional = true }
 
 [dev-dependencies]
@@ -47,4 +47,4 @@ web-sys = { workspace = true, features = [
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
 microui-redux.workspace = true
 microui-plugin-ui = { path = "../ui" }
-nc-com = { workspace = true, features = ["static-runtime"] }
+neocogi-com = { workspace = true, features = ["static-runtime"] }

@@ -1,7 +1,7 @@
 //! Native acceptance uses the production platform constructor and real COM resource calls.
 //! Run explicitly with a usable SDL video driver; ordinary unit runs do not open OS windows.
 use super::*;
-use nc_com::{NcCopyToBufferOffset, INcStringComPtrExt};
+use neocogi_com::{NcCopyToBufferOffset, INcStringComPtrExt};
 use rs_math3d::{Mat4f, Vec2f, Vec3f};
 
 /// Shared ordered stream fixture can inject native reentry and release a resource during bulk copying.

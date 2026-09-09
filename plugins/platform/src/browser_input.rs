@@ -2,7 +2,7 @@
 
 use std::{cell::RefCell, rc::Rc, collections::VecDeque};
 use microui_contracts::*;
-use nc_com::{ComRef, NcCopyFromBufferOffset, NcStatus};
+use neocogi_com::{ComRef, NcCopyFromBufferOffset, NcStatus};
 use wasm_bindgen::{JsCast, closure::Closure};
 use web_sys::{Event, EventTarget, FocusEvent, HtmlCanvasElement, HtmlTextAreaElement, KeyboardEvent, PointerEvent, WheelEvent};
 use microui_redux_renderer_support::wheel::{WheelAccumulator, WheelUnit};

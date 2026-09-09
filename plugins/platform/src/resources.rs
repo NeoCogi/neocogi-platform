@@ -116,8 +116,8 @@ impl IMeshScene for Scene {
         let mut owned_indices = Vec::new();
         owned_vertices
             .try_reserve_exact(source_vertices.len())
-            .map_err(|_| nc_com::NC_E_OUT_OF_MEMORY)?;
-        owned_indices.try_reserve_exact(source_indices.len()).map_err(|_| nc_com::NC_E_OUT_OF_MEMORY)?;
+            .map_err(|_| neocogi_com::NC_E_OUT_OF_MEMORY)?;
+        owned_indices.try_reserve_exact(source_indices.len()).map_err(|_| neocogi_com::NC_E_OUT_OF_MEMORY)?;
         owned_vertices.extend_from_slice(source_vertices);
         owned_indices.extend_from_slice(source_indices);
         self.record.submission.borrow_mut().mesh = MeshBuffers::from_vecs(owned_vertices, owned_indices);

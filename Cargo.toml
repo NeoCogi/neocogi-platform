@@ -8,15 +8,15 @@ authors = ["Raja Lehtihet", "Wael El Oraiby"]
 edition = "2024"
 license = "BSD-3-Clause AND MIT AND OFL-1.1 AND Apache-2.0 AND CC0-1.0"
 readme = "README.md"
-repository = "https://github.com/NeoCogi/microui-redux"
+repository = "https://github.com/NeoCogi/neocogi-platform"
 
 [workspace.dependencies]
 microui-contracts = { path = "crates/microui-contracts" }
-nc-com-core = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "3a667ea405ba7b57d99bd7ff9b63d5dcd67bafc4", version = "0.1.0", default-features = false }
-nc-com-macros = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "3a667ea405ba7b57d99bd7ff9b63d5dcd67bafc4", version = "0.1.0", default-features = false }
-nc-com = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "3a667ea405ba7b57d99bd7ff9b63d5dcd67bafc4", version = "0.1.0", default-features = false }
-nc-com-runtime-sys = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "3a667ea405ba7b57d99bd7ff9b63d5dcd67bafc4", version = "0.1.0", default-features = false }
-nc-com-runtime = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "3a667ea405ba7b57d99bd7ff9b63d5dcd67bafc4", version = "0.1.0", default-features = false }
+neocogi-com-core = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "66c1bc0be86b96e6f3f66bd0229834443623a9e5", version = "0.1.0", default-features = false }
+neocogi-com-macros = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "66c1bc0be86b96e6f3f66bd0229834443623a9e5", version = "0.1.0", default-features = false }
+neocogi-com = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "66c1bc0be86b96e6f3f66bd0229834443623a9e5", version = "0.1.0", default-features = false }
+neocogi-com-runtime-sys = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "66c1bc0be86b96e6f3f66bd0229834443623a9e5", version = "0.1.0", default-features = false }
+neocogi-com-runtime = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "66c1bc0be86b96e6f3f66bd0229834443623a9e5", version = "0.1.0", default-features = false }
 proc-macro-crate = "3"
 proc-macro2 = "1"
 quote = "1"
@@ -67,13 +67,13 @@ strip = "symbols"
 inherits = "release"
 incremental = false
 
-# Native assemblies consumed by the installed cargo-nc-com command.
-[workspace.metadata.nc-com]
+# Native assemblies consumed by the installed cargo-neocogi command.
+[workspace.metadata.neocogi]
 default-assembly = "full"
 
-[workspace.metadata.nc-com.assemblies.full]
+[workspace.metadata.neocogi.assemblies.full]
 application = { package = "microui-redux-demo-full", bin = "microui-redux-demo-full", default-features = false, features = ["glow"] }
-runtime = { package = "nc-com-runtime", default-features = false }
+runtime = { package = "neocogi-com-runtime", default-features = false }
 plugins = [
     { package = "microui-plugin-ui", features = ["dynamic-plugin"] },
     { package = "microui-plugin-platform", default-features = false, features = ["dynamic-plugin", "glow"] },
@@ -85,26 +85,26 @@ assets = [
     { from = "demos/demo-full/assets/FACEPALM.png", to = "assets/FACEPALM.png" },
 ]
 
-[workspace.metadata.nc-com.assemblies.full.variants.glow]
+[workspace.metadata.neocogi.assemblies.full.variants.glow]
 application-features = ["glow"]
 component-features.microui-plugin-platform = ["dynamic-plugin", "glow"]
 
-[workspace.metadata.nc-com.assemblies.full.variants.vulkan]
+[workspace.metadata.neocogi.assemblies.full.variants.vulkan]
 application-features = ["vulkan"]
 component-features.microui-plugin-platform = ["dynamic-plugin", "vulkan"]
 
-[workspace.metadata.nc-com.assemblies.full.variants.wgpu]
+[workspace.metadata.neocogi.assemblies.full.variants.wgpu]
 application-features = ["wgpu"]
 component-features.microui-plugin-platform = ["dynamic-plugin", "wgpu"]
 
-[workspace.metadata.nc-com.assemblies.full.variants.embedded]
+[workspace.metadata.neocogi.assemblies.full.variants.embedded]
 add-application-features = ["embed-assets"]
 assets = []
 component-features.microui-plugin-assets = ["dynamic-plugin"]
 
-[workspace.metadata.nc-com.assemblies.simple]
+[workspace.metadata.neocogi.assemblies.simple]
 application = { package = "microui-redux-basic-demos", bin = "simple", default-features = false, features = ["glow"] }
-runtime = { package = "nc-com-runtime", default-features = false }
+runtime = { package = "neocogi-com-runtime", default-features = false }
 plugins = [
     { package = "microui-plugin-ui", features = ["dynamic-plugin"] },
     { package = "microui-plugin-platform", default-features = false, features = ["dynamic-plugin", "glow"] },
@@ -115,26 +115,26 @@ assets = [
     { from = "assets", to = "assets" },
 ]
 
-[workspace.metadata.nc-com.assemblies.simple.variants.glow]
+[workspace.metadata.neocogi.assemblies.simple.variants.glow]
 application-features = ["glow"]
 component-features.microui-plugin-platform = ["dynamic-plugin", "glow"]
 
-[workspace.metadata.nc-com.assemblies.simple.variants.vulkan]
+[workspace.metadata.neocogi.assemblies.simple.variants.vulkan]
 application-features = ["vulkan"]
 component-features.microui-plugin-platform = ["dynamic-plugin", "vulkan"]
 
-[workspace.metadata.nc-com.assemblies.simple.variants.wgpu]
+[workspace.metadata.neocogi.assemblies.simple.variants.wgpu]
 application-features = ["wgpu"]
 component-features.microui-plugin-platform = ["dynamic-plugin", "wgpu"]
 
-[workspace.metadata.nc-com.assemblies.simple.variants.embedded]
+[workspace.metadata.neocogi.assemblies.simple.variants.embedded]
 add-application-features = ["embed-assets"]
 assets = []
 omit-plugins = ["microui-plugin-assets"]
 
-[workspace.metadata.nc-com.assemblies.calculator]
+[workspace.metadata.neocogi.assemblies.calculator]
 application = { package = "microui-redux-basic-demos", bin = "calculator", default-features = false, features = ["glow"] }
-runtime = { package = "nc-com-runtime", default-features = false }
+runtime = { package = "neocogi-com-runtime", default-features = false }
 plugins = [
     { package = "microui-plugin-ui", features = ["dynamic-plugin"] },
     { package = "microui-plugin-platform", default-features = false, features = ["dynamic-plugin", "glow"] },
@@ -145,26 +145,26 @@ assets = [
     { from = "assets", to = "assets" },
 ]
 
-[workspace.metadata.nc-com.assemblies.calculator.variants.glow]
+[workspace.metadata.neocogi.assemblies.calculator.variants.glow]
 application-features = ["glow"]
 component-features.microui-plugin-platform = ["dynamic-plugin", "glow"]
 
-[workspace.metadata.nc-com.assemblies.calculator.variants.vulkan]
+[workspace.metadata.neocogi.assemblies.calculator.variants.vulkan]
 application-features = ["vulkan"]
 component-features.microui-plugin-platform = ["dynamic-plugin", "vulkan"]
 
-[workspace.metadata.nc-com.assemblies.calculator.variants.wgpu]
+[workspace.metadata.neocogi.assemblies.calculator.variants.wgpu]
 application-features = ["wgpu"]
 component-features.microui-plugin-platform = ["dynamic-plugin", "wgpu"]
 
-[workspace.metadata.nc-com.assemblies.calculator.variants.embedded]
+[workspace.metadata.neocogi.assemblies.calculator.variants.embedded]
 add-application-features = ["embed-assets"]
 assets = []
 omit-plugins = ["microui-plugin-assets"]
 
-[workspace.metadata.nc-com.assemblies.backend-frame-cube]
+[workspace.metadata.neocogi.assemblies.backend-frame-cube]
 application = { package = "microui-redux-basic-demos", bin = "backend-frame-cube", default-features = false, features = ["glow"] }
-runtime = { package = "nc-com-runtime", default-features = false }
+runtime = { package = "neocogi-com-runtime", default-features = false }
 plugins = [
     { package = "microui-plugin-ui", features = ["dynamic-plugin"] },
     { package = "microui-plugin-platform", default-features = false, features = ["dynamic-plugin", "glow"] },
@@ -175,26 +175,26 @@ assets = [
     { from = "assets", to = "assets" },
 ]
 
-[workspace.metadata.nc-com.assemblies.backend-frame-cube.variants.glow]
+[workspace.metadata.neocogi.assemblies.backend-frame-cube.variants.glow]
 application-features = ["glow"]
 component-features.microui-plugin-platform = ["dynamic-plugin", "glow"]
 
-[workspace.metadata.nc-com.assemblies.backend-frame-cube.variants.vulkan]
+[workspace.metadata.neocogi.assemblies.backend-frame-cube.variants.vulkan]
 application-features = ["vulkan"]
 component-features.microui-plugin-platform = ["dynamic-plugin", "vulkan"]
 
-[workspace.metadata.nc-com.assemblies.backend-frame-cube.variants.wgpu]
+[workspace.metadata.neocogi.assemblies.backend-frame-cube.variants.wgpu]
 application-features = ["wgpu"]
 component-features.microui-plugin-platform = ["dynamic-plugin", "wgpu"]
 
-[workspace.metadata.nc-com.assemblies.backend-frame-cube.variants.embedded]
+[workspace.metadata.neocogi.assemblies.backend-frame-cube.variants.embedded]
 add-application-features = ["embed-assets"]
 assets = []
 omit-plugins = ["microui-plugin-assets"]
 
-[workspace.metadata.nc-com.assemblies.smoke]
+[workspace.metadata.neocogi.assemblies.smoke]
 application = { package = "microui-demo-com", bin = "microui-demo-com", default-features = false, features = ["glow"] }
-runtime = { package = "nc-com-runtime", default-features = false }
+runtime = { package = "neocogi-com-runtime", default-features = false }
 plugins = [
     { package = "microui-plugin-ui", features = ["dynamic-plugin"] },
     { package = "microui-plugin-platform", default-features = false, features = ["dynamic-plugin", "glow"] },
@@ -205,23 +205,23 @@ assets = [
     { from = "assets", to = "assets" },
 ]
 
-[workspace.metadata.nc-com.assemblies.smoke.variants.glow]
+[workspace.metadata.neocogi.assemblies.smoke.variants.glow]
 application-features = ["glow"]
 component-features.microui-plugin-platform = ["dynamic-plugin", "glow"]
 
-[workspace.metadata.nc-com.assemblies.smoke.variants.vulkan]
+[workspace.metadata.neocogi.assemblies.smoke.variants.vulkan]
 application-features = ["vulkan"]
 component-features.microui-plugin-platform = ["dynamic-plugin", "vulkan"]
 
-[workspace.metadata.nc-com.assemblies.smoke.variants.wgpu]
+[workspace.metadata.neocogi.assemblies.smoke.variants.wgpu]
 application-features = ["wgpu"]
 component-features.microui-plugin-platform = ["dynamic-plugin", "wgpu"]
 
-[workspace.metadata.nc-com.assemblies.smoke.variants.embedded]
+[workspace.metadata.neocogi.assemblies.smoke.variants.embedded]
 add-application-features = ["embed-assets"]
 assets = []
 omit-plugins = ["microui-plugin-assets"]
 
-[workspace.metadata.nc-com.assemblies.smoke.variants.extension]
+[workspace.metadata.neocogi.assemblies.smoke.variants.extension]
 add-application-features = ["extension"]
 additional-plugins = [{ package = "microui-plugin-extension-example", features = ["dynamic-plugin"] }]

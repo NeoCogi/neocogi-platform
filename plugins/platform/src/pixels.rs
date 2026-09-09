@@ -16,9 +16,9 @@ impl AtlasPixels {
         let count = info.rgba_bytes()?;
         let mut pixels = Vec::new();
         // Bounds are checked before allocation, and a failed foreign copy remains unpublished.
-        pixels.try_reserve_exact(count).map_err(|_| nc_com::NC_E_OUT_OF_MEMORY)?;
+        pixels.try_reserve_exact(count).map_err(|_| neocogi_com::NC_E_OUT_OF_MEMORY)?;
         pixels.resize(count, 0);
-        source.pixels(nc_com::NcCopyToBufferOffset::new(0, &mut pixels))?;
+        source.pixels(neocogi_com::NcCopyToBufferOffset::new(0, &mut pixels))?;
         Ok(Self { size: info.size, pixels })
     }
 
@@ -36,7 +36,7 @@ impl AtlasPixels {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nc_com::NcCopyToBufferOffset;
+    use neocogi_com::NcCopyToBufferOffset;
 
     #[com_object(interfaces(IAssetBundle))]
     /// A pixel projection deliberately makes every UI metadata operation unavailable.
@@ -68,7 +68,7 @@ mod tests {
         fn pixels(&self, mut output: NcCopyToBufferOffset<'_, u8>) -> Result<(), NcStatus> {
             self.copies.set(self.copies.get() + 1);
             if self.fail_copy {
-                return Err(nc_com::NC_E_LOAD_FAILED);
+                return Err(neocogi_com::NC_E_LOAD_FAILED);
             }
             assert_eq!((output.offset(), output.len()), (0, 4));
             output.as_mut_slice().copy_from_slice(&[11, 22, 33, 44]);
@@ -143,7 +143,7 @@ mod tests {
         })
         .query()
         .unwrap();
-        assert_eq!(AtlasPixels::read(source.as_com_ref()).err().unwrap(), nc_com::NC_E_LOAD_FAILED);
+        assert_eq!(AtlasPixels::read(source.as_com_ref()).err().unwrap(), neocogi_com::NC_E_LOAD_FAILED);
         assert_eq!(copies.get(), 1);
     }
 }

@@ -1,6 +1,6 @@
 //! Complete-frame validation shared by platform assemblies before they acquire native GPU frames.
 use microui_contracts::*;
-use nc_com::{ComPtr, ComRef, NcCopyToBufferOffset, NcStatus, NC_E_INVALID_ARG, NC_E_OUT_OF_MEMORY};
+use neocogi_com::{ComPtr, ComRef, NcCopyToBufferOffset, NcStatus, NC_E_INVALID_ARG, NC_E_OUT_OF_MEMORY};
 use std::ops::Range;
 
 /// Concrete renderer-owned resource resolution; implementations authenticate canonical COM identities.

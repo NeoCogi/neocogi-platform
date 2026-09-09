@@ -6,7 +6,7 @@ use microui_demo_contracts::*;
 use microui_redux_demo_renderer::{MeshBuffers, MeshSubmission};
 use microui_redux_renderer_support::com::{PreparedFrame, Resources};
 use microui_ui::TextureId;
-use nc_com::{ComInterface, ComPtr, ComRef, IUnknown, INcStringAbi, NcString, NcCopyFromBufferOffset, NcStatus, NC_E_INVALID_ARG, com_object};
+use neocogi_com::{ComInterface, ComPtr, ComRef, IUnknown, INcStringAbi, NcString, NcCopyFromBufferOffset, NcStatus, NC_E_INVALID_ARG, com_object};
 use std::{
     cell::{Cell, RefCell},
     collections::HashMap,
@@ -217,12 +217,12 @@ fn identity<I: ComInterface>(interface: &ComPtr<I>) -> Result<usize, NcStatus> {
     Ok(identity.as_ptr() as usize)
 }
 
-nc_com::plugin! {
+neocogi_com::plugin! {
     plugin_id(auto_guid = "microui.plugin.platform"), name = "microui.plugin.platform", version = "0.9.0-alpha.0", classes = [PlatformObject],
 }
 // Only the native assembly owns the dynamic entrypoint; browser assembly uses static descriptors.
 #[cfg(feature = "dynamic-plugin")]
-nc_com::export_plugin!();
+neocogi_com::export_plugin!();
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests;

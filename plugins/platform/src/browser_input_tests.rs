@@ -138,7 +138,7 @@ pub fn run_browser_input_tests() {
 /// Registers both assembly descriptors in one linked runtime, then exercises real DOM input,
 /// inherited editing, committed IME placement and WebGL submission through their COM interfaces.
 fn static_com_editing_and_webgl() {
-    use nc_com::{ComPtr, Runtime, NC_OK};
+    use neocogi_com::{ComPtr, Runtime, NC_OK};
     let runtime = Runtime::global();
     // SAFETY: Both descriptors and all referenced code/data live in this statically linked wasm.
     unsafe {

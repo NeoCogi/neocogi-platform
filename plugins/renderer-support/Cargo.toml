@@ -9,4 +9,4 @@ repository.workspace = true
 
 [dependencies]
 microui-contracts.workspace = true
-nc-com = { workspace = true, features = ["std"] }
+neocogi-com = { workspace = true, features = ["std"] }

@@ -1,6 +1,6 @@
 //! Boundary tests use real generated COM calls and concrete resource values, without requiring a GPU.
 use super::*;
-use nc_com::{com_object, NcCopyToBufferOffset};
+use neocogi_com::{com_object, NcCopyToBufferOffset};
 use std::{
     cell::{Cell, RefCell},
     rc::Rc,
