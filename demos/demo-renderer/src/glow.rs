@@ -4,7 +4,7 @@ use std::rc::Rc;
 
 use glow::HasContext;
 use neocogi_ui_runtime::{prelude::Recti, render::RenderItemArgs};
-use neocogi_ui_renderer_glow::{GlApplicationRenderContext, GlApplicationRenderer, create_program};
+use neocogi_render_glow::{GlApplicationRenderContext, GlApplicationRenderer, create_program};
 
 use crate::{DemoCommand, MeshSubmission, MeshVertex};
 

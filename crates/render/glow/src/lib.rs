@@ -40,7 +40,7 @@ use neocogi_ui_runtime::{
     render::{RenderItemArgs, TextureError, Vertex},
 };
 use glow::*;
-use neocogi_ui_renderer_support::resource_guard::ResourceGuard;
+use neocogi_render_support::resource_guard::ResourceGuard;
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests;

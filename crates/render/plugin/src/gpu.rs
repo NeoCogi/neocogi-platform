@@ -6,19 +6,16 @@ use neocogi_ui_runtime::{
     render::{Color, RenderItemArgs, FrameInfo, RendererBackend, RendererFrame},
 };
 use neocogi_ui_demo_renderer::{DemoCommand, DemoRenderer};
-use neocogi_ui_renderer_support::com::Batch;
+use neocogi_render_support::com::Batch;
 
-#[cfg(all(not(feature = "webgl"), feature = "glow"))]
-use neocogi_ui_renderer_glow::GLRenderer as Renderer;
-#[cfg(all(not(feature = "webgl"), not(feature = "glow"), feature = "vulkan"))]
-use neocogi_ui_renderer_vulkan::VulkanRenderer as Renderer;
-#[cfg(all(not(feature = "webgl"), not(feature = "glow"), not(feature = "vulkan"), feature = "wgpu"))]
-use neocogi_ui_renderer_wgpu::WgpuRenderer as Renderer;
+#[cfg(feature = "glow")]
+use neocogi_render_glow::GLRenderer as Renderer;
+#[cfg(feature = "vulkan")]
+use neocogi_render_vulkan::VulkanRenderer as Renderer;
+#[cfg(feature = "wgpu")]
+use neocogi_render_wgpu::WgpuRenderer as Renderer;
 #[cfg(feature = "webgl")]
-use neocogi_ui_renderer_webgl_canvas::WebGlCanvasRenderer as Renderer;
-#[cfg(not(any(feature = "webgl", feature = "glow", feature = "vulkan", feature = "wgpu")))]
-compile_error!("select glow, vulkan, wgpu or browser webgl for the platform assembly");
-
+use neocogi_render_webgl::WebGlCanvasRenderer as Renderer;
 /// Concrete drawable owner selected at compilation, never a native-handle escape through COM.
 #[cfg(not(target_arch = "wasm32"))]
 pub(super) type Window = sdl2::video::Window;

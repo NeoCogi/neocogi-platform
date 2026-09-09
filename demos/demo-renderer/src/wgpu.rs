@@ -3,7 +3,7 @@
 use std::{mem, slice};
 
 use neocogi_ui_runtime::prelude::Recti;
-use neocogi_ui_renderer_wgpu::{APPLICATION_DEPTH_FORMAT, WgpuApplicationPrepareContext, WgpuApplicationRenderer};
+use neocogi_render_wgpu::{APPLICATION_DEPTH_FORMAT, WgpuApplicationPrepareContext, WgpuApplicationRenderer};
 use wgpu::util::DeviceExt;
 
 use crate::{DemoCommand, MeshSubmission, MeshVertex};

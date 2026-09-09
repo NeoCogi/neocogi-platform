@@ -1,10 +1,26 @@
-//! Platform assembly with build-selected SDL/Glow/Vulkan/WGPU or statically assembled DOM/WebGL.
-//! Native windows, GPU resources and application mesh rendering remain in this binary.
+//! Deployable rendering plugin with build-selected Glow, Vulkan, WGPU, or WebGL execution.
+//!
+//! Each backend build has its own plugin identity. The native window, input pump, GPU resources,
+//! and renderer deliberately remain in that same artifact: splitting those owners would expose
+//! native handles or add another dynamic call boundary to every frame.
 #![deny(missing_docs)]
+
+#[cfg(not(any(feature = "webgl", feature = "glow", feature = "vulkan", feature = "wgpu")))]
+compile_error!("select exactly one renderer feature: glow, vulkan, wgpu, or webgl");
+#[cfg(any(
+    all(feature = "webgl", any(feature = "glow", feature = "vulkan", feature = "wgpu")),
+    all(feature = "glow", any(feature = "vulkan", feature = "wgpu")),
+    all(feature = "vulkan", feature = "wgpu"),
+))]
+compile_error!("renderer features are mutually exclusive");
+#[cfg(all(feature = "webgl", not(target_arch = "wasm32")))]
+compile_error!("the webgl renderer plugin requires wasm32");
+#[cfg(all(target_arch = "wasm32", not(feature = "webgl")))]
+compile_error!("wasm32 rendering requires the webgl feature");
 use neocogi_ui_contracts::*;
 use microui_demo_contracts::*;
 use neocogi_ui_demo_renderer::{MeshBuffers, MeshSubmission};
-use neocogi_ui_renderer_support::com::{PreparedFrame, Resources};
+use neocogi_render_support::com::{PreparedFrame, Resources};
 use neocogi_ui_runtime::TextureId;
 use neocogi_com::{ComInterface, ComPtr, ComRef, IUnknown, INcStringAbi, NcString, NcCopyFromBufferOffset, NcStatus, NC_E_INVALID_ARG, com_object};
 use std::{
@@ -22,10 +38,10 @@ mod native;
 #[cfg(not(target_arch = "wasm32"))]
 use native::NativeHost;
 #[cfg(target_arch = "wasm32")]
+mod browser;
+#[cfg(target_arch = "wasm32")]
 #[path = "browser_input.rs"]
 mod input;
-#[cfg(target_arch = "wasm32")]
-mod browser;
 mod resources;
 use resources::{SceneRecord, TextureRecord};
 
@@ -217,8 +233,21 @@ fn identity<I: ComInterface>(interface: &ComPtr<I>) -> Result<usize, NcStatus> {
     Ok(identity.as_ptr() as usize)
 }
 
+#[cfg(feature = "glow")]
 neocogi_com::plugin! {
-    plugin_id(auto_guid = "neocogi.ui.plugin.platform"), name = "neocogi.ui.plugin.platform", version = "0.9.0-alpha.0", classes = [PlatformObject],
+    plugin_id(auto_guid = "neocogi.render.glow"), name = "neocogi.render.glow", version = "0.9.0-alpha.0", classes = [PlatformObject],
+}
+#[cfg(feature = "vulkan")]
+neocogi_com::plugin! {
+    plugin_id(auto_guid = "neocogi.render.vulkan"), name = "neocogi.render.vulkan", version = "0.9.0-alpha.0", classes = [PlatformObject],
+}
+#[cfg(feature = "wgpu")]
+neocogi_com::plugin! {
+    plugin_id(auto_guid = "neocogi.render.wgpu"), name = "neocogi.render.wgpu", version = "0.9.0-alpha.0", classes = [PlatformObject],
+}
+#[cfg(feature = "webgl")]
+neocogi_com::plugin! {
+    plugin_id(auto_guid = "neocogi.render.webgl"), name = "neocogi.render.webgl", version = "0.9.0-alpha.0", classes = [PlatformObject],
 }
 // Only the native assembly owns the dynamic entrypoint; browser assembly uses static descriptors.
 #[cfg(feature = "dynamic-plugin")]

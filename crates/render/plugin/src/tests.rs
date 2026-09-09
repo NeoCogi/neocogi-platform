@@ -265,10 +265,7 @@ fn native_order_ownership_reentry_and_final_release() {
     }
     let oversized = oversized.into_revision(assets.as_com_ref()).unwrap();
     assert_eq!(renderer.prepare_assets(oversized.as_com_ref()), Err(UI_E_RENDER));
-    assert_eq!(
-        device.upgrade().unwrap().render.borrow().as_ref().unwrap().assets.as_ptr(),
-        assets.as_ptr()
-    );
+    assert_eq!(device.upgrade().unwrap().render.borrow().as_ref().unwrap().assets.as_ptr(), assets.as_ptr());
     renderer.render(info(), assets.as_com_ref(), stream.as_com_ref()).unwrap();
     // The foreign scene has a valid ABI but belongs to a different native window/context.
     let foreign = platform.window("COM foreign resource owner", SIZE, assets.as_com_ref()).unwrap();

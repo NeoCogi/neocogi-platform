@@ -10,8 +10,8 @@ use neocogi_ui_runtime::{
     prelude::{ImageSource, AtlasUploadError, FrameError, FrameInfo, RendererBackend, TextureId},
     render::TextureError,
 };
-use neocogi_ui_renderer_glow::{GLRenderer, GlFrame};
-pub use neocogi_ui_renderer_glow::GlApplicationRenderer;
+use neocogi_render_glow::{GLRenderer, GlFrame};
+pub use neocogi_render_glow::GlApplicationRenderer;
 
 const VERTEX_SHADER: &str = "#version 300 es
 uniform highp mat4 uTransform;

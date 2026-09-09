@@ -1,7 +1,7 @@
 //! Internal construction support shared by native renderer implementations.
 //!
 //! Shared frame validation owns only copied contracts and typed resource records. Native application
-//! renderers continue to use their concrete backend APIs inside the selected platform plugin.
+//! renderers continue to use their concrete backend APIs inside the selected renderer plugin.
 
 pub mod com;
 

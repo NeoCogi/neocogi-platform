@@ -1,8 +1,10 @@
 [package]
-name = "microui-plugin-platform"
+name = "neocogi-render-plugin"
 version = "0.9.0-alpha.0"
+authors.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 publish = false
 
 [lib]
@@ -10,20 +12,20 @@ crate-type = ["rlib", "cdylib"]
 
 [features]
 default = ["glow"]
-webgl = ["dep:glow", "dep:neocogi-ui-renderer-webgl-canvas", "neocogi-ui-demo-renderer/webgl"]
-glow = ["dep:glow", "dep:neocogi-ui-renderer-glow", "neocogi-ui-demo-renderer/glow"]
-vulkan = ["dep:neocogi-ui-renderer-vulkan", "neocogi-ui-demo-renderer/vulkan"]
-wgpu = ["dep:neocogi-ui-renderer-wgpu", "neocogi-ui-demo-renderer/wgpu"]
+webgl = ["dep:glow", "dep:neocogi-render-webgl", "neocogi-ui-demo-renderer/webgl"]
+glow = ["dep:glow", "dep:neocogi-render-glow", "neocogi-ui-demo-renderer/glow"]
+vulkan = ["dep:neocogi-render-vulkan", "neocogi-ui-demo-renderer/vulkan"]
+wgpu = ["dep:neocogi-render-wgpu", "neocogi-ui-demo-renderer/wgpu"]
 dynamic-plugin = []
 
 [dependencies]
 neocogi-ui-contracts.workspace = true
 neocogi-ui-runtime.workspace = true
-neocogi-ui-renderer-webgl-canvas = { workspace = true, optional = true }
-neocogi-ui-renderer-glow = { workspace = true, optional = true }
-neocogi-ui-renderer-vulkan = { workspace = true, optional = true }
-neocogi-ui-renderer-wgpu = { workspace = true, optional = true }
-neocogi-ui-renderer-support.workspace = true
+neocogi-render-webgl = { workspace = true, optional = true }
+neocogi-render-glow = { workspace = true, optional = true }
+neocogi-render-vulkan = { workspace = true, optional = true }
+neocogi-render-wgpu = { workspace = true, optional = true }
+neocogi-render-support.workspace = true
 neocogi-ui-demo-renderer.workspace = true
 microui-demo-contracts.workspace = true
 rs-math3d.workspace = true
@@ -46,5 +48,5 @@ web-sys = { workspace = true, features = [
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
 neocogi-ui.workspace = true
-neocogi-ui-runtime = { path = "../../crates/ui/runtime" }
+neocogi-ui-runtime.workspace = true
 neocogi-com = { workspace = true, features = ["static-runtime"] }

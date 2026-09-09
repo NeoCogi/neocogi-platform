@@ -59,7 +59,7 @@ use neocogi_ui_runtime::{
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use sdl2::video::Window;
 
-use neocogi_ui_renderer_support::resource_guard::ResourceGuard;
+use neocogi_render_support::resource_guard::ResourceGuard;
 
 type Result<T> = std::result::Result<T, String>;
 type Surface = khr::surface::Instance;

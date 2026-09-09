@@ -1,5 +1,5 @@
 [package]
-name = "neocogi-ui-renderer-support"
+name = "neocogi-render-webgl"
 version = "0.0.0"
 publish = false
 authors.workspace = true
@@ -8,5 +8,6 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-neocogi-ui-contracts.workspace = true
-neocogi-com = { workspace = true, features = ["std"] }
+glow.workspace = true
+neocogi-ui-runtime.workspace = true
+neocogi-render-glow.workspace = true

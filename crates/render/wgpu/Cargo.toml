@@ -1,5 +1,5 @@
 [package]
-name = "neocogi-ui-renderer-vulkan"
+name = "neocogi-render-wgpu"
 version = "0.0.0"
 publish = false
 authors.workspace = true
@@ -8,9 +8,8 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-ash.workspace = true
-ash-window-handle.workspace = true
 neocogi-ui-runtime.workspace = true
-neocogi-ui-renderer-support.workspace = true
+pollster.workspace = true
 raw-window-handle.workspace = true
 sdl2.workspace = true
+wgpu.workspace = true
