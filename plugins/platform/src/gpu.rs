@@ -2,8 +2,8 @@
 use super::*;
 use microui_ui::{
     ImageSource, TextureId,
-    prelude::{Dimensioni, Recti, Vec2f, color4b},
-    render::{Color, RenderItemArgs, FrameInfo, RendererBackend, RendererFrame, Vertex},
+    prelude::{Dimensioni, Recti},
+    render::{Color, RenderItemArgs, FrameInfo, RendererBackend, RendererFrame},
 };
 use microui_redux_demo_renderer::{DemoCommand, DemoRenderer};
 use microui_redux_renderer_support::com::Batch;
@@ -132,14 +132,14 @@ impl Gpu {
             match batch {
                 Batch::Atlas(range) => {
                     for triangle in prepared.vertices()[range.clone()].as_chunks::<3>().0 {
-                        frame.push_triangle(triangle.map(vertex));
+                        frame.push_triangle(*triangle);
                     }
                 }
                 Batch::Texture { vertices, texture } => {
                     // Close preceding atlas geometry before recording the image. Explicit backends
                     // otherwise submit that geometry later, painting backgrounds over the texture.
                     frame.flush();
-                    frame.draw_texture(texture.id, vertices.map(vertex));
+                    frame.draw_texture(texture.id, *vertices);
                 }
                 Batch::Item { rect, clip, item } => frame.enqueue_application(
                     RenderItemArgs {
@@ -226,9 +226,4 @@ pub(super) fn pixel_size(window: &Window) -> Size {
 /// Converts canonical copied geometry once at the private native integration boundary.
 fn local_rect(value: Rect) -> Recti {
     Recti::new(value.x, value.y, value.width, value.height)
-}
-/// Converts already validated vertex components to the native backend's temporary representation.
-fn vertex(value: RenderVertex) -> Vertex {
-    let [r, g, b, a] = value.rgba.to_le_bytes();
-    Vertex::new(Vec2f::new(value.x, value.y), Vec2f::new(value.u, value.v), color4b(r, g, b, a))
 }
