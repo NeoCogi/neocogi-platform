@@ -9,7 +9,7 @@ repository.workspace = true
 
 [dependencies]
 glow.workspace = true
-neocogi-ui-runtime.workspace = true
+neocogi-render-core.workspace = true
 neocogi-render-support.workspace = true
 
 # Native GPU regression tests can run with SDL's Mesa-compatible offscreen video driver.

@@ -52,10 +52,7 @@ use std::{
 };
 
 use ash::{khr, util::read_spv, vk, Entry};
-use neocogi_ui_runtime::{
-    prelude::*,
-    render::{RenderItemArgs, TextureError, Vertex},
-};
+use neocogi_render_core::prelude::*;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use sdl2::video::Window;
 
@@ -929,8 +926,8 @@ fn rect_from_vertices(vertices: &[Vertex]) -> Recti {
 }
 
 fn clamp_rect_to_surface(region: Recti, surface_width: u32, surface_height: u32) -> Recti {
-    let surface = rect(0, 0, surface_width as i32, surface_height as i32);
-    region.intersect(&surface).unwrap_or_else(|| rect(0, 0, 0, 0))
+    let surface = Recti::new(0, 0, surface_width as i32, surface_height as i32);
+    region.intersect(&surface).unwrap_or_else(|| Recti::new(0, 0, 0, 0))
 }
 
 fn log_viewport_scissor(_stage: &str, _logical: Recti, _viewport: &vk::Viewport, _scissor: &vk::Rect2D) {}
@@ -1483,7 +1480,7 @@ impl UiResources {
                 let viewport = ui_full_viewport(ctx.extent);
                 ctx.device.cmd_set_viewport(command_buffer, 0, &[viewport]);
 
-                let logical_clip = clip.unwrap_or(rect(0, 0, width as i32, height as i32));
+                let logical_clip = clip.unwrap_or(Recti::new(0, 0, width as i32, height as i32));
                 let clip_rect = ctx.scale_rect(logical_clip);
                 let clamped = clamp_rect_to_surface(clip_rect, ctx.extent.width, ctx.extent.height);
                 let scissor = rect_to_vk(clamped, ctx.extent.width, ctx.extent.height);

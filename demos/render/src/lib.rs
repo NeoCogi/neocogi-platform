@@ -23,7 +23,7 @@ pub use self::vulkan::DemoRenderer;
 pub use self::wgpu::DemoRenderer;
 
 /// Canonical application vertex shared with the typed COM mesh upload contract.
-pub use microui_demo_contracts::MeshVertex;
+pub use neocogi_demo_contracts::MeshVertex;
 
 /// Immutable CPU mesh storage shared between retained demo state and frame commands.
 #[derive(Clone)]

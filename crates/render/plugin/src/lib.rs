@@ -18,10 +18,10 @@ compile_error!("the webgl renderer plugin requires wasm32");
 #[cfg(all(target_arch = "wasm32", not(feature = "webgl")))]
 compile_error!("wasm32 rendering requires the webgl feature");
 use neocogi_ui_contracts::*;
-use microui_demo_contracts::*;
-use neocogi_ui_demo_renderer::{MeshBuffers, MeshSubmission};
+use neocogi_demo_contracts::*;
+use neocogi_demo_renderer::{MeshBuffers, MeshSubmission};
 use neocogi_render_support::com::{PreparedFrame, Resources};
-use neocogi_ui_runtime::TextureId;
+use neocogi_render_core::TextureId;
 use neocogi_com::{ComInterface, ComPtr, ComRef, IUnknown, INcStringAbi, NcString, NcCopyFromBufferOffset, NcStatus, NC_E_INVALID_ARG, com_object};
 use std::{
     cell::{Cell, RefCell},

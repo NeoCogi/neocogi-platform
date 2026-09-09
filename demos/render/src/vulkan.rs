@@ -3,7 +3,7 @@
 use std::{io::Cursor, mem, ptr, slice};
 
 use ash::{util::read_spv, vk};
-use neocogi_ui_runtime::prelude::Recti;
+use neocogi_render_core::prelude::Recti;
 use neocogi_render_vulkan::{VulkanApplicationPrepareContext, VulkanApplicationRenderContext, VulkanApplicationRenderer, VulkanApplicationResult};
 use rs_math3d::Mat4f;
 
@@ -81,7 +81,7 @@ impl VulkanApplicationRenderer for DemoRenderer {
     fn render(
         &self,
         context: VulkanApplicationRenderContext<'_>,
-        args: neocogi_ui_runtime::render::RenderItemArgs,
+        args: neocogi_render_core::RenderItemArgs,
         command_index: usize,
         command: &Self::Command,
     ) -> VulkanApplicationResult<()> {

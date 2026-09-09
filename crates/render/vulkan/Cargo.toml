@@ -10,7 +10,7 @@ repository.workspace = true
 [dependencies]
 ash.workspace = true
 ash-window-handle.workspace = true
-neocogi-ui-runtime.workspace = true
+neocogi-render-core.workspace = true
 neocogi-render-support.workspace = true
 raw-window-handle.workspace = true
 sdl2.workspace = true

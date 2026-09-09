@@ -9,5 +9,5 @@ repository.workspace = true
 
 [dependencies]
 glow.workspace = true
-neocogi-ui-runtime.workspace = true
+neocogi-render-core.workspace = true
 neocogi-render-glow.workspace = true

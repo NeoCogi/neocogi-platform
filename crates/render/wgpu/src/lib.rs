@@ -34,10 +34,7 @@
 
 use std::{collections::HashMap, convert::Infallible, mem, slice};
 
-use neocogi_ui_runtime::{
-    prelude::*,
-    render::{RenderItemArgs, TextureError, Vertex},
-};
+use neocogi_render_core::prelude::*;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use sdl2::video::Window;
 use wgpu::util::DeviceExt;

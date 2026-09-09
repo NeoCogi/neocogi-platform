@@ -35,10 +35,7 @@
 use core::slice;
 use std::{collections::HashMap, convert::Infallible, io, rc::Rc};
 
-use neocogi_ui_runtime::{
-    prelude::*,
-    render::{RenderItemArgs, TextureError, Vertex},
-};
+use neocogi_render_core::prelude::*;
 use glow::*;
 use neocogi_render_support::resource_guard::ResourceGuard;
 

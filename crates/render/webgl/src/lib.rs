@@ -6,10 +6,7 @@
 
 use std::rc::Rc;
 
-use neocogi_ui_runtime::{
-    prelude::{ImageSource, AtlasUploadError, FrameError, FrameInfo, RendererBackend, TextureId},
-    render::TextureError,
-};
+use neocogi_render_core::{AtlasUploadError, FrameError, FrameInfo, ImageSource, RendererBackend, TextureError, TextureId};
 use neocogi_render_glow::{GLRenderer, GlFrame};
 pub use neocogi_render_glow::GlApplicationRenderer;
 

@@ -12,28 +12,27 @@ crate-type = ["rlib", "cdylib"]
 
 [features]
 default = ["glow"]
-webgl = ["dep:glow", "dep:neocogi-render-webgl", "neocogi-ui-demo-renderer/webgl"]
-glow = ["dep:glow", "dep:neocogi-render-glow", "neocogi-ui-demo-renderer/glow"]
-vulkan = ["dep:neocogi-render-vulkan", "neocogi-ui-demo-renderer/vulkan"]
-wgpu = ["dep:neocogi-render-wgpu", "neocogi-ui-demo-renderer/wgpu"]
+webgl = ["dep:glow", "dep:neocogi-render-webgl", "neocogi-demo-renderer/webgl"]
+glow = ["dep:glow", "dep:neocogi-render-glow", "neocogi-demo-renderer/glow"]
+vulkan = ["dep:neocogi-render-vulkan", "neocogi-demo-renderer/vulkan"]
+wgpu = ["dep:neocogi-render-wgpu", "neocogi-demo-renderer/wgpu"]
 dynamic-plugin = []
 
 [dependencies]
 neocogi-ui-contracts.workspace = true
-neocogi-ui-runtime.workspace = true
+neocogi-render-core.workspace = true
 neocogi-render-webgl = { workspace = true, optional = true }
 neocogi-render-glow = { workspace = true, optional = true }
 neocogi-render-vulkan = { workspace = true, optional = true }
 neocogi-render-wgpu = { workspace = true, optional = true }
 neocogi-render-support.workspace = true
-neocogi-ui-demo-renderer.workspace = true
-microui-demo-contracts.workspace = true
+neocogi-demo-renderer.workspace = true
+neocogi-demo-contracts.workspace = true
 rs-math3d.workspace = true
 neocogi-com = { workspace = true, features = ["macros", "std"] }
 glow = { workspace = true, optional = true }
 
 [dev-dependencies]
-neocogi-ui-demo-assets = { workspace = true, features = ["embed-assets"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 sdl2.workspace = true
@@ -47,6 +46,4 @@ web-sys = { workspace = true, features = [
 ] }
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
-neocogi-ui.workspace = true
-neocogi-ui-runtime.workspace = true
 neocogi-com = { workspace = true, features = ["static-runtime"] }

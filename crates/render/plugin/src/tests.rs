@@ -126,34 +126,7 @@ fn info() -> RenderInfo {
         batch_count: 4,
     }
 }
-/// Creates a clockwise full-image quad in the final UI vertex format.
-fn quad(rect: Rect) -> [RenderVertex; 4] {
-    let (x, y, right, bottom) = (rect.x as f32, rect.y as f32, (rect.x + rect.width) as f32, (rect.y + rect.height) as f32);
-    [
-        RenderVertex { x, y, u: 0., v: 0., rgba: 0xffffffff },
-        RenderVertex {
-            x: right,
-            y,
-            u: 1.,
-            v: 0.,
-            rgba: 0xffffffff,
-        },
-        RenderVertex {
-            x: right,
-            y: bottom,
-            u: 1.,
-            v: 1.,
-            rgba: 0xffffffff,
-        },
-        RenderVertex {
-            x,
-            y: bottom,
-            u: 0.,
-            v: 1.,
-            rgba: 0xffffffff,
-        },
-    ]
-}
+
 /// Uploads a triangle using the same application contract as the independently loaded demo host.
 fn mesh(scene: &ComPtr<IMeshSceneAbi>) {
     let vertices = [
@@ -182,7 +155,7 @@ fn mesh(scene: &ComPtr<IMeshSceneAbi>) {
 #[ignore = "requires a native SDL display; use SDL_VIDEODRIVER=offscreen for Glow or a native display for Vulkan/WGPU"]
 fn native_order_ownership_reentry_and_final_release() {
     let platform = PlatformObject::default();
-    let assets = neocogi_ui_demo_assets::load_bundle().unwrap();
+    let assets = neocogi_demo_assets::load_bundle().unwrap();
     let native = platform.window("COM GPU acceptance", SIZE, assets.as_com_ref()).unwrap();
     let device = Rc::downgrade(&native.device);
     let unknown = WindowObject::from_value(native);
@@ -254,7 +227,7 @@ fn native_order_ownership_reentry_and_final_release() {
     }
     // A structurally valid, shallow atlas exceeds every tested device's 2D texture width while
     // remaining below the portable byte limit. Rejection must leave the previous GPU atlas usable.
-    let mut oversized = neocogi_ui_demo_assets::bundle_data().unwrap();
+    let mut oversized = neocogi_demo_assets::bundle_data().unwrap();
     oversized.tables.size = Size { width: 131072, height: 1 };
     oversized.pixels.to_mut().fill(255);
     for glyph in oversized.tables.glyphs.to_mut() {

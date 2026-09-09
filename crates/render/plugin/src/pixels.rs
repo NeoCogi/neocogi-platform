@@ -23,9 +23,9 @@ impl AtlasPixels {
     }
 
     /// Lends packed bytes to a backend without manufacturing a native atlas or color vector.
-    pub(super) fn image(&self) -> neocogi_ui_runtime::ImageSource<'_> {
+    pub(super) fn image(&self) -> neocogi_render_core::ImageSource<'_> {
         // Backends complete upload synchronously and retain only their GPU texture afterwards.
-        neocogi_ui_runtime::ImageSource {
+        neocogi_render_core::ImageSource {
             width: self.size.width,
             height: self.size.height,
             pixels: &self.pixels,

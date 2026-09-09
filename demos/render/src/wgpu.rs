@@ -2,7 +2,7 @@
 
 use std::{mem, slice};
 
-use neocogi_ui_runtime::prelude::Recti;
+use neocogi_render_core::prelude::Recti;
 use neocogi_render_wgpu::{APPLICATION_DEPTH_FORMAT, WgpuApplicationPrepareContext, WgpuApplicationRenderer};
 use wgpu::util::DeviceExt;
 
@@ -65,7 +65,7 @@ impl WgpuApplicationRenderer for DemoRenderer {
     fn render<'pass>(
         &'pass self,
         pass: &mut wgpu::RenderPass<'pass>,
-        args: neocogi_ui_runtime::render::RenderItemArgs,
+        args: neocogi_render_core::RenderItemArgs,
         command_index: usize,
         _command: &'pass Self::Command,
     ) -> Result<(), String> {

@@ -1,11 +1,10 @@
 //! Native GPU execution remains local to this plugin; only construction differs between selected backends.
 use super::*;
-use neocogi_ui_runtime::{
-    ImageSource, TextureId,
+use neocogi_render_core::{
+    Color, FrameInfo, ImageSource, RenderItemArgs, RendererBackend, RendererFrame, TextureId,
     prelude::{Dimensioni, Recti},
-    render::{Color, RenderItemArgs, FrameInfo, RendererBackend, RendererFrame},
 };
-use neocogi_ui_demo_renderer::{DemoCommand, DemoRenderer};
+use neocogi_demo_renderer::{DemoCommand, DemoRenderer};
 use neocogi_render_support::com::Batch;
 
 #[cfg(feature = "glow")]
