@@ -772,10 +772,12 @@ where
         Self::append_quad(&mut self.ui_vertices, v0, v1, v2, v3);
     }
 
-    /// Appends one already-triangulated UI triangle to the shared CPU-side UI vertex batch.
-    fn push_triangle_vertices(&mut self, v0: &Vertex, v1: &Vertex, v2: &Vertex) {
-        self.ui_vertices
-            .extend_from_slice(&[GpuVertex::from_vertex(v0), GpuVertex::from_vertex(v1), GpuVertex::from_vertex(v2)]);
+    /// Appends complete triangles to the shared CPU-side UI vertex batch.
+    fn push_triangle_vertices(&mut self, vertices: &[Vertex]) {
+        // Conversion remains required by WGPU's concrete upload layout, but extending from one
+        // iterator lets the vector reserve and advance as a complete prepared range.
+        debug_assert!(vertices.len().is_multiple_of(3));
+        self.ui_vertices.extend(vertices.iter().map(GpuVertex::from_vertex));
     }
 
     /// Closes the current UI batch so later commands preserve ordering.
@@ -1057,7 +1059,11 @@ where
     }
 
     fn push_triangle(&mut self, vertices: [Vertex; 3]) {
-        self.backend.push_triangle_vertices(&vertices[0], &vertices[1], &vertices[2]);
+        self.backend.push_triangle_vertices(&vertices);
+    }
+
+    fn push_triangles(&mut self, vertices: &[Vertex]) {
+        self.backend.push_triangle_vertices(vertices);
     }
 
     fn flush(&mut self) {

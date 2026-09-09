@@ -131,9 +131,10 @@ impl Gpu {
         for batch in prepared.batches() {
             match batch {
                 Batch::Atlas(range) => {
-                    for triangle in prepared.vertices()[range.clone()].as_chunks::<3>().0 {
-                        frame.push_triangle(*triangle);
-                    }
+                    // Preparation already validated this as a complete contiguous triangle range;
+                    // preserve that coarse unit through the native backend instead of replaying it
+                    // through one method invocation and one vector extension per triangle.
+                    frame.push_triangles(&prepared.vertices()[range.clone()]);
                 }
                 Batch::Texture { vertices, texture } => {
                     // Close preceding atlas geometry before recording the image. Explicit backends

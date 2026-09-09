@@ -453,9 +453,12 @@ where
         self.vertices.extend_from_slice(&[*v0, *v1, *v2, *v0, *v2, *v3]);
     }
 
-    /// Appends one triangle to the buffered UI vertex stream without forcing a separate draw job.
-    fn push_triangle_vertices(&mut self, v0: &Vertex, v1: &Vertex, v2: &Vertex) {
-        self.vertices.extend_from_slice(&[*v0, *v1, *v2]);
+    /// Appends complete triangles to the buffered UI vertex stream without a draw boundary.
+    fn push_triangle_vertices(&mut self, vertices: &[Vertex]) {
+        // Callers preserve the validated triangle grouping; one slice extension avoids repeating
+        // capacity checks and tiny copies for every primitive in a prepared atlas batch.
+        debug_assert!(vertices.len().is_multiple_of(3));
+        self.vertices.extend_from_slice(vertices);
     }
 
     /// Turns the currently buffered UI vertices into an explicit draw command boundary.
@@ -619,7 +622,11 @@ where
     }
 
     fn push_triangle(&mut self, vertices: [Vertex; 3]) {
-        self.backend.push_triangle_vertices(&vertices[0], &vertices[1], &vertices[2]);
+        self.backend.push_triangle_vertices(&vertices);
+    }
+
+    fn push_triangles(&mut self, vertices: &[Vertex]) {
+        self.backend.push_triangle_vertices(vertices);
     }
 
     fn flush(&mut self) {
