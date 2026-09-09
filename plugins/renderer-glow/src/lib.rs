@@ -35,12 +35,12 @@
 use core::slice;
 use std::{collections::HashMap, convert::Infallible, io, rc::Rc};
 
-use microui_ui::{
+use neocogi_ui_runtime::{
     prelude::*,
     render::{RenderItemArgs, TextureError, Vertex},
 };
 use glow::*;
-use microui_redux_renderer_support::resource_guard::ResourceGuard;
+use neocogi_ui_renderer_support::resource_guard::ResourceGuard;
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests;

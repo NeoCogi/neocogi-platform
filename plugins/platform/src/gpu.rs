@@ -1,21 +1,21 @@
 //! Native GPU execution remains local to this plugin; only construction differs between selected backends.
 use super::*;
-use microui_ui::{
+use neocogi_ui_runtime::{
     ImageSource, TextureId,
     prelude::{Dimensioni, Recti},
     render::{Color, RenderItemArgs, FrameInfo, RendererBackend, RendererFrame},
 };
-use microui_redux_demo_renderer::{DemoCommand, DemoRenderer};
-use microui_redux_renderer_support::com::Batch;
+use neocogi_ui_demo_renderer::{DemoCommand, DemoRenderer};
+use neocogi_ui_renderer_support::com::Batch;
 
 #[cfg(all(not(feature = "webgl"), feature = "glow"))]
-use microui_redux_renderer_glow::GLRenderer as Renderer;
+use neocogi_ui_renderer_glow::GLRenderer as Renderer;
 #[cfg(all(not(feature = "webgl"), not(feature = "glow"), feature = "vulkan"))]
-use microui_redux_renderer_vulkan::VulkanRenderer as Renderer;
+use neocogi_ui_renderer_vulkan::VulkanRenderer as Renderer;
 #[cfg(all(not(feature = "webgl"), not(feature = "glow"), not(feature = "vulkan"), feature = "wgpu"))]
-use microui_redux_renderer_wgpu::WgpuRenderer as Renderer;
+use neocogi_ui_renderer_wgpu::WgpuRenderer as Renderer;
 #[cfg(feature = "webgl")]
-use microui_redux_renderer_webgl_canvas::WebGlCanvasRenderer as Renderer;
+use neocogi_ui_renderer_webgl_canvas::WebGlCanvasRenderer as Renderer;
 #[cfg(not(any(feature = "webgl", feature = "glow", feature = "vulkan", feature = "wgpu")))]
 compile_error!("select glow, vulkan, wgpu or browser webgl for the platform assembly");
 

@@ -1,6 +1,6 @@
 //! SDL translation owns no UI references. Delivery occurs after every native state borrow ends.
 use super::*;
-use microui_redux_renderer_support::wheel::{WheelAccumulator, WheelUnit};
+use neocogi_ui_renderer_support::wheel::{WheelAccumulator, WheelUnit};
 use sdl2::{
     event::{Event, WindowEvent},
     keyboard::{Keycode, Mod},

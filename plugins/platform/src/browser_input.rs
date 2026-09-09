@@ -1,11 +1,11 @@
 //! DOM ownership and translation for the canvas host; widgets never depend on browser objects.
 
 use std::{cell::RefCell, rc::Rc, collections::VecDeque};
-use microui_contracts::*;
+use neocogi_ui_contracts::*;
 use neocogi_com::{ComRef, NcCopyFromBufferOffset, NcStatus};
 use wasm_bindgen::{JsCast, closure::Closure};
 use web_sys::{Event, EventTarget, FocusEvent, HtmlCanvasElement, HtmlTextAreaElement, KeyboardEvent, PointerEvent, WheelEvent};
-use microui_redux_renderer_support::wheel::{WheelAccumulator, WheelUnit};
+use neocogi_ui_renderer_support::wheel::{WheelAccumulator, WheelUnit};
 
 /// One pending copied transition owns text only for an actual committed string.
 struct PendingInput {

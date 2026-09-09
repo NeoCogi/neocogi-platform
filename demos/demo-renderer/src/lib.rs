@@ -72,6 +72,6 @@ pub struct MeshSubmission {
 
 /// Concrete application command retained in the selected backend's typed frame stream.
 pub enum DemoCommand {
-    /// Draws a three-dimensional mesh in the custom widget allocation supplied by microui.
+    /// Draws a three-dimensional mesh in the custom widget allocation supplied by neocogi.ui.
     DrawMesh(MeshSubmission),
 }

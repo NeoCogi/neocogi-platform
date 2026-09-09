@@ -52,14 +52,14 @@ use std::{
 };
 
 use ash::{khr, util::read_spv, vk, Entry};
-use microui_ui::{
+use neocogi_ui_runtime::{
     prelude::*,
     render::{RenderItemArgs, TextureError, Vertex},
 };
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use sdl2::video::Window;
 
-use microui_redux_renderer_support::resource_guard::ResourceGuard;
+use neocogi_ui_renderer_support::resource_guard::ResourceGuard;
 
 type Result<T> = std::result::Result<T, String>;
 type Surface = khr::surface::Instance;
@@ -885,7 +885,7 @@ enum FrameCommand<ApplicationCommand> {
     },
     /// Delegates one application-owned command to the concrete native renderer.
     Application {
-        /// Standard custom-render geometry and clip information from microui.
+        /// Standard custom-render geometry and clip information from neocogi.ui.
         args: RenderItemArgs,
         /// Application operation whose type is fixed by the backend generic parameter.
         command: ApplicationCommand,
@@ -1490,7 +1490,7 @@ impl UiResources {
                 ctx.device.cmd_set_scissor(command_buffer, 0, &[scissor]);
                 log_viewport_scissor("ui", logical_clip, &viewport, &scissor);
                 vk_trace!(
-                    "[microui-redux][vk-trace][ui] logical_clip={:?} scaled_clip={:?} viewport=({:.1},{:.1},{:.1},{:.1}) scissor=(offset=({}, {}), extent=({}, {}))",
+                    "[neocogi-ui][vk-trace][ui] logical_clip={:?} scaled_clip={:?} viewport=({:.1},{:.1},{:.1},{:.1}) scissor=(offset=({}, {}), extent=({}, {}))",
                     logical_clip,
                     clip_rect,
                     viewport.x,
@@ -1506,7 +1506,7 @@ impl UiResources {
                 let ortho = Self::ortho_matrix(width as f32, height as f32);
                 let bytes = Self::matrix_bytes(&ortho);
                 vk_trace!(
-                    "[microui-redux][vk-trace][ui] ortho_first_row=[{:.5}, {:.5}, {:.5}, {:.5}]",
+                    "[neocogi-ui][vk-trace][ui] ortho_first_row=[{:.5}, {:.5}, {:.5}, {:.5}]",
                     ortho[0],
                     ortho[1],
                     ortho[2],
@@ -1693,8 +1693,8 @@ impl VulkanContext {
         // Context creation front-loads the permanent objects: instance/device/queues, the shared
         // command pool, and the initial swapchain-dependent resources.
         let entry = Entry::linked();
-        let app_name = c"microui-redux-examples";
-        let engine_name = c"microui-redux";
+        let app_name = c"neocogi-ui-examples";
+        let engine_name = c"neocogi-ui";
 
         let display_handle = window.display_handle().map_err(|err| format!("failed to get display handle: {err:?}"))?;
         let window_handle = window.window_handle().map_err(|err| format!("failed to get window handle: {err:?}"))?;

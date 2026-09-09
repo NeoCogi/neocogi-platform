@@ -142,13 +142,13 @@ fn static_com_editing_and_webgl() {
     let runtime = Runtime::global();
     // SAFETY: Both descriptors and all referenced code/data live in this statically linked wasm.
     unsafe {
-        assert_eq!(runtime.register_plugin_descriptor(microui_plugin_ui::plugin_descriptor()), NC_OK);
+        assert_eq!(runtime.register_plugin_descriptor(neocogi_ui_runtime::plugin_descriptor()), NC_OK);
         assert_eq!(runtime.register_plugin_descriptor(crate::plugin_descriptor()), NC_OK);
     }
     assert!(runtime.require_interface_type::<UiRuntimeAbi>(UiRuntimeAbi::CLASS_ID).is_ok());
     assert!(runtime.require_interface_type::<PlatformAbi>(PlatformAbi::CLASS_ID).is_ok());
     let platform: ComPtr<PlatformAbi> = runtime.construct(()).unwrap();
-    let assets = microui_redux_demo_assets::load_bundle().unwrap();
+    let assets = neocogi_ui_demo_assets::load_bundle().unwrap();
     let native = platform
         .create_window(
             NcCopyFromBufferOffset::new(0, b"Browser COM regression"),
@@ -161,7 +161,7 @@ fn static_com_editing_and_webgl() {
     canvas.style().set_css_text("width:640px;height:400px");
     let renderer: ComPtr<IRendererAbi> = native.query().unwrap();
     let arguments = UiRuntimeAbi::arguments(assets.as_com_ref()).unwrap();
-    let ui = microui_redux::Ui::from_interface(runtime.construct::<UiRuntimeAbi>(arguments).unwrap()).unwrap();
+    let ui = neocogi_ui::Ui::from_interface(runtime.construct::<UiRuntimeAbi>(arguments).unwrap()).unwrap();
     let editor = ui.widgets().textbox("").unwrap();
     let window = ui
         .window("Editable COM window", Rect { x: 10, y: 10, width: 400, height: 180 }, &editor)

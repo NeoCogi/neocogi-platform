@@ -1,5 +1,5 @@
 [package]
-name = "microui-redux-renderer-support"
+name = "neocogi-ui-renderer-support"
 version = "0.0.0"
 publish = false
 authors.workspace = true
@@ -8,5 +8,5 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-microui-contracts.workspace = true
+neocogi-ui-contracts.workspace = true
 neocogi-com = { workspace = true, features = ["std"] }

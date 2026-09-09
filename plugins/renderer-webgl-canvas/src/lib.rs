@@ -6,12 +6,12 @@
 
 use std::rc::Rc;
 
-use microui_ui::{
+use neocogi_ui_runtime::{
     prelude::{ImageSource, AtlasUploadError, FrameError, FrameInfo, RendererBackend, TextureId},
     render::TextureError,
 };
-use microui_redux_renderer_glow::{GLRenderer, GlFrame};
-pub use microui_redux_renderer_glow::GlApplicationRenderer;
+use neocogi_ui_renderer_glow::{GLRenderer, GlFrame};
+pub use neocogi_ui_renderer_glow::GlApplicationRenderer;
 
 const VERTEX_SHADER: &str = "#version 300 es
 uniform highp mat4 uTransform;

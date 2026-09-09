@@ -2,8 +2,8 @@
 
 use std::{mem, slice};
 
-use microui_ui::prelude::Recti;
-use microui_redux_renderer_wgpu::{APPLICATION_DEPTH_FORMAT, WgpuApplicationPrepareContext, WgpuApplicationRenderer};
+use neocogi_ui_runtime::prelude::Recti;
+use neocogi_ui_renderer_wgpu::{APPLICATION_DEPTH_FORMAT, WgpuApplicationPrepareContext, WgpuApplicationRenderer};
 use wgpu::util::DeviceExt;
 
 use crate::{DemoCommand, MeshSubmission, MeshVertex};
@@ -65,7 +65,7 @@ impl WgpuApplicationRenderer for DemoRenderer {
     fn render<'pass>(
         &'pass self,
         pass: &mut wgpu::RenderPass<'pass>,
-        args: microui_ui::render::RenderItemArgs,
+        args: neocogi_ui_runtime::render::RenderItemArgs,
         command_index: usize,
         _command: &'pass Self::Command,
     ) -> Result<(), String> {

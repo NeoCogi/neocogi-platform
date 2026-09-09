@@ -10,28 +10,28 @@ crate-type = ["rlib", "cdylib"]
 
 [features]
 default = ["glow"]
-webgl = ["dep:glow", "dep:microui-redux-renderer-webgl-canvas", "microui-redux-demo-renderer/webgl"]
-glow = ["dep:glow", "dep:microui-redux-renderer-glow", "microui-redux-demo-renderer/glow"]
-vulkan = ["dep:microui-redux-renderer-vulkan", "microui-redux-demo-renderer/vulkan"]
-wgpu = ["dep:microui-redux-renderer-wgpu", "microui-redux-demo-renderer/wgpu"]
+webgl = ["dep:glow", "dep:neocogi-ui-renderer-webgl-canvas", "neocogi-ui-demo-renderer/webgl"]
+glow = ["dep:glow", "dep:neocogi-ui-renderer-glow", "neocogi-ui-demo-renderer/glow"]
+vulkan = ["dep:neocogi-ui-renderer-vulkan", "neocogi-ui-demo-renderer/vulkan"]
+wgpu = ["dep:neocogi-ui-renderer-wgpu", "neocogi-ui-demo-renderer/wgpu"]
 dynamic-plugin = []
 
 [dependencies]
-microui-contracts.workspace = true
-microui-ui.workspace = true
-microui-redux-renderer-webgl-canvas = { workspace = true, optional = true }
-microui-redux-renderer-glow = { workspace = true, optional = true }
-microui-redux-renderer-vulkan = { workspace = true, optional = true }
-microui-redux-renderer-wgpu = { workspace = true, optional = true }
-microui-redux-renderer-support.workspace = true
-microui-redux-demo-renderer.workspace = true
+neocogi-ui-contracts.workspace = true
+neocogi-ui-runtime.workspace = true
+neocogi-ui-renderer-webgl-canvas = { workspace = true, optional = true }
+neocogi-ui-renderer-glow = { workspace = true, optional = true }
+neocogi-ui-renderer-vulkan = { workspace = true, optional = true }
+neocogi-ui-renderer-wgpu = { workspace = true, optional = true }
+neocogi-ui-renderer-support.workspace = true
+neocogi-ui-demo-renderer.workspace = true
 microui-demo-contracts.workspace = true
 rs-math3d.workspace = true
 neocogi-com = { workspace = true, features = ["macros", "std"] }
 glow = { workspace = true, optional = true }
 
 [dev-dependencies]
-microui-redux-demo-assets = { workspace = true, features = ["embed-assets"] }
+neocogi-ui-demo-assets = { workspace = true, features = ["embed-assets"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 sdl2.workspace = true
@@ -45,6 +45,6 @@ web-sys = { workspace = true, features = [
 ] }
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
-microui-redux.workspace = true
-microui-plugin-ui = { path = "../ui" }
+neocogi-ui.workspace = true
+neocogi-ui-runtime = { path = "../../crates/ui/runtime" }
 neocogi-com = { workspace = true, features = ["static-runtime"] }

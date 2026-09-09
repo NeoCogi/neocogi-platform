@@ -1,5 +1,5 @@
 [package]
-name = "microui-redux-renderer-glow"
+name = "neocogi-ui-renderer-glow"
 version = "0.0.0"
 publish = false
 authors.workspace = true
@@ -9,8 +9,8 @@ repository.workspace = true
 
 [dependencies]
 glow.workspace = true
-microui-ui.workspace = true
-microui-redux-renderer-support.workspace = true
+neocogi-ui-runtime.workspace = true
+neocogi-ui-renderer-support.workspace = true
 
 # Native GPU regression tests can run with SDL's Mesa-compatible offscreen video driver.
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]

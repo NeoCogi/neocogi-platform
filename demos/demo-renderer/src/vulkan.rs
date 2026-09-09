@@ -3,8 +3,8 @@
 use std::{io::Cursor, mem, ptr, slice};
 
 use ash::{util::read_spv, vk};
-use microui_ui::prelude::Recti;
-use microui_redux_renderer_vulkan::{VulkanApplicationPrepareContext, VulkanApplicationRenderContext, VulkanApplicationRenderer, VulkanApplicationResult};
+use neocogi_ui_runtime::prelude::Recti;
+use neocogi_ui_renderer_vulkan::{VulkanApplicationPrepareContext, VulkanApplicationRenderContext, VulkanApplicationRenderer, VulkanApplicationResult};
 use rs_math3d::Mat4f;
 
 use crate::{DemoCommand, MeshSubmission, MeshVertex};
@@ -81,7 +81,7 @@ impl VulkanApplicationRenderer for DemoRenderer {
     fn render(
         &self,
         context: VulkanApplicationRenderContext<'_>,
-        args: microui_ui::render::RenderItemArgs,
+        args: neocogi_ui_runtime::render::RenderItemArgs,
         command_index: usize,
         command: &Self::Command,
     ) -> VulkanApplicationResult<()> {

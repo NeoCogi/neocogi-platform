@@ -1,11 +1,11 @@
 //! Platform assembly with build-selected SDL/Glow/Vulkan/WGPU or statically assembled DOM/WebGL.
 //! Native windows, GPU resources and application mesh rendering remain in this binary.
 #![deny(missing_docs)]
-use microui_contracts::*;
+use neocogi_ui_contracts::*;
 use microui_demo_contracts::*;
-use microui_redux_demo_renderer::{MeshBuffers, MeshSubmission};
-use microui_redux_renderer_support::com::{PreparedFrame, Resources};
-use microui_ui::TextureId;
+use neocogi_ui_demo_renderer::{MeshBuffers, MeshSubmission};
+use neocogi_ui_renderer_support::com::{PreparedFrame, Resources};
+use neocogi_ui_runtime::TextureId;
 use neocogi_com::{ComInterface, ComPtr, ComRef, IUnknown, INcStringAbi, NcString, NcCopyFromBufferOffset, NcStatus, NC_E_INVALID_ARG, com_object};
 use std::{
     cell::{Cell, RefCell},
@@ -33,7 +33,7 @@ use resources::{SceneRecord, TextureRecord};
 type Prepared = PreparedFrame<Rc<TextureRecord>, MeshSubmission>;
 
 #[derive(Default)]
-#[com_object(microui_contracts::Platform)]
+#[com_object(neocogi_ui_contracts::Platform)]
 /// Native bootstrap; initialization is fallible and no native subsystem crosses the COM boundary.
 pub struct PlatformObject {
     /// One SDL event pump shared by this platform's windows.
@@ -218,7 +218,7 @@ fn identity<I: ComInterface>(interface: &ComPtr<I>) -> Result<usize, NcStatus> {
 }
 
 neocogi_com::plugin! {
-    plugin_id(auto_guid = "microui.plugin.platform"), name = "microui.plugin.platform", version = "0.9.0-alpha.0", classes = [PlatformObject],
+    plugin_id(auto_guid = "neocogi.ui.plugin.platform"), name = "neocogi.ui.plugin.platform", version = "0.9.0-alpha.0", classes = [PlatformObject],
 }
 // Only the native assembly owns the dynamic entrypoint; browser assembly uses static descriptors.
 #[cfg(feature = "dynamic-plugin")]

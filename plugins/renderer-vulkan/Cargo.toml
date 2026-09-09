@@ -1,5 +1,5 @@
 [package]
-name = "microui-redux-renderer-vulkan"
+name = "neocogi-ui-renderer-vulkan"
 version = "0.0.0"
 publish = false
 authors.workspace = true
@@ -10,7 +10,7 @@ repository.workspace = true
 [dependencies]
 ash.workspace = true
 ash-window-handle.workspace = true
-microui-ui.workspace = true
-microui-redux-renderer-support.workspace = true
+neocogi-ui-runtime.workspace = true
+neocogi-ui-renderer-support.workspace = true
 raw-window-handle.workspace = true
 sdl2.workspace = true

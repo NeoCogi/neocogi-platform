@@ -34,7 +34,7 @@
 
 use std::{collections::HashMap, convert::Infallible, mem, slice};
 
-use microui_ui::{
+use neocogi_ui_runtime::{
     prelude::*,
     render::{RenderItemArgs, TextureError, Vertex},
 };
@@ -198,7 +198,7 @@ struct DepthTarget {
     view: wgpu::TextureView,
 }
 
-/// WGPU renderer backend for microui.
+/// WGPU renderer backend for neocogi.ui.
 ///
 /// The renderer batches all per-frame geometry into a single staging vertex buffer and
 /// replays a lightweight command list (`RenderCommand`) to switch texture/scissor state.
@@ -304,7 +304,7 @@ where
 
         // All UI/user textures share the same simple RGBA8 + nearest sampling setup.
         let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("microui.texture"),
+            label: Some("neocogi.ui.texture"),
             size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
             mip_level_count: 1,
             sample_count: 1,
@@ -336,7 +336,7 @@ where
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         // Bind group also carries uniforms/sampler so draw calls only switch one handle.
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("microui.texture.bind_group"),
+            label: Some("neocogi.ui.texture.bind_group"),
             layout: bind_group_layout,
             entries: &[
                 wgpu::BindGroupEntry {
@@ -401,7 +401,7 @@ where
         // FrameInfo rejects non-positive logical dimensions, but construction and surface recovery
         // still defensively clamp native allocations to WGPU's non-zero texture requirement.
         let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("microui.application.depth"),
+            label: Some("neocogi.ui.application.depth"),
             size: wgpu::Extent3d {
                 width: width.max(1),
                 height: height.max(1),
@@ -427,7 +427,7 @@ where
         // Grow geometrically to avoid reallocating every frame with fluctuating counts.
         let target = byte_count.next_power_of_two().max(64 * 1024);
         self.staging_vertex_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("microui.staging.vertices"),
+            label: Some("neocogi.ui.staging.vertices"),
             size: target as u64,
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
@@ -471,12 +471,12 @@ where
     fn create_pipeline(device: &wgpu::Device, format: wgpu::TextureFormat) -> (wgpu::RenderPipeline, wgpu::BindGroupLayout, wgpu::Sampler) {
         // One pipeline is enough for all UI/custom draws: position + uv + color, alpha blend.
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("microui.wgpu.shader"),
+            label: Some("neocogi.ui.wgpu.shader"),
             source: wgpu::ShaderSource::Wgsl(UI_SHADER.into()),
         });
 
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("microui.bind_group_layout"),
+            label: Some("neocogi.ui.bind_group_layout"),
             entries: &[
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
@@ -508,7 +508,7 @@ where
         });
 
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("microui.sampler"),
+            label: Some("neocogi.ui.sampler"),
             address_mode_u: wgpu::AddressMode::ClampToEdge,
             address_mode_v: wgpu::AddressMode::ClampToEdge,
             address_mode_w: wgpu::AddressMode::ClampToEdge,
@@ -519,13 +519,13 @@ where
         });
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("microui.pipeline_layout"),
+            label: Some("neocogi.ui.pipeline_layout"),
             bind_group_layouts: &[Some(&bind_group_layout)],
             immediate_size: 0,
         });
 
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("microui.pipeline"),
+            label: Some("neocogi.ui.pipeline"),
             layout: Some(&pipeline_layout),
             vertex: wgpu::VertexState {
                 module: &shader,
@@ -633,7 +633,7 @@ where
         .map_err(|err| format!("failed to request wgpu adapter: {err}"))?;
 
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            label: Some("microui.wgpu.device"),
+            label: Some("neocogi.ui.wgpu.device"),
             required_features: wgpu::Features::empty(),
             required_limits: wgpu::Limits::default(),
             experimental_features: wgpu::ExperimentalFeatures::disabled(),
@@ -658,7 +658,7 @@ where
             _pad: [0.0, 0.0],
         };
         let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("microui.uniforms"),
+            label: Some("neocogi.ui.uniforms"),
             contents: Self::as_bytes(&uniforms),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
@@ -678,7 +678,7 @@ where
 
         let initial_capacity = 64 * 1024;
         let staging_vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("microui.staging.vertices"),
+            label: Some("neocogi.ui.staging.vertices"),
             size: initial_capacity as u64,
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
@@ -791,7 +791,7 @@ where
         let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
         let mut encoder = self
             .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("microui.encoder") });
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("neocogi.ui.encoder") });
 
         // Give the concrete application renderer one preparation phase before any render-pass
         // resource is borrowed. It may create pipelines, resize buffers, upload data, or encode
@@ -899,7 +899,7 @@ where
             // The render pass replays each prepared draw by switching bind groups/scissors and
             // slicing the shared staging vertex buffer to the right subrange.
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("microui.render_pass"),
+                label: Some("neocogi.ui.render_pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &view,
                     depth_slice: None,

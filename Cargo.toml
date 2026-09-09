@@ -1,7 +1,7 @@
 [workspace]
 resolver = "3"
-members = ["crates/microui-contracts", "plugins/ui", "plugins/extension-example", "plugins/assets", "plugins/platform", "plugins/renderer-support", "plugins/renderer-glow", "plugins/renderer-webgl-canvas", "plugins/renderer-vulkan", "plugins/renderer-wgpu", "crates/microui-redux", "crates/microui-ui", "demos/demo-assets", "demos/demo-host", "demos/demo-renderer", "demos/demo-contracts", "demos/demo-full", "demos/basic"]
-default-members = ["crates/microui-redux"]
+members = ["crates/ui/contracts", "plugins/extension-example", "plugins/assets", "plugins/platform", "plugins/renderer-support", "plugins/renderer-glow", "plugins/renderer-webgl-canvas", "plugins/renderer-vulkan", "plugins/renderer-wgpu", "crates/ui/api", "crates/ui/runtime", "demos/demo-assets", "demos/demo-host", "demos/demo-renderer", "demos/demo-contracts", "demos/demo-full", "demos/basic"]
+default-members = ["crates/ui/api"]
 
 [workspace.package]
 authors = ["Raja Lehtihet", "Wael El Oraiby"]
@@ -11,7 +11,7 @@ readme = "README.md"
 repository = "https://github.com/NeoCogi/neocogi-platform"
 
 [workspace.dependencies]
-microui-contracts = { path = "crates/microui-contracts" }
+neocogi-ui-contracts = { path = "crates/ui/contracts" }
 neocogi-com-core = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "66c1bc0be86b96e6f3f66bd0229834443623a9e5", version = "0.1.0", default-features = false }
 neocogi-com-macros = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "66c1bc0be86b96e6f3f66bd0229834443623a9e5", version = "0.1.0", default-features = false }
 neocogi-com = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "66c1bc0be86b96e6f3f66bd0229834443623a9e5", version = "0.1.0", default-features = false }
@@ -21,18 +21,18 @@ proc-macro-crate = "3"
 proc-macro2 = "1"
 quote = "1"
 syn = { version = "2", features = ["full", "extra-traits"] }
-microui-redux = { path = "crates/microui-redux", version = "0.9.0-alpha.0", default-features = false }
+neocogi-ui = { path = "crates/ui/api", version = "0.9.0-alpha.0", default-features = false }
 microui-plugin-assets = { path = "plugins/assets", version = "0.9.0-alpha.0", default-features = false }
-microui-ui = { path = "crates/microui-ui", version = "0.9.0-alpha.0", default-features = false }
-microui-redux-demo-assets = { path = "demos/demo-assets", default-features = false }
-microui-redux-demo-host = { path = "demos/demo-host", default-features = false }
+neocogi-ui-runtime = { path = "crates/ui/runtime", version = "0.9.0-alpha.0", default-features = false }
+neocogi-ui-demo-assets = { path = "demos/demo-assets", default-features = false }
+neocogi-ui-demo-host = { path = "demos/demo-host", default-features = false }
 microui-demo-contracts = { path = "demos/demo-contracts" }
-microui-redux-demo-renderer = { path = "demos/demo-renderer", default-features = false }
-microui-redux-renderer-support = { path = "plugins/renderer-support" }
-microui-redux-renderer-glow = { path = "plugins/renderer-glow" }
-microui-redux-renderer-webgl-canvas = { path = "plugins/renderer-webgl-canvas" }
-microui-redux-renderer-vulkan = { path = "plugins/renderer-vulkan" }
-microui-redux-renderer-wgpu = { path = "plugins/renderer-wgpu" }
+neocogi-ui-demo-renderer = { path = "demos/demo-renderer", default-features = false }
+neocogi-ui-renderer-support = { path = "plugins/renderer-support" }
+neocogi-ui-renderer-glow = { path = "plugins/renderer-glow" }
+neocogi-ui-renderer-webgl-canvas = { path = "plugins/renderer-webgl-canvas" }
+neocogi-ui-renderer-vulkan = { path = "plugins/renderer-vulkan" }
+neocogi-ui-renderer-wgpu = { path = "plugins/renderer-wgpu" }
 
 ash = { version = "0.38", default-features = false, features = ["linked"] }
 ash-window-handle = { package = "ash-window", version = "0.13" }
@@ -72,10 +72,10 @@ incremental = false
 default-assembly = "full"
 
 [workspace.metadata.neocogi.assemblies.full]
-application = { package = "microui-redux-demo-full", bin = "microui-redux-demo-full", default-features = false, features = ["glow"] }
+application = { package = "neocogi-ui-demo-full", bin = "neocogi-ui-demo-full", default-features = false, features = ["glow"] }
 runtime = { package = "neocogi-com-runtime", default-features = false }
 plugins = [
-    { package = "microui-plugin-ui", features = ["dynamic-plugin"] },
+    { package = "neocogi-ui-runtime", features = ["dynamic-plugin"] },
     { package = "microui-plugin-platform", default-features = false, features = ["dynamic-plugin", "glow"] },
     { package = "microui-plugin-assets", default-features = false, features = ["dynamic-plugin", "theme-json"] },
 ]
@@ -103,10 +103,10 @@ assets = []
 component-features.microui-plugin-assets = ["dynamic-plugin"]
 
 [workspace.metadata.neocogi.assemblies.simple]
-application = { package = "microui-redux-basic-demos", bin = "simple", default-features = false, features = ["glow"] }
+application = { package = "neocogi-ui-basic-demos", bin = "simple", default-features = false, features = ["glow"] }
 runtime = { package = "neocogi-com-runtime", default-features = false }
 plugins = [
-    { package = "microui-plugin-ui", features = ["dynamic-plugin"] },
+    { package = "neocogi-ui-runtime", features = ["dynamic-plugin"] },
     { package = "microui-plugin-platform", default-features = false, features = ["dynamic-plugin", "glow"] },
     { package = "microui-plugin-assets", default-features = false, features = ["dynamic-plugin", "theme-json"] },
 ]
@@ -133,10 +133,10 @@ assets = []
 omit-plugins = ["microui-plugin-assets"]
 
 [workspace.metadata.neocogi.assemblies.calculator]
-application = { package = "microui-redux-basic-demos", bin = "calculator", default-features = false, features = ["glow"] }
+application = { package = "neocogi-ui-basic-demos", bin = "calculator", default-features = false, features = ["glow"] }
 runtime = { package = "neocogi-com-runtime", default-features = false }
 plugins = [
-    { package = "microui-plugin-ui", features = ["dynamic-plugin"] },
+    { package = "neocogi-ui-runtime", features = ["dynamic-plugin"] },
     { package = "microui-plugin-platform", default-features = false, features = ["dynamic-plugin", "glow"] },
     { package = "microui-plugin-assets", default-features = false, features = ["dynamic-plugin", "theme-json"] },
 ]
@@ -163,10 +163,10 @@ assets = []
 omit-plugins = ["microui-plugin-assets"]
 
 [workspace.metadata.neocogi.assemblies.backend-frame-cube]
-application = { package = "microui-redux-basic-demos", bin = "backend-frame-cube", default-features = false, features = ["glow"] }
+application = { package = "neocogi-ui-basic-demos", bin = "backend-frame-cube", default-features = false, features = ["glow"] }
 runtime = { package = "neocogi-com-runtime", default-features = false }
 plugins = [
-    { package = "microui-plugin-ui", features = ["dynamic-plugin"] },
+    { package = "neocogi-ui-runtime", features = ["dynamic-plugin"] },
     { package = "microui-plugin-platform", default-features = false, features = ["dynamic-plugin", "glow"] },
     { package = "microui-plugin-assets", default-features = false, features = ["dynamic-plugin", "theme-json"] },
 ]
@@ -196,7 +196,7 @@ omit-plugins = ["microui-plugin-assets"]
 application = { package = "microui-demo-com", bin = "microui-demo-com", default-features = false, features = ["glow"] }
 runtime = { package = "neocogi-com-runtime", default-features = false }
 plugins = [
-    { package = "microui-plugin-ui", features = ["dynamic-plugin"] },
+    { package = "neocogi-ui-runtime", features = ["dynamic-plugin"] },
     { package = "microui-plugin-platform", default-features = false, features = ["dynamic-plugin", "glow"] },
     { package = "microui-plugin-assets", default-features = false, features = ["dynamic-plugin", "theme-json"] },
 ]

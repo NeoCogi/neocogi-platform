@@ -1,5 +1,5 @@
 [package]
-name = "microui-redux-renderer-webgl-canvas"
+name = "neocogi-ui-renderer-webgl-canvas"
 version = "0.0.0"
 publish = false
 authors.workspace = true
@@ -9,5 +9,5 @@ repository.workspace = true
 
 [dependencies]
 glow.workspace = true
-microui-ui.workspace = true
-microui-redux-renderer-glow.workspace = true
+neocogi-ui-runtime.workspace = true
+neocogi-ui-renderer-glow.workspace = true

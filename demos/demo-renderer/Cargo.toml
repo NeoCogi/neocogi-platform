@@ -1,5 +1,5 @@
 [package]
-name = "microui-redux-demo-renderer"
+name = "neocogi-ui-demo-renderer"
 version = "0.0.0"
 publish = false
 authors.workspace = true
@@ -9,18 +9,18 @@ repository.workspace = true
 
 [features]
 default = []
-glow = ["dep:glow", "dep:microui-redux-renderer-glow"]
+glow = ["dep:glow", "dep:neocogi-ui-renderer-glow"]
 webgl = ["glow"]
-vulkan = ["dep:ash", "dep:microui-redux-renderer-vulkan"]
-wgpu = ["dep:microui-redux-renderer-wgpu", "dep:wgpu"]
+vulkan = ["dep:ash", "dep:neocogi-ui-renderer-vulkan"]
+wgpu = ["dep:neocogi-ui-renderer-wgpu", "dep:wgpu"]
 
 [dependencies]
 microui-demo-contracts.workspace = true
 ash = { workspace = true, optional = true }
 glow = { workspace = true, optional = true }
-microui-ui.workspace = true
-microui-redux-renderer-glow = { workspace = true, optional = true }
-microui-redux-renderer-vulkan = { workspace = true, optional = true }
-microui-redux-renderer-wgpu = { workspace = true, optional = true }
+neocogi-ui-runtime.workspace = true
+neocogi-ui-renderer-glow = { workspace = true, optional = true }
+neocogi-ui-renderer-vulkan = { workspace = true, optional = true }
+neocogi-ui-renderer-wgpu = { workspace = true, optional = true }
 rs-math3d.workspace = true
 wgpu = { workspace = true, optional = true }

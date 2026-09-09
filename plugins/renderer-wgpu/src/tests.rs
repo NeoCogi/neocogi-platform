@@ -4,7 +4,7 @@ use super::*;
 
 /// Runs the actual WGPU validation layer; requires any native adapter, including a software one.
 #[test]
-#[ignore = "requires a native WGPU adapter; run cargo test -p microui-redux-renderer-wgpu -- --ignored"]
+#[ignore = "requires a native WGPU adapter; run cargo test -p neocogi-ui-renderer-wgpu -- --ignored"]
 fn texture_upload_failures_are_returned_without_poisoning_later_uploads() {
     let instance = wgpu::Instance::default();
     let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default())).unwrap();
