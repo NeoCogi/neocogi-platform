@@ -12,11 +12,11 @@ repository = "https://github.com/NeoCogi/neocogi-platform"
 
 [workspace.dependencies]
 neocogi-ui-contracts = { path = "crates/ui/contracts" }
-neocogi-com-core = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "66c1bc0be86b96e6f3f66bd0229834443623a9e5", version = "0.1.0", default-features = false }
-neocogi-com-macros = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "66c1bc0be86b96e6f3f66bd0229834443623a9e5", version = "0.1.0", default-features = false }
-neocogi-com = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "66c1bc0be86b96e6f3f66bd0229834443623a9e5", version = "0.1.0", default-features = false }
-neocogi-com-runtime-sys = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "66c1bc0be86b96e6f3f66bd0229834443623a9e5", version = "0.1.0", default-features = false }
-neocogi-com-runtime = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "66c1bc0be86b96e6f3f66bd0229834443623a9e5", version = "0.1.0", default-features = false }
+neocogi-com-core = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "d6f4d4b0ad3e588333a4ade9594e836ce216b9ab", version = "0.1.0", default-features = false }
+neocogi-com-macros = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "d6f4d4b0ad3e588333a4ade9594e836ce216b9ab", version = "0.1.0", default-features = false }
+neocogi-com = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "d6f4d4b0ad3e588333a4ade9594e836ce216b9ab", version = "0.1.0", default-features = false }
+neocogi-com-runtime-sys = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "d6f4d4b0ad3e588333a4ade9594e836ce216b9ab", version = "0.1.0", default-features = false }
+neocogi-com-runtime = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "d6f4d4b0ad3e588333a4ade9594e836ce216b9ab", version = "0.1.0", default-features = false }
 proc-macro-crate = "3"
 proc-macro2 = "1"
 quote = "1"
