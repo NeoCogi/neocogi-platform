@@ -8,7 +8,9 @@ repository.workspace = true
 publish = false
 
 [lib]
-crate-type = ["rlib", "cdylib"]
+# The implementation is linked once by cargo-neocogi's generated cdylib root;
+# emitting a second package-local cdylib would only duplicate optimized work.
+crate-type = ["rlib"]
 
 [features]
 default = ["glow"]
