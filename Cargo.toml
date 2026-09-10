@@ -20,7 +20,7 @@ readme = "README.md"
 repository = "https://github.com/NeoCogi/neocogi-platform"
 
 [workspace.dependencies]
-neocogi-com = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "835bfc5af2f18e82cbd10b4293f405a144ab9be6", version = "0.1.0", default-features = false }
+neocogi-com = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "90eab43537f1ccc3da6fa57d2c37f206b65ecb8d", version = "0.1.0", default-features = false }
 proc-macro2 = "1"
 quote = "1"
 syn = { version = "2", features = ["full", "extra-traits"] }
@@ -101,6 +101,9 @@ add-application-features = ["embed-assets"]
 assets = []
 component-features.neocogi-assets = ["dynamic-plugin"]
 
+[workspace.metadata.neocogi.assemblies.full.variants.monolith]
+linkage = "monolith"
+
 [workspace.metadata.neocogi.assemblies.simple]
 com-validation = "none"
 application = { package = "neocogi-demo-basic", bin = "simple", default-features = false, features = ["glow"] }
@@ -131,6 +134,9 @@ component-features.neocogi-render-plugin = ["dynamic-plugin", "wgpu"]
 add-application-features = ["embed-assets"]
 assets = []
 omit-plugins = ["neocogi-assets"]
+
+[workspace.metadata.neocogi.assemblies.simple.variants.monolith]
+linkage = "monolith"
 
 [workspace.metadata.neocogi.assemblies.calculator]
 com-validation = "none"
@@ -163,6 +169,9 @@ add-application-features = ["embed-assets"]
 assets = []
 omit-plugins = ["neocogi-assets"]
 
+[workspace.metadata.neocogi.assemblies.calculator.variants.monolith]
+linkage = "monolith"
+
 [workspace.metadata.neocogi.assemblies.backend-frame-cube]
 com-validation = "none"
 application = { package = "neocogi-demo-basic", bin = "backend-frame-cube", default-features = false, features = ["glow"] }
@@ -194,6 +203,9 @@ add-application-features = ["embed-assets"]
 assets = []
 omit-plugins = ["neocogi-assets"]
 
+[workspace.metadata.neocogi.assemblies.backend-frame-cube.variants.monolith]
+linkage = "monolith"
+
 [workspace.metadata.neocogi.assemblies.smoke]
 com-validation = "none"
 application = { package = "neocogi-demo-smoke", bin = "neocogi-demo-smoke", default-features = false, features = ["glow"] }
@@ -224,6 +236,9 @@ component-features.neocogi-render-plugin = ["dynamic-plugin", "wgpu"]
 add-application-features = ["embed-assets"]
 assets = []
 omit-plugins = ["neocogi-assets"]
+
+[workspace.metadata.neocogi.assemblies.smoke.variants.monolith]
+linkage = "monolith"
 
 [workspace.metadata.neocogi.assemblies.smoke.variants.extension]
 add-application-features = ["extension"]
