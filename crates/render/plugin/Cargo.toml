@@ -14,6 +14,8 @@ crate-type = ["rlib"]
 
 [features]
 default = ["glow"]
+# Generates and checks exact ABI contracts for this component graph.
+abi-validation = ["neocogi-com/abi-validation"]
 webgl = ["dep:glow", "dep:neocogi-render-webgl", "neocogi-demo-renderer/webgl"]
 glow = ["dep:glow", "dep:neocogi-render-glow", "neocogi-demo-renderer/glow"]
 vulkan = ["dep:neocogi-render-vulkan", "neocogi-demo-renderer/vulkan"]
