@@ -14,8 +14,11 @@ crate-type = ["rlib"]
 
 [features]
 default = ["glow"]
-# Generates and checks exact ABI contracts for this component graph.
-abi-validation = ["neocogi-com/abi-validation"]
+# The assembly selects one validation representation for the complete graph.
+com-validation-none = ["neocogi-com/com-validation-none"]
+com-validation-sha-256 = ["neocogi-com/com-validation-sha-256"]
+com-validation-fnv-1a-128 = ["neocogi-com/com-validation-fnv-1a-128"]
+com-validation-mangling = ["neocogi-com/com-validation-mangling"]
 webgl = ["dep:glow", "dep:neocogi-render-webgl", "neocogi-demo-renderer/webgl"]
 glow = ["dep:glow", "dep:neocogi-render-glow", "neocogi-demo-renderer/glow"]
 vulkan = ["dep:neocogi-render-vulkan", "neocogi-demo-renderer/vulkan"]
@@ -33,7 +36,7 @@ neocogi-render-support.workspace = true
 neocogi-demo-renderer.workspace = true
 neocogi-demo-contracts.workspace = true
 rs-math3d.workspace = true
-neocogi-com = { workspace = true, features = ["macros", "std"] }
+neocogi-com = { workspace = true, default-features = false, features = ["macros", "std"] }
 glow = { workspace = true, optional = true }
 
 [dev-dependencies]
