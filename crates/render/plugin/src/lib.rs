@@ -49,7 +49,7 @@ use resources::{SceneRecord, TextureRecord};
 type Prepared = PreparedFrame<Rc<TextureRecord>, MeshSubmission>;
 
 #[derive(Default)]
-#[com_object(neocogi_ui_contracts::Platform)]
+#[com_object(constructible(neocogi_ui_contracts::Platform))]
 /// Native bootstrap; initialization is fallible and no native subsystem crosses the COM boundary.
 pub struct PlatformObject {
     /// One SDL event pump shared by this platform's windows.
