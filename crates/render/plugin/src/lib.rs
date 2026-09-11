@@ -22,7 +22,10 @@ use neocogi_demo_contracts::*;
 use neocogi_demo_renderer::{MeshBuffers, MeshSubmission};
 use neocogi_render_support::com::{PreparedFrame, Resources};
 use neocogi_render_core::TextureId;
-use neocogi_com::{ComInterface, ComPtr, ComRef, IUnknown, INcStringAbi, NcString, NcCopyFromBufferOffset, NcStatus, NC_E_INVALID_ARG, com_object};
+use neocogi_com::{
+    ComFactoryBootstrap, ComInterface, ComPtr, ComRef, IUnknown, INcStringAbi, NcCopyFromBufferOffset, NcStatus, NcString, NC_E_INVALID_ARG, com_factory,
+    com_object,
+};
 use std::{
     cell::{Cell, RefCell},
     collections::HashMap,
@@ -49,7 +52,7 @@ use resources::{SceneRecord, TextureRecord};
 type Prepared = PreparedFrame<Rc<TextureRecord>, MeshSubmission>;
 
 #[derive(Default)]
-#[com_object(constructible(neocogi_ui_contracts::Platform))]
+#[com_factory(neocogi_ui_contracts::Platform)]
 /// Native bootstrap; initialization is fallible and no native subsystem crosses the COM boundary.
 pub struct PlatformObject {
     /// One SDL event pump shared by this platform's windows.
@@ -60,10 +63,6 @@ pub struct PlatformObject {
 }
 
 impl Platform for PlatformObject {
-    /// Creates an empty platform root; native subsystem ownership begins with the first window.
-    fn new() -> Result<Self, NcStatus> {
-        Ok(Self::default())
-    }
     /// Validates input and publishes one complete native object only after the selected backend exists.
     fn create_window(
         &self,
@@ -78,6 +77,13 @@ impl Platform for PlatformObject {
         Ok(WindowObject::from_value(self.window(title, size, assets)?)
             .query()
             .expect("native window declares IPlatformWindow"))
+    }
+}
+
+impl ComFactoryBootstrap for PlatformObject {
+    /// Creates the stateful renderer root without publishing constructor arguments through the ABI.
+    fn create_factory() -> Result<ComPtr<PlatformAbi>, NcStatus> {
+        Self::from_value(Self::default()).query()
     }
 }
 impl IRenderDiagnostics for PlatformObject {
@@ -234,24 +240,36 @@ fn identity<I: ComInterface>(interface: &ComPtr<I>) -> Result<usize, NcStatus> {
 }
 
 #[cfg(feature = "glow")]
-neocogi_com::plugin! {
-    plugin_id(auto_guid = "neocogi.render.glow"), name = "neocogi.render.glow", version = "0.9.0-alpha.0", classes = [PlatformObject],
+neocogi_com::factory_plugin! {
+    name = "neocogi.render.glow",
+    version = "0.9.0-alpha.0",
+    contracts = [neocogi_ui_contracts::MODULE, neocogi_demo_contracts::MODULE],
+    factory = PlatformObject,
 }
 #[cfg(feature = "vulkan")]
-neocogi_com::plugin! {
-    plugin_id(auto_guid = "neocogi.render.vulkan"), name = "neocogi.render.vulkan", version = "0.9.0-alpha.0", classes = [PlatformObject],
+neocogi_com::factory_plugin! {
+    name = "neocogi.render.vulkan",
+    version = "0.9.0-alpha.0",
+    contracts = [neocogi_ui_contracts::MODULE, neocogi_demo_contracts::MODULE],
+    factory = PlatformObject,
 }
 #[cfg(feature = "wgpu")]
-neocogi_com::plugin! {
-    plugin_id(auto_guid = "neocogi.render.wgpu"), name = "neocogi.render.wgpu", version = "0.9.0-alpha.0", classes = [PlatformObject],
+neocogi_com::factory_plugin! {
+    name = "neocogi.render.wgpu",
+    version = "0.9.0-alpha.0",
+    contracts = [neocogi_ui_contracts::MODULE, neocogi_demo_contracts::MODULE],
+    factory = PlatformObject,
 }
 #[cfg(feature = "webgl")]
-neocogi_com::plugin! {
-    plugin_id(auto_guid = "neocogi.render.webgl"), name = "neocogi.render.webgl", version = "0.9.0-alpha.0", classes = [PlatformObject],
+neocogi_com::factory_plugin! {
+    name = "neocogi.render.webgl",
+    version = "0.9.0-alpha.0",
+    contracts = [neocogi_ui_contracts::MODULE, neocogi_demo_contracts::MODULE],
+    factory = PlatformObject,
 }
 // Only the native assembly owns the dynamic entrypoint; browser assembly uses static descriptors.
 #[cfg(feature = "dynamic-plugin")]
-neocogi_com::export_plugin!();
+neocogi_com::export_factory_plugin!();
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests;

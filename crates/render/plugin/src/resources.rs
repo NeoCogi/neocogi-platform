@@ -128,18 +128,21 @@ impl IMeshScene for Scene {
     /// Matrix replacement is one copied transaction and never changes the retained widget's geometry.
     fn set_transforms(&self, transforms: SceneTransforms) -> Result<(), NcStatus> {
         self.record.writable()?;
-        if transforms
-            .pvm
+        // The contract owns its portable matrix layout. Convert once at this
+        // implementation boundary so renderer internals remain native math values.
+        let pvm: Mat4f = transforms.pvm.into();
+        let view_model: Mat4f = transforms.view_model.into();
+        if pvm
             .col
             .iter()
-            .chain(&transforms.view_model.col)
+            .chain(&view_model.col)
             .any(|v| [v.x, v.y, v.z, v.w].iter().any(|x| !x.is_finite()))
         {
             return Err(NC_E_INVALID_ARG);
         }
         let mut submission = self.record.submission.borrow_mut();
-        submission.pvm = transforms.pvm;
-        submission.view_model = transforms.view_model;
+        submission.pvm = pvm;
+        submission.view_model = view_model;
         Ok(())
     }
 }
