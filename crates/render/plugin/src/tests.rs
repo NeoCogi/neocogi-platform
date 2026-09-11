@@ -78,8 +78,8 @@ impl IRenderStream for Stream {
         );
         assert_eq!(
             self.input.editing.set_transforms(SceneTransforms {
-                pvm: Mat4f::identity(),
-                view_model: Mat4f::identity()
+                pvm: Mat4f::identity().into(),
+                view_model: Mat4f::identity().into()
             }),
             Err(UI_E_BUSY)
         );
@@ -131,19 +131,19 @@ fn info() -> RenderInfo {
 fn mesh(scene: &ComPtr<IMeshSceneAbi>) {
     let vertices = [
         MeshVertex {
-            position: Vec3f::new(-0.9, -0.9, 0.),
-            normal: Vec3f::new(0., 0., 1.),
-            uv: Vec2f::new(0., 0.),
+            position: Vec3f::new(-0.9, -0.9, 0.).into(),
+            normal: Vec3f::new(0., 0., 1.).into(),
+            uv: Vec2f::new(0., 0.).into(),
         },
         MeshVertex {
-            position: Vec3f::new(0.9, -0.9, 0.),
-            normal: Vec3f::new(0., 0., 1.),
-            uv: Vec2f::new(1., 0.),
+            position: Vec3f::new(0.9, -0.9, 0.).into(),
+            normal: Vec3f::new(0., 0., 1.).into(),
+            uv: Vec2f::new(1., 0.).into(),
         },
         MeshVertex {
-            position: Vec3f::new(0., 0.9, 0.),
-            normal: Vec3f::new(0., 0., 1.),
-            uv: Vec2f::new(0.5, 1.),
+            position: Vec3f::new(0., 0.9, 0.).into(),
+            normal: Vec3f::new(0., 0., 1.).into(),
+            uv: Vec2f::new(0.5, 1.).into(),
         },
     ];
     scene
