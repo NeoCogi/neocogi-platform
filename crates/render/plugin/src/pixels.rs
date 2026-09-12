@@ -98,8 +98,20 @@ mod tests {
         fn chrome(&self) -> Result<AssetChrome, NcStatus> {
             Err(NC_E_INVALID_ARG)
         }
-        /// Compiled appearances are consumed by the UI before triangles reach the renderer.
-        fn visuals(&self, _: AppearanceFamily, _: NcCopyToBufferOffset<'_, AssetVisual>) -> Result<(), NcStatus> {
+        /// Compiled surface appearances are consumed before triangles reach the renderer.
+        fn surface_visuals(&self, _: NcCopyToBufferOffset<'_, AssetSurfaceVisuals>) -> Result<(), NcStatus> {
+            Err(NC_E_INVALID_ARG)
+        }
+        /// Compiled control appearances are consumed before triangles reach the renderer.
+        fn control_visuals(&self, _: NcCopyToBufferOffset<'_, AssetControlVisuals>) -> Result<(), NcStatus> {
+            Err(NC_E_INVALID_ARG)
+        }
+        /// Compiled menu appearances are consumed before triangles reach the renderer.
+        fn menu_visuals(&self, _: NcCopyToBufferOffset<'_, AssetMenuVisuals>) -> Result<(), NcStatus> {
+            Err(NC_E_INVALID_ARG)
+        }
+        /// Compiled chrome appearances are consumed before triangles reach the renderer.
+        fn chrome_visuals(&self, _: NcCopyToBufferOffset<'_, AssetChromeVisuals>) -> Result<(), NcStatus> {
             Err(NC_E_INVALID_ARG)
         }
     }
