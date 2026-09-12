@@ -20,8 +20,8 @@ readme = "README.md"
 repository = "https://github.com/NeoCogi/neocogi-platform"
 
 [workspace.dependencies]
-neocogi-com = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "d7e63b94f19185de48b8c04f8f2a81017d54b10c", version = "0.1.0", default-features = false }
-neocogi-idl = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "d7e63b94f19185de48b8c04f8f2a81017d54b10c", version = "0.1.0" }
+neocogi-com = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "781464eda609767c891580283919f1f911497390", version = "0.1.0", default-features = false }
+neocogi-idl = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "781464eda609767c891580283919f1f911497390", version = "0.1.0" }
 prettyplease = "0.2"
 proc-macro2 = "1"
 quote = "1"
@@ -72,7 +72,6 @@ incremental = false
 default-assembly = "full"
 
 [workspace.metadata.neocogi.assemblies.full]
-com-validation = "none"
 application = { package = "neocogi-demo-full", bin = "neocogi-demo-full", default-features = false, features = ["glow"] }
 runtime = { package = "neocogi-com-runtime", default-features = false }
 plugins = [
@@ -107,7 +106,6 @@ component-features.neocogi-assets = ["dynamic-plugin"]
 linkage = "monolith"
 
 [workspace.metadata.neocogi.assemblies.simple]
-com-validation = "none"
 application = { package = "neocogi-demo-basic", bin = "simple", default-features = false, features = ["glow"] }
 runtime = { package = "neocogi-com-runtime", default-features = false }
 plugins = [
@@ -141,7 +139,6 @@ omit-plugins = ["neocogi-assets"]
 linkage = "monolith"
 
 [workspace.metadata.neocogi.assemblies.calculator]
-com-validation = "none"
 application = { package = "neocogi-demo-basic", bin = "calculator", default-features = false, features = ["glow"] }
 runtime = { package = "neocogi-com-runtime", default-features = false }
 plugins = [
@@ -175,7 +172,6 @@ omit-plugins = ["neocogi-assets"]
 linkage = "monolith"
 
 [workspace.metadata.neocogi.assemblies.backend-frame-cube]
-com-validation = "none"
 application = { package = "neocogi-demo-basic", bin = "backend-frame-cube", default-features = false, features = ["glow"] }
 runtime = { package = "neocogi-com-runtime", default-features = false }
 plugins = [
@@ -209,7 +205,6 @@ omit-plugins = ["neocogi-assets"]
 linkage = "monolith"
 
 [workspace.metadata.neocogi.assemblies.smoke]
-com-validation = "none"
 application = { package = "neocogi-demo-smoke", bin = "neocogi-demo-smoke", default-features = false, features = ["glow"] }
 runtime = { package = "neocogi-com-runtime", default-features = false }
 plugins = [
