@@ -20,8 +20,8 @@ readme = "README.md"
 repository = "https://github.com/NeoCogi/neocogi-platform"
 
 [workspace.dependencies]
-neocogi-com = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "781464eda609767c891580283919f1f911497390", version = "0.1.0", default-features = false }
-neocogi-idl = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "781464eda609767c891580283919f1f911497390", version = "0.1.0" }
+neocogi-com = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "0a23ca07eedf3e63f38e3c294f6c093c8676b067", version = "0.1.0", default-features = false }
+neocogi-idl = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "0a23ca07eedf3e63f38e3c294f6c093c8676b067", version = "0.1.0" }
 prettyplease = "0.2"
 proc-macro2 = "1"
 quote = "1"
