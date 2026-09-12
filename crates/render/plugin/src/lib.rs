@@ -17,7 +17,7 @@ compile_error!("renderer features are mutually exclusive");
 compile_error!("the webgl renderer plugin requires wasm32");
 #[cfg(all(target_arch = "wasm32", not(feature = "webgl")))]
 compile_error!("wasm32 rendering requires the webgl feature");
-use neocogi_ui_contracts::*;
+use neocogi_ui_core_contracts::*;
 use neocogi_demo_contracts::*;
 use neocogi_demo_renderer::{MeshBuffers, MeshSubmission};
 use neocogi_render_support::com::{PreparedFrame, Resources};
@@ -52,7 +52,7 @@ use resources::{SceneRecord, TextureRecord};
 type Prepared = PreparedFrame<Rc<TextureRecord>, MeshSubmission>;
 
 #[derive(Default)]
-#[com_factory(neocogi_ui_contracts::Platform)]
+#[com_factory(neocogi_ui_core_contracts::Platform)]
 /// Native bootstrap; initialization is fallible and no native subsystem crosses the COM boundary.
 pub struct PlatformObject {
     /// One SDL event pump shared by this platform's windows.
@@ -243,28 +243,28 @@ fn identity<I: ComInterface>(interface: &ComPtr<I>) -> Result<usize, NcStatus> {
 neocogi_com::factory_plugin! {
     name = "neocogi.render.glow",
     version = "0.9.0-alpha.0",
-    contracts = [neocogi_ui_contracts::MODULE, neocogi_demo_contracts::MODULE],
+    contracts = [neocogi_ui_core_contracts::MODULE, neocogi_demo_contracts::MODULE],
     factory = PlatformObject,
 }
 #[cfg(feature = "vulkan")]
 neocogi_com::factory_plugin! {
     name = "neocogi.render.vulkan",
     version = "0.9.0-alpha.0",
-    contracts = [neocogi_ui_contracts::MODULE, neocogi_demo_contracts::MODULE],
+    contracts = [neocogi_ui_core_contracts::MODULE, neocogi_demo_contracts::MODULE],
     factory = PlatformObject,
 }
 #[cfg(feature = "wgpu")]
 neocogi_com::factory_plugin! {
     name = "neocogi.render.wgpu",
     version = "0.9.0-alpha.0",
-    contracts = [neocogi_ui_contracts::MODULE, neocogi_demo_contracts::MODULE],
+    contracts = [neocogi_ui_core_contracts::MODULE, neocogi_demo_contracts::MODULE],
     factory = PlatformObject,
 }
 #[cfg(feature = "webgl")]
 neocogi_com::factory_plugin! {
     name = "neocogi.render.webgl",
     version = "0.9.0-alpha.0",
-    contracts = [neocogi_ui_contracts::MODULE, neocogi_demo_contracts::MODULE],
+    contracts = [neocogi_ui_core_contracts::MODULE, neocogi_demo_contracts::MODULE],
     factory = PlatformObject,
 }
 // Only the native assembly owns the dynamic entrypoint; browser assembly uses static descriptors.

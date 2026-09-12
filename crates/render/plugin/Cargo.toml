@@ -21,7 +21,7 @@ wgpu = ["dep:neocogi-render-wgpu", "neocogi-demo-renderer/wgpu"]
 dynamic-plugin = []
 
 [dependencies]
-neocogi-ui-contracts.workspace = true
+neocogi-ui-core-contracts.workspace = true
 neocogi-render-core.workspace = true
 neocogi-render-webgl = { workspace = true, optional = true }
 neocogi-render-glow = { workspace = true, optional = true }
