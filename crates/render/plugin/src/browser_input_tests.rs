@@ -68,7 +68,7 @@ pub fn run_browser_input_tests() {
     assert!(matches!(host.drain().as_slice(), [PendingInput { event: UiInput::Text, text }] if text == "é\n pasted"));
     exercise(host.text.unchecked_ref(), "key");
     assert!(
-        matches!(host.drain().as_slice(), [PendingInput { event: UiInput::Key(event), .. }] if event.key == KeyCode::CHARACTER && event.value == u32::from('F'))
+        matches!(host.drain().as_slice(), [PendingInput { event: UiInput::Key(event), .. }] if event.key == KeyCode::Character && event.value == u32::from('F'))
     );
     exercise(canvas.unchecked_ref(), "wheel");
     assert!(matches!(

@@ -309,7 +309,7 @@ fn input_delivery(unknown: &ComPtr<IUnknown>, device: &Weak<Device>) {
     .query()
     .unwrap();
     // Drain construction/focus events before inserting a deterministic pair of Unicode commits.
-    while window.poll(empty.as_com_ref()).unwrap() == PollStatus::EVENT {}
+    while window.poll(empty.as_com_ref()).unwrap() == PollStatus::Event {}
     received.borrow_mut().clear();
     let owner = device.upgrade().unwrap();
     let id = owner.window.id();
@@ -334,8 +334,8 @@ fn input_delivery(unknown: &ComPtr<IUnknown>, device: &Weak<Device>) {
     .query()
     .unwrap();
     assert_eq!(window.poll(sink.as_com_ref()), Err(NC_E_INVALID_ARG));
-    assert_eq!(window.poll(sink.as_com_ref()), Ok(PollStatus::EVENT));
-    while window.poll(sink.as_com_ref()).unwrap() == PollStatus::EVENT {}
+    assert_eq!(window.poll(sink.as_com_ref()), Ok(PollStatus::Event));
+    while window.poll(sink.as_com_ref()).unwrap() == PollStatus::Event {}
     assert_eq!(
         &*received.borrow(),
         &[(UiInput::Text, "first é".to_owned()), (UiInput::Text, "second ☃".to_owned())]

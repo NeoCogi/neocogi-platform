@@ -124,37 +124,37 @@ fn button(button: MouseButton) -> Option<u8> {
 /// Preserves logical shortcut identity without deriving committed text from key presses.
 fn key(code: Keycode) -> Option<(KeyCode, u32)> {
     let key = match code {
-        Keycode::Backspace => KeyCode::BACKSPACE,
-        Keycode::Delete => KeyCode::DELETE,
-        Keycode::Return | Keycode::KpEnter => KeyCode::ENTER,
-        Keycode::Escape => KeyCode::ESCAPE,
-        Keycode::Space => KeyCode::SPACE,
-        Keycode::Tab => KeyCode::TAB,
-        Keycode::Insert => KeyCode::INSERT,
-        Keycode::Home => KeyCode::HOME,
-        Keycode::End => KeyCode::END,
-        Keycode::PageUp => KeyCode::PAGE_UP,
-        Keycode::PageDown => KeyCode::PAGE_DOWN,
-        Keycode::Up => KeyCode::ARROW_UP,
-        Keycode::Down => KeyCode::ARROW_DOWN,
-        Keycode::Left => KeyCode::ARROW_LEFT,
-        Keycode::Right => KeyCode::ARROW_RIGHT,
-        Keycode::LAlt | Keycode::RAlt => KeyCode::ALT,
-        Keycode::LCtrl | Keycode::RCtrl => KeyCode::CONTROL,
-        Keycode::LShift | Keycode::RShift => KeyCode::SHIFT,
-        Keycode::LGui | Keycode::RGui => KeyCode::SUPER,
+        Keycode::Backspace => KeyCode::Backspace,
+        Keycode::Delete => KeyCode::Delete,
+        Keycode::Return | Keycode::KpEnter => KeyCode::Enter,
+        Keycode::Escape => KeyCode::Escape,
+        Keycode::Space => KeyCode::Space,
+        Keycode::Tab => KeyCode::Tab,
+        Keycode::Insert => KeyCode::Insert,
+        Keycode::Home => KeyCode::Home,
+        Keycode::End => KeyCode::End,
+        Keycode::PageUp => KeyCode::PageUp,
+        Keycode::PageDown => KeyCode::PageDown,
+        Keycode::Up => KeyCode::ArrowUp,
+        Keycode::Down => KeyCode::ArrowDown,
+        Keycode::Left => KeyCode::ArrowLeft,
+        Keycode::Right => KeyCode::ArrowRight,
+        Keycode::LAlt | Keycode::RAlt => KeyCode::Alt,
+        Keycode::LCtrl | Keycode::RCtrl => KeyCode::Control,
+        Keycode::LShift | Keycode::RShift => KeyCode::Shift,
+        Keycode::LGui | Keycode::RGui => KeyCode::Super,
         _ => {
             // SDL's two function-key ranges are individually contiguous; keep the hole between
             // F12 and F13 out of the public logical key numbering.
             let raw = code.into_i32();
             for (first, last, offset) in [(Keycode::F1, Keycode::F12, 1), (Keycode::F13, Keycode::F24, 13)] {
                 if (first.into_i32()..=last.into_i32()).contains(&raw) {
-                    return Some((KeyCode::FUNCTION, (raw - first.into_i32() + offset) as u32));
+                    return Some((KeyCode::Function, (raw - first.into_i32() + offset) as u32));
                 }
             }
             return char::from_u32(raw as u32)
                 .filter(|c| !c.is_control())
-                .map(|c| (KeyCode::CHARACTER, u32::from(c)));
+                .map(|c| (KeyCode::Character, u32::from(c)));
         }
     };
     Some((key, 0))
@@ -184,15 +184,15 @@ impl IPlatformWindow for WindowObject {
             let transition = self.input.borrow_mut().translate(event, self.device.window.size(), self.size()?);
             match transition {
                 Transition::Ignore => continue,
-                Transition::Changed => return Ok(PollStatus::EVENT),
-                Transition::Close => return Ok(PollStatus::CLOSE),
+                Transition::Changed => return Ok(PollStatus::Event),
+                Transition::Close => return Ok(PollStatus::Close),
                 Transition::Input(event, text) => {
                     destination.input(event.into(), NcCopyFromBufferOffset::new(0, text.as_bytes()))?;
-                    return Ok(PollStatus::EVENT);
+                    return Ok(PollStatus::Event);
                 }
             }
         }
-        Ok(PollStatus::IDLE)
+        Ok(PollStatus::Idle)
     }
 
     /// Converts physical editor placement to logical window pixels and preserves active composition.
@@ -240,12 +240,12 @@ mod tests {
     /// contracts; exercise their SDL translation without opening a display or constructing a GPU.
     #[test]
     fn logical_keys_buttons_and_scaled_capture_keep_their_complete_values() {
-        assert_eq!(key(Keycode::F1), Some((KeyCode::FUNCTION, 1)));
-        assert_eq!(key(Keycode::F12), Some((KeyCode::FUNCTION, 12)));
-        assert_eq!(key(Keycode::F13), Some((KeyCode::FUNCTION, 13)));
-        assert_eq!(key(Keycode::F24), Some((KeyCode::FUNCTION, 24)));
-        assert_eq!(key(Keycode::A), Some((KeyCode::CHARACTER, u32::from('a'))));
-        assert_eq!(key(Keycode::KpEnter), Some((KeyCode::ENTER, 0)));
+        assert_eq!(key(Keycode::F1), Some((KeyCode::Function, 1)));
+        assert_eq!(key(Keycode::F12), Some((KeyCode::Function, 12)));
+        assert_eq!(key(Keycode::F13), Some((KeyCode::Function, 13)));
+        assert_eq!(key(Keycode::F24), Some((KeyCode::Function, 24)));
+        assert_eq!(key(Keycode::A), Some((KeyCode::Character, u32::from('a'))));
+        assert_eq!(key(Keycode::KpEnter), Some((KeyCode::Enter, 0)));
         assert_eq!(modifiers(Mod::RALTMOD | Mod::LCTRLMOD | Mod::RSHIFTMOD | Mod::LGUIMOD), 15);
         assert_eq!(button(MouseButton::Left), Some(1));
         assert_eq!(button(MouseButton::Right), Some(2));

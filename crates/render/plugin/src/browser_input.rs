@@ -237,7 +237,7 @@ impl BrowserInputHost {
                         };
                         queue.borrow_mut().push(UiInput::Key(transition));
                         let editable = event.target().is_some_and(|target| target == EventTarget::from(text.clone()));
-                        let printable = matches!(key, KeyCode::CHARACTER | KeyCode::SPACE);
+                        let printable = matches!(key, KeyCode::Character | KeyCode::Space);
                         // Keep the native paste shortcut and printable defaults; navigation/editing
                         // commands belong to the retained editor and must not edit the input buffer.
                         if !(editable && printable) {
@@ -356,34 +356,34 @@ mod tests;
 /// Maps logical commands without deriving committed text from key events.
 fn map_key(key: &str) -> Option<(KeyCode, u32)> {
     match key {
-        "Backspace" => Some((KeyCode::BACKSPACE, 0)),
-        "Delete" => Some((KeyCode::DELETE, 0)),
-        "Enter" => Some((KeyCode::ENTER, 0)),
-        "Escape" | "Esc" => Some((KeyCode::ESCAPE, 0)),
-        " " | "Spacebar" => Some((KeyCode::SPACE, 0)),
-        "Tab" => Some((KeyCode::TAB, 0)),
-        "Insert" => Some((KeyCode::INSERT, 0)),
-        "Home" => Some((KeyCode::HOME, 0)),
-        "End" => Some((KeyCode::END, 0)),
-        "PageUp" => Some((KeyCode::PAGE_UP, 0)),
-        "PageDown" => Some((KeyCode::PAGE_DOWN, 0)),
-        "ArrowUp" => Some((KeyCode::ARROW_UP, 0)),
-        "ArrowDown" => Some((KeyCode::ARROW_DOWN, 0)),
-        "ArrowLeft" => Some((KeyCode::ARROW_LEFT, 0)),
-        "ArrowRight" => Some((KeyCode::ARROW_RIGHT, 0)),
-        "Alt" => Some((KeyCode::ALT, 0)),
-        "Control" => Some((KeyCode::CONTROL, 0)),
-        "Shift" => Some((KeyCode::SHIFT, 0)),
-        "Meta" | "OS" => Some((KeyCode::SUPER, 0)),
+        "Backspace" => Some((KeyCode::Backspace, 0)),
+        "Delete" => Some((KeyCode::Delete, 0)),
+        "Enter" => Some((KeyCode::Enter, 0)),
+        "Escape" | "Esc" => Some((KeyCode::Escape, 0)),
+        " " | "Spacebar" => Some((KeyCode::Space, 0)),
+        "Tab" => Some((KeyCode::Tab, 0)),
+        "Insert" => Some((KeyCode::Insert, 0)),
+        "Home" => Some((KeyCode::Home, 0)),
+        "End" => Some((KeyCode::End, 0)),
+        "PageUp" => Some((KeyCode::PageUp, 0)),
+        "PageDown" => Some((KeyCode::PageDown, 0)),
+        "ArrowUp" => Some((KeyCode::ArrowUp, 0)),
+        "ArrowDown" => Some((KeyCode::ArrowDown, 0)),
+        "ArrowLeft" => Some((KeyCode::ArrowLeft, 0)),
+        "ArrowRight" => Some((KeyCode::ArrowRight, 0)),
+        "Alt" => Some((KeyCode::Alt, 0)),
+        "Control" => Some((KeyCode::Control, 0)),
+        "Shift" => Some((KeyCode::Shift, 0)),
+        "Meta" | "OS" => Some((KeyCode::Super, 0)),
         _ if key.starts_with('F') && key.len() > 1 => key[1..]
             .parse::<u8>()
             .ok()
             .filter(|number| (1..=24).contains(number))
-            .map(|number| (KeyCode::FUNCTION, u32::from(number))),
+            .map(|number| (KeyCode::Function, u32::from(number))),
         _ => {
             let mut characters = key.chars();
             let character = characters.next()?;
-            characters.next().is_none().then_some((KeyCode::CHARACTER, u32::from(character)))
+            characters.next().is_none().then_some((KeyCode::Character, u32::from(character)))
         }
     }
 }
