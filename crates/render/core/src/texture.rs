@@ -126,7 +126,7 @@ impl RendererId {
         // Relaxed ordering is sufficient: this counter establishes uniqueness but publishes no
         // object memory. Exhaustion is terminal so a destroyed renderer identity is never reused.
         let raw = NEXT_RENDERER_ID
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| value.checked_add(1))
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |value| value.checked_add(1))
             .expect("renderer identity space exhausted");
         Self(NonZeroU64::new(raw).expect("renderer identity allocator returned zero"))
     }
