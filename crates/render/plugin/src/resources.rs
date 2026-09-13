@@ -84,8 +84,8 @@ struct Scene {
 impl SceneRecord {
     /// Editing during preparation/execution is rejected so one complete frame uses a coherent scene state.
     fn writable(&self) -> Result<(), NcStatus> {
-        if self.device.render.try_borrow().map_err(|_| UI_E_BUSY)?.is_none() {
-            Err(UI_E_BUSY)
+        if self.device.render.try_borrow().map_err(|_| RENDER_E_BUSY)?.is_none() {
+            Err(RENDER_E_BUSY)
         } else {
             Ok(())
         }
@@ -178,10 +178,10 @@ impl Resources for WindowObject {
     /// Authentication never calls a resource-reported owner getter and never downcasts erased data.
     fn texture(&self, texture: ComPtr<ITextureAbi>) -> Result<Self::Texture, NcStatus> {
         let key = identity(&texture)?;
-        let registry = self.device.textures.try_borrow().map_err(|_| UI_E_BUSY)?;
+        let registry = self.device.textures.try_borrow().map_err(|_| RENDER_E_BUSY)?;
         let resolved = registry.get(&key).and_then(Weak::upgrade);
         drop(registry);
-        resolved.ok_or(UI_E_OWNER)
+        resolved.ok_or(RENDER_E_OWNER)
     }
     /// Snapshots the same application data used by its concrete native renderer, before a GPU frame exists.
     fn item(&self, item: ComPtr<IRenderItemAbi>) -> Result<Self::Item, NcStatus> {
@@ -190,10 +190,10 @@ impl Resources for WindowObject {
             .device
             .scenes
             .try_borrow()
-            .map_err(|_| UI_E_BUSY)?
+            .map_err(|_| RENDER_E_BUSY)?
             .get(&key)
             .and_then(Weak::upgrade)
-            .ok_or(UI_E_OWNER)?;
+            .ok_or(RENDER_E_OWNER)?;
         Ok(scene.submission.borrow().clone())
     }
 }

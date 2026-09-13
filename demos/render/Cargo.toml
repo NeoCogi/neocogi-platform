@@ -15,7 +15,7 @@ vulkan = ["dep:ash", "dep:neocogi-render-vulkan"]
 wgpu = ["dep:neocogi-render-wgpu", "dep:wgpu"]
 
 [dependencies]
-neocogi-demo-contracts.workspace = true
+neocogi-demo-render-contracts.workspace = true
 ash = { workspace = true, optional = true }
 glow = { workspace = true, optional = true }
 neocogi-render-core.workspace = true

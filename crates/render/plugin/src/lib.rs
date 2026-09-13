@@ -17,9 +17,9 @@ compile_error!("renderer features are mutually exclusive");
 compile_error!("the webgl renderer plugin requires wasm32");
 #[cfg(all(target_arch = "wasm32", not(feature = "webgl")))]
 compile_error!("wasm32 rendering requires the webgl feature");
-use neocogi_ui_core_contracts::*;
-use neocogi_renderer_contracts::{IRenderer, IRendererAbi, IRgbaImageAbi};
-use neocogi_demo_contracts::*;
+use neocogi_platform_contracts::*;
+use neocogi_renderer_contracts::*;
+use neocogi_demo_render_contracts::*;
 use neocogi_demo_renderer::{MeshBuffers, MeshSubmission};
 use neocogi_render_support::com::{PreparedFrame, Resources};
 use neocogi_render_core::TextureId;
@@ -53,7 +53,7 @@ use resources::{SceneRecord, TextureRecord};
 type Prepared = PreparedFrame<Rc<TextureRecord>, MeshSubmission>;
 
 #[derive(Default)]
-#[com_factory(neocogi_ui_core_contracts::Platform)]
+#[com_factory(neocogi_platform_contracts::Platform)]
 /// Native bootstrap; initialization is fallible and no native subsystem crosses the COM boundary.
 pub struct PlatformObject {
     /// One SDL event pump shared by this platform's windows.
@@ -69,13 +69,13 @@ impl Platform for PlatformObject {
         &self,
         title: NcCopyFromBufferOffset<'_, u8>,
         size: Size,
-        assets: ComRef<'_, IAssetBundleAbi>,
+        atlas: ComRef<'_, IRgbaImageAbi>,
     ) -> Result<ComPtr<IPlatformWindowAbi>, NcStatus> {
         if title.offset() != 0 || size.width <= 0 || size.height <= 0 {
             return Err(NC_E_INVALID_ARG);
         }
         let title = std::str::from_utf8(title.as_slice()).map_err(|_| NC_E_INVALID_ARG)?;
-        Ok(WindowObject::from_value(self.window(title, size, assets)?)
+        Ok(WindowObject::from_value(self.window(title, size, atlas)?)
             .query()
             .expect("native window declares IPlatformWindow"))
     }
@@ -120,7 +120,7 @@ impl RenderState {
 
 /// Shared native lifetime retained by the window, every image and every editable scene.
 struct Device {
-    /// None throughout preparation and submission; reentrant GPU operations receive UI_E_BUSY.
+    /// None throughout preparation and submission; reentrant GPU operations receive RENDER_E_BUSY.
     render: RefCell<Option<RenderState>>,
     /// Canonical COM identity maps contain weak native records and never own their COM objects.
     textures: RefCell<HashMap<usize, Weak<TextureRecord>>>,
@@ -147,13 +147,13 @@ struct RenderAccess<'a> {
 impl Device {
     /// Takes the complete native state; nested render/upload attempts cannot borrow its internals.
     fn access(&self) -> Result<RenderAccess<'_>, NcStatus> {
-        let state = self.render.try_borrow_mut().map_err(|_| UI_E_BUSY)?.take().ok_or(UI_E_BUSY)?;
+        let state = self.render.try_borrow_mut().map_err(|_| RENDER_E_BUSY)?.take().ok_or(RENDER_E_BUSY)?;
         Ok(RenderAccess { device: self, state: Some(state) })
     }
     /// Preserves native backend failure text rather than erasing it into a status alone.
     fn failure(&self, error: impl std::fmt::Display) -> NcStatus {
         *self.diagnostic.borrow_mut() = error.to_string();
-        UI_E_RENDER
+        RENDER_E_BACKEND
     }
     /// Deletes immediately when idle; a live frame's ownership transaction drains the same queue on Drop.
     fn retire(&self, id: TextureId) {
@@ -244,28 +244,28 @@ fn identity<I: ComInterface>(interface: &ComPtr<I>) -> Result<usize, NcStatus> {
 neocogi_com::factory_plugin! {
     name = "neocogi.render.glow",
     version = "0.9.0-alpha.0",
-    contracts = [neocogi_renderer_contracts::MODULE, neocogi_ui_core_contracts::MODULE, neocogi_demo_contracts::MODULE],
+    contracts = [neocogi_renderer_contracts::MODULE, neocogi_platform_contracts::MODULE, neocogi_demo_render_contracts::MODULE],
     factory = PlatformObject,
 }
 #[cfg(feature = "vulkan")]
 neocogi_com::factory_plugin! {
     name = "neocogi.render.vulkan",
     version = "0.9.0-alpha.0",
-    contracts = [neocogi_renderer_contracts::MODULE, neocogi_ui_core_contracts::MODULE, neocogi_demo_contracts::MODULE],
+    contracts = [neocogi_renderer_contracts::MODULE, neocogi_platform_contracts::MODULE, neocogi_demo_render_contracts::MODULE],
     factory = PlatformObject,
 }
 #[cfg(feature = "wgpu")]
 neocogi_com::factory_plugin! {
     name = "neocogi.render.wgpu",
     version = "0.9.0-alpha.0",
-    contracts = [neocogi_renderer_contracts::MODULE, neocogi_ui_core_contracts::MODULE, neocogi_demo_contracts::MODULE],
+    contracts = [neocogi_renderer_contracts::MODULE, neocogi_platform_contracts::MODULE, neocogi_demo_render_contracts::MODULE],
     factory = PlatformObject,
 }
 #[cfg(feature = "webgl")]
 neocogi_com::factory_plugin! {
     name = "neocogi.render.webgl",
     version = "0.9.0-alpha.0",
-    contracts = [neocogi_renderer_contracts::MODULE, neocogi_ui_core_contracts::MODULE, neocogi_demo_contracts::MODULE],
+    contracts = [neocogi_renderer_contracts::MODULE, neocogi_platform_contracts::MODULE, neocogi_demo_render_contracts::MODULE],
     factory = PlatformObject,
 }
 // Only the native assembly owns the dynamic entrypoint; browser assembly uses static descriptors.

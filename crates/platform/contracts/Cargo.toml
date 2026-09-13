@@ -1,0 +1,20 @@
+[package]
+name = "neocogi-platform-contracts"
+version = "0.9.0-alpha.0"
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Platform input and native-window ABI contracts for NeoCogi"
+links = "nc_contract_neocogi_platform"
+
+[package.metadata.neocogi-contract]
+module = "neocogi.platform"
+source = "idl/neocogi/platform"
+
+[dependencies]
+neocogi-com = { workspace = true, default-features = false, features = ["macros"] }
+neocogi-renderer-contracts.workspace = true
+
+[build-dependencies]
+neocogi-idl-build.workspace = true

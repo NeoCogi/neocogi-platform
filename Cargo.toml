@@ -2,6 +2,7 @@
 resolver = "3"
 members = [
     "crates/render/contracts",
+    "crates/platform/contracts",
     "crates/render/plugin",
     "crates/render/core",
     "crates/render/support",
@@ -10,6 +11,7 @@ members = [
     "crates/render/vulkan",
     "crates/render/wgpu",
     "demos/render",
+    "demos/render-contracts",
 ]
 default-members = ["crates/render/core"]
 
@@ -22,12 +24,14 @@ repository = "https://github.com/NeoCogi/neocogi-platform"
 
 [workspace.dependencies]
 neocogi-renderer-contracts = { path = "crates/render/contracts" }
+neocogi-platform-contracts = { path = "crates/platform/contracts" }
 neocogi-com = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "04516e75a57a3aa9c871e90c6827ce602683251d", version = "0.1.0", default-features = false }
 neocogi-idl = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "04516e75a57a3aa9c871e90c6827ce602683251d", version = "0.1.0" }
 prettyplease = "0.2"
 proc-macro2 = { version = "1", features = ["span-locations"] }
 quote = "1"
 syn = { version = "2", features = ["full", "extra-traits"] }
+neocogi-demo-render-contracts = { path = "demos/render-contracts" }
 neocogi-demo-renderer = { path = "demos/render", default-features = false }
 neocogi-render-core = { path = "crates/render/core" }
 neocogi-render-support = { path = "crates/render/support" }

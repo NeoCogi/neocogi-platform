@@ -16,6 +16,15 @@ pub const MAX_RENDER_VERTICES: u32 = 16 * 1024 * 1024;
 /// Maximum number of ordered batches accepted in one renderer submission.
 pub const MAX_RENDER_BATCHES: u32 = 1024 * 1024;
 
+/// Renderer state is already borrowed by another upload, submission, or resource operation.
+pub const RENDER_E_BUSY: NcStatus = NcStatus::from_code(-1001);
+
+/// A texture or render item belongs to a different renderer device.
+pub const RENDER_E_OWNER: NcStatus = NcStatus::from_code(-1002);
+
+/// A renderer backend failed; its diagnostics capability retains concrete detail.
+pub const RENDER_E_BACKEND: NcStatus = NcStatus::from_code(-1005);
+
 impl Default for Size {
     /// Returns zero width and height for caller-owned output initialization.
     fn default() -> Self {

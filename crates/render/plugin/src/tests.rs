@@ -65,21 +65,21 @@ impl IRenderStream for Stream {
     fn vertices(&self, _: u64, mut output: NcCopyToBufferOffset<'_, RenderVertex>) -> Result<u32, NcStatus> {
         assert_eq!(
             self.input.renderer.render(info(), self.input.atlas.as_com_ref(), self.input.empty.as_com_ref()),
-            Err(UI_E_BUSY)
+            Err(RENDER_E_BUSY)
         );
         let factory: ComPtr<ITextureFactoryAbi> = self.input.renderer.query()?;
         assert_eq!(
             factory
                 .create_texture(Size { width: 1, height: 1 }, NcCopyFromBufferOffset::new(0, &[0; 4]))
                 .unwrap_err(),
-            UI_E_BUSY
+            RENDER_E_BUSY
         );
         assert_eq!(
             self.input.editing.set_transforms(SceneTransforms {
                 pvm: Mat4f::identity().into(),
                 view_model: Mat4f::identity().into()
             }),
-            Err(UI_E_BUSY)
+            Err(RENDER_E_BUSY)
         );
         let retire = self.input.retire.borrow_mut().take();
         let retired = retire.is_some();
@@ -155,7 +155,7 @@ fn native_order_ownership_reentry_and_final_release() {
     let platform = PlatformObject::default();
     let assets = neocogi_demo_assets::load_bundle().unwrap();
     let atlas = assets.query::<IRgbaImageAbi>().unwrap();
-    let native = platform.window("COM GPU acceptance", SIZE, assets.as_com_ref()).unwrap();
+    let native = platform.window("COM GPU acceptance", SIZE, atlas.as_com_ref()).unwrap();
     let device = Rc::downgrade(&native.device);
     let unknown = WindowObject::from_value(native);
     input_delivery(&unknown, &device);
@@ -237,20 +237,20 @@ fn native_order_ownership_reentry_and_final_release() {
     }
     let oversized = oversized.into_revision(assets.as_com_ref()).unwrap();
     let oversized_atlas = oversized.query::<IRgbaImageAbi>().unwrap();
-    assert_eq!(renderer.prepare_atlas(oversized_atlas.as_com_ref()), Err(UI_E_RENDER));
+    assert_eq!(renderer.prepare_atlas(oversized_atlas.as_com_ref()), Err(RENDER_E_BACKEND));
     assert_eq!(device.upgrade().unwrap().render.borrow().as_ref().unwrap().atlas.as_ptr(), atlas.as_ptr());
     renderer.render(info(), atlas.as_com_ref(), stream.as_com_ref()).unwrap();
     // The foreign scene has a valid ABI but belongs to a different native window/context.
-    let foreign = platform.window("COM foreign resource owner", SIZE, assets.as_com_ref()).unwrap();
+    let foreign = platform.window("COM foreign resource owner", SIZE, atlas.as_com_ref()).unwrap();
     let foreign_device = Rc::downgrade(&foreign.device);
     let foreign_scene = IDemoScenes::create_scene(&foreign).unwrap();
     let foreign_texture = ITextureFactory::create_texture(&foreign, Size { width: 1, height: 1 }, NcCopyFromBufferOffset::new(0, &[0; 4])).unwrap();
     *input.foreign_texture.borrow_mut() = Some(foreign_texture);
-    assert_eq!(renderer.render(info(), atlas.as_com_ref(), stream.as_com_ref()), Err(UI_E_OWNER));
+    assert_eq!(renderer.render(info(), atlas.as_com_ref(), stream.as_com_ref()), Err(RENDER_E_OWNER));
     let foreign_texture = input.foreign_texture.borrow_mut().take();
     drop(foreign_texture);
     *input.scene.borrow_mut() = foreign_scene.query().unwrap();
-    assert_eq!(renderer.render(info(), atlas.as_com_ref(), stream.as_com_ref()), Err(UI_E_OWNER));
+    assert_eq!(renderer.render(info(), atlas.as_com_ref(), stream.as_com_ref()), Err(RENDER_E_OWNER));
     assert!(
         renderer
             .query::<IRenderDiagnosticsAbi>()
@@ -291,7 +291,7 @@ impl IInputSink for InputProbe {
             .borrow_mut()
             .push((UiInput::try_from(event)?, std::str::from_utf8(text.as_slice()).unwrap().to_owned()));
         if let Some(window) = &self.window {
-            assert_eq!(window.poll(self.empty.as_ref().unwrap().as_com_ref()), Err(UI_E_BUSY));
+            assert_eq!(window.poll(self.empty.as_ref().unwrap().as_com_ref()), Err(PLATFORM_E_BUSY));
         }
         if self.fail.replace(false) { Err(NC_E_INVALID_ARG) } else { Ok(()) }
     }

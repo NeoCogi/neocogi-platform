@@ -6,12 +6,11 @@ use web_sys::HtmlCanvasElement;
 impl PlatformObject {
     /// Allocates an independent canvas for each COM window; no two devices accidentally share
     /// one WebGL context. Applications style canvas elements using ordinary page CSS.
-    pub(super) fn window(&self, title: &str, size: Size, source: ComRef<'_, IAssetBundleAbi>) -> Result<WindowObject, NcStatus> {
-        let atlas = source.add_ref().query::<IRgbaImageAbi>()?;
-        let pixels = AtlasPixels::read(atlas.as_com_ref())?;
-        self.canvas(title, size, atlas, pixels).map_err(|error| {
+    pub(super) fn window(&self, title: &str, size: Size, atlas: ComRef<'_, IRgbaImageAbi>) -> Result<WindowObject, NcStatus> {
+        let pixels = AtlasPixels::read(atlas)?;
+        self.canvas(title, size, atlas.add_ref(), pixels).map_err(|error| {
             *self.diagnostic.borrow_mut() = error;
-            UI_E_RENDER
+            PLATFORM_E_BACKEND
         })
     }
 
@@ -88,7 +87,7 @@ impl IPlatformWindow for WindowObject {
     /// Borrows one destination during delivery and rejects callback-driven recursive polling.
     fn poll(&self, destination: ComRef<'_, IInputSinkAbi>) -> Result<PollStatus, NcStatus> {
         if self.polling.replace(true) {
-            return Err(UI_E_BUSY);
+            return Err(PLATFORM_E_BUSY);
         }
         let _polling = Polling { active: &self.polling };
         Ok(if self.input.poll(destination)? { PollStatus::Event } else { PollStatus::Idle })

@@ -177,7 +177,7 @@ impl IPlatformWindow for WindowObject {
     /// Removes only the attempted event; foreign delivery cannot retain any SDL or queue borrow.
     fn poll(&self, destination: ComRef<'_, IInputSinkAbi>) -> Result<PollStatus, NcStatus> {
         if self.polling.replace(true) {
-            return Err(UI_E_BUSY);
+            return Err(PLATFORM_E_BUSY);
         }
         let _polling = Polling { active: &self.polling };
         while let Some(event) = self.device.host.poll(self.device.window.id())? {

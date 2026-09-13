@@ -1,0 +1,19 @@
+[package]
+name = "neocogi-demo-render-contracts"
+version = "0.9.0-alpha.0"
+edition.workspace = true
+license.workspace = true
+publish = false
+links = "nc_contract_neocogi_demo_render"
+
+[package.metadata.neocogi-contract]
+module = "neocogi.demo.render"
+source = "idl/neocogi/demo/render.ncidl"
+
+[dependencies]
+neocogi-renderer-contracts.workspace = true
+neocogi-com = { workspace = true, features = ["macros"] }
+rs-math3d.workspace = true
+
+[build-dependencies]
+neocogi-idl-build.workspace = true

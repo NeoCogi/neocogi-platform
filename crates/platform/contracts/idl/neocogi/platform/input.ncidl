@@ -1,0 +1,127 @@
+#[version(1)]
+/// Integer point or delta in drawable or UI-local coordinates documented by its caller.
+struct Point {
+    /// Horizontal coordinate or displacement.
+    x: i32,
+    /// Vertical coordinate or displacement.
+    y: i32,
+}
+
+#[version(1)]
+/// Logical keyboard identity normalized independently of native scan codes.
+enum KeyCode: u8 {
+    /// Printable shortcut key; its scalar is carried in `KeyStroke::value`.
+    Character = 0,
+    /// Removes the previous character.
+    Backspace = 1,
+    /// Removes the next character.
+    Delete = 2,
+    /// Primary activation or line break.
+    Enter = 3,
+    /// Cancellation or popup dismissal.
+    Escape = 4,
+    /// Space-bar activation, separate from committed text.
+    Space = 5,
+    /// Sequential focus traversal.
+    Tab = 6,
+    /// Insert editing command.
+    Insert = 7,
+    /// Beginning of content or line.
+    Home = 8,
+    /// End of content or line.
+    End = 9,
+    /// Previous viewport.
+    PageUp = 10,
+    /// Next viewport.
+    PageDown = 11,
+    /// Upward navigation.
+    ArrowUp = 12,
+    /// Downward navigation.
+    ArrowDown = 13,
+    /// Leftward navigation.
+    ArrowLeft = 14,
+    /// Rightward navigation.
+    ArrowRight = 15,
+    /// Numbered function key; its number is carried in `KeyStroke::value`.
+    Function = 16,
+    /// Alt/Option itself, for distinguishing a tap from a chord.
+    Alt = 17,
+    /// Control modifier itself.
+    Control = 18,
+    /// Shift modifier itself.
+    Shift = 19,
+    /// Command/Windows/Super modifier itself.
+    Super = 20,
+}
+
+#[version(1)]
+/// Complete logical key transition shared by platform producers and UI consumers.
+struct KeyStroke {
+    /// Stable logical key family.
+    key: KeyCode,
+    /// Unicode scalar for Character, function number for Function, otherwise zero.
+    value: u32,
+    /// True for a press, false for a release.
+    pressed: bool,
+    /// True only for a platform-generated repeated press.
+    repeat: bool,
+    /// Complete modifier bits: Alt=1, Ctrl=2, Shift=4, Super=8.
+    modifiers: u8,
+}
+
+#[version(1)]
+/// Ordered native input before a UI implementation computes drag, hover, and local coordinates.
+enum UiInput: u8 {
+    /// Native focus or capture was lost; clears held state in input order.
+    Cancel,
+    /// Absolute pointer position in drawable coordinates.
+    Pointer(Point),
+    /// Button press at an absolute drawable position.
+    Down {
+        /// Current drawable position.
+        position: Point,
+        /// Buttons changed by this transition: left=1, right=2, middle=4.
+        buttons: u8,
+    },
+    /// Button release at an absolute drawable position.
+    Up {
+        /// Current drawable position.
+        position: Point,
+        /// Buttons changed by this transition: left=1, right=2, middle=4.
+        buttons: u8,
+    },
+    /// Wheel delta at the last committed pointer position.
+    Scroll(Point),
+    /// Complete key identity, state, and modifiers.
+    Key(KeyStroke),
+    /// Complete UTF-8 commit supplied in the accompanying bounded text argument.
+    Text,
+}
+
+#[version(1)]
+/// Synchronous normalized-input destination implemented by a UI runtime or application adapter.
+trait IInputSink {
+    /// Copies one ordered event. Text requires complete UTF-8 at offset zero; every other event
+    /// requires an empty text argument. The platform borrows this interface only during polling.
+    fn input(&self, event: UiInput, text: &[u8]) -> Result<()>;
+}
+
+#[version(1)]
+/// Outcome of removing one relevant native transition from a window's queue.
+enum PollStatus: u8 {
+    /// No relevant transition remains; update and render the accumulated input.
+    Idle = 0,
+    /// Input was delivered or drawable/window state changed; poll again before rendering.
+    Event = 1,
+    /// Application quit or this native window's close was requested.
+    Close = 2,
+}
+
+#[version(1)]
+/// Committed native text-input placement expressed in physical drawable pixels.
+enum TextInputArea: u8 {
+    /// No editable focus currently requests IME or text composition.
+    None,
+    /// Nonnegative editor rectangle; platforms convert it to logical OS or CSS coordinates.
+    Area(Rect),
+}

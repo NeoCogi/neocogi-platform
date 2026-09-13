@@ -30,8 +30,8 @@ impl NativeHost {
     }
     /// Routes native events to their own windows; global quit is broadcast to every live window.
     pub(super) fn poll(&self, id: u32) -> Result<Option<Event>, NcStatus> {
-        let mut queues = self.queues.try_borrow_mut().map_err(|_| UI_E_BUSY)?;
-        for event in self.pump.try_borrow_mut().map_err(|_| UI_E_BUSY)?.poll_iter() {
+        let mut queues = self.queues.try_borrow_mut().map_err(|_| PLATFORM_E_BUSY)?;
+        for event in self.pump.try_borrow_mut().map_err(|_| PLATFORM_E_BUSY)?.poll_iter() {
             if matches!(event, Event::Quit { .. }) {
                 for queue in queues.values_mut() {
                     queue.push_back(event.clone());
@@ -49,29 +49,28 @@ impl NativeHost {
 
 impl PlatformObject {
     /// Constructs the concrete native owner used by COM activation and native lifetime acceptance tests.
-    pub(super) fn window(&self, title: &str, size: Size, source: ComRef<'_, IAssetBundleAbi>) -> Result<WindowObject, NcStatus> {
+    pub(super) fn window(&self, title: &str, size: Size, atlas: ComRef<'_, IRgbaImageAbi>) -> Result<WindowObject, NcStatus> {
         // Validate pixel storage before creating a native window or borrowing SDL ownership.
-        let atlas = source.add_ref().query::<IRgbaImageAbi>()?;
-        let pixels = AtlasPixels::read(atlas.as_com_ref())?;
-        let mut owner = self.host.try_borrow_mut().map_err(|_| UI_E_BUSY)?;
+        let pixels = AtlasPixels::read(atlas)?;
+        let mut owner = self.host.try_borrow_mut().map_err(|_| PLATFORM_E_BUSY)?;
         if owner.is_none() {
             *owner = Some(NativeHost::new().map_err(|error| {
                 *self.diagnostic.borrow_mut() = error;
-                UI_E_RENDER
+                PLATFORM_E_BACKEND
             })?);
         }
         let host = owner.as_ref().expect("host initialized").clone();
         drop(owner);
         let gpu = gpu::Gpu::new(&host.video, title, size, pixels.image()).map_err(|error| {
             *self.diagnostic.borrow_mut() = error;
-            UI_E_RENDER
+            PLATFORM_E_BACKEND
         })?;
         let window = gpu.window();
         host.queues.borrow_mut().insert(window.id(), VecDeque::new());
         let device = Rc::new(Device {
             render: RefCell::new(Some(RenderState {
                 gpu,
-                atlas,
+                atlas: atlas.add_ref(),
                 prepared: Prepared::default(),
             })),
             textures: RefCell::default(),
