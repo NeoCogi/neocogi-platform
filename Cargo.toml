@@ -140,7 +140,7 @@ component-features.neocogi-render-plugin = ["dynamic-plugin", "wgpu"]
 [workspace.metadata.neocogi.assemblies.simple.variants.embedded]
 add-application-features = ["embed-assets"]
 assets = []
-omit-plugins = ["neocogi-gfx"]
+component-features.neocogi-gfx = ["dynamic-plugin"]
 
 [workspace.metadata.neocogi.assemblies.simple.variants.monolith]
 linkage = "monolith"
@@ -172,7 +172,7 @@ component-features.neocogi-render-plugin = ["dynamic-plugin", "wgpu"]
 [workspace.metadata.neocogi.assemblies.calculator.variants.embedded]
 add-application-features = ["embed-assets"]
 assets = []
-omit-plugins = ["neocogi-gfx"]
+component-features.neocogi-gfx = ["dynamic-plugin"]
 
 [workspace.metadata.neocogi.assemblies.calculator.variants.monolith]
 linkage = "monolith"
@@ -204,7 +204,7 @@ component-features.neocogi-render-plugin = ["dynamic-plugin", "wgpu"]
 [workspace.metadata.neocogi.assemblies.backend-frame-cube.variants.embedded]
 add-application-features = ["embed-assets"]
 assets = []
-omit-plugins = ["neocogi-gfx"]
+component-features.neocogi-gfx = ["dynamic-plugin"]
 
 [workspace.metadata.neocogi.assemblies.backend-frame-cube.variants.monolith]
 linkage = "monolith"
@@ -238,7 +238,8 @@ component-features.neocogi-render-plugin = ["dynamic-plugin", "wgpu"]
 [workspace.metadata.neocogi.assemblies.smoke.variants.embedded]
 add-application-features = ["embed-assets"]
 assets = []
-omit-plugins = ["neocogi-gfx", "neocogi-skin"]
+omit-plugins = ["neocogi-skin"]
+component-features.neocogi-gfx = ["dynamic-plugin"]
 
 [workspace.metadata.neocogi.assemblies.smoke.variants.monolith]
 linkage = "monolith"
