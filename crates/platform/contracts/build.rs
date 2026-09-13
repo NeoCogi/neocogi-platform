@@ -1,4 +1,4 @@
-//! Generates typed bindings and one native description for `neocogi.platform`.
+//! Generates typed path, input, window, and IME bindings for `neocogi.platform`.
 
 /// Resolves the checked-in module directory and delegates deterministic generation.
 fn main() {

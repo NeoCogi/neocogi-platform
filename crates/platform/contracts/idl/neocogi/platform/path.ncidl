@@ -1,0 +1,23 @@
+#[version(1)]
+/// Native path representation carried by an immutable path capability.
+enum PathEncoding: u8 {
+    /// Exact Unix filename bytes; invalid UTF-8 is preserved.
+    UnixBytes = 0,
+    /// Exact Windows UTF-16 code units; unpaired surrogates are preserved.
+    WindowsUtf16 = 1,
+}
+
+#[version(1)]
+/// Immutable native path snapshot with explicit encoding and separate display-only text.
+trait INativePath {
+    /// Reports which typed copy method applies; callers reject incompatible host encodings.
+    fn encoding(&self) -> Result<PathEncoding>;
+    /// Returns bytes or UTF-16 code units according to encoding, without a trailing terminator.
+    fn unit_count(&self) -> Result<u64>;
+    /// Copies the exact requested byte range; wrong encoding or invalid range changes no output.
+    fn unix_bytes(&self, output: &mut [u8]) -> Result<()>;
+    /// Copies the exact requested UTF-16 range; wrong encoding or invalid range changes no output.
+    fn windows_units(&self, output: &mut [u16]) -> Result<()>;
+    /// Returns human-readable UTF-8 which must never be used to reconstruct native selection.
+    fn display(&self) -> Result<String>;
+}
