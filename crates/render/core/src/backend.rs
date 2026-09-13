@@ -141,7 +141,7 @@ impl FrameInfo {
 /// Backend-frame acquisition, command, submission, or presentation failure.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FrameError {
-    /// Backend-provided detail retained through Context error propagation.
+    /// Backend-provided detail retained through renderer error propagation.
     message: String,
 }
 
@@ -174,7 +174,7 @@ impl From<&str> for FrameError {
 
 /// Failure to upload and publish a replacement UI atlas in one renderer backend.
 ///
-/// Theme switching uses a separate error from ordinary Context textures because the atlas is a
+/// Theme switching uses a separate error from ordinary renderer textures because the atlas is a
 /// renderer-wide resource: a failed replacement must leave the previous atlas fully usable. The
 /// backend-specific diagnostic is captured as owned text at this concrete public boundary, so
 /// callers never need type erasure or backend-dependent generic error plumbing.
@@ -247,24 +247,14 @@ pub trait RendererFrame {
     fn flush(&mut self);
     /// Draws one pre-clipped external-texture quad.
     fn draw_texture(&mut self, id: TextureId, vertices: [Vertex; 4]);
-    /// Transfers an owned texture to the COM submission backend. Legacy direct backends reject it.
-    /// This transitional native integration hook is removed with direct Context APIs in milestone 17.
-    fn draw_com_texture(&mut self, _texture: neocogi_com::ComPtr<neocogi_renderer_contracts::ITextureAbi>, _vertices: [Vertex; 4]) -> Result<(), FrameError> {
-        Err(FrameError::new("COM texture requires the COM runtime submission backend"))
-    }
-    /// Transfers owned application work without lending this native frame through COM.
-    /// Direct legacy Context backends reject this transitional hook until their removal in milestone 17.
-    fn draw_com_item(&mut self, _item: neocogi_com::ComPtr<neocogi_renderer_contracts::IRenderItemAbi>, _args: RenderItemArgs) -> Result<(), FrameError> {
-        Err(FrameError::new("COM render item requires the COM runtime submission backend"))
-    }
 }
 
-/// Trait implemented by render backends used by the UI context.
+/// Device-local rendering interface implemented inside the selected renderer plugin.
 ///
-/// Backends and their frames execute on the owning Context thread. This trait deliberately has no
+/// Backends and their frames execute on the device-owning thread. This trait deliberately has no
 /// `Send` or `Sync` bound.
 ///
-/// Backends consume final [`Vertex`] values from Context's crate-private display-list executor:
+/// The renderer plugin consumes final GFX stream geometry and calls this interface:
 ///
 /// ```
 /// use neocogi_render_core::{
@@ -334,7 +324,7 @@ pub trait RendererBackend: 'static {
     ///
     /// The caller validates [`TextureId::size`] and RGBA byte length before calling this method.
     /// Backends should return [`TextureError::backend`] without retaining `id` when GPU creation
-    /// or upload fails. Image validation and identifier allocation are owned by the Context, so a
+    /// or upload fails. Image validation and identifier allocation are owned by the renderer plugin, so a
     /// backend does not manufacture those higher-level error classifications.
     /// Dimensions are carried only by `id`, preventing a backend from observing contradictory
     /// handle and argument sizes.

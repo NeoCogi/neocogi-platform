@@ -10,5 +10,4 @@ publish = false
 
 [dependencies]
 neocogi-renderer-contracts.workspace = true
-neocogi-com = { workspace = true, features = ["std"] }
 rs-math3d.workspace = true
