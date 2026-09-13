@@ -120,10 +120,8 @@ plugins = [
     { package = "neocogi-ui-runtime", features = ["dynamic-plugin"] },
     { package = "neocogi-render-plugin", default-features = false, features = ["dynamic-plugin", "glow"] },
     { package = "neocogi-gfx", default-features = false, features = ["builder", "dynamic-plugin"] },
-    { package = "neocogi-skin", default-features = false, features = ["dynamic-plugin", "theme-json"] },
 ]
 assets = [
-    { from = "themes", to = "themes" },
     { from = "assets", to = "assets" },
 ]
 
@@ -142,7 +140,7 @@ component-features.neocogi-render-plugin = ["dynamic-plugin", "wgpu"]
 [workspace.metadata.neocogi.assemblies.simple.variants.embedded]
 add-application-features = ["embed-assets"]
 assets = []
-omit-plugins = ["neocogi-gfx", "neocogi-skin"]
+omit-plugins = ["neocogi-gfx"]
 
 [workspace.metadata.neocogi.assemblies.simple.variants.monolith]
 linkage = "monolith"
@@ -154,10 +152,8 @@ plugins = [
     { package = "neocogi-ui-runtime", features = ["dynamic-plugin"] },
     { package = "neocogi-render-plugin", default-features = false, features = ["dynamic-plugin", "glow"] },
     { package = "neocogi-gfx", default-features = false, features = ["builder", "dynamic-plugin"] },
-    { package = "neocogi-skin", default-features = false, features = ["dynamic-plugin", "theme-json"] },
 ]
 assets = [
-    { from = "themes", to = "themes" },
     { from = "assets", to = "assets" },
 ]
 
@@ -176,7 +172,7 @@ component-features.neocogi-render-plugin = ["dynamic-plugin", "wgpu"]
 [workspace.metadata.neocogi.assemblies.calculator.variants.embedded]
 add-application-features = ["embed-assets"]
 assets = []
-omit-plugins = ["neocogi-gfx", "neocogi-skin"]
+omit-plugins = ["neocogi-gfx"]
 
 [workspace.metadata.neocogi.assemblies.calculator.variants.monolith]
 linkage = "monolith"
@@ -188,10 +184,8 @@ plugins = [
     { package = "neocogi-ui-runtime", features = ["dynamic-plugin"] },
     { package = "neocogi-render-plugin", default-features = false, features = ["dynamic-plugin", "glow"] },
     { package = "neocogi-gfx", default-features = false, features = ["builder", "dynamic-plugin"] },
-    { package = "neocogi-skin", default-features = false, features = ["dynamic-plugin", "theme-json"] },
 ]
 assets = [
-    { from = "themes", to = "themes" },
     { from = "assets", to = "assets" },
 ]
 
@@ -210,7 +204,7 @@ component-features.neocogi-render-plugin = ["dynamic-plugin", "wgpu"]
 [workspace.metadata.neocogi.assemblies.backend-frame-cube.variants.embedded]
 add-application-features = ["embed-assets"]
 assets = []
-omit-plugins = ["neocogi-gfx", "neocogi-skin"]
+omit-plugins = ["neocogi-gfx"]
 
 [workspace.metadata.neocogi.assemblies.backend-frame-cube.variants.monolith]
 linkage = "monolith"
