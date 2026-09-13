@@ -18,6 +18,7 @@ compile_error!("the webgl renderer plugin requires wasm32");
 #[cfg(all(target_arch = "wasm32", not(feature = "webgl")))]
 compile_error!("wasm32 rendering requires the webgl feature");
 use neocogi_ui_core_contracts::*;
+use neocogi_renderer_contracts::{IRenderer, IRendererAbi, IRgbaImageAbi};
 use neocogi_demo_contracts::*;
 use neocogi_demo_renderer::{MeshBuffers, MeshSubmission};
 use neocogi_render_support::com::{PreparedFrame, Resources};
@@ -99,20 +100,20 @@ struct RenderState {
     gpu: gpu::Gpu,
     /// Resource references are cleared before restoring this state, preventing a Device ownership cycle.
     prepared: Prepared,
-    /// Current immutable resource revision; a same-pointer preparation performs no copies or upload.
-    assets: ComPtr<IAssetBundleAbi>,
+    /// Current immutable atlas image; a same-pointer preparation performs no copy or upload.
+    atlas: ComPtr<IRgbaImageAbi>,
 }
 impl RenderState {
-    /// Copies and uploads candidate pixels before retaining the new revision identity.
-    fn prepare_assets(&mut self, source: ComRef<'_, IAssetBundleAbi>) -> Result<(), String> {
-        if self.assets.as_ptr() == source.as_ptr() {
+    /// Copies and uploads candidate pixels before retaining the new image identity.
+    fn prepare_atlas(&mut self, source: ComRef<'_, IRgbaImageAbi>) -> Result<(), String> {
+        if self.atlas.as_ptr() == source.as_ptr() {
             return Ok(());
         }
-        // Renderers may serve independent UIs, so a new catalog is valid here. Only UI replacement
-        // preserves application references and therefore requires the original catalog identity.
+        // The image projection deliberately carries no fonts, names, theme records, or catalog.
+        // Those higher-level meanings have already been resolved before renderer submission.
         let pixels = AtlasPixels::read(source).map_err(|status| status.to_string())?;
         self.gpu.replace_atlas(pixels.image())?;
-        self.assets = source.add_ref();
+        self.atlas = source.add_ref();
         Ok(())
     }
 }
@@ -206,13 +207,13 @@ impl Drop for Polling<'_> {
 }
 
 impl IRenderer for WindowObject {
-    /// Takes owned device state so nested bundle methods cannot reenter native upload or submission.
-    fn prepare_assets(&self, assets: ComRef<'_, IAssetBundleAbi>) -> Result<(), NcStatus> {
+    /// Takes owned device state so nested image methods cannot reenter native upload or submission.
+    fn prepare_atlas(&self, atlas: ComRef<'_, IRgbaImageAbi>) -> Result<(), NcStatus> {
         let mut access = self.device.access()?;
-        access.state().prepare_assets(assets).map_err(|error| self.device.failure(error))
+        access.state().prepare_atlas(atlas).map_err(|error| self.device.failure(error))
     }
     /// Prepares the complete frame without borrowing native state, then executes and explicitly finishes it.
-    fn render(&self, info: RenderInfo, assets: ComRef<'_, IAssetBundleAbi>, stream: ComRef<'_, IRenderStreamAbi>) -> Result<(), NcStatus> {
+    fn render(&self, info: RenderInfo, atlas: ComRef<'_, IRgbaImageAbi>, stream: ComRef<'_, IRenderStreamAbi>) -> Result<(), NcStatus> {
         if info.size != self.size()? {
             return Err(NC_E_INVALID_ARG);
         }
@@ -222,7 +223,7 @@ impl IRenderer for WindowObject {
             *self.device.diagnostic.borrow_mut() = format!("frame preparation failed: {error}");
         })?;
         // Reject malformed commands and foreign resource owners before changing GPU atlas state.
-        state.prepare_assets(assets).map_err(|error| self.device.failure(error))?;
+        state.prepare_atlas(atlas).map_err(|error| self.device.failure(error))?;
         state.gpu.render(info, &state.prepared).map_err(|error| self.device.failure(error))
     }
 }
@@ -243,28 +244,28 @@ fn identity<I: ComInterface>(interface: &ComPtr<I>) -> Result<usize, NcStatus> {
 neocogi_com::factory_plugin! {
     name = "neocogi.render.glow",
     version = "0.9.0-alpha.0",
-    contracts = [neocogi_ui_core_contracts::MODULE, neocogi_demo_contracts::MODULE],
+    contracts = [neocogi_renderer_contracts::MODULE, neocogi_ui_core_contracts::MODULE, neocogi_demo_contracts::MODULE],
     factory = PlatformObject,
 }
 #[cfg(feature = "vulkan")]
 neocogi_com::factory_plugin! {
     name = "neocogi.render.vulkan",
     version = "0.9.0-alpha.0",
-    contracts = [neocogi_ui_core_contracts::MODULE, neocogi_demo_contracts::MODULE],
+    contracts = [neocogi_renderer_contracts::MODULE, neocogi_ui_core_contracts::MODULE, neocogi_demo_contracts::MODULE],
     factory = PlatformObject,
 }
 #[cfg(feature = "wgpu")]
 neocogi_com::factory_plugin! {
     name = "neocogi.render.wgpu",
     version = "0.9.0-alpha.0",
-    contracts = [neocogi_ui_core_contracts::MODULE, neocogi_demo_contracts::MODULE],
+    contracts = [neocogi_renderer_contracts::MODULE, neocogi_ui_core_contracts::MODULE, neocogi_demo_contracts::MODULE],
     factory = PlatformObject,
 }
 #[cfg(feature = "webgl")]
 neocogi_com::factory_plugin! {
     name = "neocogi.render.webgl",
     version = "0.9.0-alpha.0",
-    contracts = [neocogi_ui_core_contracts::MODULE, neocogi_demo_contracts::MODULE],
+    contracts = [neocogi_renderer_contracts::MODULE, neocogi_ui_core_contracts::MODULE, neocogi_demo_contracts::MODULE],
     factory = PlatformObject,
 }
 // Only the native assembly owns the dynamic entrypoint; browser assembly uses static descriptors.

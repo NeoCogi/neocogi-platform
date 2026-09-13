@@ -51,7 +51,8 @@ impl PlatformObject {
     /// Constructs the concrete native owner used by COM activation and native lifetime acceptance tests.
     pub(super) fn window(&self, title: &str, size: Size, source: ComRef<'_, IAssetBundleAbi>) -> Result<WindowObject, NcStatus> {
         // Validate pixel storage before creating a native window or borrowing SDL ownership.
-        let pixels = AtlasPixels::read(source)?;
+        let atlas = source.add_ref().query::<IRgbaImageAbi>()?;
+        let pixels = AtlasPixels::read(atlas.as_com_ref())?;
         let mut owner = self.host.try_borrow_mut().map_err(|_| UI_E_BUSY)?;
         if owner.is_none() {
             *owner = Some(NativeHost::new().map_err(|error| {
@@ -70,7 +71,7 @@ impl PlatformObject {
         let device = Rc::new(Device {
             render: RefCell::new(Some(RenderState {
                 gpu,
-                assets: source.add_ref(),
+                atlas,
                 prepared: Prepared::default(),
             })),
             textures: RefCell::default(),

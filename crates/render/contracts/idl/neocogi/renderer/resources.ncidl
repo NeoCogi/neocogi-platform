@@ -1,0 +1,37 @@
+#[version(1)]
+/// Immutable bounded CPU image containing tightly packed row-major RGBA pixels.
+///
+/// The capability carries only graphics data. In particular, it exposes no UI
+/// font, icon, skin, chrome, palette, or catalog metadata to renderer plugins.
+trait IRgbaImage {
+    /// Returns positive immutable pixel dimensions.
+    fn size(&self) -> Result<Size>;
+    /// Copies the exact requested byte range from tightly packed RGBA storage.
+    fn pixels(&self, output: &mut [u8]) -> Result<()>;
+}
+
+#[version(1)]
+/// Immutable GPU texture whose final release destroys its native allocation with its owning device alive.
+trait ITexture {
+    /// Returns positive immutable pixel dimensions, independent of its destination rectangle.
+    fn size(&self) -> Result<Size>;
+}
+
+#[version(1)]
+/// Opaque owned application GPU work authenticated by the renderer that created it.
+/// Application-specific derived interfaces edit concrete scene data; this interface exposes no native handles.
+trait IRenderItem {}
+
+#[version(1)]
+/// Optional renderer capability for uploading immutable external images.
+trait ITextureFactory {
+    /// Uploads exactly width * height * 4 RGBA bytes at offset zero.
+    fn create_texture(&self, size: Size, pixels: &[u8]) -> Result<ITexture>;
+}
+
+#[version(1)]
+/// Owned diagnostic snapshots preserve backend details without exposing backend-dependent errors.
+trait IRenderDiagnostics {
+    /// Returns the most recent failed GPU operation's detail, or empty text before a failure.
+    fn diagnostic(&self) -> Result<String>;
+}

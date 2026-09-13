@@ -7,15 +7,16 @@ impl PlatformObject {
     /// Allocates an independent canvas for each COM window; no two devices accidentally share
     /// one WebGL context. Applications style canvas elements using ordinary page CSS.
     pub(super) fn window(&self, title: &str, size: Size, source: ComRef<'_, IAssetBundleAbi>) -> Result<WindowObject, NcStatus> {
-        let pixels = AtlasPixels::read(source)?;
-        self.canvas(title, size, source, pixels).map_err(|error| {
+        let atlas = source.add_ref().query::<IRgbaImageAbi>()?;
+        let pixels = AtlasPixels::read(atlas.as_com_ref())?;
+        self.canvas(title, size, atlas, pixels).map_err(|error| {
             *self.diagnostic.borrow_mut() = error;
             UI_E_RENDER
         })
     }
 
     /// Owns partial DOM construction so listener or GPU failures leave no orphan canvas in the page.
-    fn canvas(&self, title: &str, size: Size, source: ComRef<'_, IAssetBundleAbi>, pixels: AtlasPixels) -> Result<WindowObject, String> {
+    fn canvas(&self, title: &str, size: Size, atlas: ComPtr<IRgbaImageAbi>, pixels: AtlasPixels) -> Result<WindowObject, String> {
         let document = web_sys::window().and_then(|window| window.document()).ok_or("browser document unavailable")?;
         let canvas = document
             .create_element("canvas")
@@ -35,7 +36,7 @@ impl PlatformObject {
         let device = Rc::new(Device {
             render: RefCell::new(Some(RenderState {
                 gpu,
-                assets: source.add_ref(),
+                atlas,
                 prepared: Prepared::default(),
             })),
             textures: RefCell::default(),

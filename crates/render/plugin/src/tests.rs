@@ -7,7 +7,7 @@ use rs_math3d::{Mat4f, Vec2f, Vec3f};
 /// Shared ordered stream fixture can inject native reentry and release a resource during bulk copying.
 struct Input {
     /// Immutable atlas passed explicitly to every native render, including reentry probes.
-    assets: ComPtr<IAssetBundleAbi>,
+    atlas: ComPtr<IRgbaImageAbi>,
     /// Atlas background and image quads share the same native coordinate convention.
     vertices: Vec<RenderVertex>,
     /// Validated pointer-free painter order.
@@ -64,9 +64,7 @@ impl IRenderStream for Stream {
     /// Reentry and resource destruction happen while the renderer owns detached preparation storage.
     fn vertices(&self, _: u64, mut output: NcCopyToBufferOffset<'_, RenderVertex>) -> Result<u32, NcStatus> {
         assert_eq!(
-            self.input
-                .renderer
-                .render(info(), self.input.assets.as_com_ref(), self.input.empty.as_com_ref()),
+            self.input.renderer.render(info(), self.input.atlas.as_com_ref(), self.input.empty.as_com_ref()),
             Err(UI_E_BUSY)
         );
         let factory: ComPtr<ITextureFactoryAbi> = self.input.renderer.query()?;
@@ -156,6 +154,7 @@ fn mesh(scene: &ComPtr<IMeshSceneAbi>) {
 fn native_order_ownership_reentry_and_final_release() {
     let platform = PlatformObject::default();
     let assets = neocogi_demo_assets::load_bundle().unwrap();
+    let atlas = assets.query::<IRgbaImageAbi>().unwrap();
     let native = platform.window("COM GPU acceptance", SIZE, assets.as_com_ref()).unwrap();
     let device = Rc::downgrade(&native.device);
     let unknown = WindowObject::from_value(native);
@@ -182,7 +181,7 @@ fn native_order_ownership_reentry_and_final_release() {
     // flushed the atlas batch yet. The previous texture/item/texture fixture missed this boundary.
     let backdrop = quad(bounds).map(|vertex| RenderVertex { u: 0., v: 0., rgba: 0xffff0000, ..vertex });
     let input = Rc::new(Input {
-        assets: assets.clone(),
+        atlas: atlas.clone(),
         vertices: [backdrop[0], backdrop[1], backdrop[2], backdrop[0], backdrop[2], backdrop[3]]
             .into_iter()
             .chain(quad(bounds))
@@ -206,7 +205,7 @@ fn native_order_ownership_reentry_and_final_release() {
         reentries: Cell::new(0),
     });
     let stream: ComPtr<IRenderStreamAbi> = Stream::from_value(Stream { input: input.clone() }).query().unwrap();
-    renderer.render(info(), assets.as_com_ref(), stream.as_com_ref()).unwrap();
+    renderer.render(info(), atlas.as_com_ref(), stream.as_com_ref()).unwrap();
     assert_eq!(input.reentries.get(), 1);
     {
         let owner = device.upgrade().unwrap();
@@ -237,20 +236,21 @@ fn native_order_ownership_reentry_and_final_release() {
         icon.rect = Rect { x: 0, y: 0, width: 1, height: 1 };
     }
     let oversized = oversized.into_revision(assets.as_com_ref()).unwrap();
-    assert_eq!(renderer.prepare_assets(oversized.as_com_ref()), Err(UI_E_RENDER));
-    assert_eq!(device.upgrade().unwrap().render.borrow().as_ref().unwrap().assets.as_ptr(), assets.as_ptr());
-    renderer.render(info(), assets.as_com_ref(), stream.as_com_ref()).unwrap();
+    let oversized_atlas = oversized.query::<IRgbaImageAbi>().unwrap();
+    assert_eq!(renderer.prepare_atlas(oversized_atlas.as_com_ref()), Err(UI_E_RENDER));
+    assert_eq!(device.upgrade().unwrap().render.borrow().as_ref().unwrap().atlas.as_ptr(), atlas.as_ptr());
+    renderer.render(info(), atlas.as_com_ref(), stream.as_com_ref()).unwrap();
     // The foreign scene has a valid ABI but belongs to a different native window/context.
     let foreign = platform.window("COM foreign resource owner", SIZE, assets.as_com_ref()).unwrap();
     let foreign_device = Rc::downgrade(&foreign.device);
     let foreign_scene = IDemoScenes::create_scene(&foreign).unwrap();
     let foreign_texture = ITextureFactory::create_texture(&foreign, Size { width: 1, height: 1 }, NcCopyFromBufferOffset::new(0, &[0; 4])).unwrap();
     *input.foreign_texture.borrow_mut() = Some(foreign_texture);
-    assert_eq!(renderer.render(info(), assets.as_com_ref(), stream.as_com_ref()), Err(UI_E_OWNER));
+    assert_eq!(renderer.render(info(), atlas.as_com_ref(), stream.as_com_ref()), Err(UI_E_OWNER));
     let foreign_texture = input.foreign_texture.borrow_mut().take();
     drop(foreign_texture);
     *input.scene.borrow_mut() = foreign_scene.query().unwrap();
-    assert_eq!(renderer.render(info(), assets.as_com_ref(), stream.as_com_ref()), Err(UI_E_OWNER));
+    assert_eq!(renderer.render(info(), atlas.as_com_ref(), stream.as_com_ref()), Err(UI_E_OWNER));
     assert!(
         renderer
             .query::<IRenderDiagnosticsAbi>()
@@ -263,7 +263,7 @@ fn native_order_ownership_reentry_and_final_release() {
     );
     *input.scene.borrow_mut() = scene.query().unwrap();
     // A failed frame must not poison the next explicit native submission.
-    renderer.render(info(), assets.as_com_ref(), stream.as_com_ref()).unwrap();
+    renderer.render(info(), atlas.as_com_ref(), stream.as_com_ref()).unwrap();
     drop((foreign_scene, foreign));
     assert!(foreign_device.upgrade().is_none());
     drop((stream, input, scene, factory, scenes, renderer, unknown, platform));

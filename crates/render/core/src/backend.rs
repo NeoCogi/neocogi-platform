@@ -54,7 +54,7 @@
 
 use super::texture::TextureError;
 use crate::{Color, ImageSource, TextureId};
-pub use neocogi_ui_core_contracts::RenderVertex as Vertex;
+pub use neocogi_renderer_contracts::RenderVertex as Vertex;
 use rs_math3d::{Dimensioni, Rect};
 use std::{error::Error, fmt};
 
@@ -249,12 +249,12 @@ pub trait RendererFrame {
     fn draw_texture(&mut self, id: TextureId, vertices: [Vertex; 4]);
     /// Transfers an owned texture to the COM submission backend. Legacy direct backends reject it.
     /// This transitional native integration hook is removed with direct Context APIs in milestone 17.
-    fn draw_com_texture(&mut self, _texture: neocogi_com::ComPtr<neocogi_ui_core_contracts::ITextureAbi>, _vertices: [Vertex; 4]) -> Result<(), FrameError> {
+    fn draw_com_texture(&mut self, _texture: neocogi_com::ComPtr<neocogi_renderer_contracts::ITextureAbi>, _vertices: [Vertex; 4]) -> Result<(), FrameError> {
         Err(FrameError::new("COM texture requires the COM runtime submission backend"))
     }
     /// Transfers owned application work without lending this native frame through COM.
     /// Direct legacy Context backends reject this transitional hook until their removal in milestone 17.
-    fn draw_com_item(&mut self, _item: neocogi_com::ComPtr<neocogi_ui_core_contracts::IRenderItemAbi>, _args: RenderItemArgs) -> Result<(), FrameError> {
+    fn draw_com_item(&mut self, _item: neocogi_com::ComPtr<neocogi_renderer_contracts::IRenderItemAbi>, _args: RenderItemArgs) -> Result<(), FrameError> {
         Err(FrameError::new("COM render item requires the COM runtime submission backend"))
     }
 }

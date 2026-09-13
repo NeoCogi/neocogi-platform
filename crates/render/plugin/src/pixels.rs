@@ -11,15 +11,15 @@ pub(super) struct AtlasPixels {
 
 impl AtlasPixels {
     /// Reads only allocation bounds and pixels; fonts, names and appearances belong to the UI.
-    pub(super) fn read(source: ComRef<'_, IAssetBundleAbi>) -> Result<Self, NcStatus> {
-        let info = source.info()?;
-        let count = info.rgba_bytes()?;
+    pub(super) fn read(source: ComRef<'_, IRgbaImageAbi>) -> Result<Self, NcStatus> {
+        let size = source.size()?;
+        let count = neocogi_renderer_contracts::rgba_bytes(size)?;
         let mut pixels = Vec::new();
         // Bounds are checked before allocation, and a failed foreign copy remains unpublished.
         pixels.try_reserve_exact(count).map_err(|_| neocogi_com::NC_E_OUT_OF_MEMORY)?;
         pixels.resize(count, 0);
         source.pixels(neocogi_com::NcCopyToBufferOffset::new(0, &mut pixels))?;
-        Ok(Self { size: info.size, pixels })
+        Ok(Self { size, pixels })
     }
 
     /// Lends packed bytes to a backend without manufacturing a native atlas or color vector.
@@ -38,8 +38,8 @@ mod tests {
     use super::*;
     use neocogi_com::NcCopyToBufferOffset;
 
-    #[com_object(interfaces(IAssetBundle))]
-    /// A pixel projection deliberately makes every UI metadata operation unavailable.
+    #[com_object(interfaces(IRgbaImage))]
+    /// A renderer-only image proves that upload has no dependency on UI metadata contracts.
     struct PixelSource {
         /// Header dimensions exercised before any pixel copy.
         size: Size,
@@ -48,21 +48,10 @@ mod tests {
         /// Simulates a recoverable transfer failure after successful header validation.
         fail_copy: bool,
     }
-    impl IAssetBundle for PixelSource {
-        /// Renderers need revision identity, not the UI's catalog namespace.
-        fn catalog(&self) -> Result<ComPtr<IAssetCatalogAbi>, NcStatus> {
-            Err(NC_E_INVALID_ARG)
-        }
-        /// Supplies bounded counts without requiring the consumer to fetch those tables.
-        fn info(&self) -> Result<AssetInfo, NcStatus> {
-            Ok(AssetInfo {
-                schema: ASSET_SCHEMA_VERSION,
-                size: self.size,
-                fonts: 1,
-                icons: 1,
-                glyphs: 1,
-                names: 1,
-            })
+    impl IRgbaImage for PixelSource {
+        /// Supplies only dimensions needed to bound the packed allocation.
+        fn size(&self) -> Result<Size, NcStatus> {
+            Ok(self.size)
         }
         /// Copies one known texel or propagates the requested source failure.
         fn pixels(&self, mut output: NcCopyToBufferOffset<'_, u8>) -> Result<(), NcStatus> {
@@ -74,53 +63,13 @@ mod tests {
             output.as_mut_slice().copy_from_slice(&[11, 22, 33, 44]);
             Ok(())
         }
-        /// Font metrics must never be requested by the pixel uploader.
-        fn fonts(&self, _: NcCopyToBufferOffset<'_, AssetFont>) -> Result<(), NcStatus> {
-            Err(NC_E_INVALID_ARG)
-        }
-        /// Glyph positions belong to geometry preparation in the UI.
-        fn glyphs(&self, _: NcCopyToBufferOffset<'_, AssetGlyph>) -> Result<(), NcStatus> {
-            Err(NC_E_INVALID_ARG)
-        }
-        /// GPU atlas sampling receives finished UVs and needs no icon table.
-        fn icons(&self, _: NcCopyToBufferOffset<'_, AssetIcon>) -> Result<(), NcStatus> {
-            Err(NC_E_INVALID_ARG)
-        }
-        /// Resource names never enter the native GPU upload path.
-        fn names(&self, _: NcCopyToBufferOffset<'_, u8>) -> Result<(), NcStatus> {
-            Err(NC_E_INVALID_ARG)
-        }
-        /// Layout metrics are deliberately unavailable to this consumer.
-        fn metrics(&self) -> Result<AssetMetrics, NcStatus> {
-            Err(NC_E_INVALID_ARG)
-        }
-        /// Window policy is deliberately unavailable to this consumer.
-        fn chrome(&self) -> Result<AssetChrome, NcStatus> {
-            Err(NC_E_INVALID_ARG)
-        }
-        /// Compiled surface appearances are consumed before triangles reach the renderer.
-        fn surface_visuals(&self, _: NcCopyToBufferOffset<'_, AssetSurfaceVisuals>) -> Result<(), NcStatus> {
-            Err(NC_E_INVALID_ARG)
-        }
-        /// Compiled control appearances are consumed before triangles reach the renderer.
-        fn control_visuals(&self, _: NcCopyToBufferOffset<'_, AssetControlVisuals>) -> Result<(), NcStatus> {
-            Err(NC_E_INVALID_ARG)
-        }
-        /// Compiled menu appearances are consumed before triangles reach the renderer.
-        fn menu_visuals(&self, _: NcCopyToBufferOffset<'_, AssetMenuVisuals>) -> Result<(), NcStatus> {
-            Err(NC_E_INVALID_ARG)
-        }
-        /// Compiled chrome appearances are consumed before triangles reach the renderer.
-        fn chrome_visuals(&self, _: NcCopyToBufferOffset<'_, AssetChromeVisuals>) -> Result<(), NcStatus> {
-            Err(NC_E_INVALID_ARG)
-        }
     }
 
-    /// Pixel transfer succeeds even when all font, theme and catalog operations reject calls.
+    /// Pixel transfer succeeds with no font, theme, catalog, or UI interface at all.
     #[test]
     fn pixel_import_has_no_ui_metadata_dependency() {
         let copies = Rc::new(Cell::new(0));
-        let source: ComPtr<IAssetBundleAbi> = PixelSource::from_value(PixelSource {
+        let source: ComPtr<IRgbaImageAbi> = PixelSource::from_value(PixelSource {
             size: Size { width: 1, height: 1 },
             copies: copies.clone(),
             fail_copy: false,
@@ -138,7 +87,7 @@ mod tests {
     fn pixel_import_bounds_allocations_and_preserves_transfer_errors() {
         let copies = Rc::new(Cell::new(0));
         for size in [Size { width: 0, height: 1 }, Size { width: -1, height: 1 }, Size { width: 4096, height: 4097 }] {
-            let source: ComPtr<IAssetBundleAbi> = PixelSource::from_value(PixelSource {
+            let source: ComPtr<IRgbaImageAbi> = PixelSource::from_value(PixelSource {
                 size,
                 copies: copies.clone(),
                 fail_copy: false,
@@ -148,7 +97,7 @@ mod tests {
             assert_eq!(AtlasPixels::read(source.as_com_ref()).err().unwrap(), NC_E_INVALID_ARG);
         }
         assert_eq!(copies.get(), 0);
-        let source: ComPtr<IAssetBundleAbi> = PixelSource::from_value(PixelSource {
+        let source: ComPtr<IRgbaImageAbi> = PixelSource::from_value(PixelSource {
             size: Size { width: 1, height: 1 },
             copies: copies.clone(),
             fail_copy: true,

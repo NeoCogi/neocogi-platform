@@ -92,7 +92,7 @@ impl Resources for Probe {
     /// Simulates a foreign-owner failure after any preceding texture was resolved.
     fn item(&self, item: Self::Item) -> Result<Self::Item, NcStatus> {
         self.resolved.borrow_mut().push("item");
-        if self.reject_item.get() { Err(UI_E_OWNER) } else { Ok(item) }
+        if self.reject_item.get() { Err(neocogi_com::NC_E_NOT_FOUND) } else { Ok(item) }
     }
 }
 /// Fixed viewport leaves room to exercise clipped custom content beyond its origin.
@@ -237,7 +237,7 @@ fn failed_resource_resolution_cleans_partial_work_and_allows_retry() {
     );
     let mut frame = PreparedFrame::default();
     probe.reject_item.set(true);
-    assert_eq!(frame.read(info, stream.as_com_ref(), &*probe), Err(UI_E_OWNER));
+    assert_eq!(frame.read(info, stream.as_com_ref(), &*probe), Err(neocogi_com::NC_E_NOT_FOUND));
     assert!(frame.batches().is_empty());
     probe.reject_item.set(false);
     frame.read(info, stream.as_com_ref(), &*probe).unwrap();

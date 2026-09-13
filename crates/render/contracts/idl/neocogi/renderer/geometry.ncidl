@@ -1,0 +1,35 @@
+#[version(1)]
+/// Canonical copied pixel dimensions shared by platform, GFX, and renderer contracts.
+struct Size {
+    /// Horizontal extent in pixels.
+    width: i32,
+    /// Vertical extent in pixels.
+    height: i32,
+}
+
+#[version(1)]
+/// Copied axis-aligned rectangle in the coordinate system documented by its caller.
+struct Rect {
+    /// Horizontal origin.
+    x: i32,
+    /// Vertical origin.
+    y: i32,
+    /// Nonnegative horizontal extent.
+    width: i32,
+    /// Nonnegative vertical extent.
+    height: i32,
+}
+
+#[version(1)]
+/// Simple RGBA color stored with independently addressable 8-bit components.
+#[deserialize(sequence)]
+struct Color {
+    /// Red channel.
+    r: u8,
+    /// Green channel.
+    g: u8,
+    /// Blue channel.
+    b: u8,
+    /// Alpha channel.
+    a: u8,
+}
