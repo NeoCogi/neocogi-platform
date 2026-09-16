@@ -82,6 +82,7 @@ application = { package = "neocogi-demo-full", bin = "neocogi-demo-full", defaul
 runtime = { package = "neocogi-com-runtime", default-features = false }
 plugins = [
     { package = "neocogi-ui-runtime", features = ["dynamic-plugin"] },
+    { package = "neocogi-ui-nodes", features = ["dynamic-plugin"] },
     { package = "neocogi-render-plugin", default-features = false, features = ["dynamic-plugin", "glow"] },
     { package = "neocogi-gfx", default-features = false, features = ["builder", "dynamic-plugin"] },
     { package = "neocogi-skin", default-features = false, features = ["dynamic-plugin", "theme-json"] },
@@ -118,6 +119,7 @@ application = { package = "neocogi-demo-basic", bin = "simple", default-features
 runtime = { package = "neocogi-com-runtime", default-features = false }
 plugins = [
     { package = "neocogi-ui-runtime", features = ["dynamic-plugin"] },
+    { package = "neocogi-ui-nodes", features = ["dynamic-plugin"] },
     { package = "neocogi-render-plugin", default-features = false, features = ["dynamic-plugin", "glow"] },
     { package = "neocogi-gfx", default-features = false, features = ["builder", "dynamic-plugin"] },
 ]
@@ -150,6 +152,7 @@ application = { package = "neocogi-demo-basic", bin = "calculator", default-feat
 runtime = { package = "neocogi-com-runtime", default-features = false }
 plugins = [
     { package = "neocogi-ui-runtime", features = ["dynamic-plugin"] },
+    { package = "neocogi-ui-nodes", features = ["dynamic-plugin"] },
     { package = "neocogi-render-plugin", default-features = false, features = ["dynamic-plugin", "glow"] },
     { package = "neocogi-gfx", default-features = false, features = ["builder", "dynamic-plugin"] },
 ]
@@ -182,6 +185,7 @@ application = { package = "neocogi-demo-basic", bin = "backend-frame-cube", defa
 runtime = { package = "neocogi-com-runtime", default-features = false }
 plugins = [
     { package = "neocogi-ui-runtime", features = ["dynamic-plugin"] },
+    { package = "neocogi-ui-nodes", features = ["dynamic-plugin"] },
     { package = "neocogi-render-plugin", default-features = false, features = ["dynamic-plugin", "glow"] },
     { package = "neocogi-gfx", default-features = false, features = ["builder", "dynamic-plugin"] },
 ]
@@ -214,6 +218,7 @@ application = { package = "neocogi-demo-smoke", bin = "neocogi-demo-smoke", defa
 runtime = { package = "neocogi-com-runtime", default-features = false }
 plugins = [
     { package = "neocogi-ui-runtime", features = ["dynamic-plugin"] },
+    { package = "neocogi-ui-nodes", features = ["dynamic-plugin"] },
     { package = "neocogi-render-plugin", default-features = false, features = ["dynamic-plugin", "glow"] },
     { package = "neocogi-gfx", default-features = false, features = ["builder", "dynamic-plugin"] },
     { package = "neocogi-skin", default-features = false, features = ["dynamic-plugin", "theme-json"] },
