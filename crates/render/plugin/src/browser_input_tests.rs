@@ -4,6 +4,11 @@
 //! --features webgl`, then call `run_browser_input_tests()` after the generated module initializes.
 
 use super::*;
+// Provider activation imports the generated contracts directly, not implementation re-exports.
+use neocogi_gfx_contracts::GfxPluginFactoryAbi;
+use neocogi_renderer_contracts::{IRendererAbi, IRgbaImageAbi};
+use neocogi_ui_core_contracts::UiPluginFactoryAbi;
+use neocogi_ui_nodes_contracts::NodesPluginFactoryAbi;
 use wasm_bindgen::prelude::*;
 
 // Synthetic DOM events exercise translation deterministically. Pointer capture itself requires

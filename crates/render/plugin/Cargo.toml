@@ -49,4 +49,7 @@ web-sys = { workspace = true, features = [
 ] }
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+neocogi-ui-core-contracts.workspace = true
+neocogi-ui-nodes-contracts.workspace = true
+neocogi-gfx-contracts.workspace = true
 neocogi-com = { workspace = true, features = ["static-runtime"] }
