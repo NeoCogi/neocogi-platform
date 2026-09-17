@@ -100,7 +100,7 @@ enum UiInput: u8 {
 
 #[version(1)]
 /// Synchronous normalized-input destination implemented by a UI runtime or application adapter.
-trait IInputSink {
+interface IInputSink {
     /// Copies one ordered event. Text requires complete UTF-8 at offset zero; every other event
     /// requires an empty text argument. The platform borrows this interface only during polling.
     fn input(&self, event: UiInput, text: &[u8]) -> Result<()>;

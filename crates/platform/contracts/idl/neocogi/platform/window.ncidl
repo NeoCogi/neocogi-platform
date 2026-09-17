@@ -1,6 +1,6 @@
 #[version(1)]
 /// Native window and event-pump capability with no exposed toolkit or graphics handles.
-trait IPlatformWindow {
+interface IPlatformWindow {
     /// Returns current drawable dimensions, including device scaling. Resize is synchronized
     /// by passing this value to the next UI update before rendering.
     fn size(&self) -> Result<Size>;

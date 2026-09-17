@@ -9,7 +9,7 @@ enum PathEncoding: u8 {
 
 #[version(1)]
 /// Immutable native path snapshot with explicit encoding and separate display-only text.
-trait INativePath {
+interface INativePath {
     /// Reports which typed copy method applies; callers reject incompatible host encodings.
     fn encoding(&self) -> Result<PathEncoding>;
     /// Returns bytes or UTF-16 code units according to encoding, without a trailing terminator.

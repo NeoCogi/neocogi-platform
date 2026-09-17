@@ -244,28 +244,24 @@ fn identity<I: ComInterface>(interface: &ComPtr<I>) -> Result<usize, NcStatus> {
 neocogi_com::factory_plugin! {
     name = "neocogi.render.glow",
     version = "0.9.0-alpha.0",
-    contracts = [neocogi_renderer_contracts::MODULE, neocogi_platform_contracts::MODULE, neocogi_demo_render_contracts::MODULE],
     factory = PlatformObject,
 }
 #[cfg(feature = "vulkan")]
 neocogi_com::factory_plugin! {
     name = "neocogi.render.vulkan",
     version = "0.9.0-alpha.0",
-    contracts = [neocogi_renderer_contracts::MODULE, neocogi_platform_contracts::MODULE, neocogi_demo_render_contracts::MODULE],
     factory = PlatformObject,
 }
 #[cfg(feature = "wgpu")]
 neocogi_com::factory_plugin! {
     name = "neocogi.render.wgpu",
     version = "0.9.0-alpha.0",
-    contracts = [neocogi_renderer_contracts::MODULE, neocogi_platform_contracts::MODULE, neocogi_demo_render_contracts::MODULE],
     factory = PlatformObject,
 }
 #[cfg(feature = "webgl")]
 neocogi_com::factory_plugin! {
     name = "neocogi.render.webgl",
     version = "0.9.0-alpha.0",
-    contracts = [neocogi_renderer_contracts::MODULE, neocogi_platform_contracts::MODULE, neocogi_demo_render_contracts::MODULE],
     factory = PlatformObject,
 }
 // Only the native assembly owns the dynamic entrypoint; browser assembly uses static descriptors.

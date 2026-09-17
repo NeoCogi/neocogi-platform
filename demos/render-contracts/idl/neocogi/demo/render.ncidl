@@ -80,7 +80,7 @@ struct SceneTransforms {
 
 #[version(1)]
 /// Editable mesh scene is itself a render item on one COM allocation.
-trait IMeshScene: IRenderItem {
+interface IMeshScene: IRenderItem {
     /// Replaces the complete immutable mesh after validating finite vertices and in-range triangle indices.
     /// Offsets must be zero; limits are 4M vertices and 12M indices. Two empty buffers clear the mesh.
     fn set_mesh(&self, vertices: &[MeshVertex], indices: &[u32]) -> Result<()>;
@@ -90,7 +90,7 @@ trait IMeshScene: IRenderItem {
 
 #[version(1)]
 /// Demo-specific factory exposed by the native window alongside its ordinary renderer interfaces.
-trait IDemoScenes {
+interface IDemoScenes {
     /// Creates an empty scene with identity transforms; its resources retain this window/device.
     fn create_scene(&self) -> Result<IMeshScene>;
 }

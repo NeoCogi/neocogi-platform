@@ -54,7 +54,7 @@ struct RenderInfo {
 
 #[version(1)]
 /// Owned reusable frame storage readable only during its active submission.
-trait IRenderStream {
+interface IRenderStream {
     /// Copies a bounded range into caller-owned storage; offsets count vertices.
     fn vertices(&self, invocation: u64, output: &mut [RenderVertex]) -> Result<u32>;
     /// Copies ordered tagged records; offsets count batches and records contain no pointers.
@@ -67,7 +67,7 @@ trait IRenderStream {
 
 #[version(1)]
 /// Renderer device accepting one primary image and one complete ordered frame stream.
-trait IRenderer {
+interface IRenderer {
     /// Imports and transactionally uploads a complete primary image. Repeated preparation of
     /// the identical image is a cheap no-op; failure leaves the previous native image usable.
     fn prepare_atlas(&self, atlas: &IRgbaImage) -> Result<()>;
