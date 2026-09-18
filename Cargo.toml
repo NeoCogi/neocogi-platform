@@ -25,8 +25,8 @@ repository = "https://github.com/NeoCogi/neocogi-platform"
 [workspace.dependencies]
 neocogi-renderer-contracts = { path = "crates/render/contracts" }
 neocogi-platform-contracts = { path = "crates/platform/contracts" }
-neocogi-com = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "08c37f061e76614c56d2691642f4192fec7ef428", version = "0.1.0", default-features = false }
-neocogi-idl = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "08c37f061e76614c56d2691642f4192fec7ef428", version = "0.1.0" }
+neocogi-com = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "5f2c67f06482d8959309e1e73ea7339426e778fd", version = "0.1.0", default-features = false }
+neocogi-idl = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "5f2c67f06482d8959309e1e73ea7339426e778fd", version = "0.1.0" }
 prettyplease = "0.2"
 proc-macro2 = { version = "1", features = ["span-locations"] }
 quote = "1"
