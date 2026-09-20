@@ -1,20 +1,26 @@
 //! Vulkan implementation of the full demo's mesh renderer.
 
-use std::{io::Cursor, mem, ptr, slice};
+use std::{io::Cursor, mem, ptr, rc::Rc, slice, sync::Arc};
 
 use ash::{util::read_spv, vk};
 use neocogi_render_core::prelude::Recti;
 use neocogi_render_vulkan::{VulkanApplicationPrepareContext, VulkanApplicationRenderContext, VulkanApplicationRenderer, VulkanApplicationResult};
 use rs_math3d::Mat4f;
 
-use crate::{DemoCommand, MeshSubmission, MeshVertex};
+use crate::{DemoCommand, MeshBuffers, MeshVertex};
+
+#[cfg(test)]
+#[path = "vulkan_tests.rs"]
+mod tests;
 
 /// Application renderer owning the full demo's Vulkan mesh resources.
 pub struct DemoRenderer {
     /// Pipeline compatible with the current backend render-pass generation.
     pipeline: Option<MeshPipeline>,
-    /// Prepared mesh buffers partitioned by synchronized frame-in-flight slot.
-    prepared_frames: Vec<Vec<Option<PreparedMesh>>>,
+    /// One immutable GPU upload per retained CPU mesh, independent of draw order and visibility.
+    meshes: Vec<Rc<PreparedMesh>>,
+    /// Each slot retains its submitted meshes until the backend has waited for that slot's fence.
+    prepared_frames: Vec<Vec<Option<Rc<PreparedMesh>>>>,
     /// Frame slot selected by the most recent preparation phase.
     active_frame: usize,
     /// Swapchain generation baked into `pipeline`.
@@ -26,10 +32,58 @@ impl DemoRenderer {
     pub fn new() -> Self {
         Self {
             pipeline: None,
+            meshes: Vec::new(),
             prepared_frames: Vec::new(),
             active_frame: 0,
             pipeline_generation: None,
         }
+    }
+
+    /// Resolves shared uploads and retires only references belonging to a completed frame slot.
+    fn prepare_meshes(
+        &mut self,
+        device: &ash::Device,
+        memory_properties: &vk::PhysicalDeviceMemoryProperties,
+        frame_index: usize,
+        frames_in_flight: usize,
+        commands: &[&DemoCommand],
+    ) -> VulkanApplicationResult<()> {
+        if frame_index >= frames_in_flight {
+            return Err(format!("invalid Vulkan application frame slot {frame_index}"));
+        }
+        if self.prepared_frames.len() != frames_in_flight {
+            // The backend fixes the slot count for the device lifetime. Initial construction has
+            // no submitted work; a backend replacing that configuration must first finish it all.
+            self.prepared_frames = (0..frames_in_flight).map(|_| Vec::new()).collect();
+        }
+        self.active_frame = frame_index;
+        let frame = &mut self.prepared_frames[frame_index];
+        // Only this slot's fence has completed. Other slots keep strong GPU references even when
+        // a scene replaces or releases its CPU mesh and the cache stops retaining the old upload.
+        frame.clear();
+        self.meshes.retain(|mesh| mesh.source_is_retained());
+        frame.reserve(commands.len());
+        for command in commands {
+            let DemoCommand::DrawMesh(submission) = command;
+            let prepared = match &submission.mesh {
+                mesh if mesh.is_empty() => None,
+                mesh => {
+                    // Immutable allocation identity is enough: transforms never modify these
+                    // arrays. Hold the source with the upload so its address cannot be recycled.
+                    let prepared = match self.meshes.iter().find(|prepared| prepared.matches(mesh)) {
+                        Some(prepared) => Rc::clone(prepared),
+                        None => {
+                            let prepared = Rc::new(PreparedMesh::new(device, memory_properties, mesh)?);
+                            self.meshes.push(Rc::clone(&prepared));
+                            prepared
+                        }
+                    };
+                    Some(prepared)
+                }
+            };
+            frame.push(prepared);
+        }
+        Ok(())
     }
 }
 
@@ -43,7 +97,7 @@ impl Default for DemoRenderer {
 impl VulkanApplicationRenderer for DemoRenderer {
     type Command = DemoCommand;
 
-    /// Rebuilds render-pass-dependent state and uploads the active frame slot's mesh buffers.
+    /// Rebuilds render-pass-dependent state and resolves the active slot's shared mesh uploads.
     fn prepare(&mut self, context: VulkanApplicationPrepareContext<'_>, commands: &[&Self::Command]) -> VulkanApplicationResult<()> {
         if self.pipeline_generation != Some(context.swapchain_generation) {
             // The backend waits for device idle before changing render-pass generations, so the
@@ -52,29 +106,13 @@ impl VulkanApplicationRenderer for DemoRenderer {
             self.pipeline = Some(MeshPipeline::new(context.device, context.render_pass)?);
             self.pipeline_generation = Some(context.swapchain_generation);
         }
-        if self.prepared_frames.len() != context.frames_in_flight {
-            self.prepared_frames = (0..context.frames_in_flight).map(|_| Vec::new()).collect();
-        }
-        self.active_frame = context.frame_index;
-        let frame = self
-            .prepared_frames
-            .get_mut(context.frame_index)
-            .ok_or_else(|| format!("invalid Vulkan application frame slot {}", context.frame_index))?;
-
-        // The backend has waited for this slot's fence. Replacing only this bin therefore leaves
-        // resources referenced by other in-flight slots untouched.
-        frame.clear();
-        frame.reserve(commands.len());
-        for command in commands {
-            let prepared = match command {
-                DemoCommand::DrawMesh(submission) if !submission.mesh.is_empty() => {
-                    Some(PreparedMesh::new(context.device, &context.memory_properties, submission)?)
-                }
-                DemoCommand::DrawMesh(_) => None,
-            };
-            frame.push(prepared);
-        }
-        Ok(())
+        self.prepare_meshes(
+            context.device,
+            &context.memory_properties,
+            context.frame_index,
+            context.frames_in_flight,
+            commands,
+        )
     }
 
     /// Records one native indexed mesh draw inside the backend-owned render pass.
@@ -272,8 +310,10 @@ impl Drop for MeshPipeline {
     }
 }
 
-/// Host-visible Vulkan buffers prepared for one mesh command.
+/// One immutable GPU upload shared by retained scenes and every frame that draws their mesh.
 struct PreparedMesh {
+    /// Retains the allocation identity used for lookup; other CPU owners keep this upload cached.
+    source: MeshBuffers,
     /// Vertex allocation containing application-owned [`MeshVertex`] data.
     vertex: VulkanBuffer,
     /// Index allocation containing the triangle-list u32 data.
@@ -283,20 +323,28 @@ struct PreparedMesh {
 }
 
 impl PreparedMesh {
-    /// Creates and fills coherent vertex and index buffers for one synchronized frame slot.
-    fn new(device: &ash::Device, memory_properties: &vk::PhysicalDeviceMemoryProperties, submission: &MeshSubmission) -> VulkanApplicationResult<Self> {
-        let vertex = VulkanBuffer::new(
-            device,
-            memory_properties,
-            bytes(submission.mesh.vertices()),
-            vk::BufferUsageFlags::VERTEX_BUFFER,
-        )?;
-        let index = VulkanBuffer::new(device, memory_properties, bytes(submission.mesh.indices()), vk::BufferUsageFlags::INDEX_BUFFER)?;
+    /// Creates and fills both buffers once; subsequent frames only bind these immutable objects.
+    fn new(device: &ash::Device, memory_properties: &vk::PhysicalDeviceMemoryProperties, mesh: &MeshBuffers) -> VulkanApplicationResult<Self> {
+        let vertex = VulkanBuffer::new(device, memory_properties, bytes(mesh.vertices()), vk::BufferUsageFlags::VERTEX_BUFFER)?;
+        let index = VulkanBuffer::new(device, memory_properties, bytes(mesh.indices()), vk::BufferUsageFlags::INDEX_BUFFER)?;
         Ok(Self {
+            source: mesh.clone(),
             vertex,
             index,
-            index_count: submission.mesh.indices().len() as u32,
+            index_count: mesh.indices().len() as u32,
         })
+    }
+
+    /// Compares both immutable allocations without hashing or reading their potentially large data.
+    fn matches(&self, mesh: &MeshBuffers) -> bool {
+        Arc::ptr_eq(&self.source.vertices, &mesh.vertices) && Arc::ptr_eq(&self.source.indices, &mesh.indices)
+    }
+
+    /// Keeps hidden meshes cached while a scene or CPU command still owns their source arrays.
+    fn source_is_retained(&self) -> bool {
+        // This upload owns exactly one clone. Frame references clone Rc<PreparedMesh>, not its
+        // source, so they delay GPU destruction without making retired CPU meshes look live.
+        Arc::strong_count(&self.source.vertices) > 1 || Arc::strong_count(&self.source.indices) > 1
     }
 }
 

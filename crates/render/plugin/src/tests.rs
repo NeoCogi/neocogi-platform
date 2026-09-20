@@ -264,6 +264,29 @@ fn native_order_ownership_reentry_and_final_release() {
     *input.scene.borrow_mut() = scene.query().unwrap();
     // A failed frame must not poison the next explicit native submission.
     renderer.render(info(), atlas.as_com_ref(), stream.as_com_ref()).unwrap();
+    // Reuse immutable GPU geometry across both native frame slots while only camera state changes.
+    // Then replace and clear it while previous submissions may still be reading the old upload.
+    for _ in 0..4 {
+        scene
+            .set_transforms(SceneTransforms {
+                pvm: Mat4f::identity().into(),
+                view_model: Mat4f::identity().into(),
+            })
+            .unwrap();
+        renderer.render(info(), atlas.as_com_ref(), stream.as_com_ref()).unwrap();
+    }
+    mesh(&scene);
+    for _ in 0..3 {
+        renderer.render(info(), atlas.as_com_ref(), stream.as_com_ref()).unwrap();
+    }
+    scene
+        .set_mesh(NcCopyFromBufferOffset::new(0, &[]), NcCopyFromBufferOffset::new(0, &[]))
+        .unwrap();
+    for _ in 0..3 {
+        renderer.render(info(), atlas.as_com_ref(), stream.as_com_ref()).unwrap();
+    }
+    mesh(&scene);
+    renderer.render(info(), atlas.as_com_ref(), stream.as_com_ref()).unwrap();
     drop((foreign_scene, foreign));
     assert!(foreign_device.upgrade().is_none());
     drop((stream, input, scene, factory, scenes, renderer, unknown, platform));
