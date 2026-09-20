@@ -252,3 +252,21 @@ linkage = "monolith"
 [workspace.metadata.neocogi.assemblies.smoke.variants.extension]
 add-application-features = ["extension"]
 additional-plugins = [{ package = "neocogi-example-ui-extension", features = ["dynamic-plugin"] }]
+
+[workspace.metadata.neocogi.assemblies.theme-editor]
+application = { package = "neocogi-theme-editor", bin = "neocogi-theme-editor", default-features = false, features = ["glow"] }
+runtime = { package = "neocogi-com-runtime", default-features = false }
+plugins = [
+    { package = "neocogi-ui-runtime", features = ["dynamic-plugin"] },
+    { package = "neocogi-ui-nodes", features = ["dynamic-plugin"] },
+    { package = "neocogi-render-plugin", default-features = false, features = ["dynamic-plugin", "glow"] },
+    { package = "neocogi-gfx", default-features = false, features = ["builder", "dynamic-plugin"] },
+]
+assets = [{ from = "assets", to = "assets" }, { from = "themes", to = "themes" }]
+
+[workspace.metadata.neocogi.assemblies.theme-editor.variants.monolith]
+linkage = "monolith"
+
+[workspace.metadata.neocogi.assemblies.theme-editor.variants.embedded]
+add-application-features = ["embed-assets"]
+assets = []
