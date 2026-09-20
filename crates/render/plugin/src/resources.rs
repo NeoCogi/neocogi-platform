@@ -51,19 +51,25 @@ impl ITextureFactory for WindowObject {
             .gpu
             .create_texture(id, pixels.as_slice())
             .map_err(|error| self.device.failure(error))?;
-        let record = Rc::new(TextureRecord {
-            id,
-            device: self.device.clone(),
-            key: Cell::new(0),
-        });
-        let texture: ComPtr<ITextureAbi> = Texture::from_value(Texture { record: record.clone() })
-            .query()
-            .expect("Texture declares ITexture");
-        let key = identity(&texture)?;
-        record.key.set(key);
-        self.device.textures.borrow_mut().insert(key, Rc::downgrade(&record));
-        Ok(texture)
+        Ok(publish_texture(retain_texture(self.device.clone(), id)))
     }
+}
+
+/// Retains a successfully allocated native image through the existing retirement path.
+pub(super) fn retain_texture(device: Rc<Device>, id: TextureId) -> Rc<TextureRecord> {
+    Rc::new(TextureRecord { id, device, key: Cell::new(0) })
+}
+
+/// Publishes one local native image only after upload or offscreen rendering succeeds.
+pub(super) fn publish_texture(record: Rc<TextureRecord>) -> ComPtr<ITextureAbi> {
+    // The identity is queried from our own closed implementation, never foreign code.
+    let texture: ComPtr<ITextureAbi> = Texture::from_value(Texture { record: record.clone() })
+        .query()
+        .expect("Texture declares ITexture");
+    let key = identity(&texture).expect("local texture declares canonical IUnknown identity");
+    record.key.set(key);
+    record.device.textures.borrow_mut().insert(key, Rc::downgrade(&record));
+    texture
 }
 
 /// Application scene storage contains concrete mesh data, with no native handle passed through COM.
@@ -172,13 +178,13 @@ impl IDemoScenes for WindowObject {
         Ok(scene)
     }
 }
-impl Resources for WindowObject {
+impl Resources for Device {
     type Texture = Rc<TextureRecord>;
     type Item = MeshSubmission;
     /// Authentication never calls a resource-reported owner getter and never downcasts erased data.
     fn texture(&self, texture: ComPtr<ITextureAbi>) -> Result<Self::Texture, NcStatus> {
         let key = identity(&texture)?;
-        let registry = self.device.textures.try_borrow().map_err(|_| RENDER_E_BUSY)?;
+        let registry = self.textures.try_borrow().map_err(|_| RENDER_E_BUSY)?;
         let resolved = registry.get(&key).and_then(Weak::upgrade);
         drop(registry);
         resolved.ok_or(RENDER_E_OWNER)
@@ -187,7 +193,6 @@ impl Resources for WindowObject {
     fn item(&self, item: ComPtr<IRenderItemAbi>) -> Result<Self::Item, NcStatus> {
         let key = identity(&item)?;
         let scene = self
-            .device
             .scenes
             .try_borrow()
             .map_err(|_| RENDER_E_BUSY)?
@@ -195,5 +200,21 @@ impl Resources for WindowObject {
             .and_then(Weak::upgrade)
             .ok_or(RENDER_E_OWNER)?;
         Ok(scene.submission.borrow().clone())
+    }
+}
+
+/// Window and offscreen sessions authenticate resources in the same concrete device registry.
+impl Resources for WindowObject {
+    type Texture = Rc<TextureRecord>;
+    type Item = MeshSubmission;
+
+    /// Delegates authentication without exposing or trusting a caller-provided device identifier.
+    fn texture(&self, texture: ComPtr<ITextureAbi>) -> Result<Self::Texture, NcStatus> {
+        self.device.texture(texture)
+    }
+
+    /// Retains the existing native-window application scene support.
+    fn item(&self, item: ComPtr<IRenderItemAbi>) -> Result<Self::Item, NcStatus> {
+        self.device.item(item)
     }
 }

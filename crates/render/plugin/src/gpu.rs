@@ -119,11 +119,36 @@ impl Gpu {
     }
     /// Executes only validated owned commands; no foreign method is invoked while a frame is acquired.
     pub(super) fn render(&mut self, info: RenderInfo, prepared: &Prepared) -> Result<(), String> {
+        self.render_target(info, prepared, None)
+    }
+
+    /// Reports surface availability before accepting an independent rendering session.
+    pub(super) fn supports_surfaces(&self) -> bool {
+        cfg!(any(feature = "glow", feature = "webgl"))
+    }
+
+    /// Allocates an unpublished offscreen output through the native image owner.
+    pub(super) fn create_render_texture(&mut self, id: TextureId) -> Result<(), String> {
+        self.current()?;
+        self.renderer.create_render_texture(id).map_err(|error| error.to_string())
+    }
+
+    /// Executes UI into an unpublished texture without any native presentation.
+    pub(super) fn render_surface(&mut self, info: RenderInfo, prepared: &Prepared, output: TextureId, atlas: TextureId) -> Result<(), String> {
+        self.render_target(info, prepared, Some((output, atlas)))
+    }
+
+    /// Shares validated command execution while keeping target acquisition and presentation explicit.
+    fn render_target(&mut self, info: RenderInfo, prepared: &Prepared, target: Option<(TextureId, TextureId)>) -> Result<(), String> {
         self.current()?;
         let [r, g, b, a] = info.clear.to_le_bytes();
         let dimensions = Dimensioni::new(info.size.width, info.size.height);
         let frame_info = FrameInfo::try_new(dimensions, Color { r, g, b, a }).map_err(|e| e.to_string())?;
-        let mut frame = self.renderer.frame(frame_info).map_err(|e| e.to_string())?;
+        let mut frame = match target {
+            None => self.renderer.frame(frame_info),
+            Some((output, atlas)) => self.renderer.texture_frame(frame_info, output, atlas),
+        }
+        .map_err(|error| error.to_string())?;
         for batch in prepared.batches() {
             match batch {
                 Batch::Atlas(range) => {
@@ -159,7 +184,7 @@ impl Gpu {
                 return Err(format!("OpenGL frame failed with error 0x{error:04x}"));
             }
             #[cfg(all(test, feature = "glow"))]
-            {
+            if target.is_none() {
                 self.last_pixels.resize(info.size.width as usize * info.size.height as usize * 4, 0);
                 // SAFETY: The complete RGBA output is allocated, and the live native context remains current.
                 unsafe {
@@ -175,7 +200,9 @@ impl Gpu {
                 }
             }
             #[cfg(not(target_arch = "wasm32"))]
-            self.window.gl_swap_window();
+            if target.is_none() {
+                self.window.gl_swap_window();
+            }
         }
         Ok(())
     }

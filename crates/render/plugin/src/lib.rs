@@ -47,6 +47,7 @@ mod browser;
 #[path = "browser_input.rs"]
 mod input;
 mod resources;
+mod surface;
 use resources::{SceneRecord, TextureRecord};
 
 /// Prepared resources are concrete native records, never erased objects or callbacks.
@@ -180,7 +181,7 @@ impl Drop for RenderAccess<'_> {
         *self.device.render.borrow_mut() = Some(state);
     }
 }
-#[com_object(interfaces(IPlatformWindow, IRenderer, ITextureFactory, IDemoScenes, IRenderDiagnostics))]
+#[com_object(interfaces(IPlatformWindow, IRenderer, ITextureFactory, IRenderSurfaceFactory, IDemoScenes, IRenderDiagnostics))]
 /// One COM identity exposes OS polling, rendering and concrete resource factories.
 struct WindowObject {
     /// Resources retain this same native owner after the public window interface is released.

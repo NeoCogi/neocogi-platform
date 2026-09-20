@@ -82,6 +82,16 @@ where
         self.inner.frame(info)
     }
 
+    /// Uses the shared GL resource owner for unpublished canvas-independent output.
+    fn create_render_texture(&mut self, id: TextureId) -> Result<(), TextureError> {
+        self.inner.create_render_texture(id)
+    }
+
+    /// Selects an offscreen target without clearing or presenting the browser canvas.
+    fn texture_frame(&mut self, info: FrameInfo, output: TextureId, atlas: TextureId) -> Result<Self::Frame<'_>, FrameError> {
+        self.inner.texture_frame(info, output, atlas)
+    }
+
     fn create_texture(&mut self, id: TextureId, pixels: &[u8]) -> Result<(), TextureError> {
         self.inner.create_texture(id, pixels)
     }

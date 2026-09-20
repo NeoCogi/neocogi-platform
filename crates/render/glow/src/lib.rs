@@ -123,6 +123,21 @@ void main()
     gl_FragColor = col * vVertexColor;
 }";
 
+/// Selected draw target for one exclusively borrowed frame.
+#[derive(Clone, Copy)]
+enum DrawTarget {
+    /// Native window or browser canvas with its persistent default atlas.
+    Window,
+    /// Unpublished offscreen image and its session's independently resident atlas.
+    Texture {
+        /// Framebuffer owned by the output image's backend allocation.
+        framebuffer: Framebuffer,
+        /// Private atlas image selected only for this frame.
+        atlas: Texture,
+    },
+}
+
+/// Concrete GL device resources and one exclusively selected frame target.
 pub struct GLRenderer<Application = ()>
 where
     Application: GlApplicationRenderer,
@@ -132,22 +147,36 @@ where
     // cannot be folded into the batch easily.
     // GL contexts and every resource user remain on their owning UI thread. Rc expresses that
     // lifetime directly and also works for browser WebGL contexts, which are never Send/Sync.
+    /// Current-thread GL context shared with guarded resource destruction.
     gl: Rc<glow::Context>,
+    /// Pending atlas vertices for the current exclusive frame.
     verts: Vec<Vertex>,
+    /// Triangle indices into the pending vertex batch.
     indices: Vec<u16>,
 
     /// Private vertex array isolates UI attributes from application vertex layouts.
     vao: VertexArray,
+    /// Reusable UI vertex upload buffer.
     vbo: Buffer,
+    /// Reusable UI index upload buffer.
     ibo: Buffer,
+    /// Persistent atlas belonging to ordinary window frames.
     tex_o: Texture,
 
+    /// Shared textured UI shader program.
     program: Program,
 
+    /// Physical width of the selected frame.
     width: u32,
+    /// Physical height of the selected frame.
     height: u32,
 
+    /// Device-local immutable images, including unpublished render outputs.
     textures: HashMap<TextureId, Texture>,
+    /// Framebuffers exist only for images allocated as render outputs.
+    framebuffers: HashMap<TextureId, Framebuffer>,
+    /// Frame-local target selection; reset when the exclusive frame is released.
+    target: DrawTarget,
     /// Application-owned native renderer invoked only for its concrete command type.
     application: Application,
 }
@@ -163,11 +192,19 @@ where
 
     /// Establishes the window/canvas target and complete color-write region for draws and clears.
     fn bind_target(&self, clip: Recti) {
-        // The backend owns presentation to the default framebuffer. An application may leave an
-        // offscreen FBO bound; neither the next UI draw nor the next frame clear may inherit it.
+        // Restore the exact selected target before every draw, regardless of
+        // framebuffer state left by preceding operations.
         unsafe {
-            self.gl.bind_framebuffer(glow::DRAW_FRAMEBUFFER, None);
-            self.gl.draw_buffers(&[glow::BACK]);
+            match self.target {
+                DrawTarget::Window => {
+                    self.gl.bind_framebuffer(glow::DRAW_FRAMEBUFFER, None);
+                    self.gl.draw_buffers(&[glow::BACK]);
+                }
+                DrawTarget::Texture { framebuffer, .. } => {
+                    self.gl.bind_framebuffer(glow::DRAW_FRAMEBUFFER, Some(framebuffer));
+                    self.gl.draw_buffers(&[glow::COLOR_ATTACHMENT0]);
+                }
+            }
             self.gl.viewport(0, 0, self.width as i32, self.height as i32);
             self.gl.color_mask(true, true, true, true);
             self.gl.disable(glow::RASTERIZER_DISCARD);
@@ -222,7 +259,8 @@ where
         unsafe {
             gl.enable(glow::BLEND);
             gl.blend_equation(glow::FUNC_ADD);
-            gl.blend_func(glow::SRC_ALPHA, glow::ONE_MINUS_SRC_ALPHA);
+            // Preserve opaque target alpha under translucent UI primitives.
+            gl.blend_func_separate(glow::SRC_ALPHA, glow::ONE_MINUS_SRC_ALPHA, glow::ONE, glow::ONE_MINUS_SRC_ALPHA);
             for capability in [
                 glow::CULL_FACE,
                 glow::DEPTH_TEST,
@@ -242,7 +280,12 @@ where
             let sampler = gl.get_uniform_location(self.program, "uTexture").unwrap();
             gl.uniform_1_i32(Some(&sampler), 0);
             let transform = gl.get_uniform_location(self.program, "uTransform").unwrap();
-            let matrix = ortho4(0.0, self.width as f32, self.height as f32, 0.0, -1.0, 1.0);
+            // Offscreen row zero must sample at v=0 like uploaded CPU images.
+            let (bottom, top) = match self.target {
+                DrawTarget::Window => (self.height as f32, 0.0),
+                DrawTarget::Texture { .. } => (0.0, self.height as f32),
+            };
+            let matrix = ortho4(0.0, self.width as f32, bottom, top, -1.0, 1.0);
             let matrix = slice::from_raw_parts(matrix.col.as_ptr().cast::<f32>(), 16);
             gl.uniform_matrix_4_f32_slice(Some(&transform), false, matrix);
 
@@ -327,7 +370,10 @@ where
             return None;
         }
         let x = clip.x;
-        let y = (self.height as i32).saturating_sub(clip.y.saturating_add(clip.height));
+        let y = match self.target {
+            DrawTarget::Window => (self.height as i32).saturating_sub(clip.y.saturating_add(clip.height)),
+            DrawTarget::Texture { .. } => clip.y,
+        };
         Some((x, y, clip.width, clip.height))
     }
 
@@ -426,6 +472,8 @@ where
                 width,
                 height,
                 textures: HashMap::new(),
+                framebuffers: HashMap::new(),
+                target: DrawTarget::Window,
                 application,
             })
         }
@@ -464,10 +512,18 @@ impl<Application> GLRenderer<Application>
 where
     Application: GlApplicationRenderer,
 {
+    /// Resolves the atlas belonging to this frame without uploading or replacing another session.
+    fn active_atlas(&self) -> Texture {
+        match self.target {
+            DrawTarget::Window => self.tex_o,
+            DrawTarget::Texture { atlas, .. } => atlas,
+        }
+    }
+
     /// Flushes the accumulated UI quad batch through the shared atlas pipeline.
     fn flush(&mut self) {
         // Indexed atlas, standalone texture, and colored draws share all consumed GL state.
-        self.draw_vertices(self.tex_o, &self.verts, Some(&self.indices), self.full_clip());
+        self.draw_vertices(self.active_atlas(), &self.verts, Some(&self.indices), self.full_clip());
         self.verts.clear();
         self.indices.clear();
     }
@@ -529,6 +585,11 @@ where
 
     /// Creates a GL texture for a backend-owned external image.
     fn create_texture(&mut self, id: TextureId, pixels: &[u8]) -> Result<(), TextureError> {
+        self.create_image(id, Some(pixels))
+    }
+
+    /// Allocates either uploaded immutable pixels or an unpublished render image.
+    fn create_image(&mut self, id: TextureId, pixels: Option<&[u8]>) -> Result<(), TextureError> {
         // The opaque capability is the sole dimension source validated by the Context executor.
         let dimensions = id.size();
 
@@ -552,6 +613,8 @@ where
             gl.bind_texture(glow::TEXTURE_2D, Some(*texture.get()));
             gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MIN_FILTER, glow::NEAREST as i32);
             gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, glow::NEAREST as i32);
+            gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_S, glow::CLAMP_TO_EDGE as i32);
+            gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_T, glow::CLAMP_TO_EDGE as i32);
             gl.tex_image_2d(
                 glow::TEXTURE_2D,
                 0,
@@ -561,7 +624,7 @@ where
                 0,
                 glow::RGBA,
                 glow::UNSIGNED_BYTE,
-                PixelUnpackData::Slice(Some(pixels)),
+                PixelUnpackData::Slice(pixels),
             );
             let err = gl.get_error();
             if err != 0 {
@@ -583,7 +646,14 @@ where
         Ok(())
     }
 
+    /// Releases framebuffer attachment ownership before its texture allocation.
     fn destroy_texture(&mut self, id: TextureId) {
+        if let Some(framebuffer) = self.framebuffers.remove(&id) {
+            // SAFETY: GPU retirement invokes this only on the owning current context.
+            unsafe {
+                self.gl.delete_framebuffer(framebuffer);
+            }
+        }
         if let Some(tex) = self.textures.remove(&id) {
             unsafe {
                 self.gl.delete_texture(tex);
@@ -608,6 +678,9 @@ where
     /// Releases every persistent GL object, including user textures that remain live at shutdown.
     fn drop(&mut self) {
         unsafe {
+            for (_, framebuffer) in self.framebuffers.drain() {
+                self.gl.delete_framebuffer(framebuffer);
+            }
             for (_, texture) in self.textures.drain() {
                 self.gl.delete_texture(texture);
             }
@@ -639,6 +712,10 @@ where
     /// Flushes preceding UI work and executes one typed application GPU command immediately.
     pub fn enqueue_application(&mut self, args: RenderItemArgs, command: Application::Command) {
         if self.error.is_some() {
+            return;
+        }
+        if matches!(self.backend.target, DrawTarget::Texture { .. }) {
+            self.error = Some(FrameError::new("application render items are unavailable on UI surfaces"));
             return;
         }
         // GL records directly into the current context. Closing the UI batch here preserves the
@@ -709,6 +786,7 @@ where
         // unwinding through a custom renderer must not call GL or submit more application work.
         self.backend.verts.clear();
         self.backend.indices.clear();
+        self.backend.target = DrawTarget::Window;
     }
 }
 
@@ -734,6 +812,58 @@ where
     }
 
     fn frame(&mut self, info: FrameInfo) -> Result<Self::Frame<'_>, FrameError> {
+        let dimensions = info.dimensions();
+        self.target = DrawTarget::Window;
+        self.begin(dimensions.width, dimensions.height, info.clear());
+        Ok(GlFrame { backend: self, error: None })
+    }
+
+    /// Allocates a framebuffer-backed image without CPU zero filling or window presentation.
+    fn create_render_texture(&mut self, id: TextureId) -> Result<(), TextureError> {
+        self.framebuffers.try_reserve(1).map_err(TextureError::backend)?;
+        self.create_image(id, None)?;
+        let result = (|| {
+            // SAFETY: This device owns the current context and both attachment handles.
+            unsafe {
+                let gl = &self.gl;
+                let framebuffer = ResourceGuard::new(gl.create_framebuffer().map_err(TextureError::backend)?, |value| gl.delete_framebuffer(value));
+                gl.bind_framebuffer(glow::DRAW_FRAMEBUFFER, Some(*framebuffer.get()));
+                gl.framebuffer_texture_2d(
+                    glow::DRAW_FRAMEBUFFER,
+                    glow::COLOR_ATTACHMENT0,
+                    glow::TEXTURE_2D,
+                    self.textures.get(&id).copied(),
+                    0,
+                );
+                gl.draw_buffers(&[glow::COLOR_ATTACHMENT0]);
+                let status = gl.check_framebuffer_status(glow::DRAW_FRAMEBUFFER);
+                gl.bind_framebuffer(glow::DRAW_FRAMEBUFFER, None);
+                if status != glow::FRAMEBUFFER_COMPLETE {
+                    return Err(TextureError::backend(format!("incomplete preview framebuffer: 0x{status:04x}")));
+                }
+                Ok(framebuffer.into_inner())
+            }
+        })();
+        match result {
+            Ok(framebuffer) => {
+                self.framebuffers.insert(id, framebuffer);
+                Ok(())
+            }
+            Err(error) => {
+                self.destroy_texture(id);
+                Err(error)
+            }
+        }
+    }
+
+    /// Selects already resident output and atlas images for one opaque UI frame.
+    fn texture_frame(&mut self, info: FrameInfo, output: TextureId, atlas: TextureId) -> Result<Self::Frame<'_>, FrameError> {
+        if output == atlas || (output.width(), output.height()) != (info.dimensions().width, info.dimensions().height) || info.clear().a != 255 {
+            return Err(FrameError::new("invalid offscreen image, size, or nonopaque clear color"));
+        }
+        let framebuffer = *self.framebuffers.get(&output).ok_or_else(|| FrameError::new("missing offscreen framebuffer"))?;
+        let atlas = *self.textures.get(&atlas).ok_or_else(|| FrameError::new("missing surface atlas"))?;
+        self.target = DrawTarget::Texture { framebuffer, atlas };
         let dimensions = info.dimensions();
         self.begin(dimensions.width, dimensions.height, info.clear());
         Ok(GlFrame { backend: self, error: None })
@@ -762,7 +892,7 @@ where
     fn draw_colored_vertices(&mut self, clip: Recti, vertices: &[Vertex]) {
         self.flush();
         // These UVs sample the white atlas texel, using the identical shader and vertex layout.
-        self.draw_vertices(self.tex_o, vertices, None, clip);
+        self.draw_vertices(self.active_atlas(), vertices, None, clip);
     }
 }
 
