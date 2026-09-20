@@ -57,6 +57,8 @@ impl Gpu {
         builder.resizable().allow_highdpi();
         #[cfg(feature = "glow")]
         builder.opengl();
+        #[cfg(all(feature = "wgpu", target_os = "macos"))]
+        builder.metal_view();
         #[cfg(all(not(feature = "glow"), feature = "vulkan"))]
         builder.vulkan();
         let window = builder.build().map_err(|e| e.to_string())?;
@@ -124,7 +126,7 @@ impl Gpu {
 
     /// Reports surface availability before accepting an independent rendering session.
     pub(super) fn supports_surfaces(&self) -> bool {
-        cfg!(any(feature = "glow", feature = "webgl"))
+        cfg!(any(feature = "glow", feature = "webgl", feature = "wgpu"))
     }
 
     /// Allocates an unpublished offscreen output through the native image owner.

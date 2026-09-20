@@ -183,8 +183,25 @@ enum RenderCommand<ApplicationCommand> {
 struct GpuTexture {
     /// Keeps the texture alive as long as the bind group references its view.
     _texture: wgpu::Texture,
+    /// Stored view can become a color attachment only for a render-target allocation.
+    view: wgpu::TextureView,
+    /// Upload-only textures are never accepted as offscreen render destinations.
+    render_target: bool,
     /// Uniform, sampler, and validated texture-view bindings used by UI drawing.
     bind_group: wgpu::BindGroup,
+}
+
+/// An acquired presentation image or a UI-only destination owned by the same device.
+enum FrameTarget {
+    /// This frame alone may present to the native surface.
+    Window(wgpu::SurfaceTexture),
+    /// Offscreen frames bind their private atlas and never acquire a swapchain image.
+    Texture {
+        /// Unpublished immutable-output allocation.
+        output: TextureId,
+        /// Independently retained source atlas.
+        atlas: TextureId,
+    },
 }
 
 /// Depth texture retained beside the surface configuration that determines its dimensions.
@@ -212,7 +229,10 @@ where
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
 
+    /// Window pipeline includes the shared application depth attachment.
     pipeline: wgpu::RenderPipeline,
+    /// UI-only output uses linear RGBA8 without a depth allocation.
+    texture_pipeline: wgpu::RenderPipeline,
     bind_group_layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
     uniform_buffer: wgpu::Buffer,
@@ -307,7 +327,11 @@ where
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: wgpu::TextureFormat::Rgba8Unorm,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING
+                | match pixels {
+                    Some(_) => wgpu::TextureUsages::COPY_DST,
+                    None => wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+                },
             view_formats: &[],
         });
 
@@ -362,7 +386,12 @@ where
         if let Some(error) = failure {
             return Err(format!("WGPU texture creation or upload failed: {error}"));
         }
-        Ok(GpuTexture { _texture: texture, bind_group })
+        Ok(GpuTexture {
+            _texture: texture,
+            view,
+            render_target: pixels.is_none(),
+            bind_group,
+        })
     }
 
     /// Records the boundary between the current UI batch and later render commands.
@@ -465,7 +494,10 @@ where
     }
 
     /// Builds the single render pipeline shared by atlas, textured, and colored UI draws.
-    fn create_pipeline(device: &wgpu::Device, format: wgpu::TextureFormat) -> (wgpu::RenderPipeline, wgpu::BindGroupLayout, wgpu::Sampler) {
+    fn create_pipeline(
+        device: &wgpu::Device,
+        format: wgpu::TextureFormat,
+    ) -> (wgpu::RenderPipeline, wgpu::RenderPipeline, wgpu::BindGroupLayout, wgpu::Sampler) {
         // One pipeline is enough for all UI/custom draws: position + uv + color, alpha blend.
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("neocogi.ui.wgpu.shader"),
@@ -521,74 +553,87 @@ where
             immediate_size: 0,
         });
 
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("neocogi.ui.pipeline"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-                buffers: &[Some(wgpu::VertexBufferLayout {
-                    array_stride: mem::size_of::<GpuVertex>() as u64,
-                    step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &[
-                        wgpu::VertexAttribute {
-                            format: wgpu::VertexFormat::Float32x2,
-                            offset: 0,
-                            shader_location: 0,
-                        },
-                        wgpu::VertexAttribute {
-                            format: wgpu::VertexFormat::Float32x2,
-                            offset: 8,
-                            shader_location: 1,
-                        },
-                        wgpu::VertexAttribute {
-                            format: wgpu::VertexFormat::Unorm8x4,
-                            offset: 16,
-                            shader_location: 2,
-                        },
-                    ],
-                })],
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format,
-                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                strip_index_format: None,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: None,
-                polygon_mode: wgpu::PolygonMode::Fill,
-                unclipped_depth: false,
-                conservative: false,
-            },
-            // The shared pass always carries the application depth target. WGPU requires every
-            // pipeline used in that pass to declare a compatible attachment format even when UI
-            // rendering deliberately performs no depth reads or writes.
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: APPLICATION_DEPTH_FORMAT,
-                depth_write_enabled: Some(false),
-                depth_compare: Some(wgpu::CompareFunction::Always),
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            multisample: wgpu::MultisampleState {
-                count: 1,
-                mask: !0,
-                alpha_to_coverage_enabled: false,
-            },
-            multiview_mask: None,
-            cache: None,
-        });
+        // Both pipelines share this exact layout, so every retained sampled image can
+        // be used in either target without rebinding or uploading its source pixels.
+        let build_pipeline = |format, depth| {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("neocogi.ui.pipeline"),
+                layout: Some(&pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    buffers: &[Some(wgpu::VertexBufferLayout {
+                        array_stride: mem::size_of::<GpuVertex>() as u64,
+                        step_mode: wgpu::VertexStepMode::Vertex,
+                        attributes: &[
+                            wgpu::VertexAttribute {
+                                format: wgpu::VertexFormat::Float32x2,
+                                offset: 0,
+                                shader_location: 0,
+                            },
+                            wgpu::VertexAttribute {
+                                format: wgpu::VertexFormat::Float32x2,
+                                offset: 8,
+                                shader_location: 1,
+                            },
+                            wgpu::VertexAttribute {
+                                format: wgpu::VertexFormat::Unorm8x4,
+                                offset: 16,
+                                shader_location: 2,
+                            },
+                        ],
+                    })],
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_main"),
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format,
+                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    strip_index_format: None,
+                    front_face: wgpu::FrontFace::Ccw,
+                    cull_mode: None,
+                    polygon_mode: wgpu::PolygonMode::Fill,
+                    unclipped_depth: false,
+                    conservative: false,
+                },
+                // The shared pass always carries the application depth target. WGPU requires every
+                // pipeline used in that pass to declare a compatible attachment format even when UI
+                // rendering deliberately performs no depth reads or writes.
+                depth_stencil: if depth {
+                    Some(wgpu::DepthStencilState {
+                        format: APPLICATION_DEPTH_FORMAT,
+                        depth_write_enabled: Some(false),
+                        depth_compare: Some(wgpu::CompareFunction::Always),
+                        stencil: wgpu::StencilState::default(),
+                        bias: wgpu::DepthBiasState::default(),
+                    })
+                } else {
+                    None
+                },
+                multisample: wgpu::MultisampleState {
+                    count: 1,
+                    mask: !0,
+                    alpha_to_coverage_enabled: false,
+                },
+                multiview_mask: None,
+                cache: None,
+            })
+        };
 
-        (pipeline, bind_group_layout, sampler)
+        (
+            build_pipeline(format, true),
+            build_pipeline(wgpu::TextureFormat::Rgba8Unorm, false),
+            bind_group_layout,
+            sampler,
+        )
     }
 
     /// Creates the WGPU renderer with one concrete application-rendering extension.
@@ -596,6 +641,12 @@ where
     /// Retains an SDL window clone, so dropping the caller's window before the renderer is safe.
     pub fn new_with_application(window: &Window, atlas: ImageSource<'_>, width: u32, height: u32, application: Application) -> Result<Self, String> {
         atlas.validate().map_err(|error| error.to_string())?;
+        // SDL's raw-window-handle adapter panics for these software-only video
+        // drivers. Reject them before crossing a non-unwinding plugin boundary.
+        match window.subsystem().current_video_driver() {
+            "offscreen" | "dummy" => return Err("WGPU requires an SDL driver with native window handles".to_owned()),
+            _ => {}
+        }
         // Declare the native owner before GPU locals so failure unwinding also drops surfaces first.
         let window = window.clone();
         let instance = wgpu::Instance::default();
@@ -649,7 +700,7 @@ where
         }
         surface.configure(&device, &config);
 
-        let (pipeline, bind_group_layout, sampler) = Self::create_pipeline(&device, config.format);
+        let (pipeline, texture_pipeline, bind_group_layout, sampler) = Self::create_pipeline(&device, config.format);
         let uniforms = Uniforms {
             screen_size: [width.max(1) as f32, height.max(1) as f32],
             _pad: [0.0, 0.0],
@@ -692,6 +743,7 @@ where
             config,
 
             pipeline,
+            texture_pipeline,
             bind_group_layout,
             sampler,
             uniform_buffer,
@@ -745,7 +797,7 @@ impl<Application> WgpuRenderer<Application>
 where
     Application: WgpuApplicationRenderer,
 {
-    /// Starts a new frame by resetting CPU-side queues, syncing surface size, and updating uniforms.
+    /// Resets shared command storage and uniforms without selecting or resizing native presentation.
     fn begin(&mut self, width: i32, height: i32, clr: Color) {
         // Reset per-frame CPU-side command/vertex queues.
         self.width = width.max(0) as u32;
@@ -755,7 +807,6 @@ where
         self.commands.clear();
         self.current_batch_end = 0;
 
-        self.configure_surface(self.width.max(1), self.height.max(1));
         // Keep screen-size uniform in sync for pixel->NDC conversion in vertex shader.
         let uniforms = Uniforms {
             screen_size: [self.width.max(1) as f32, self.height.max(1) as f32],
@@ -782,10 +833,43 @@ where
         self.flush_ui_batch();
     }
 
-    /// Uploads all queued vertices, records the render pass, and presents an acquired surface frame.
-    fn finish(&mut self, frame: wgpu::SurfaceTexture) -> Result<(), FrameError> {
+    /// Owns WGPU diagnostics before publishing an output or presenting a native frame.
+    fn finish(&mut self, target: FrameTarget) -> Result<(), FrameError> {
+        let scopes = [
+            self.device.push_error_scope(wgpu::ErrorFilter::OutOfMemory),
+            self.device.push_error_scope(wgpu::ErrorFilter::Internal),
+            self.device.push_error_scope(wgpu::ErrorFilter::Validation),
+        ];
+        let result = self.finish_target(target);
+        let mut failure = None;
+        for scope in scopes.into_iter().rev() {
+            if let Some(error) = pollster::block_on(scope.pop()) {
+                failure.get_or_insert(error);
+            }
+        }
+        match failure {
+            Some(error) => Err(FrameError::new(format!("WGPU frame failed: {error}"))),
+            None => {
+                // Presentation follows successful recording, submission, and error-scope
+                // completion. Texture targets have no native image to present.
+                if let Some(frame) = result? {
+                    self.queue.present(frame);
+                }
+                Ok(())
+            }
+        }
+    }
+
+    /// Records the same painter-order stream into an explicit window or texture attachment.
+    fn finish_target(&mut self, target: FrameTarget) -> Result<Option<wgpu::SurfaceTexture>, FrameError> {
         self.flush_ui_batch();
-        let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let (view, atlas) = match &target {
+            FrameTarget::Window(frame) => (frame.texture.create_view(&wgpu::TextureViewDescriptor::default()), None),
+            FrameTarget::Texture { output, atlas } => (self.textures[output].view.clone(), Some(*atlas)),
+        };
+        if atlas.is_some() && self.commands.iter().any(|command| matches!(command, RenderCommand::Application { .. })) {
+            return Err(FrameError::new("offscreen WGPU surfaces accept UI commands only"));
+        }
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("neocogi.ui.encoder") });
@@ -801,30 +885,41 @@ where
                 RenderCommand::DrawUiTo(_) | RenderCommand::DrawTexture { .. } | RenderCommand::DrawColored { .. } => None,
             })
             .collect::<Vec<_>>();
-        self.application
-            .prepare(
-                WgpuApplicationPrepareContext {
-                    device: &self.device,
-                    queue: &self.queue,
-                    encoder: &mut encoder,
-                    color_format: self.config.format,
-                    width: self.config.width,
-                    height: self.config.height,
-                },
-                &application_commands,
-            )
-            .map_err(FrameError::new)?;
+        if atlas.is_none() {
+            self.application
+                .prepare(
+                    WgpuApplicationPrepareContext {
+                        device: &self.device,
+                        queue: &self.queue,
+                        encoder: &mut encoder,
+                        color_format: self.config.format,
+                        width: self.width,
+                        height: self.height,
+                    },
+                    &application_commands,
+                )
+                .map_err(FrameError::new)?;
+        }
 
+        /// One validated contiguous slice of this frame's shared vertex upload.
         struct PreparedDraw {
+            /// Starting byte in the shared upload buffer.
             vertex_offset: u64,
+            /// Complete byte length of this draw's triangle list.
             vertex_size: u64,
+            /// Number of vertices submitted from the bound range.
             vertex_count: u32,
+            /// Explicit source binding, independent of the native presentation image.
             source: DrawSource,
+            /// Optional physical clip for colored application geometry.
             scissor: Option<(u32, u32, u32, u32)>,
         }
         #[derive(Clone, Copy)]
+        /// The current session atlas or one independently owned image.
         enum DrawSource {
+            /// Resolves to the window atlas or selected offscreen session atlas.
             Atlas,
+            /// Resolves through the device's authenticated texture ownership map.
             Texture(TextureId),
         }
 
@@ -854,7 +949,7 @@ where
                     (vertices.as_slice(), DrawSource::Texture(*id), None)
                 }
                 RenderCommand::DrawColored { clip, vertices } => {
-                    let scissor = Self::clip_to_scissor(*clip, self.config.width, self.config.height);
+                    let scissor = Self::clip_to_scissor(*clip, self.width, self.height);
                     if scissor.is_none() {
                         prepared_draws.push(None);
                         continue;
@@ -911,19 +1006,23 @@ where
                         store: wgpu::StoreOp::Store,
                     },
                 })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &self.depth_target.view,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(1.0),
-                        store: wgpu::StoreOp::Store,
-                    }),
-                    stencil_ops: None,
-                }),
+                depth_stencil_attachment: if atlas.is_none() {
+                    Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: &self.depth_target.view,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(1.0),
+                            store: wgpu::StoreOp::Store,
+                        }),
+                        stencil_ops: None,
+                    })
+                } else {
+                    None
+                },
                 timestamp_writes: None,
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            pass.set_scissor_rect(0, 0, self.config.width, self.config.height);
+            pass.set_scissor_rect(0, 0, self.width, self.height);
 
             let mut application_index = 0usize;
             for (command, prepared) in self.commands.iter().zip(prepared_draws.iter()) {
@@ -940,11 +1039,14 @@ where
                         if let Some((x, y, w, h)) = draw.scissor {
                             pass.set_scissor_rect(x, y, w, h);
                         } else {
-                            pass.set_scissor_rect(0, 0, self.config.width, self.config.height);
+                            pass.set_scissor_rect(0, 0, self.width, self.height);
                         }
 
                         let bind_group = match draw.source {
-                            DrawSource::Atlas => &self.atlas_texture.bind_group,
+                            DrawSource::Atlas => match atlas {
+                                Some(id) => &self.textures[&id].bind_group,
+                                None => &self.atlas_texture.bind_group,
+                            },
                             DrawSource::Texture(id) => {
                                 let Some(texture) = self.textures.get(&id) else {
                                     continue;
@@ -955,9 +1057,12 @@ where
 
                         // Application rendering may have replaced every pass binding, so each UI
                         // draw explicitly restores the complete pipeline and resource state.
-                        pass.set_pipeline(&self.pipeline);
+                        pass.set_pipeline(match atlas {
+                            Some(_) => &self.texture_pipeline,
+                            None => &self.pipeline,
+                        });
                         pass.set_bind_group(0, bind_group, &[]);
-                        pass.set_viewport(0.0, 0.0, self.config.width as f32, self.config.height as f32, 0.0, 1.0);
+                        pass.set_viewport(0.0, 0.0, self.width as f32, self.height as f32, 0.0, 1.0);
                         pass.set_vertex_buffer(0, self.staging_vertex_buffer.slice(draw.vertex_offset..(draw.vertex_offset + draw.vertex_size)));
                         pass.draw(0..draw.vertex_count, 0..1);
                     }
@@ -966,8 +1071,10 @@ where
         }
 
         self.queue.submit(Some(encoder.finish()));
-        self.queue.present(frame);
-        Ok(())
+        Ok(match target {
+            FrameTarget::Window(frame) => Some(frame),
+            FrameTarget::Texture { .. } => None,
+        })
     }
 
     /// Creates a backend-owned sampled texture and its bind group.
@@ -1020,8 +1127,8 @@ where
 {
     /// Exclusive backend borrow carrying the concrete application renderer type.
     backend: &'a mut WgpuRenderer<Application>,
-    /// Surface image presented exactly once when this frame is finalized.
-    surface_frame: Option<wgpu::SurfaceTexture>,
+    /// Explicit target is consumed once; dropping a frame never submits or presents.
+    target: Option<FrameTarget>,
 }
 
 impl<Application> WgpuFrame<'_, Application>
@@ -1047,8 +1154,8 @@ where
 {
     /// Consumes the surface image only through an explicit, observable submit/present operation.
     fn finish(mut self) -> Result<(), FrameError> {
-        let frame = self.surface_frame.take().expect("an active frame owns its surface image");
-        self.backend.finish(frame)
+        let target = self.target.take().expect("an active frame owns its explicit target");
+        self.backend.finish(target)
     }
 
     fn push_quad(&mut self, vertices: [Vertex; 4]) {
@@ -1117,11 +1224,53 @@ where
 
     fn frame(&mut self, info: FrameInfo) -> Result<Self::Frame<'_>, FrameError> {
         let dimensions = info.dimensions();
+        self.configure_surface(dimensions.width as u32, dimensions.height as u32);
         self.begin(dimensions.width, dimensions.height, info.clear());
         let surface_frame = self.acquire_surface_frame()?;
         Ok(WgpuFrame {
             backend: self,
-            surface_frame: Some(surface_frame),
+            target: Some(FrameTarget::Window(surface_frame)),
+        })
+    }
+
+    /// Allocates output storage without a CPU zero image; WGPU owns in-flight retirement.
+    fn create_render_texture(&mut self, id: TextureId) -> Result<(), TextureError> {
+        if self.textures.contains_key(&id) {
+            return Err(TextureError::backend("render target already exists"));
+        }
+        self.textures.try_reserve(1).map_err(|error| TextureError::backend(error.to_string()))?;
+        let size = id.size();
+        let texture = Self::create_gpu_texture(
+            &self.device,
+            &self.queue,
+            &self.bind_group_layout,
+            &self.sampler,
+            &self.uniform_buffer,
+            size.width as u32,
+            size.height as u32,
+            None,
+        )
+        .map_err(TextureError::backend)?;
+        self.textures.insert(id, texture);
+        Ok(())
+    }
+
+    /// Begins a UI-only texture pass without touching surface configuration or presentation.
+    fn texture_frame(&mut self, info: FrameInfo, output: TextureId, atlas: TextureId) -> Result<Self::Frame<'_>, FrameError> {
+        let size = info.dimensions();
+        if output == atlas
+            || info.clear().a != 255
+            || output.size().width != size.width
+            || output.size().height != size.height
+            || !self.textures.get(&output).is_some_and(|texture| texture.render_target)
+            || !self.textures.contains_key(&atlas)
+        {
+            return Err(FrameError::new("invalid WGPU output or private atlas"));
+        }
+        self.begin(size.width, size.height, info.clear());
+        Ok(WgpuFrame {
+            backend: self,
+            target: Some(FrameTarget::Texture { output, atlas }),
         })
     }
 

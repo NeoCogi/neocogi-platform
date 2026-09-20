@@ -270,3 +270,7 @@ linkage = "monolith"
 [workspace.metadata.neocogi.assemblies.theme-editor.variants.embedded]
 add-application-features = ["embed-assets"]
 assets = []
+
+[workspace.metadata.neocogi.assemblies.theme-editor.variants.wgpu]
+application-features = ["wgpu"]
+component-features.neocogi-render-plugin = ["dynamic-plugin", "wgpu"]
