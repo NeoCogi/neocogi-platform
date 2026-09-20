@@ -304,3 +304,29 @@ component-features.neocogi-render-plugin = ["dynamic-plugin", "wgpu"]
 [workspace.metadata.neocogi.assemblies.runtime-ui.variants.vulkan]
 application-features = ["vulkan"]
 component-features.neocogi-render-plugin = ["dynamic-plugin", "vulkan"]
+
+[workspace.metadata.neocogi.assemblies.ui-designer]
+application = { package = "neocogi-ui-designer", bin = "neocogi-ui-designer", default-features = false, features = ["glow"] }
+runtime = { package = "neocogi-com-runtime", default-features = false }
+plugins = [
+    { package = "neocogi-ui-runtime", features = ["dynamic-plugin"] },
+    { package = "neocogi-ui-nodes", features = ["dynamic-plugin"] },
+    { package = "neocogi-render-plugin", default-features = false, features = ["dynamic-plugin", "glow"] },
+    { package = "neocogi-gfx", default-features = false, features = ["builder", "dynamic-plugin"] },
+]
+assets = [{ from = "assets", to = "assets" }, { from = "tools/ui-designer/examples", to = "examples/ui" }]
+
+[workspace.metadata.neocogi.assemblies.ui-designer.variants.monolith]
+linkage = "monolith"
+
+[workspace.metadata.neocogi.assemblies.ui-designer.variants.embedded]
+add-application-features = ["embed-assets"]
+assets = []
+
+[workspace.metadata.neocogi.assemblies.ui-designer.variants.wgpu]
+application-features = ["wgpu"]
+component-features.neocogi-render-plugin = ["dynamic-plugin", "wgpu"]
+
+[workspace.metadata.neocogi.assemblies.ui-designer.variants.vulkan]
+application-features = ["vulkan"]
+component-features.neocogi-render-plugin = ["dynamic-plugin", "vulkan"]
