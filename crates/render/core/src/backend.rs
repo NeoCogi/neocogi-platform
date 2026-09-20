@@ -320,6 +320,17 @@ pub trait RendererBackend: 'static {
     fn replace_atlas(&mut self, atlas: ImageSource<'_>) -> Result<(), AtlasUploadError>;
     /// Acquires and initializes one backend frame.
     fn frame(&mut self, info: FrameInfo) -> Result<Self::Frame<'_>, FrameError>;
+    /// Allocates an unpublished offscreen color image without uploading CPU pixels.
+    /// The same texture destruction path owns it after a successful allocation.
+    fn create_render_texture(&mut self, _id: TextureId) -> Result<(), TextureError> {
+        Err(TextureError::backend("offscreen rendering is unavailable on this backend"))
+    }
+    /// Renders UI into an unpublished image using a separate, already resident atlas.
+    /// Neither the window target nor its atlas binding may change. Output row zero
+    /// corresponds to texture v=0; callers publish the image only after finish succeeds.
+    fn texture_frame(&mut self, _info: FrameInfo, _output: TextureId, _atlas: TextureId) -> Result<Self::Frame<'_>, FrameError> {
+        Err(FrameError::new("offscreen rendering is unavailable on this backend"))
+    }
     /// Creates a texture owned by the backend.
     ///
     /// The caller validates [`TextureId::size`] and RGBA byte length before calling this method.

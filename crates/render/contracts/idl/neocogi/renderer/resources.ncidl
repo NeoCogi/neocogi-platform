@@ -30,6 +30,30 @@ interface ITextureFactory {
 }
 
 #[version(1)]
+/// Independent two-dimensional rendering session on its creating renderer's device.
+/// Query IRenderer to prepare its private atlas and submit frames at the selected size.
+interface IRenderSurface {
+    /// Returns the requested physical size; a zero component suspends rendering.
+    fn size(&self) -> Result<Size>;
+    /// Changes the next frame's size without mutating any completed image.
+    /// Negative or oversized extents fail without changing the current size.
+    fn resize(&self, size: Size) -> Result<()>;
+    /// Retains the last successfully completed immutable image; NC_E_NOT_FOUND precedes the first frame.
+    /// A retained image remains unchanged after later renders, resize, or surface release.
+    fn completed_image(&self) -> Result<ITexture>;
+}
+
+#[version(1)]
+/// Creates independent opaque preview surfaces without exposing native GPU handles.
+interface IRenderSurfaceFactory {
+    /// Creates a private atlas binding and a surface on the same device as the factory.
+    /// Rendering never presents or clears the window. Output uses top-left texture coordinates
+    /// and an opaque clear color; application-specific RenderBatch::Item work is unsupported.
+    /// Backends without this capability report an explicit failure.
+    fn create_surface(&self, size: Size, atlas: &IRgbaImage) -> Result<IRenderSurface>;
+}
+
+#[version(1)]
 /// Owned diagnostic snapshots preserve backend details without exposing backend-dependent errors.
 interface IRenderDiagnostics {
     /// Returns the most recent failed GPU operation's detail, or empty text before a failure.

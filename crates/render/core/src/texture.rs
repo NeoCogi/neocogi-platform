@@ -150,6 +150,17 @@ pub struct TextureId {
 }
 
 impl TextureId {
+    /// Allocates an offscreen image key after checking dimensions without CPU pixel storage.
+    pub fn for_render_target(width: i32, height: i32) -> Result<Self, TextureError> {
+        // The shared validator supplies all dimension/allocation bounds. Only its
+        // missing-pixel result is expected for a GPU-produced image.
+        match (ImageSource { width, height, pixels: &[] }).validate() {
+            Err(ImageValidationError::PixelLength { .. }) => Ok(Self::new(RendererId::allocate(), 1, width, height)),
+            Err(error) => Err(error.into()),
+            Ok(()) => unreachable!("a positive RGBA image requires pixel storage"),
+        }
+    }
+
     /// Allocates a native backend key after the shared image validator checks the complete upload.
     /// This key stays inside the renderer plugin; callers receive an authenticated ITexture capability.
     /// Direct Context texture allocation retains its existing owner until that API is removed in milestone 17.
@@ -195,6 +206,16 @@ impl TextureId {
 mod tests {
     use super::*;
     use std::collections::HashSet;
+
+    /// GPU-produced images obey the same allocation limits as uploaded images.
+    #[test]
+    fn render_target_rejects_invalid_extents_without_pixel_allocation() {
+        let id = TextureId::for_render_target(64, 32).unwrap();
+        assert_eq!((id.width(), id.height()), (64, 32));
+        assert!(matches!(TextureId::for_render_target(0, 32), Err(TextureError::Image { .. })));
+        assert!(matches!(TextureId::for_render_target(-1, 32), Err(TextureError::Image { .. })));
+        assert!(matches!(TextureId::for_render_target(i32::MAX, i32::MAX), Err(TextureError::Image { .. })));
+    }
 
     /// Verifies every texture failure has stable classification, diagnostics, and source behavior.
     #[test]
