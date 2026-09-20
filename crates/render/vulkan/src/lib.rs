@@ -58,6 +58,10 @@ use sdl2::video::Window;
 
 use neocogi_render_support::resource_guard::ResourceGuard;
 
+mod offscreen;
+#[cfg(test)]
+mod surface_tests;
+
 type Result<T> = std::result::Result<T, String>;
 type Surface = khr::surface::Instance;
 type Swapchain = khr::swapchain::Device;
@@ -206,6 +210,19 @@ struct AcquiredVulkanFrame {
     suboptimal: bool,
 }
 
+/// Exactly one native acquisition or one unpublished UI texture is owned by an active frame.
+enum FrameTarget {
+    /// Native image and binary semaphores follow the established acquire/present state machine.
+    Window(AcquiredVulkanFrame),
+    /// Device images are selected without touching any swapchain synchronization slot.
+    Texture {
+        /// Fresh output whose previous pixels have never been published.
+        output: TextureId,
+        /// Independently resident atlas for this UI session.
+        atlas: TextureId,
+    },
+}
+
 /// Lifecycle of the single swapchain image currently owned by the high-level frame boundary.
 ///
 /// A successful acquire signals a binary semaphore and removes one image from the presentation
@@ -288,6 +305,8 @@ where
     textures: HashMap<TextureId, VulkanTexture>,
     /// Concrete application renderer dropped before the logical device that owns its resources.
     application: Application,
+    /// Private UI-only submission state is destroyed before its logical device.
+    offscreen: Option<offscreen::Offscreen>,
     /// Native Vulkan state owned exclusively by the backend.
     context: VulkanContext,
     /// Last swapchain generation for which user texture descriptors were rebound.
@@ -333,6 +352,7 @@ where
 
         Ok(Self {
             textures: HashMap::new(),
+            offscreen: None,
             context,
             last_swapchain_generation: swapchain_generation,
             vertices: Vec::new(),
@@ -425,7 +445,7 @@ impl<Application> VulkanRenderer<Application>
 where
     Application: VulkanApplicationRenderer,
 {
-    /// Starts a new frame, syncing window size and swapchain generation.
+    /// Starts CPU-side batching and synchronizes texture descriptors without acquiring presentation.
     fn begin(&mut self, width: i32, height: i32, clr: Color) -> Result<()> {
         // `begin` only resets CPU-side batching state and keeps the GPU-side context synchronized
         // with window size changes. Actual command buffer recording happens in `end`.
@@ -440,7 +460,6 @@ where
             return Err(String::from("Vulkan renderer is disabled after an unrecoverable frame failure"));
         }
 
-        self.ensure_swapchain_extent(self.width, self.height)?;
         self.handle_swapchain_updates()?;
         Ok(())
     }
@@ -466,7 +485,33 @@ where
     }
 
     /// Finalizes the frame by submitting the queued UI and custom commands to Vulkan.
-    fn finish(&mut self, acquired: AcquiredVulkanFrame) -> Result<()> {
+    fn finish(&mut self, target: FrameTarget) -> Result<()> {
+        match target {
+            FrameTarget::Window(acquired) => self.finish_window(acquired),
+            FrameTarget::Texture { output, atlas } => {
+                self.flush_ui_batch();
+                let result = self.offscreen.as_mut().ok_or("offscreen execution was not initialized")?.render(
+                    &self.context,
+                    &self.textures[&output],
+                    self.textures[&atlas].descriptor.set,
+                    Self::color_to_vk_clear(self.clear_color),
+                    &self.vertices,
+                    &self.commands,
+                );
+                self.disabled |= self.offscreen.as_ref().is_some_and(offscreen::Offscreen::unusable);
+                if result.is_ok() {
+                    self.textures.get_mut(&output).expect("output remains owned").image.layout = vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL;
+                }
+                self.commands.clear();
+                self.vertices.clear();
+                self.current_batch_end = 0;
+                result
+            }
+        }
+    }
+
+    /// Native finalization preserves the existing acquire, transfer, submit, and present protocol.
+    fn finish_window(&mut self, acquired: AcquiredVulkanFrame) -> Result<()> {
         self.flush_ui_batch();
         if self.disabled {
             self.commands.clear();
@@ -585,8 +630,8 @@ where
 {
     /// Backend borrowed for the complete acquire-to-present transaction.
     backend: &'a mut VulkanRenderer<Application>,
-    /// Acquired swapchain image consumed exactly once during frame finalization.
-    acquired: Option<AcquiredVulkanFrame>,
+    /// Explicit target consumed exactly once; a texture frame owns no native acquisition.
+    target: Option<FrameTarget>,
 }
 
 impl<Application> VulkanFrame<'_, Application>
@@ -610,8 +655,8 @@ where
 {
     /// Completes the acquired transaction; Drop still guards against any unwinding escape.
     fn finish(mut self) -> std::result::Result<(), FrameError> {
-        let acquired = self.acquired.take().expect("an active Vulkan frame owns its acquired image");
-        self.backend.finish(acquired).map_err(FrameError::new)
+        let target = self.target.take().expect("an active Vulkan frame owns its explicit target");
+        self.backend.finish(target).map_err(FrameError::new)
     }
 
     fn push_quad(&mut self, vertices: [Vertex; 4]) {
@@ -643,7 +688,7 @@ where
         // Success has already restored Ready. Any other escape, including a panic after taking
         // the token in finish, must forbid reuse of the potentially signaled acquire semaphore.
         self.backend.context.abandon_acquired_frame();
-        self.backend.disabled |= self.backend.context.is_unusable();
+        self.backend.disabled |= self.backend.context.is_unusable() || self.backend.offscreen.as_ref().is_some_and(offscreen::Offscreen::unusable);
         self.backend.commands.clear();
         self.backend.vertices.clear();
         self.backend.current_batch_end = 0;
@@ -668,12 +713,82 @@ where
 
     fn frame(&mut self, info: FrameInfo) -> std::result::Result<Self::Frame<'_>, FrameError> {
         let dimensions = info.dimensions();
+        self.ensure_swapchain_extent(dimensions.width as u32, dimensions.height as u32)
+            .map_err(FrameError::new)?;
         self.begin(dimensions.width, dimensions.height, info.clear()).map_err(FrameError::new)?;
         let acquired = self
             .context
             .acquire_frame(dimensions.width as u32, dimensions.height as u32)
             .map_err(FrameError::new)?;
-        Ok(VulkanFrame { backend: self, acquired: Some(acquired) })
+        Ok(VulkanFrame {
+            backend: self,
+            target: Some(FrameTarget::Window(acquired)),
+        })
+    }
+
+    /// Creates an image/framebuffer/descriptor transaction without acquiring a presentation image.
+    fn create_render_texture(&mut self, id: TextureId) -> std::result::Result<(), TextureError> {
+        if self.disabled || self.textures.contains_key(&id) {
+            return Err(TextureError::backend("Vulkan render target is unavailable or already exists"));
+        }
+        self.textures.try_reserve(1).map_err(|error| TextureError::backend(error.to_string()))?;
+        if self.offscreen.is_none() {
+            self.offscreen = Some(offscreen::Offscreen::new(&self.context).map_err(TextureError::backend)?);
+        }
+        let device = self.context.device.clone();
+        let image = self
+            .context
+            .create_image_with_usage(
+                id.width() as u32,
+                id.height() as u32,
+                vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_SRC,
+            )
+            .map_err(TextureError::backend)?
+            .guarded(&device);
+        let attachments = [image.get().view];
+        let info = vk::FramebufferCreateInfo::default()
+            .render_pass(self.offscreen.as_ref().expect("initialized above").render_pass)
+            .attachments(&attachments)
+            .width(id.width() as u32)
+            .height(id.height() as u32)
+            .layers(1);
+        // SAFETY: The attachment, render pass, and logical device remain owned by this transaction.
+        let framebuffer = ResourceGuard::new(
+            unsafe { device.create_framebuffer(&info, None) }.map_err(|error| TextureError::backend(format!("offscreen framebuffer: {error:?}")))?,
+            |framebuffer| unsafe { device.destroy_framebuffer(framebuffer, None) },
+        );
+        let descriptor = self
+            .context
+            .allocate_texture_descriptor(image.get())
+            .map_err(TextureError::backend)?
+            .guarded(&device);
+        self.textures.insert(
+            id,
+            VulkanTexture {
+                image: image.into_inner(),
+                descriptor: descriptor.into_inner(),
+                framebuffer: Some(framebuffer.into_inner()),
+            },
+        );
+        Ok(())
+    }
+
+    /// Opens UI batching against an explicit private atlas and fresh immutable-output allocation.
+    fn texture_frame(&mut self, info: FrameInfo, output: TextureId, atlas: TextureId) -> std::result::Result<Self::Frame<'_>, FrameError> {
+        let size = info.dimensions();
+        if output == atlas
+            || (output.width(), output.height()) != (size.width, size.height)
+            || info.clear().a != 255
+            || !self.textures.get(&output).is_some_and(|image| image.framebuffer.is_some())
+            || !self.textures.contains_key(&atlas)
+        {
+            return Err(FrameError::new("invalid Vulkan output, extent, clear, or private atlas"));
+        }
+        self.begin(size.width, size.height, info.clear()).map_err(FrameError::new)?;
+        Ok(VulkanFrame {
+            backend: self,
+            target: Some(FrameTarget::Texture { output, atlas }),
+        })
     }
 
     fn create_texture(&mut self, id: TextureId, pixels: &[u8]) -> std::result::Result<(), TextureError> {
@@ -710,15 +825,25 @@ where
     }
 }
 
+/// One device image and its authenticated sampled binding, optionally usable as an output.
 struct VulkanTexture {
+    /// Complete image/view/allocation ownership.
     image: ImageResource,
+    /// Sampled-image binding follows the native descriptor-pool generation.
     descriptor: TextureDescriptor,
+    /// Only render outputs have a framebuffer for the private UI-only render pass.
+    framebuffer: Option<vk::Framebuffer>,
 }
 
 impl VulkanTexture {
     /// Releases the individually allocated descriptor before destroying its referenced image.
     fn destroy(&mut self, context: &VulkanContext) {
         context.free_texture_descriptor(&mut self.descriptor);
+        if let Some(framebuffer) = self.framebuffer.take() {
+            unsafe {
+                context.device.destroy_framebuffer(framebuffer, None);
+            }
+        }
         self.image.destroy(&context.device);
     }
 }
@@ -1064,7 +1189,7 @@ impl UiResources {
         let pipeline_layout = ResourceGuard::new(Self::create_pipeline_layout(device, *descriptor_set_layout.get())?, |layout| unsafe {
             device.destroy_pipeline_layout(layout, None)
         });
-        let pipeline = ResourceGuard::new(Self::create_pipeline(ctx, *pipeline_layout.get())?, |pipeline| unsafe {
+        let pipeline = ResourceGuard::new(Self::create_pipeline(device, ctx.render_pass, *pipeline_layout.get())?, |pipeline| unsafe {
             device.destroy_pipeline(pipeline, None)
         });
         let sampler = ResourceGuard::new(Self::create_sampler(device)?, |sampler| unsafe { device.destroy_sampler(sampler, None) });
@@ -1151,8 +1276,8 @@ impl UiResources {
         unsafe { device.create_pipeline_layout(&info, None) }.map_err(|err| format!("create_pipeline_layout failed: {err:?}"))
     }
 
-    fn create_pipeline(ctx: &VulkanContext, pipeline_layout: vk::PipelineLayout) -> Result<vk::Pipeline> {
-        let device = &ctx.device;
+    /// Builds the canonical UI shaders for an explicit compatible color/depth render pass.
+    fn create_pipeline(device: &ash::Device, render_pass: vk::RenderPass, pipeline_layout: vk::PipelineLayout) -> Result<vk::Pipeline> {
         // Shader modules are construction-only objects. Their guards intentionally remain armed
         // on success, so they are destroyed as soon as pipeline creation returns.
         let vert_module = ResourceGuard::new(Self::create_shader_module(device, UI_VERT_SPV)?, |module| unsafe {
@@ -1246,7 +1371,7 @@ impl UiResources {
             .color_blend_state(&color_blend)
             .dynamic_state(&dynamic_state)
             .layout(pipeline_layout)
-            .render_pass(ctx.render_pass)
+            .render_pass(render_pass)
             .subpass(0);
         let pipeline = create_single_graphics_pipeline(device, pipeline_info)?;
 
@@ -1687,6 +1812,10 @@ impl VulkanContext {
         // Retain before creating GPU locals: constructor failures unwind those before this owner,
         // and success transfers it into the context until after explicit surface destruction.
         let window = window.clone();
+        match window.subsystem().current_video_driver() {
+            "offscreen" | "dummy" => return Err("Vulkan requires an SDL driver with native window handles".to_owned()),
+            _ => {}
+        }
         // Context creation front-loads the permanent objects: instance/device/queues, the shared
         // command pool, and the initial swapchain-dependent resources.
         let entry = Entry::linked();
@@ -2763,6 +2892,17 @@ impl VulkanContext {
 
     /// Creates a sampled 2D image resource suitable for atlas or texture uploads.
     fn create_image_resource(&self, width: u32, height: u32) -> Result<ImageResource> {
+        self.create_image_with_usage(width, height, vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST)
+    }
+
+    /// Shares guarded RGBA image ownership while keeping render and upload usage explicit.
+    fn create_image_with_usage(&self, width: u32, height: u32, usage: vk::ImageUsageFlags) -> Result<ImageResource> {
+        let limit = unsafe { self.instance.get_physical_device_properties(self.physical_device) }
+            .limits
+            .max_image_dimension2_d;
+        if width == 0 || height == 0 || width > limit || height > limit {
+            return Err(format!("Vulkan image {width}x{height} exceeds device dimension limit {limit}"));
+        }
         let format = vk::Format::R8G8B8A8_UNORM;
         let extent3d = vk::Extent3D { width, height, depth: 1 };
         let image_info = vk::ImageCreateInfo::default()
@@ -2773,7 +2913,7 @@ impl VulkanContext {
             .array_layers(1)
             .samples(vk::SampleCountFlags::TYPE_1)
             .tiling(vk::ImageTiling::OPTIMAL)
-            .usage(vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST)
+            .usage(usage)
             .sharing_mode(vk::SharingMode::EXCLUSIVE)
             .initial_layout(vk::ImageLayout::UNDEFINED);
         // Image, memory, and view are guarded separately because every edge between those
@@ -3089,6 +3229,7 @@ impl VulkanContext {
         Ok(VulkanTexture {
             image: image.into_inner(),
             descriptor: descriptor.into_inner(),
+            framebuffer: None,
         })
     }
 

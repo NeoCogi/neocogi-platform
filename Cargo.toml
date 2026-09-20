@@ -274,3 +274,7 @@ assets = []
 [workspace.metadata.neocogi.assemblies.theme-editor.variants.wgpu]
 application-features = ["wgpu"]
 component-features.neocogi-render-plugin = ["dynamic-plugin", "wgpu"]
+
+[workspace.metadata.neocogi.assemblies.theme-editor.variants.vulkan]
+application-features = ["vulkan"]
+component-features.neocogi-render-plugin = ["dynamic-plugin", "vulkan"]

@@ -126,7 +126,7 @@ impl Gpu {
 
     /// Reports surface availability before accepting an independent rendering session.
     pub(super) fn supports_surfaces(&self) -> bool {
-        cfg!(any(feature = "glow", feature = "webgl", feature = "wgpu"))
+        cfg!(any(feature = "glow", feature = "webgl", feature = "wgpu", feature = "vulkan"))
     }
 
     /// Allocates an unpublished offscreen output through the native image owner.
