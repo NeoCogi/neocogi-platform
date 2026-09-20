@@ -155,7 +155,7 @@ fn mesh(scene: &ComPtr<IMeshSceneAbi>) {
 fn native_order_ownership_reentry_and_final_release() {
     let platform = PlatformObject::default();
     let assets = neocogi_demo_assets::load_bundle().unwrap();
-    let atlas = assets.query::<IRgbaImageAbi>().unwrap();
+    let atlas = assets.image().unwrap();
     let native = platform.window("COM GPU acceptance", SIZE, atlas.as_com_ref()).unwrap();
     let device = Rc::downgrade(&native.device);
     let unknown = WindowObject::from_value(native);
@@ -237,7 +237,7 @@ fn native_order_ownership_reentry_and_final_release() {
         icon.rect = Rect { x: 0, y: 0, width: 1, height: 1 };
     }
     let oversized = oversized.into_revision(assets.as_com_ref()).unwrap();
-    let oversized_atlas = oversized.query::<IRgbaImageAbi>().unwrap();
+    let oversized_atlas = oversized.image().unwrap();
     assert_eq!(renderer.prepare_atlas(oversized_atlas.as_com_ref()), Err(RENDER_E_BACKEND));
     assert_eq!(device.upgrade().unwrap().render.borrow().as_ref().unwrap().atlas.as_ptr(), atlas.as_ptr());
     renderer.render(info(), atlas.as_com_ref(), stream.as_com_ref()).unwrap();
