@@ -25,8 +25,8 @@ repository = "https://github.com/NeoCogi/neocogi-platform"
 [workspace.dependencies]
 neocogi-renderer-contracts = { path = "crates/render/contracts" }
 neocogi-platform-contracts = { path = "crates/platform/contracts" }
-neocogi-com = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "6c3df75f448141ac22c87e08ac7fbb6d3265fb47", version = "0.1.0", default-features = false }
-neocogi-idl = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "6c3df75f448141ac22c87e08ac7fbb6d3265fb47", version = "0.1.0" }
+neocogi-com = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "5288d89ada33fcd2a5405972d6da03731130623c", version = "0.1.0", default-features = false }
+neocogi-idl = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "5288d89ada33fcd2a5405972d6da03731130623c", version = "0.1.0" }
 prettyplease = "0.2"
 proc-macro2 = { version = "1", features = ["span-locations"] }
 quote = "1"
@@ -115,7 +115,7 @@ component-features.neocogi-skin = ["dynamic-plugin"]
 linkage = "monolith"
 
 [workspace.metadata.neocogi.assemblies.simple]
-application = { package = "neocogi-demo-basic", bin = "simple", default-features = false, features = ["glow"] }
+application = { package = "neocogi-demo-basic", bin = "neocogi-demo-simple", default-features = false, features = ["glow"] }
 runtime = { package = "neocogi-com-runtime", default-features = false }
 plugins = [
     { package = "neocogi-ui-runtime", features = ["dynamic-plugin"] },
@@ -148,7 +148,7 @@ component-features.neocogi-gfx = ["dynamic-plugin"]
 linkage = "monolith"
 
 [workspace.metadata.neocogi.assemblies.calculator]
-application = { package = "neocogi-demo-basic", bin = "calculator", default-features = false, features = ["glow"] }
+application = { package = "neocogi-demo-basic", bin = "neocogi-demo-calculator", default-features = false, features = ["glow"] }
 runtime = { package = "neocogi-com-runtime", default-features = false }
 plugins = [
     { package = "neocogi-ui-runtime", features = ["dynamic-plugin"] },
@@ -181,7 +181,7 @@ component-features.neocogi-gfx = ["dynamic-plugin"]
 linkage = "monolith"
 
 [workspace.metadata.neocogi.assemblies.backend-frame-cube]
-application = { package = "neocogi-demo-basic", bin = "backend-frame-cube", default-features = false, features = ["glow"] }
+application = { package = "neocogi-demo-basic", bin = "neocogi-demo-cube", default-features = false, features = ["glow"] }
 runtime = { package = "neocogi-com-runtime", default-features = false }
 plugins = [
     { package = "neocogi-ui-runtime", features = ["dynamic-plugin"] },
@@ -280,7 +280,7 @@ application-features = ["vulkan"]
 component-features.neocogi-render-plugin = ["dynamic-plugin", "vulkan"]
 
 [workspace.metadata.neocogi.assemblies.runtime-ui]
-application = { package = "neocogi-runtime-ui-example", bin = "neocogi-runtime-ui-example", default-features = false, features = ["glow"] }
+application = { package = "neocogi-runtime-ui-example", bin = "neocogi-example-ui", default-features = false, features = ["glow"] }
 runtime = { package = "neocogi-com-runtime", default-features = false }
 plugins = [
     { package = "neocogi-ui-runtime", features = ["dynamic-plugin"] },
