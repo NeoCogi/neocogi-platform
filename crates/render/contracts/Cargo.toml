@@ -17,4 +17,4 @@ neocogi-com = { workspace = true, features = ["macros"] }
 rs-math3d.workspace = true
 
 [build-dependencies]
-neocogi-idl-build.workspace = true
+neocogi-idl.workspace = true

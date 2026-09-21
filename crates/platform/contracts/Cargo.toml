@@ -17,4 +17,4 @@ neocogi-com = { workspace = true, default-features = false, features = ["macros"
 neocogi-renderer-contracts.workspace = true
 
 [build-dependencies]
-neocogi-idl-build.workspace = true
+neocogi-idl.workspace = true

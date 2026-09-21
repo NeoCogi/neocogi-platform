@@ -4,7 +4,7 @@
 fn main() {
     // The build helper resolves `neocogi.renderer` from Cargo metadata, keeping
     // the demo protocol independent of UI widgets and their transitive modules.
-    neocogi_idl_build::Module::new("idl", "neocogi/demo/render.ncidl")
+    neocogi_idl::cargo::Module::new("idl", "neocogi/demo/render.ncidl")
         .build()
         .expect("failed to build neocogi.demo.render");
 }
