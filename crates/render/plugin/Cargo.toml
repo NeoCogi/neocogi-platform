@@ -8,6 +8,8 @@ repository.workspace = true
 publish = false
 
 [lib]
+# The Rust target also defines the deployed shared-library name on each platform.
+name = "nc_render"
 # The implementation is linked once by cargo-neocogi's generated cdylib root;
 # emitting a second package-local cdylib would only duplicate optimized work.
 crate-type = ["rlib"]
