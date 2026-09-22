@@ -7,7 +7,7 @@
 #![no_std]
 #![deny(missing_docs)]
 
-include!(concat!(env!("OUT_DIR"), "/neocogi_renderer.rs"));
+include!(concat!(env!("OUT_DIR"), "/neocogi_renderer.include.rs"));
 
 mod helpers;
 pub use helpers::*;
