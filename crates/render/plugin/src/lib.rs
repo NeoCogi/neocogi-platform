@@ -32,6 +32,7 @@ use std::{
     collections::HashMap,
     rc::{Rc, Weak},
 };
+mod clipboard;
 mod gpu;
 mod pixels;
 use pixels::AtlasPixels;
@@ -181,7 +182,15 @@ impl Drop for RenderAccess<'_> {
         *self.device.render.borrow_mut() = Some(state);
     }
 }
-#[com_object(interfaces(IPlatformWindow, IRenderer, ITextureFactory, IRenderSurfaceFactory, IMeshScenes, IRenderDiagnostics))]
+#[com_object(interfaces(
+    IPlatformWindow,
+    ITextClipboard,
+    IRenderer,
+    ITextureFactory,
+    IRenderSurfaceFactory,
+    IMeshScenes,
+    IRenderDiagnostics
+))]
 /// One COM identity exposes OS polling, rendering and concrete resource factories.
 struct WindowObject {
     /// Resources retain this same native owner after the public window interface is released.

@@ -24,3 +24,22 @@ factory Platform: IRenderDiagnostics {
         atlas: &IRgbaImage,
     ) -> Result<IPlatformWindow>;
 }
+
+#[version(1)]
+/// Completion of one bounded clipboard operation; implementations may deliver asynchronously.
+interface IClipboardCompletion {
+    /// Status is zero on success or a failing NcStatus code. Successful reads supply UTF-8 at
+    /// offset zero; writes and failures supply empty text. The recipient queues this copied fact.
+    fn complete(&self, status: i32, text: &[u8]) -> Result<()>;
+}
+
+#[version(1)]
+/// System text clipboard independent of SDL, DOM, and widget ownership.
+interface ITextClipboard {
+    /// Retains the completion until exactly one success/failure is delivered, or fails immediately.
+    /// Reading may require browser permission; no callback borrows a UI traversal.
+    fn read(&self, completion: &IClipboardCompletion) -> Result<()>;
+    /// Copies bounded UTF-8 text before returning. A successful completion means the platform
+    /// accepted the write; callers must wait for that receipt before removing cut text.
+    fn write(&self, text: &[u8], completion: &IClipboardCompletion) -> Result<()>;
+}

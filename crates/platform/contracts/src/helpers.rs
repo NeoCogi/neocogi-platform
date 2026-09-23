@@ -35,3 +35,6 @@ pub const PLATFORM_E_BUSY: NcStatus = NcStatus::from_code(-1001);
 
 /// Native window, event-pump, or browser integration failed; diagnostics retain detail.
 pub const PLATFORM_E_BACKEND: NcStatus = NcStatus::from_code(-1005);
+
+/// Maximum UTF-8 bytes transferred by one clipboard request or successful read.
+pub const MAX_CLIPBOARD_BYTES: usize = 1024 * 1024;

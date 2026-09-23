@@ -45,9 +45,11 @@ neocogi-com = { workspace = true, features = ["static-runtime"] }
 sdl2.workspace = true
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen-futures = "=0.4.77"
+js-sys = "=0.3.104"
 wasm-bindgen.workspace = true
 web-sys = { workspace = true, features = [
-    "Document", "DomRect", "Element", "Event", "EventTarget", "FocusEvent",
+    "Clipboard", "Navigator", "Document", "DomRect", "Element", "Event", "EventTarget", "FocusEvent",
     "CssStyleDeclaration", "HtmlTextAreaElement", "HtmlCanvasElement", "HtmlElement",
     "KeyboardEvent", "PointerEvent", "WebGl2RenderingContext", "WheelEvent", "Window",
 ] }

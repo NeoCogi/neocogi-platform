@@ -238,9 +238,13 @@ impl BrowserInputHost {
                         queue.borrow_mut().push(UiInput::Key(transition));
                         let editable = event.target().is_some_and(|target| target == EventTarget::from(text.clone()));
                         let printable = matches!(key, KeyCode::Character | KeyCode::Space);
-                        // Keep the native paste shortcut and printable defaults; navigation/editing
-                        // commands belong to the retained editor and must not edit the input buffer.
-                        if !(editable && printable) {
+                        // Clipboard and history shortcuts belong to the retained editor. Suppress
+                        // dummy-textarea defaults so asynchronous paste cannot also arrive as input.
+                        let editor_command = editable
+                            && transition.modifiers & (2 | 8) != 0
+                            && transition.modifiers & 1 == 0
+                            && char::from_u32(value).is_some_and(|key| matches!(key.to_ascii_lowercase(), 'a' | 'c' | 'x' | 'v' | 'z' | 'y'));
+                        if editor_command || !(editable && printable) {
                             event.prevent_default();
                         }
                     }
