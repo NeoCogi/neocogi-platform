@@ -21,7 +21,7 @@ struct Vector3 {
     z: f32,
 }
 
-/// Column-major four-by-four floating-point matrix copied across the demo ABI.
+/// Column-major four-by-four floating-point matrix copied across the mesh ABI.
 #[version(1)]
 struct Matrix4 {
     /// Column zero, row zero.
@@ -59,7 +59,7 @@ struct Matrix4 {
 }
 
 #[version(1)]
-/// Plain vertex format shared by all native demo shaders.
+/// Plain vertex format shared by all mesh renderer backends.
 struct MeshVertex {
     /// Object-space position; every component must be finite.
     position: Vector3,
@@ -74,7 +74,7 @@ struct MeshVertex {
 struct SceneTransforms {
     /// Projection-view-model transform applied to mesh positions.
     pvm: Matrix4,
-    /// View-model transform applied to normals, matching the existing demo's shader convention.
+    /// View-model transform applied to normals, using the fixed-material shader convention.
     view_model: Matrix4,
 }
 
@@ -89,8 +89,8 @@ interface IMeshScene: IRenderItem {
 }
 
 #[version(1)]
-/// Demo-specific factory exposed by the native window alongside its ordinary renderer interfaces.
-interface IDemoScenes {
+/// Reusable mesh scene factory exposed alongside the window's ordinary renderer interfaces.
+interface IMeshScenes {
     /// Creates an empty scene with identity transforms; its resources retain this window/device.
     fn create_scene(&self) -> Result<IMeshScene>;
 }

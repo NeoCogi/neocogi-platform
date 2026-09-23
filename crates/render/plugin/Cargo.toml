@@ -16,10 +16,10 @@ crate-type = ["rlib"]
 
 [features]
 default = ["glow"]
-webgl = ["dep:glow", "dep:neocogi-render-webgl", "neocogi-demo-renderer/webgl"]
-glow = ["dep:glow", "dep:neocogi-render-glow", "neocogi-demo-renderer/glow"]
-vulkan = ["dep:neocogi-render-vulkan", "neocogi-demo-renderer/vulkan"]
-wgpu = ["dep:neocogi-render-wgpu", "neocogi-demo-renderer/wgpu"]
+webgl = ["dep:glow", "dep:neocogi-render-webgl", "neocogi-render-mesh/webgl"]
+glow = ["dep:glow", "dep:neocogi-render-glow", "neocogi-render-mesh/glow"]
+vulkan = ["dep:neocogi-render-vulkan", "neocogi-render-mesh/vulkan"]
+wgpu = ["dep:neocogi-render-wgpu", "neocogi-render-mesh/wgpu"]
 dynamic-plugin = []
 
 [dependencies]
@@ -31,13 +31,15 @@ neocogi-render-glow = { workspace = true, optional = true }
 neocogi-render-vulkan = { workspace = true, optional = true }
 neocogi-render-wgpu = { workspace = true, optional = true }
 neocogi-render-support.workspace = true
-neocogi-demo-renderer.workspace = true
-neocogi-demo-render-contracts.workspace = true
+neocogi-render-mesh.workspace = true
+neocogi-render-mesh-contracts.workspace = true
 rs-math3d.workspace = true
 neocogi-com = { workspace = true, default-features = false, features = ["macros", "std"] }
 glow = { workspace = true, optional = true }
 
 [dev-dependencies]
+# Native and browser unit tests own their runtime; they must not require a deployed shared library.
+neocogi-com = { workspace = true, features = ["static-runtime"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 sdl2.workspace = true
@@ -54,4 +56,3 @@ web-sys = { workspace = true, features = [
 neocogi-ui-core-contracts.workspace = true
 neocogi-ui-nodes-contracts.workspace = true
 neocogi-gfx-contracts.workspace = true
-neocogi-com = { workspace = true, features = ["static-runtime"] }

@@ -162,7 +162,7 @@ fn native_order_ownership_reentry_and_final_release() {
     input_delivery(&unknown, &device);
     let renderer: ComPtr<IRendererAbi> = unknown.query().unwrap();
     let factory: ComPtr<ITextureFactoryAbi> = unknown.query().unwrap();
-    let scenes: ComPtr<IDemoScenesAbi> = unknown.query().unwrap();
+    let scenes: ComPtr<IMeshScenesAbi> = unknown.query().unwrap();
     let scene = scenes.create_scene().unwrap();
     mesh(&scene);
     let base: ComPtr<IRenderItemAbi> = scene.query().unwrap();
@@ -244,7 +244,7 @@ fn native_order_ownership_reentry_and_final_release() {
     // The foreign scene has a valid ABI but belongs to a different native window/context.
     let foreign = platform.window("COM foreign resource owner", SIZE, atlas.as_com_ref()).unwrap();
     let foreign_device = Rc::downgrade(&foreign.device);
-    let foreign_scene = IDemoScenes::create_scene(&foreign).unwrap();
+    let foreign_scene = IMeshScenes::create_scene(&foreign).unwrap();
     let foreign_texture = ITextureFactory::create_texture(&foreign, Size { width: 1, height: 1 }, NcCopyFromBufferOffset::new(0, &[0; 4])).unwrap();
     *input.foreign_texture.borrow_mut() = Some(foreign_texture);
     assert_eq!(renderer.render(info(), atlas.as_com_ref(), stream.as_com_ref()), Err(RENDER_E_OWNER));

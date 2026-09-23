@@ -1,14 +1,14 @@
 [package]
-name = "neocogi-demo-render-contracts"
+name = "neocogi-render-mesh-contracts"
 version = "0.0.0"
 edition.workspace = true
 license.workspace = true
 publish = false
-links = "nc_contract_neocogi_demo_render"
+links = "nc_contract_neocogi_render_mesh"
 
 [package.metadata.neocogi-contract]
-module = "neocogi.demo.render"
-source = "idl/neocogi/demo/render.ncidl"
+module = "neocogi.render.mesh"
+source = "idl/neocogi/render/mesh.ncidl"
 
 [dependencies]
 neocogi-renderer-contracts.workspace = true

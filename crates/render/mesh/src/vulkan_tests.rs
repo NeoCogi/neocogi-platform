@@ -38,7 +38,7 @@ impl TestDevice {
     }
 
     /// Simulates preparation after one of two slots has completed; no GPU commands are submitted.
-    fn prepare(&self, renderer: &mut DemoRenderer, slot: usize, commands: &[&DemoCommand]) {
+    fn prepare(&self, renderer: &mut MeshRenderer, slot: usize, commands: &[&MeshCommand]) {
         renderer.prepare_meshes(&self.device, &self.memory_properties, slot, 2, commands).unwrap();
     }
 }
@@ -67,8 +67,8 @@ fn triangle() -> MeshBuffers {
 }
 
 /// Builds an ordinary scene snapshot with geometry independent of its copied transforms.
-fn command(mesh: &MeshBuffers) -> DemoCommand {
-    DemoCommand::DrawMesh(MeshSubmission {
+fn command(mesh: &MeshBuffers) -> MeshCommand {
+    MeshCommand::DrawMesh(MeshSubmission {
         mesh: mesh.clone(),
         pvm: Mat4f::identity(),
         view_model: Mat4f::identity(),
@@ -80,7 +80,7 @@ fn command(mesh: &MeshBuffers) -> DemoCommand {
 #[ignore = "requires a Vulkan device; run explicitly with --include-ignored"]
 fn immutable_mesh_uploads_are_shared_and_retired_after_all_frame_references() {
     let gpu = TestDevice::new();
-    let mut renderer = DemoRenderer::new();
+    let mut renderer = MeshRenderer::new();
     let first = triangle();
     let first_command = command(&first);
     gpu.prepare(&mut renderer, 0, &[&first_command, &first_command]);
@@ -96,7 +96,7 @@ fn immutable_mesh_uploads_are_shared_and_retired_after_all_frame_references() {
 
     // Matrix edits and alternating synchronized slots must reuse the exact native buffers.
     let mut moved = command(&first);
-    let DemoCommand::DrawMesh(submission) = &mut moved;
+    let MeshCommand::DrawMesh(submission) = &mut moved;
     submission.pvm.col[3].x = 0.25;
     for slot in [1, 0, 1, 0] {
         gpu.prepare(&mut renderer, slot, &[&moved]);

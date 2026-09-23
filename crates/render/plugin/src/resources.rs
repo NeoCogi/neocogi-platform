@@ -158,7 +158,7 @@ impl Drop for Scene {
         self.record.device.scenes.borrow_mut().remove(&self.record.key.get());
     }
 }
-impl IDemoScenes for WindowObject {
+impl IMeshScenes for WindowObject {
     /// Creates the actual empty application scene in this renderer's ownership domain.
     fn create_scene(&self) -> Result<ComPtr<IMeshSceneAbi>, NcStatus> {
         let _access = self.device.access()?;

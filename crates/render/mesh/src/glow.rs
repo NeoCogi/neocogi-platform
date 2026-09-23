@@ -1,4 +1,4 @@
-//! OpenGL ES 3 / WebGL 2 implementation of the full demo's mesh renderer.
+//! OpenGL ES 3 / WebGL 2 implementation of the reusable mesh renderer.
 
 use std::rc::Rc;
 
@@ -6,15 +6,15 @@ use glow::HasContext;
 use neocogi_render_core::{RenderItemArgs, prelude::Recti};
 use neocogi_render_glow::{GlApplicationRenderContext, GlApplicationRenderer, create_program};
 
-use crate::{DemoCommand, MeshSubmission, MeshVertex};
+use crate::{MeshCommand, MeshSubmission, MeshVertex};
 
-/// Application renderer owning the demo's GL program and mesh buffers.
-pub struct DemoRenderer {
+/// Application renderer owning the mesh renderer's GL program and mesh buffers.
+pub struct MeshRenderer {
     /// Lazily created resources, initialized only if a frame actually contains a mesh command.
     resources: Option<GlMeshResources>,
 }
 
-impl DemoRenderer {
+impl MeshRenderer {
     /// Creates an empty renderer whose GL objects will be allocated on its first mesh draw.
     pub fn new() -> Self {
         Self { resources: None }
@@ -29,20 +29,20 @@ impl DemoRenderer {
     }
 }
 
-impl Default for DemoRenderer {
-    /// Uses the same lazy construction policy as [`DemoRenderer::new`].
+impl Default for MeshRenderer {
+    /// Uses the same lazy construction policy as [`MeshRenderer::new`].
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl GlApplicationRenderer for DemoRenderer {
-    type Command = DemoCommand;
+impl GlApplicationRenderer for MeshRenderer {
+    type Command = MeshCommand;
 
     /// Uploads and draws the command's mesh through native GL buffers and a depth-tested pipeline.
     fn render(&mut self, context: GlApplicationRenderContext<'_>, command: Self::Command) -> Result<(), String> {
         match command {
-            DemoCommand::DrawMesh(submission) => self.resources(context.gl)?.draw(context.framebuffer_size, context.args, &submission),
+            MeshCommand::DrawMesh(submission) => self.resources(context.gl)?.draw(context.framebuffer_size, context.args, &submission),
         }
     }
 }
@@ -53,7 +53,7 @@ struct GlMeshResources {
     gl: Rc<glow::Context>,
     /// Linked vertex/fragment program implementing transform and normal shading.
     program: glow::Program,
-    /// Vertex array recording the demo mesh's attribute and buffer bindings.
+    /// Vertex array recording the scene mesh's attribute and buffer bindings.
     vertex_array: glow::VertexArray,
     /// Dynamic buffer receiving application-owned mesh vertices.
     vertex_buffer: glow::Buffer,
@@ -224,7 +224,7 @@ void main() {
 }
 "#;
 
-/// OpenGL ES 3 shader providing the demo's simple directional material.
+/// OpenGL ES 3 shader providing the mesh renderer's simple directional material.
 const MESH_FRAGMENT_SHADER: &str = r#"#version 300 es
 precision highp float;
 in vec3 normal;

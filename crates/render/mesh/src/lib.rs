@@ -1,8 +1,9 @@
-//! Application-owned GPU renderer used by the full demonstration.
+//! Reusable fixed-material mesh rendering for the platform renderer's scene capability.
 //!
-//! The crate deliberately lives beside the demos rather than inside a reusable renderer backend.
-//! It owns the demo mesh vocabulary, shaders, pipelines, buffers, and backend-specific recording
-//! code. Renderer crates supply only typed native extension points and frame ownership.
+//! This crate owns mesh shaders, pipelines, immutable geometry, and backend recording.
+//! Native GPU types remain private to the selected backend; applications submit typed
+//! scene data through `neocogi-render-mesh-contracts` and ordinary render items.
+#![deny(missing_docs)]
 
 use std::sync::Arc;
 
@@ -16,16 +17,16 @@ mod vulkan;
 mod wgpu;
 
 #[cfg(any(feature = "glow", feature = "webgl"))]
-pub use self::glow::DemoRenderer;
+pub use self::glow::MeshRenderer;
 #[cfg(all(not(feature = "webgl"), not(feature = "glow"), feature = "vulkan"))]
-pub use self::vulkan::DemoRenderer;
+pub use self::vulkan::MeshRenderer;
 #[cfg(all(not(feature = "webgl"), not(feature = "glow"), not(feature = "vulkan"), feature = "wgpu"))]
-pub use self::wgpu::DemoRenderer;
+pub use self::wgpu::MeshRenderer;
 
 /// Canonical application vertex shared with the typed COM mesh upload contract.
-pub use neocogi_demo_render_contracts::MeshVertex;
+pub use neocogi_render_mesh_contracts::MeshVertex;
 
-/// Immutable CPU mesh storage shared between retained demo state and frame commands.
+/// Immutable CPU mesh storage shared between retained scene state and frame commands.
 #[derive(Clone)]
 pub struct MeshBuffers {
     /// Contiguous vertex storage uploaded by the selected application renderer.
@@ -71,7 +72,7 @@ pub struct MeshSubmission {
 }
 
 /// Concrete application command retained in the selected backend's typed frame stream.
-pub enum DemoCommand {
+pub enum MeshCommand {
     /// Draws a three-dimensional mesh in the custom widget allocation supplied by neocogi.ui.
     DrawMesh(MeshSubmission),
 }

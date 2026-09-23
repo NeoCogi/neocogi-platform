@@ -1,4 +1,4 @@
-//! Rust math conversions layered over the generated demo-render transport values.
+//! Rust math conversions layered over the generated mesh transport values.
 
 use crate::{Matrix4, MeshVertex, Vector2, Vector3};
 use rs_math3d::{Mat4f, Vec2f, Vec3f};

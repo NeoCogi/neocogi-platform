@@ -4,7 +4,7 @@ use neocogi_render_core::{
     Color, FrameInfo, ImageSource, RenderItemArgs, RendererBackend, RendererFrame, TextureId,
     prelude::{Dimensioni, Recti},
 };
-use neocogi_demo_renderer::{DemoCommand, DemoRenderer};
+use neocogi_render_mesh::{MeshCommand, MeshRenderer};
 use neocogi_render_support::com::Batch;
 
 #[cfg(feature = "glow")]
@@ -24,8 +24,8 @@ pub(super) type Window = web_sys::HtmlCanvasElement;
 
 /// Concrete native owner. Its field order destroys all UI/application GPU resources before the surface.
 pub(super) struct Gpu {
-    /// Both UI drawing and the demo's native depth-tested mesh renderer live in this concrete backend.
-    renderer: Renderer<DemoRenderer>,
+    /// Both UI drawing and the reusable depth-tested mesh renderer live in this concrete backend.
+    renderer: Renderer<MeshRenderer>,
     /// Shared loader is used only to check GL execution errors before presentation.
     #[cfg(any(feature = "glow", feature = "webgl"))]
     gl: std::rc::Rc<glow::Context>,
@@ -69,7 +69,7 @@ impl Gpu {
             window.gl_make_current(&context)?;
             // SAFETY: SDL selected this live context, and the loader resolves functions for it.
             let gl = std::rc::Rc::new(unsafe { glow::Context::from_loader_function(|name| video.gl_get_proc_address(name) as *const _) });
-            let renderer = Renderer::new_with_application(gl.clone(), atlas, actual.width as u32, actual.height as u32, DemoRenderer::new())?;
+            let renderer = Renderer::new_with_application(gl.clone(), atlas, actual.width as u32, actual.height as u32, MeshRenderer::new())?;
             Ok(Self {
                 renderer,
                 gl,
@@ -82,7 +82,7 @@ impl Gpu {
         #[cfg(not(feature = "glow"))]
         {
             let renderer =
-                Renderer::new_with_application(&window, atlas, actual.width as u32, actual.height as u32, DemoRenderer::new()).map_err(|e| e.to_string())?;
+                Renderer::new_with_application(&window, atlas, actual.width as u32, actual.height as u32, MeshRenderer::new()).map_err(|e| e.to_string())?;
             Ok(Self { renderer, window })
         }
     }
@@ -97,7 +97,7 @@ impl Gpu {
             .dyn_into::<web_sys::WebGl2RenderingContext>()
             .map_err(|_| "canvas context is not WebGL 2")?;
         let gl = std::rc::Rc::new(glow::Context::from_webgl2_context(webgl.clone()));
-        let renderer = Renderer::new_with_application(gl.clone(), atlas, window.width(), window.height(), DemoRenderer::new())?;
+        let renderer = Renderer::new_with_application(gl.clone(), atlas, window.width(), window.height(), MeshRenderer::new())?;
         Ok(Self { renderer, gl, context: webgl, window })
     }
     /// SDL's cheap owned clone keeps polling available while render state is temporarily detached.
@@ -171,7 +171,7 @@ impl Gpu {
                         content_area: local_rect(*rect),
                         view: local_rect(*clip),
                     },
-                    DemoCommand::DrawMesh(item.clone()),
+                    MeshCommand::DrawMesh(item.clone()),
                 ),
             }
         }

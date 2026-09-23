@@ -1,4 +1,4 @@
-//! WGPU implementation of the full demo's mesh renderer.
+//! WGPU implementation of the reusable mesh renderer.
 
 use std::{mem, slice};
 
@@ -6,32 +6,32 @@ use neocogi_render_core::prelude::Recti;
 use neocogi_render_wgpu::{APPLICATION_DEPTH_FORMAT, WgpuApplicationPrepareContext, WgpuApplicationRenderer};
 use wgpu::util::DeviceExt;
 
-use crate::{DemoCommand, MeshSubmission, MeshVertex};
+use crate::{MeshCommand, MeshSubmission, MeshVertex};
 
-/// Application renderer owning the demo's WGPU mesh pipeline and prepared frame resources.
-pub struct DemoRenderer {
+/// Application renderer owning the mesh renderer's WGPU mesh pipeline and prepared frame resources.
+pub struct MeshRenderer {
     /// Pipeline state recreated only if the surface color format changes.
     pipeline: Option<MeshPipeline>,
     /// GPU buffers aligned one-for-one with application commands in the active frame.
     prepared: Vec<Option<PreparedMesh>>,
 }
 
-impl DemoRenderer {
+impl MeshRenderer {
     /// Creates an empty renderer whose resources are allocated during frame preparation.
     pub fn new() -> Self {
         Self { pipeline: None, prepared: Vec::new() }
     }
 }
 
-impl Default for DemoRenderer {
-    /// Uses the same lazy resource construction as [`DemoRenderer::new`].
+impl Default for MeshRenderer {
+    /// Uses the same lazy resource construction as [`MeshRenderer::new`].
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl WgpuApplicationRenderer for DemoRenderer {
-    type Command = DemoCommand;
+impl WgpuApplicationRenderer for MeshRenderer {
+    type Command = MeshCommand;
 
     /// Builds native buffers and uniforms before the shared render pass borrows them.
     fn prepare(&mut self, context: WgpuApplicationPrepareContext<'_>, commands: &[&Self::Command]) -> Result<(), String> {
@@ -51,10 +51,10 @@ impl WgpuApplicationRenderer for DemoRenderer {
         self.prepared.reserve(commands.len());
         for command in commands {
             let prepared = match command {
-                DemoCommand::DrawMesh(submission) if !submission.mesh.is_empty() => {
+                MeshCommand::DrawMesh(submission) if !submission.mesh.is_empty() => {
                     Some(PreparedMesh::new(context.device, &pipeline.bind_group_layout, submission))
                 }
-                DemoCommand::DrawMesh(_) => None,
+                MeshCommand::DrawMesh(_) => None,
             };
             self.prepared.push(prepared);
         }
@@ -103,14 +103,14 @@ struct MeshPipeline {
 }
 
 impl MeshPipeline {
-    /// Creates the demo mesh shader, uniform layout, and compatible graphics pipeline.
+    /// Creates the scene mesh shader, uniform layout, and compatible graphics pipeline.
     fn new(device: &wgpu::Device, color_format: wgpu::TextureFormat) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("demo.mesh.shader"),
+            label: Some("render.mesh.shader"),
             source: wgpu::ShaderSource::Wgsl(MESH_SHADER.into()),
         });
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("demo.mesh.bind_group_layout"),
+            label: Some("render.mesh.bind_group_layout"),
             entries: &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
                 visibility: wgpu::ShaderStages::VERTEX,
@@ -123,12 +123,12 @@ impl MeshPipeline {
             }],
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("demo.mesh.pipeline_layout"),
+            label: Some("render.mesh.pipeline_layout"),
             bind_group_layouts: &[Some(&bind_group_layout)],
             immediate_size: 0,
         });
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("demo.mesh.pipeline"),
+            label: Some("render.mesh.pipeline"),
             layout: Some(&pipeline_layout),
             vertex: wgpu::VertexState {
                 module: &shader,
@@ -196,9 +196,9 @@ impl MeshPipeline {
 
 /// GPU resources prepared for one application mesh command.
 struct PreparedMesh {
-    /// Immutable vertex buffer populated from the demo-owned mesh storage.
+    /// Immutable vertex buffer populated from the scene-owned mesh storage.
     vertex_buffer: wgpu::Buffer,
-    /// Immutable unsigned-32 index buffer populated from the demo-owned triangle list.
+    /// Immutable unsigned-32 index buffer populated from the scene-owned triangle list.
     index_buffer: wgpu::Buffer,
     /// Uniform allocation retained because the bind group references it.
     _uniform_buffer: wgpu::Buffer,
@@ -212,12 +212,12 @@ impl PreparedMesh {
     /// Uploads immutable geometry and transform data for one frame command.
     fn new(device: &wgpu::Device, layout: &wgpu::BindGroupLayout, submission: &MeshSubmission) -> Self {
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("demo.mesh.vertices"),
+            label: Some("render.mesh.vertices"),
             contents: bytes(submission.mesh.vertices()),
             usage: wgpu::BufferUsages::VERTEX,
         });
         let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("demo.mesh.indices"),
+            label: Some("render.mesh.indices"),
             contents: bytes(submission.mesh.indices()),
             usage: wgpu::BufferUsages::INDEX,
         });
@@ -226,12 +226,12 @@ impl PreparedMesh {
             view_model: matrix_values(&submission.view_model),
         };
         let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("demo.mesh.uniforms"),
+            label: Some("render.mesh.uniforms"),
             contents: bytes(std::slice::from_ref(&uniforms)),
             usage: wgpu::BufferUsages::UNIFORM,
         });
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("demo.mesh.bind_group"),
+            label: Some("render.mesh.bind_group"),
             layout,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
@@ -286,7 +286,7 @@ fn surface_rect(rect: Recti, target: (u32, u32)) -> Option<(u32, u32, u32, u32)>
     (right > left && bottom > top).then_some((left, top, right - left, bottom - top))
 }
 
-/// WGPU shader transforming and shading real demo mesh data on the GPU.
+/// WGPU shader transforming and shading real scene mesh data on the GPU.
 const MESH_SHADER: &str = r#"
 struct MeshUniforms {
     pvm: mat4x4<f32>,

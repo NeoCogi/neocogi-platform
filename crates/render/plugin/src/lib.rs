@@ -19,8 +19,8 @@ compile_error!("the webgl renderer plugin requires wasm32");
 compile_error!("wasm32 rendering requires the webgl feature");
 use neocogi_platform_contracts::*;
 use neocogi_renderer_contracts::*;
-use neocogi_demo_render_contracts::*;
-use neocogi_demo_renderer::{MeshBuffers, MeshSubmission};
+use neocogi_render_mesh_contracts::*;
+use neocogi_render_mesh::{MeshBuffers, MeshSubmission};
 use neocogi_render_support::com::{PreparedFrame, Resources};
 use neocogi_render_core::TextureId;
 use neocogi_com::{
@@ -181,7 +181,7 @@ impl Drop for RenderAccess<'_> {
         *self.device.render.borrow_mut() = Some(state);
     }
 }
-#[com_object(interfaces(IPlatformWindow, IRenderer, ITextureFactory, IRenderSurfaceFactory, IDemoScenes, IRenderDiagnostics))]
+#[com_object(interfaces(IPlatformWindow, IRenderer, ITextureFactory, IRenderSurfaceFactory, IMeshScenes, IRenderDiagnostics))]
 /// One COM identity exposes OS polling, rendering and concrete resource factories.
 struct WindowObject {
     /// Resources retain this same native owner after the public window interface is released.

@@ -1,4 +1,4 @@
-//! Vulkan implementation of the full demo's mesh renderer.
+//! Vulkan implementation of the reusable mesh renderer.
 
 use std::{io::Cursor, mem, ptr, rc::Rc, slice, sync::Arc};
 
@@ -7,14 +7,14 @@ use neocogi_render_core::prelude::Recti;
 use neocogi_render_vulkan::{VulkanApplicationPrepareContext, VulkanApplicationRenderContext, VulkanApplicationRenderer, VulkanApplicationResult};
 use rs_math3d::Mat4f;
 
-use crate::{DemoCommand, MeshBuffers, MeshVertex};
+use crate::{MeshCommand, MeshBuffers, MeshVertex};
 
 #[cfg(test)]
 #[path = "vulkan_tests.rs"]
 mod tests;
 
-/// Application renderer owning the full demo's Vulkan mesh resources.
-pub struct DemoRenderer {
+/// Application renderer owning the reusable Vulkan mesh resources.
+pub struct MeshRenderer {
     /// Pipeline compatible with the current backend render-pass generation.
     pipeline: Option<MeshPipeline>,
     /// One immutable GPU upload per retained CPU mesh, independent of draw order and visibility.
@@ -27,7 +27,7 @@ pub struct DemoRenderer {
     pipeline_generation: Option<u64>,
 }
 
-impl DemoRenderer {
+impl MeshRenderer {
     /// Creates an empty renderer whose Vulkan objects are allocated on first use.
     pub fn new() -> Self {
         Self {
@@ -46,7 +46,7 @@ impl DemoRenderer {
         memory_properties: &vk::PhysicalDeviceMemoryProperties,
         frame_index: usize,
         frames_in_flight: usize,
-        commands: &[&DemoCommand],
+        commands: &[&MeshCommand],
     ) -> VulkanApplicationResult<()> {
         if frame_index >= frames_in_flight {
             return Err(format!("invalid Vulkan application frame slot {frame_index}"));
@@ -64,7 +64,7 @@ impl DemoRenderer {
         self.meshes.retain(|mesh| mesh.source_is_retained());
         frame.reserve(commands.len());
         for command in commands {
-            let DemoCommand::DrawMesh(submission) = command;
+            let MeshCommand::DrawMesh(submission) = command;
             let prepared = match &submission.mesh {
                 mesh if mesh.is_empty() => None,
                 mesh => {
@@ -87,15 +87,15 @@ impl DemoRenderer {
     }
 }
 
-impl Default for DemoRenderer {
-    /// Uses the same lazy native-resource construction as [`DemoRenderer::new`].
+impl Default for MeshRenderer {
+    /// Uses the same lazy native-resource construction as [`MeshRenderer::new`].
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl VulkanApplicationRenderer for DemoRenderer {
-    type Command = DemoCommand;
+impl VulkanApplicationRenderer for MeshRenderer {
+    type Command = MeshCommand;
 
     /// Rebuilds render-pass-dependent state and resolves the active slot's shared mesh uploads.
     fn prepare(&mut self, context: VulkanApplicationPrepareContext<'_>, commands: &[&Self::Command]) -> VulkanApplicationResult<()> {
@@ -123,7 +123,7 @@ impl VulkanApplicationRenderer for DemoRenderer {
         command_index: usize,
         command: &Self::Command,
     ) -> VulkanApplicationResult<()> {
-        let DemoCommand::DrawMesh(submission) = command;
+        let MeshCommand::DrawMesh(submission) = command;
         let Some(prepared) = self
             .prepared_frames
             .get(self.active_frame)
@@ -180,7 +180,7 @@ impl VulkanApplicationRenderer for DemoRenderer {
     }
 }
 
-/// Render-pass-compatible Vulkan pipeline owned entirely by the demo.
+/// Render-pass-compatible Vulkan pipeline owned entirely by the mesh renderer.
 struct MeshPipeline {
     /// Device dispatch retained so Drop can release native pipeline objects.
     device: ash::Device,
@@ -199,7 +199,7 @@ impl MeshPipeline {
             .size((mem::size_of::<f32>() * 32) as u32);
         let layout_info = vk::PipelineLayoutCreateInfo::default().push_constant_ranges(slice::from_ref(&push_range));
         let layout =
-            unsafe { device.create_pipeline_layout(&layout_info, None) }.map_err(|error| format!("create demo mesh pipeline layout failed: {error:?}"))?;
+            unsafe { device.create_pipeline_layout(&layout_info, None) }.map_err(|error| format!("create scene mesh pipeline layout failed: {error:?}"))?;
 
         let vertex_module = match create_shader_module(device, MESH_VERTEX_SPV) {
             Ok(module) => module,
@@ -293,7 +293,7 @@ impl MeshPipeline {
             Ok(mut pipelines) => pipelines.remove(0),
             Err((_, error)) => {
                 unsafe { device.destroy_pipeline_layout(layout, None) };
-                return Err(format!("create demo mesh graphics pipeline failed: {error:?}"));
+                return Err(format!("create scene mesh graphics pipeline failed: {error:?}"));
             }
         };
         Ok(Self { device: device.clone(), layout, pipeline })
@@ -370,7 +370,7 @@ impl VulkanBuffer {
             .size(data.len() as u64)
             .usage(usage)
             .sharing_mode(vk::SharingMode::EXCLUSIVE);
-        let buffer = unsafe { device.create_buffer(&buffer_info, None) }.map_err(|error| format!("create demo mesh buffer failed: {error:?}"))?;
+        let buffer = unsafe { device.create_buffer(&buffer_info, None) }.map_err(|error| format!("create scene mesh buffer failed: {error:?}"))?;
         let requirements = unsafe { device.get_buffer_memory_requirements(buffer) };
         let memory_type = match find_memory_type(
             memory_properties,
@@ -380,7 +380,7 @@ impl VulkanBuffer {
             Some(index) => index,
             None => {
                 unsafe { device.destroy_buffer(buffer, None) };
-                return Err("no coherent host-visible Vulkan memory type is available for demo mesh buffers".into());
+                return Err("no coherent host-visible Vulkan memory type is available for scene mesh buffers".into());
             }
         };
         let allocation_info = vk::MemoryAllocateInfo::default()
@@ -390,7 +390,7 @@ impl VulkanBuffer {
             Ok(memory) => memory,
             Err(error) => {
                 unsafe { device.destroy_buffer(buffer, None) };
-                return Err(format!("allocate demo mesh buffer memory failed: {error:?}"));
+                return Err(format!("allocate scene mesh buffer memory failed: {error:?}"));
             }
         };
         if let Err(error) = unsafe { device.bind_buffer_memory(buffer, memory, 0) } {
@@ -398,7 +398,7 @@ impl VulkanBuffer {
                 device.free_memory(memory, None);
                 device.destroy_buffer(buffer, None);
             }
-            return Err(format!("bind demo mesh buffer memory failed: {error:?}"));
+            return Err(format!("bind scene mesh buffer memory failed: {error:?}"));
         }
         let mapped = match unsafe { device.map_memory(memory, 0, data.len() as u64, vk::MemoryMapFlags::empty()) } {
             Ok(mapped) => mapped,
@@ -407,7 +407,7 @@ impl VulkanBuffer {
                     device.free_memory(memory, None);
                     device.destroy_buffer(buffer, None);
                 }
-                return Err(format!("map demo mesh buffer memory failed: {error:?}"));
+                return Err(format!("map scene mesh buffer memory failed: {error:?}"));
             }
         };
         unsafe {
@@ -439,9 +439,9 @@ fn find_memory_type(properties: &vk::PhysicalDeviceMemoryProperties, accepted_bi
 
 /// Creates one shader module from checked SPIR-V bytes.
 fn create_shader_module(device: &ash::Device, code: &[u8]) -> VulkanApplicationResult<vk::ShaderModule> {
-    let words = read_spv(&mut Cursor::new(code)).map_err(|error| format!("read demo mesh SPIR-V failed: {error:?}"))?;
+    let words = read_spv(&mut Cursor::new(code)).map_err(|error| format!("read scene mesh SPIR-V failed: {error:?}"))?;
     let info = vk::ShaderModuleCreateInfo::default().code(&words);
-    unsafe { device.create_shader_module(&info, None) }.map_err(|error| format!("create demo mesh shader module failed: {error:?}"))
+    unsafe { device.create_shader_module(&info, None) }.map_err(|error| format!("create scene mesh shader module failed: {error:?}"))
 }
 
 /// Converts a logical rectangle into a clamped top-left Vulkan surface rectangle.
@@ -486,7 +486,7 @@ fn opengl_to_vulkan_clip_matrix() -> Mat4f {
     )
 }
 
-/// Demo-owned vertex SPIR-V embedded into the Vulkan application renderer.
+/// Mesh-renderer-owned vertex SPIR-V embedded into the Vulkan application renderer.
 const MESH_VERTEX_SPV: &[u8] = include_bytes!("../shaders/mesh.vert.spv");
-/// Demo-owned fragment SPIR-V embedded into the Vulkan application renderer.
+/// Mesh-renderer-owned fragment SPIR-V embedded into the Vulkan application renderer.
 const MESH_FRAGMENT_SPV: &[u8] = include_bytes!("../shaders/mesh.frag.spv");
