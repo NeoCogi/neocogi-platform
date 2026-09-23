@@ -77,7 +77,25 @@ incremental = false
 [workspace.metadata.neocogi]
 default-assembly = "full"
 
+
+# Shared selectable policies; assemblies opt in explicitly and keep resource choices local.
+[workspace.metadata.neocogi.variants.glow]
+application-features = ["glow"]
+component-features.neocogi-render-plugin = ["dynamic-plugin", "glow"]
+
+[workspace.metadata.neocogi.variants.vulkan]
+application-features = ["vulkan"]
+component-features.neocogi-render-plugin = ["dynamic-plugin", "vulkan"]
+
+[workspace.metadata.neocogi.variants.wgpu]
+application-features = ["wgpu"]
+component-features.neocogi-render-plugin = ["dynamic-plugin", "wgpu"]
+
+[workspace.metadata.neocogi.variants.monolith]
+linkage = "monolith"
+
 [workspace.metadata.neocogi.assemblies.full]
+use-variants = ["glow", "vulkan", "wgpu", "monolith"]
 application = { package = "neocogi-demo-full", bin = "neocogi-demo-full", default-features = false, features = ["glow"] }
 runtime = { package = "neocogi-com-runtime", default-features = false }
 plugins = [
@@ -93,28 +111,14 @@ assets = [
     { from = "demos/full/assets/FACEPALM.png", to = "assets/FACEPALM.png" },
 ]
 
-[workspace.metadata.neocogi.assemblies.full.variants.glow]
-application-features = ["glow"]
-component-features.neocogi-render-plugin = ["dynamic-plugin", "glow"]
-
-[workspace.metadata.neocogi.assemblies.full.variants.vulkan]
-application-features = ["vulkan"]
-component-features.neocogi-render-plugin = ["dynamic-plugin", "vulkan"]
-
-[workspace.metadata.neocogi.assemblies.full.variants.wgpu]
-application-features = ["wgpu"]
-component-features.neocogi-render-plugin = ["dynamic-plugin", "wgpu"]
-
 [workspace.metadata.neocogi.assemblies.full.variants.embedded]
 add-application-features = ["embed-assets"]
 assets = []
 component-features.neocogi-gfx = ["dynamic-plugin"]
 component-features.neocogi-skin = ["dynamic-plugin"]
 
-[workspace.metadata.neocogi.assemblies.full.variants.monolith]
-linkage = "monolith"
-
 [workspace.metadata.neocogi.assemblies.simple]
+use-variants = ["glow", "vulkan", "wgpu", "monolith"]
 application = { package = "neocogi-demo-basic", bin = "neocogi-demo-simple", default-features = false, features = ["glow"] }
 runtime = { package = "neocogi-com-runtime", default-features = false }
 plugins = [
@@ -127,27 +131,13 @@ assets = [
     { from = "assets", to = "assets" },
 ]
 
-[workspace.metadata.neocogi.assemblies.simple.variants.glow]
-application-features = ["glow"]
-component-features.neocogi-render-plugin = ["dynamic-plugin", "glow"]
-
-[workspace.metadata.neocogi.assemblies.simple.variants.vulkan]
-application-features = ["vulkan"]
-component-features.neocogi-render-plugin = ["dynamic-plugin", "vulkan"]
-
-[workspace.metadata.neocogi.assemblies.simple.variants.wgpu]
-application-features = ["wgpu"]
-component-features.neocogi-render-plugin = ["dynamic-plugin", "wgpu"]
-
 [workspace.metadata.neocogi.assemblies.simple.variants.embedded]
 add-application-features = ["embed-assets"]
 assets = []
 component-features.neocogi-gfx = ["dynamic-plugin"]
 
-[workspace.metadata.neocogi.assemblies.simple.variants.monolith]
-linkage = "monolith"
-
 [workspace.metadata.neocogi.assemblies.calculator]
+use-variants = ["glow", "vulkan", "wgpu", "monolith"]
 application = { package = "neocogi-demo-basic", bin = "neocogi-demo-calculator", default-features = false, features = ["glow"] }
 runtime = { package = "neocogi-com-runtime", default-features = false }
 plugins = [
@@ -160,27 +150,13 @@ assets = [
     { from = "assets", to = "assets" },
 ]
 
-[workspace.metadata.neocogi.assemblies.calculator.variants.glow]
-application-features = ["glow"]
-component-features.neocogi-render-plugin = ["dynamic-plugin", "glow"]
-
-[workspace.metadata.neocogi.assemblies.calculator.variants.vulkan]
-application-features = ["vulkan"]
-component-features.neocogi-render-plugin = ["dynamic-plugin", "vulkan"]
-
-[workspace.metadata.neocogi.assemblies.calculator.variants.wgpu]
-application-features = ["wgpu"]
-component-features.neocogi-render-plugin = ["dynamic-plugin", "wgpu"]
-
 [workspace.metadata.neocogi.assemblies.calculator.variants.embedded]
 add-application-features = ["embed-assets"]
 assets = []
 component-features.neocogi-gfx = ["dynamic-plugin"]
 
-[workspace.metadata.neocogi.assemblies.calculator.variants.monolith]
-linkage = "monolith"
-
 [workspace.metadata.neocogi.assemblies.backend-frame-cube]
+use-variants = ["glow", "vulkan", "wgpu", "monolith"]
 application = { package = "neocogi-demo-basic", bin = "neocogi-demo-cube", default-features = false, features = ["glow"] }
 runtime = { package = "neocogi-com-runtime", default-features = false }
 plugins = [
@@ -193,27 +169,13 @@ assets = [
     { from = "assets", to = "assets" },
 ]
 
-[workspace.metadata.neocogi.assemblies.backend-frame-cube.variants.glow]
-application-features = ["glow"]
-component-features.neocogi-render-plugin = ["dynamic-plugin", "glow"]
-
-[workspace.metadata.neocogi.assemblies.backend-frame-cube.variants.vulkan]
-application-features = ["vulkan"]
-component-features.neocogi-render-plugin = ["dynamic-plugin", "vulkan"]
-
-[workspace.metadata.neocogi.assemblies.backend-frame-cube.variants.wgpu]
-application-features = ["wgpu"]
-component-features.neocogi-render-plugin = ["dynamic-plugin", "wgpu"]
-
 [workspace.metadata.neocogi.assemblies.backend-frame-cube.variants.embedded]
 add-application-features = ["embed-assets"]
 assets = []
 component-features.neocogi-gfx = ["dynamic-plugin"]
 
-[workspace.metadata.neocogi.assemblies.backend-frame-cube.variants.monolith]
-linkage = "monolith"
-
 [workspace.metadata.neocogi.assemblies.smoke]
+use-variants = ["glow", "vulkan", "wgpu", "monolith"]
 application = { package = "neocogi-demo-smoke", bin = "neocogi-demo-smoke", default-features = false, features = ["glow"] }
 runtime = { package = "neocogi-com-runtime", default-features = false }
 plugins = [
@@ -228,32 +190,18 @@ assets = [
     { from = "assets", to = "assets" },
 ]
 
-[workspace.metadata.neocogi.assemblies.smoke.variants.glow]
-application-features = ["glow"]
-component-features.neocogi-render-plugin = ["dynamic-plugin", "glow"]
-
-[workspace.metadata.neocogi.assemblies.smoke.variants.vulkan]
-application-features = ["vulkan"]
-component-features.neocogi-render-plugin = ["dynamic-plugin", "vulkan"]
-
-[workspace.metadata.neocogi.assemblies.smoke.variants.wgpu]
-application-features = ["wgpu"]
-component-features.neocogi-render-plugin = ["dynamic-plugin", "wgpu"]
-
 [workspace.metadata.neocogi.assemblies.smoke.variants.embedded]
 add-application-features = ["embed-assets"]
 assets = []
 omit-plugins = ["neocogi-skin"]
 component-features.neocogi-gfx = ["dynamic-plugin"]
 
-[workspace.metadata.neocogi.assemblies.smoke.variants.monolith]
-linkage = "monolith"
-
 [workspace.metadata.neocogi.assemblies.smoke.variants.extension]
 add-application-features = ["extension"]
 additional-plugins = [{ package = "neocogi-example-ui-extension", features = ["dynamic-plugin"] }]
 
 [workspace.metadata.neocogi.assemblies.theme-editor]
+use-variants = ["glow", "vulkan", "wgpu", "monolith"]
 application = { package = "neocogi-theme-editor", bin = "neocogi-theme-editor", default-features = false, features = ["glow"] }
 runtime = { package = "neocogi-com-runtime", default-features = false }
 plugins = [
@@ -264,22 +212,12 @@ plugins = [
 ]
 assets = [{ from = "assets", to = "assets" }, { from = "themes", to = "themes" }]
 
-[workspace.metadata.neocogi.assemblies.theme-editor.variants.monolith]
-linkage = "monolith"
-
 [workspace.metadata.neocogi.assemblies.theme-editor.variants.embedded]
 add-application-features = ["embed-assets"]
 assets = []
 
-[workspace.metadata.neocogi.assemblies.theme-editor.variants.wgpu]
-application-features = ["wgpu"]
-component-features.neocogi-render-plugin = ["dynamic-plugin", "wgpu"]
-
-[workspace.metadata.neocogi.assemblies.theme-editor.variants.vulkan]
-application-features = ["vulkan"]
-component-features.neocogi-render-plugin = ["dynamic-plugin", "vulkan"]
-
 [workspace.metadata.neocogi.assemblies.runtime-ui]
+use-variants = ["glow", "vulkan", "wgpu", "monolith"]
 application = { package = "neocogi-runtime-ui-example", bin = "neocogi-example-ui", default-features = false, features = ["glow"] }
 runtime = { package = "neocogi-com-runtime", default-features = false }
 plugins = [
@@ -290,22 +228,12 @@ plugins = [
 ]
 assets = [{ from = "assets", to = "assets" }, { from = "themes", to = "themes" }]
 
-[workspace.metadata.neocogi.assemblies.runtime-ui.variants.monolith]
-linkage = "monolith"
-
 [workspace.metadata.neocogi.assemblies.runtime-ui.variants.embedded]
 add-application-features = ["embed-assets"]
 assets = []
 
-[workspace.metadata.neocogi.assemblies.runtime-ui.variants.wgpu]
-application-features = ["wgpu"]
-component-features.neocogi-render-plugin = ["dynamic-plugin", "wgpu"]
-
-[workspace.metadata.neocogi.assemblies.runtime-ui.variants.vulkan]
-application-features = ["vulkan"]
-component-features.neocogi-render-plugin = ["dynamic-plugin", "vulkan"]
-
 [workspace.metadata.neocogi.assemblies.ui-designer]
+use-variants = ["glow", "vulkan", "wgpu", "monolith"]
 application = { package = "neocogi-ui-designer", bin = "neocogi-ui-designer", default-features = false, features = ["glow"] }
 runtime = { package = "neocogi-com-runtime", default-features = false }
 plugins = [
@@ -316,17 +244,6 @@ plugins = [
 ]
 assets = [{ from = "assets", to = "assets" }, { from = "tools/ui-designer/examples", to = "examples/ui" }]
 
-[workspace.metadata.neocogi.assemblies.ui-designer.variants.monolith]
-linkage = "monolith"
-
 [workspace.metadata.neocogi.assemblies.ui-designer.variants.embedded]
 add-application-features = ["embed-assets"]
 assets = []
-
-[workspace.metadata.neocogi.assemblies.ui-designer.variants.wgpu]
-application-features = ["wgpu"]
-component-features.neocogi-render-plugin = ["dynamic-plugin", "wgpu"]
-
-[workspace.metadata.neocogi.assemblies.ui-designer.variants.vulkan]
-application-features = ["vulkan"]
-component-features.neocogi-render-plugin = ["dynamic-plugin", "vulkan"]
