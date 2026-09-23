@@ -124,9 +124,13 @@ impl WgpuApplicationRenderer for () {
 
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
+/// Fully initialized packed vertex consumed by the WGPU input layout.
 struct GpuVertex {
+    /// Two screen-space coordinates at byte offset zero.
     pos: [f32; 2],
+    /// Two texture coordinates immediately following position.
     uv: [f32; 2],
+    /// Four packed color channels complete the record without tail padding.
     color: [u8; 4],
 }
 
@@ -146,9 +150,23 @@ impl GpuVertex {
 
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
+/// Four initialized floats matching the shader’s sixteen-byte uniform block.
 struct Uniforms {
+    /// Physical surface width and height used to map pixels to clip coordinates.
     screen_size: [f32; 2],
+    /// Explicit initialized padding required by the shader uniform alignment.
     _pad: [f32; 2],
+}
+
+impl Uniforms {
+    /// Encodes the exact shader block without reading a Rust object representation.
+    fn bytes(&self) -> [u8; 16] {
+        let mut bytes = [0; 16];
+        for (slot, value) in bytes.chunks_exact_mut(4).zip(self.screen_size.iter().chain(&self._pad)) {
+            slot.copy_from_slice(&value.to_ne_bytes());
+        }
+        bytes
+    }
 }
 
 #[allow(clippy::enum_variant_names)] // The prefix makes queued draw operations explicit at use sites.
@@ -279,16 +297,20 @@ where
         }
     }
 
-    /// Reinterprets a plain-old-data value as a byte slice for queue/buffer uploads.
-    fn as_bytes<T>(value: &T) -> &[u8] {
-        // SAFETY: `value` lives for the returned slice lifetime and we preserve size/alignment.
-        unsafe { slice::from_raw_parts((value as *const T).cast::<u8>(), mem::size_of::<T>()) }
-    }
-
-    /// Reinterprets a slice of plain-old-data values as bytes for queue/buffer uploads.
-    fn slice_as_bytes<T>(values: &[T]) -> &[u8] {
-        // SAFETY: same rationale as `as_bytes`, but for contiguous slices.
-        unsafe { slice::from_raw_parts(values.as_ptr().cast::<u8>(), std::mem::size_of_val(values)) }
+    /// Exposes only the concrete packed vertex layout, never arbitrary Rust values.
+    fn vertex_bytes(values: &[GpuVertex]) -> &[u8] {
+        // These compile-time checks cover every byte in the C layout. Adding a field or
+        // changing its alignment cannot silently introduce padding into a safe upload.
+        const {
+            assert!(mem::size_of::<GpuVertex>() == 20);
+            assert!(mem::offset_of!(GpuVertex, pos) == 0);
+            assert!(mem::offset_of!(GpuVertex, uv) == 8);
+            assert!(mem::offset_of!(GpuVertex, color) == 16);
+        }
+        // SAFETY: GpuVertex consists exclusively of initialized float/channel arrays;
+        // the assertions exclude interior/tail padding. The borrowed slice supplies the
+        // allocation extent and lifetime; u8 requires no stronger alignment.
+        unsafe { slice::from_raw_parts(values.as_ptr().cast::<u8>(), mem::size_of_val(values)) }
     }
 
     /// Creates a sampled RGBA texture plus the bind group used to draw with it.
@@ -707,7 +729,7 @@ where
         };
         let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("neocogi.ui.uniforms"),
-            contents: Self::as_bytes(&uniforms),
+            contents: &uniforms.bytes(),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
@@ -812,7 +834,7 @@ where
             screen_size: [self.width.max(1) as f32, self.height.max(1) as f32],
             _pad: [0.0, 0.0],
         };
-        self.queue.write_buffer(&self.uniform_buffer, 0, Self::as_bytes(&uniforms));
+        self.queue.write_buffer(&self.uniform_buffer, 0, &uniforms.bytes());
     }
 
     /// Appends one UI quad to the CPU-side UI vertex batch.
@@ -969,7 +991,7 @@ where
 
             // Pack every draw's vertex payload into one contiguous upload buffer so we only
             // issue one queue.write_buffer call for the entire frame.
-            let bytes = Self::slice_as_bytes(vertices);
+            let bytes = Self::vertex_bytes(vertices);
             let vertex_offset = packed_upload.len() as u64;
             let vertex_size = bytes.len() as u64;
             packed_upload.extend_from_slice(bytes);

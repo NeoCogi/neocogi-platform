@@ -108,17 +108,18 @@ impl RenderVertex {
     }
 
     /// Linearly interpolates every attribute for geometry clipping.
-    pub fn lerp(left: Self, right: Self, amount: f32) -> Self {
-        // Clamp numerical noise at an intersection so clipping cannot
-        // extrapolate a vertex beyond the validated input segment.
+    pub fn lerp(left: Self, right: Self, amount: f64) -> Self {
+        // Keep the clipping fraction and differences wide: subtracting two finite f32
+        // endpoints can overflow in f32 before multiplication restores the range.
+        // A clamped convex combination stays within the finite endpoint interval.
         let amount = amount.clamp(0.0, 1.0);
         let left_color = left.rgba.to_le_bytes();
         let right_color = right.rgba.to_le_bytes();
         Self {
-            x: left.x + (right.x - left.x) * amount,
-            y: left.y + (right.y - left.y) * amount,
-            u: left.u + (right.u - left.u) * amount,
-            v: left.v + (right.v - left.v) * amount,
+            x: (f64::from(left.x) + (f64::from(right.x) - f64::from(left.x)) * amount) as f32,
+            y: (f64::from(left.y) + (f64::from(right.y) - f64::from(left.y)) * amount) as f32,
+            u: (f64::from(left.u) + (f64::from(right.u) - f64::from(left.u)) * amount) as f32,
+            v: (f64::from(left.v) + (f64::from(right.v) - f64::from(left.v)) * amount) as f32,
             rgba: u32::from_le_bytes([
                 Self::lerp_channel(left_color[0], right_color[0], amount),
                 Self::lerp_channel(left_color[1], right_color[1], amount),
@@ -129,10 +130,10 @@ impl RenderVertex {
     }
 
     /// Interpolates one packed channel and rounds it back into byte storage.
-    fn lerp_channel(left: u8, right: u8, amount: f32) -> u8 {
+    fn lerp_channel(left: u8, right: u8, amount: f64) -> u8 {
         // Inputs and the clamped amount make adding one half sufficient for
         // nearest rounding without requiring a `std` floating-point helper.
-        let interpolated = (left as f32) + (right as f32 - left as f32) * amount;
+        let interpolated = f64::from(left) + (f64::from(right) - f64::from(left)) * amount;
         (interpolated + 0.5).clamp(0.0, 255.0) as u8
     }
 }
@@ -155,5 +156,25 @@ impl TextureRegion {
         } else {
             Err(NC_E_INVALID_ARG)
         }
+    }
+}
+
+/// Numerical regressions exercise the contract independently of renderer selection.
+#[cfg(test)]
+mod interpolation_tests {
+    use super::*;
+
+    /// Finite opposite extremes must produce bounded attributes, including at either endpoint.
+    #[test]
+    fn finite_extremes_interpolate_without_overflow() {
+        let left = RenderVertex { x: -f32::MAX, y: f32::MAX, u: -f32::MAX, v: f32::MAX, rgba: 0 };
+        let right = RenderVertex { x: f32::MAX, y: -f32::MAX, u: f32::MAX, v: -f32::MAX, rgba: u32::MAX };
+        for amount in [0.0, 0.25, 0.5, 0.75, 1.0] {
+            let value = RenderVertex::lerp(left, right, amount);
+            assert!([value.x, value.y, value.u, value.v].into_iter().all(f32::is_finite));
+        }
+        let midpoint = RenderVertex::lerp(left, right, 0.5);
+        assert_eq!([midpoint.x, midpoint.y, midpoint.u, midpoint.v], [0.0; 4]);
+        assert_eq!(midpoint.rgba, 0x80808080);
     }
 }
