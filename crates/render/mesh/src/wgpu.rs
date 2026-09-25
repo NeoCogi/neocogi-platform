@@ -1,25 +1,31 @@
 //! WGPU implementation of the reusable mesh renderer.
 
-use std::{mem, slice};
+use std::{mem, rc::Rc, slice};
 
 use neocogi_render_core::prelude::Recti;
 use neocogi_render_wgpu::{APPLICATION_DEPTH_FORMAT, WgpuApplicationPrepareContext, WgpuApplicationRenderer};
 use wgpu::util::DeviceExt;
 
-use crate::{MeshCommand, MeshSubmission, MeshVertex};
+use crate::{MeshBuffers, MeshCommand, MeshSubmission, MeshVertex};
 
 /// Application renderer owning the mesh renderer's WGPU mesh pipeline and prepared frame resources.
 pub struct MeshRenderer {
     /// Pipeline state recreated only if the surface color format changes.
     pipeline: Option<MeshPipeline>,
-    /// GPU buffers aligned one-for-one with application commands in the active frame.
+    /// Immutable geometry uploads shared by retained CPU meshes.
+    meshes: Vec<Rc<MeshGeometry>>,
+    /// Per-draw uniforms aligned one-for-one with commands in the active frame.
     prepared: Vec<Option<PreparedMesh>>,
 }
 
 impl MeshRenderer {
     /// Creates an empty renderer whose resources are allocated during frame preparation.
     pub fn new() -> Self {
-        Self { pipeline: None, prepared: Vec::new() }
+        Self {
+            pipeline: None,
+            meshes: Vec::new(),
+            prepared: Vec::new(),
+        }
     }
 }
 
@@ -48,11 +54,20 @@ impl WgpuApplicationRenderer for MeshRenderer {
         // Dropped WGPU handles remain alive while submitted command buffers reference them. The
         // next prepared vector can therefore replace the previous frame without a CPU wait.
         self.prepared.clear();
+        self.meshes.retain(|mesh| mesh.source.externally_retained());
         self.prepared.reserve(commands.len());
         for command in commands {
             let prepared = match command {
                 MeshCommand::DrawMesh(submission) if !submission.mesh.is_empty() => {
-                    Some(PreparedMesh::new(context.device, &pipeline.bind_group_layout, submission))
+                    let geometry = match self.meshes.iter().find(|mesh| mesh.source.same_storage(&submission.mesh)) {
+                        Some(mesh) => Rc::clone(mesh),
+                        None => {
+                            let mesh = Rc::new(MeshGeometry::new(context.device, &submission.mesh));
+                            self.meshes.push(Rc::clone(&mesh));
+                            mesh
+                        }
+                    };
+                    Some(PreparedMesh::new(context.device, &pipeline.bind_group_layout, geometry, submission))
                 }
                 MeshCommand::DrawMesh(_) => None,
             };
@@ -83,11 +98,11 @@ impl WgpuApplicationRenderer for MeshRenderer {
 
         pass.set_pipeline(&pipeline.pipeline);
         pass.set_bind_group(0, &prepared.bind_group, &[]);
-        pass.set_vertex_buffer(0, prepared.vertex_buffer.slice(..));
-        pass.set_index_buffer(prepared.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+        pass.set_vertex_buffer(0, prepared.geometry.vertex_buffer.slice(..));
+        pass.set_index_buffer(prepared.geometry.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
         pass.set_viewport(viewport.0 as f32, viewport.1 as f32, viewport.2 as f32, viewport.3 as f32, 0.0, 1.0);
         pass.set_scissor_rect(scissor.0, scissor.1, scissor.2, scissor.3);
-        pass.draw_indexed(0..prepared.index_count, 0, 0..1);
+        pass.draw_indexed(0..prepared.geometry.index_count, 0, 0..1);
         Ok(())
     }
 }
@@ -194,33 +209,53 @@ impl MeshPipeline {
     }
 }
 
-/// GPU resources prepared for one application mesh command.
-struct PreparedMesh {
-    /// Immutable vertex buffer populated from the scene-owned mesh storage.
+/// One immutable geometry upload shared by all draws of its retained CPU source.
+struct MeshGeometry {
+    /// Retains allocation identity until all owners release this cache entry.
+    source: MeshBuffers,
+    /// Vertex data uploaded once for this immutable source.
     vertex_buffer: wgpu::Buffer,
-    /// Immutable unsigned-32 index buffer populated from the scene-owned triangle list.
+    /// Triangle indices uploaded once for this immutable source.
     index_buffer: wgpu::Buffer,
-    /// Uniform allocation retained because the bind group references it.
-    _uniform_buffer: wgpu::Buffer,
-    /// Binding exposing projection and normal transforms to the vertex shader.
-    bind_group: wgpu::BindGroup,
-    /// Number of indices issued by the prepared draw.
+    /// Number of indices issued for every draw of this source.
     index_count: u32,
 }
 
-impl PreparedMesh {
-    /// Uploads immutable geometry and transform data for one frame command.
-    fn new(device: &wgpu::Device, layout: &wgpu::BindGroupLayout, submission: &MeshSubmission) -> Self {
+impl MeshGeometry {
+    /// Creates both GPU buffers once for an immutable mesh allocation.
+    fn new(device: &wgpu::Device, source: &MeshBuffers) -> Self {
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("render.mesh.vertices"),
-            contents: bytes(submission.mesh.vertices()),
+            contents: bytes(source.vertices()),
             usage: wgpu::BufferUsages::VERTEX,
         });
         let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("render.mesh.indices"),
-            contents: bytes(submission.mesh.indices()),
+            contents: bytes(source.indices()),
             usage: wgpu::BufferUsages::INDEX,
         });
+        Self {
+            source: source.clone(),
+            vertex_buffer,
+            index_buffer,
+            index_count: source.indices().len() as u32,
+        }
+    }
+}
+
+/// Per-command transforms retain shared geometry while submitted work completes.
+struct PreparedMesh {
+    /// Geometry shared with other draws and previous submitted command buffers.
+    geometry: Rc<MeshGeometry>,
+    /// Uniform allocation retained because the bind group references it.
+    _uniform_buffer: wgpu::Buffer,
+    /// Binding exposing projection and normal transforms to the vertex shader.
+    bind_group: wgpu::BindGroup,
+}
+
+impl PreparedMesh {
+    /// Uploads only changing transform data for one frame command.
+    fn new(device: &wgpu::Device, layout: &wgpu::BindGroupLayout, geometry: Rc<MeshGeometry>, submission: &MeshSubmission) -> Self {
         let uniforms = MeshUniforms {
             pvm: matrix_values(&submission.pvm),
             view_model: matrix_values(&submission.view_model),
@@ -239,11 +274,9 @@ impl PreparedMesh {
             }],
         });
         Self {
-            vertex_buffer,
-            index_buffer,
+            geometry,
             _uniform_buffer: uniform_buffer,
             bind_group,
-            index_count: submission.mesh.indices().len() as u32,
         }
     }
 }

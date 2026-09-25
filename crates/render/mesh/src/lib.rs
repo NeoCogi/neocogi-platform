@@ -54,6 +54,18 @@ impl MeshBuffers {
         &self.indices
     }
 
+    /// Compares immutable allocation identity without hashing the vertex and index contents.
+    pub(crate) fn same_storage(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.vertices, &other.vertices) && Arc::ptr_eq(&self.indices, &other.indices)
+    }
+
+    /// Returns whether a scene or frame command still owns either source array.
+    /// A cache owns exactly one clone, so it may retire an upload when both
+    /// allocation counts fall back to one.
+    pub(crate) fn externally_retained(&self) -> bool {
+        Arc::strong_count(&self.vertices) > 1 || Arc::strong_count(&self.indices) > 1
+    }
+
     /// Returns whether the mesh lacks either vertices or drawable indices.
     pub fn is_empty(&self) -> bool {
         self.vertices.is_empty() || self.indices.is_empty()
@@ -75,4 +87,22 @@ pub struct MeshSubmission {
 pub enum MeshCommand {
     /// Draws a three-dimensional mesh in the custom widget allocation supplied by neocogi.ui.
     DrawMesh(MeshSubmission),
+}
+
+#[cfg(test)]
+mod identity_tests {
+    use super::*;
+
+    /// Upload caches reuse clones and retire their source after the last external owner.
+    #[test]
+    fn immutable_mesh_identity_tracks_shared_allocations() {
+        let source = MeshBuffers::from_vecs(vec![MeshVertex::default()], vec![0]);
+        let same_values = MeshBuffers::from_vecs(vec![MeshVertex::default()], vec![0]);
+        assert!(!source.same_storage(&same_values));
+        let retained = source.clone();
+        assert!(source.same_storage(&retained));
+        assert!(source.externally_retained());
+        drop(retained);
+        assert!(!source.externally_retained());
+    }
 }

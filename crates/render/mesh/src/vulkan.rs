@@ -1,6 +1,6 @@
 //! Vulkan implementation of the reusable mesh renderer.
 
-use std::{io::Cursor, mem, ptr, rc::Rc, slice, sync::Arc};
+use std::{io::Cursor, mem, ptr, rc::Rc, slice};
 
 use ash::{util::read_spv, vk};
 use neocogi_render_core::prelude::Recti;
@@ -337,14 +337,14 @@ impl PreparedMesh {
 
     /// Compares both immutable allocations without hashing or reading their potentially large data.
     fn matches(&self, mesh: &MeshBuffers) -> bool {
-        Arc::ptr_eq(&self.source.vertices, &mesh.vertices) && Arc::ptr_eq(&self.source.indices, &mesh.indices)
+        self.source.same_storage(mesh)
     }
 
     /// Keeps hidden meshes cached while a scene or CPU command still owns their source arrays.
     fn source_is_retained(&self) -> bool {
         // This upload owns exactly one clone. Frame references clone Rc<PreparedMesh>, not its
         // source, so they delay GPU destruction without making retired CPU meshes look live.
-        Arc::strong_count(&self.source.vertices) > 1 || Arc::strong_count(&self.source.indices) > 1
+        self.source.externally_retained()
     }
 }
 

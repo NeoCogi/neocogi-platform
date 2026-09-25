@@ -6,7 +6,7 @@ use glow::HasContext;
 use neocogi_render_core::{RenderItemArgs, prelude::Recti};
 use neocogi_render_glow::{GlApplicationRenderContext, GlApplicationRenderer, create_program};
 
-use crate::{MeshCommand, MeshSubmission, MeshVertex};
+use crate::{MeshBuffers, MeshCommand, MeshSubmission, MeshVertex};
 
 /// Application renderer owning the mesh renderer's GL program and mesh buffers.
 pub struct MeshRenderer {
@@ -55,14 +55,12 @@ struct GlMeshResources {
     program: glow::Program,
     /// Vertex array recording the scene mesh's attribute and buffer bindings.
     vertex_array: glow::VertexArray,
-    /// Dynamic buffer receiving application-owned mesh vertices.
-    vertex_buffer: glow::Buffer,
-    /// Dynamic buffer receiving application-owned triangle indices.
-    index_buffer: glow::Buffer,
+    /// Immutable GPU uploads indexed by retained CPU allocation identity.
+    meshes: Vec<GlMesh>,
 }
 
 impl GlMeshResources {
-    /// Allocates the application pipeline and empty native buffers transactionally.
+    /// Allocates the application pipeline; immutable buffers are lazy per mesh.
     fn new(gl: Rc<glow::Context>) -> Result<Self, String> {
         let program = create_program(&gl, MESH_VERTEX_SHADER, MESH_FRAGMENT_SHADER).map_err(|error| error.to_string())?;
         let vertex_array = match unsafe { gl.create_vertex_array() } {
@@ -75,38 +73,15 @@ impl GlMeshResources {
                 return Err(format!("create mesh vertex array failed: {error}"));
             }
         };
-        let vertex_buffer = match unsafe { gl.create_buffer() } {
-            Ok(buffer) => buffer,
-            Err(error) => {
-                unsafe {
-                    gl.delete_vertex_array(vertex_array);
-                    gl.delete_program(program);
-                }
-                return Err(format!("create mesh vertex buffer failed: {error}"));
-            }
-        };
-        let index_buffer = match unsafe { gl.create_buffer() } {
-            Ok(buffer) => buffer,
-            Err(error) => {
-                unsafe {
-                    gl.delete_buffer(vertex_buffer);
-                    gl.delete_vertex_array(vertex_array);
-                    gl.delete_program(program);
-                }
-                return Err(format!("create mesh index buffer failed: {error}"));
-            }
-        };
-
         Ok(Self {
             gl,
             program,
             vertex_array,
-            vertex_buffer,
-            index_buffer,
+            meshes: Vec::new(),
         })
     }
 
-    /// Uploads one mesh and records a native indexed draw in the widget's viewport and clip.
+    /// Binds cached geometry and records an indexed draw in the widget's viewport and clip.
     fn draw(&mut self, framebuffer_size: (u32, u32), args: RenderItemArgs, submission: &MeshSubmission) -> Result<(), String> {
         if submission.mesh.is_empty() {
             return Ok(());
@@ -118,6 +93,15 @@ impl GlMeshResources {
             return Ok(());
         };
 
+        self.meshes.retain(|mesh| mesh.source.externally_retained());
+        let mesh_index = match self.meshes.iter().position(|mesh| mesh.source.same_storage(&submission.mesh)) {
+            Some(index) => index,
+            None => {
+                self.meshes.push(GlMesh::new(self.gl.clone(), &submission.mesh)?);
+                self.meshes.len() - 1
+            }
+        };
+        let mesh = &self.meshes[mesh_index];
         let gl = &self.gl;
         unsafe {
             // The application's viewport is independent of the UI projection. Its scissor both
@@ -135,10 +119,8 @@ impl GlMeshResources {
 
             gl.use_program(Some(self.program));
             gl.bind_vertex_array(Some(self.vertex_array));
-            gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.vertex_buffer));
-            gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, bytes(submission.mesh.vertices()), glow::DYNAMIC_DRAW);
-            gl.bind_buffer(glow::ELEMENT_ARRAY_BUFFER, Some(self.index_buffer));
-            gl.buffer_data_u8_slice(glow::ELEMENT_ARRAY_BUFFER, bytes(submission.mesh.indices()), glow::DYNAMIC_DRAW);
+            gl.bind_buffer(glow::ARRAY_BUFFER, Some(mesh.vertex_buffer));
+            gl.bind_buffer(glow::ELEMENT_ARRAY_BUFFER, Some(mesh.index_buffer));
 
             // MeshVertex and its rs-math3d vectors are repr(C), so these offsets match their float fields.
             gl.enable_vertex_attrib_array(0);
@@ -150,7 +132,7 @@ impl GlMeshResources {
 
             set_matrix(gl, self.program, "uPvm", &submission.pvm)?;
             set_matrix(gl, self.program, "uViewModel", &submission.view_model)?;
-            gl.draw_elements(glow::TRIANGLES, submission.mesh.indices().len() as i32, glow::UNSIGNED_INT, 0);
+            gl.draw_elements(glow::TRIANGLES, mesh.index_count, glow::UNSIGNED_INT, 0);
 
             gl.bind_vertex_array(None);
             gl.use_program(None);
@@ -163,10 +145,64 @@ impl Drop for GlMeshResources {
     /// Deletes application-owned GL handles while the retained shared context is still alive.
     fn drop(&mut self) {
         unsafe {
-            self.gl.delete_buffer(self.index_buffer);
-            self.gl.delete_buffer(self.vertex_buffer);
             self.gl.delete_vertex_array(self.vertex_array);
             self.gl.delete_program(self.program);
+        }
+    }
+}
+
+/// One immutable GL upload retained while its source mesh remains in a scene.
+struct GlMesh {
+    /// Keeps the GL context alive through deletion of these buffer handles.
+    gl: Rc<glow::Context>,
+    /// Source allocation identity, without copying vertex or index contents.
+    source: MeshBuffers,
+    /// Static vertex buffer uploaded once.
+    vertex_buffer: glow::Buffer,
+    /// Static index buffer uploaded once.
+    index_buffer: glow::Buffer,
+    /// Number of indices supplied to the indexed draw.
+    index_count: i32,
+}
+
+impl GlMesh {
+    /// Allocates and uploads immutable geometry, rolling back partial handle creation.
+    fn new(gl: Rc<glow::Context>, source: &MeshBuffers) -> Result<Self, String> {
+        let vertex_buffer = unsafe { gl.create_buffer() }.map_err(|error| format!("create mesh vertex buffer failed: {error}"))?;
+        let index_buffer = match unsafe { gl.create_buffer() } {
+            Ok(buffer) => buffer,
+            Err(error) => {
+                unsafe {
+                    gl.delete_buffer(vertex_buffer);
+                }
+                return Err(format!("create mesh index buffer failed: {error}"));
+            }
+        };
+        unsafe {
+            gl.bind_buffer(glow::ARRAY_BUFFER, Some(vertex_buffer));
+            gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, bytes(source.vertices()), glow::STATIC_DRAW);
+            // Upload through ARRAY_BUFFER so preparation does not mutate the
+            // renderer's vertex-array element binding before a draw begins.
+            gl.bind_buffer(glow::ARRAY_BUFFER, Some(index_buffer));
+            gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, bytes(source.indices()), glow::STATIC_DRAW);
+            gl.bind_buffer(glow::ARRAY_BUFFER, None);
+        }
+        Ok(Self {
+            gl,
+            source: source.clone(),
+            vertex_buffer,
+            index_buffer,
+            index_count: source.indices().len() as i32,
+        })
+    }
+}
+
+impl Drop for GlMesh {
+    /// Releases GPU buffers after the renderer no longer retains their source.
+    fn drop(&mut self) {
+        unsafe {
+            self.gl.delete_buffer(self.index_buffer);
+            self.gl.delete_buffer(self.vertex_buffer);
         }
     }
 }
