@@ -60,9 +60,9 @@ interface IRenderStream {
     /// Copies ordered tagged records; offsets count batches and records contain no pointers.
     fn batches(&self, invocation: u64, output: &mut [RenderBatch]) -> Result<u32>;
     /// Retains the texture used by this batch; another batch kind or invalid index is rejected.
-    fn texture(&self, invocation: u64, batch: u32) -> Result<ITexture>;
+    fn texture(&self, invocation: u64, batch: u32) -> Result<ComPtr<ITexture>>;
     /// Retains custom work used by this batch; another batch kind or invalid index is rejected.
-    fn item(&self, invocation: u64, batch: u32) -> Result<IRenderItem>;
+    fn item(&self, invocation: u64, batch: u32) -> Result<ComPtr<IRenderItem>>;
 }
 
 #[version(1)]

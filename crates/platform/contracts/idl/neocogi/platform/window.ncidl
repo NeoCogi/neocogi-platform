@@ -22,7 +22,7 @@ factory Platform: IRenderDiagnostics {
         title: &[u8],
         size: Size,
         atlas: &IRgbaImage,
-    ) -> Result<IPlatformWindow>;
+    ) -> Result<ComPtr<IPlatformWindow>>;
 }
 
 #[version(1)]

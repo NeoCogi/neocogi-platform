@@ -26,7 +26,7 @@ interface IRenderItem {}
 /// Optional renderer capability for uploading immutable external images.
 interface ITextureFactory {
     /// Uploads exactly width * height * 4 RGBA bytes at offset zero.
-    fn create_texture(&self, size: Size, pixels: &[u8]) -> Result<ITexture>;
+    fn create_texture(&self, size: Size, pixels: &[u8]) -> Result<ComPtr<ITexture>>;
 }
 
 #[version(1)]
@@ -40,7 +40,7 @@ interface IRenderSurface {
     fn resize(&self, size: Size) -> Result<()>;
     /// Retains the last successfully completed immutable image; NC_E_NOT_FOUND precedes the first frame.
     /// A retained image remains unchanged after later renders, resize, or surface release.
-    fn completed_image(&self) -> Result<ITexture>;
+    fn completed_image(&self) -> Result<ComPtr<ITexture>>;
 }
 
 #[version(1)]
@@ -50,12 +50,12 @@ interface IRenderSurfaceFactory {
     /// Rendering never presents or clears the window. Output uses top-left texture coordinates
     /// and an opaque clear color; application-specific RenderBatch::Item work is unsupported.
     /// Backends without this capability report an explicit failure.
-    fn create_surface(&self, size: Size, atlas: &IRgbaImage) -> Result<IRenderSurface>;
+    fn create_surface(&self, size: Size, atlas: &IRgbaImage) -> Result<ComPtr<IRenderSurface>>;
 }
 
 #[version(1)]
 /// Owned diagnostic snapshots preserve backend details without exposing backend-dependent errors.
 interface IRenderDiagnostics {
     /// Returns the most recent failed GPU operation's detail, or empty text before a failure.
-    fn diagnostic(&self) -> Result<String>;
+    fn diagnostic(&self) -> Result<ComPtr<INcString>>;
 }

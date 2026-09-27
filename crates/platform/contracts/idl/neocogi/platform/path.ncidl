@@ -19,5 +19,5 @@ interface INativePath {
     /// Copies the exact requested UTF-16 range; wrong encoding or invalid range changes no output.
     fn windows_units(&self, output: &mut [u16]) -> Result<()>;
     /// Returns human-readable UTF-8 which must never be used to reconstruct native selection.
-    fn display(&self) -> Result<String>;
+    fn display(&self) -> Result<ComPtr<INcString>>;
 }
