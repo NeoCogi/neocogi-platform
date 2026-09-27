@@ -91,7 +91,7 @@ impl SurfaceAtlas {
 
     /// Replaces the session binding only after candidate pixels upload successfully.
     fn prepare(&mut self, device: &Rc<Device>, gpu: &mut gpu::Gpu, source: ComRef<'_, IRgbaImageAbi>) -> Result<(), NcStatus> {
-        if self.source.as_ptr() != source.as_ptr() {
+        if self.source.as_raw().object != source.as_raw().object {
             *self = Self::upload(device, gpu, source)?;
         }
         Ok(())

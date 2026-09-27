@@ -108,7 +108,7 @@ struct RenderState {
 impl RenderState {
     /// Copies and uploads candidate pixels before retaining the new image identity.
     fn prepare_atlas(&mut self, source: ComRef<'_, IRgbaImageAbi>) -> Result<(), String> {
-        if self.atlas.as_ptr() == source.as_ptr() {
+        if self.atlas.as_raw().object == source.as_raw().object {
             return Ok(());
         }
         // The image projection deliberately carries no fonts, names, theme records, or catalog.
@@ -247,7 +247,7 @@ impl IRenderDiagnostics for WindowObject {
 /// Queries canonical identity before borrowing any native registry; foreign QueryInterface may reenter.
 fn identity<I: ComInterface>(interface: &ComPtr<I>) -> Result<usize, NcStatus> {
     let identity: ComPtr<IUnknown> = interface.query()?;
-    Ok(identity.as_ptr() as usize)
+    Ok(identity.as_raw().object as usize)
 }
 
 #[cfg(feature = "glow")]
