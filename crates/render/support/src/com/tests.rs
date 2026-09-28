@@ -173,7 +173,6 @@ fn malformed_ranges_tags_and_clips_reject_before_resource_resolution() {
             clip: Rect { width: 0, ..CLIP },
         }
         .into(),
-        RenderBatchAbi::from_unknown_tag(RenderBatchTag::from_raw(255)).unwrap(),
     ];
     for bad in invalid {
         let (stream, info, probe) = source(vec![RenderBatch::Texture { first: 0 }.into(), bad], vec![RenderVertex::default(); 7]);
@@ -182,6 +181,17 @@ fn malformed_ranges_tags_and_clips_reject_before_resource_resolution() {
         assert!(frame.batches().is_empty());
         assert!(probe.resolved.borrow().is_empty());
     }
+}
+/// Checked COM output decoding rejects unknown enum tags before renderer-level
+/// geometry validation. This remains distinct from an invalid range or clip.
+#[test]
+fn invalid_record_tag_rejects_in_the_generated_buffer_codec() {
+    let bad = RenderBatchAbi::from_unknown_tag(RenderBatchTag::from_raw(255)).unwrap();
+    let (stream, info, probe) = source(vec![RenderBatch::Texture { first: 0 }.into(), bad], vec![RenderVertex::default(); 7]);
+    let mut frame = PreparedFrame::default();
+    assert_eq!(frame.read(info, stream.as_com_ref(), &*probe), Err(neocogi_com::NC_E_INVALID_TAG));
+    assert!(frame.batches().is_empty());
+    assert!(probe.resolved.borrow().is_empty());
 }
 /// Short reads and non-finite components fail before passing owned data to a native backend.
 #[test]
