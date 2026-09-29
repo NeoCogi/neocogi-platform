@@ -44,8 +44,8 @@ impl Drop for Resource {
 struct Source {
     /// Geometry copied in one bulk operation.
     vertices: Vec<RenderVertex>,
-    /// Includes deliberately invalid tagged records in malformed-frame tests.
-    records: Vec<RenderBatchAbi>,
+    /// Native records can carry invalid geometry but never an invalid enum tag.
+    records: Vec<RenderBatch>,
     /// Owned image returned only at a matching batch index.
     texture: ComPtr<ITextureAbi>,
     /// Same canonical resource through its custom-item projection.
@@ -63,7 +63,7 @@ impl IRenderStream for Source {
         Ok((self.vertices.len() as u32).saturating_sub(u32::from(self.probe.short.get())))
     }
     /// Copies the complete ordered ABI records with no per-operation foreign call.
-    fn batches(&self, invocation: u64, mut output: NcCopyToBufferOffset<'_, RenderBatchAbi>) -> Result<u32, NcStatus> {
+    fn batches(&self, invocation: u64, mut output: NcCopyToBufferOffset<'_, RenderBatch>) -> Result<u32, NcStatus> {
         assert_eq!(invocation, 1);
         assert_eq!(output.offset(), 0);
         self.probe.copies.set(self.probe.copies.get() + 1);
@@ -72,12 +72,12 @@ impl IRenderStream for Source {
     }
     /// A mismatch would expose a batch-index bug in the reader.
     fn texture(&self, _: u64, index: u32) -> Result<ComPtr<ITextureAbi>, NcStatus> {
-        assert!(matches!(RenderBatch::try_from(self.records[index as usize])?, RenderBatch::Texture { .. }));
+        assert!(matches!(self.records[index as usize], RenderBatch::Texture { .. }));
         Ok(self.texture.clone())
     }
     /// The index is the overall batch position, not a separate custom-resource index.
     fn item(&self, _: u64, index: u32) -> Result<ComPtr<IRenderItemAbi>, NcStatus> {
-        assert!(matches!(RenderBatch::try_from(self.records[index as usize])?, RenderBatch::Item { .. }));
+        assert!(matches!(self.records[index as usize], RenderBatch::Item { .. }));
         Ok(self.item.clone())
     }
 }
@@ -102,7 +102,7 @@ const RECT: Rect = Rect { x: -10, y: 0, width: 110, height: 80 };
 /// Final clip intersects the negative-origin content with the viewport.
 const CLIP: Rect = Rect { x: 0, y: 0, width: 100, height: 80 };
 /// Creates one owned source and exact announced counts, optionally containing malformed records.
-fn source(records: Vec<RenderBatchAbi>, vertices: Vec<RenderVertex>) -> (ComPtr<IRenderStreamAbi>, RenderInfo, Rc<Probe>) {
+fn source(records: Vec<RenderBatch>, vertices: Vec<RenderVertex>) -> (ComPtr<IRenderStreamAbi>, RenderInfo, Rc<Probe>) {
     let probe = Rc::new(Probe::default());
     let resource = Resource::from_value(Resource { releases: probe.releases.clone() });
     let info = RenderInfo {
@@ -127,10 +127,10 @@ fn source(records: Vec<RenderBatchAbi>, vertices: Vec<RenderVertex>) -> (ComPtr<
 #[test]
 fn ordered_bulk_frame_owns_resources_and_reuses_allocations() {
     let records = vec![
-        RenderBatch::Atlas { first: 0, count: 3 }.into(),
-        RenderBatch::Texture { first: 3 }.into(),
-        RenderBatch::Item { rect: RECT, clip: CLIP }.into(),
-        RenderBatch::Atlas { first: 7, count: 3 }.into(),
+        RenderBatch::Atlas { first: 0, count: 3 },
+        RenderBatch::Texture { first: 3 },
+        RenderBatch::Item { rect: RECT, clip: CLIP },
+        RenderBatch::Atlas { first: 7, count: 3 },
     ];
     let (stream, info, probe) = source(records, vec![RenderVertex::default(); 10]);
     let mut frame = PreparedFrame::default();
@@ -153,29 +153,26 @@ fn ordered_bulk_frame_owns_resources_and_reuses_allocations() {
 #[test]
 fn malformed_ranges_tags_and_clips_reject_before_resource_resolution() {
     let invalid = [
-        RenderBatch::Atlas { first: 4, count: 0 }.into(),
-        RenderBatch::Atlas { first: 3, count: 3 }.into(),
-        RenderBatch::Atlas { first: 5, count: 3 }.into(),
-        RenderBatch::Atlas { first: 4, count: 4 }.into(),
-        RenderBatch::Atlas { first: 4, count: u32::MAX }.into(),
+        RenderBatch::Atlas { first: 4, count: 0 },
+        RenderBatch::Atlas { first: 3, count: 3 },
+        RenderBatch::Atlas { first: 5, count: 3 },
+        RenderBatch::Atlas { first: 4, count: 4 },
+        RenderBatch::Atlas { first: 4, count: u32::MAX },
         RenderBatch::Item {
             rect: RECT,
             clip: Rect { width: 101, ..CLIP },
-        }
-        .into(),
+        },
         RenderBatch::Item {
             rect: Rect { width: 1, ..RECT },
             clip: CLIP,
-        }
-        .into(),
+        },
         RenderBatch::Item {
             rect: RECT,
             clip: Rect { width: 0, ..CLIP },
-        }
-        .into(),
+        },
     ];
     for bad in invalid {
-        let (stream, info, probe) = source(vec![RenderBatch::Texture { first: 0 }.into(), bad], vec![RenderVertex::default(); 7]);
+        let (stream, info, probe) = source(vec![RenderBatch::Texture { first: 0 }, bad], vec![RenderVertex::default(); 7]);
         let mut frame = PreparedFrame::default();
         assert_eq!(frame.read(info, stream.as_com_ref(), &*probe), Err(NC_E_INVALID_ARG));
         assert!(frame.batches().is_empty());
@@ -186,10 +183,37 @@ fn malformed_ranges_tags_and_clips_reject_before_resource_resolution() {
 /// geometry validation. This remains distinct from an invalid range or clip.
 #[test]
 fn invalid_record_tag_rejects_in_the_generated_buffer_codec() {
-    let bad = RenderBatchAbi::from_unknown_tag(RenderBatchTag::from_raw(255)).unwrap();
-    let (stream, info, probe) = source(vec![RenderBatch::Texture { first: 0 }.into(), bad], vec![RenderVertex::default(); 7]);
+    /// Simulates an independently compiled provider returning an unknown raw tag.
+    unsafe extern "C" fn malformed_batches(
+        _object: *mut core::ffi::c_void,
+        _invocation: u64,
+        _offset: u64,
+        count: u64,
+        output: *mut <RenderBatch as neocogi_com::ComValue>::Wire,
+        written: *mut u32,
+    ) -> NcStatus {
+        if count != 2 { return NC_E_INVALID_ARG; }
+        let good = neocogi_com::encode_inline(&RenderBatch::Texture { first: 0 }).unwrap();
+        let mut bad = good;
+        bad.tag = 255;
+        // SAFETY: the generated caller provides two writable wire records and
+        // a writable result. No invalid native Rust enum is ever constructed.
+        unsafe {
+            output.write(good);
+            output.add(1).write(bad);
+            written.write(2);
+        }
+        neocogi_com::NC_OK
+    }
+    let (stream, info, probe) = source(vec![RenderBatch::Texture { first: 0 }; 2], vec![RenderVertex::default(); 7]);
+    let raw = stream.as_raw();
+    // SAFETY: vtables contain only immutable metadata and function pointers.
+    // The object and our stack-local replacement table outlive the borrowed call.
+    let mut table = unsafe { core::ptr::read(raw.vtable) };
+    table.batches = malformed_batches;
+    let borrowed = unsafe { neocogi_com::ComRef::from_raw_borrowed(neocogi_com::ComRaw { object: raw.object, vtable: &table }) }.unwrap();
     let mut frame = PreparedFrame::default();
-    assert_eq!(frame.read(info, stream.as_com_ref(), &*probe), Err(neocogi_com::NC_E_INVALID_TAG));
+    assert_eq!(frame.read(info, borrowed, &*probe), Err(neocogi_com::NC_E_INVALID_TAG));
     assert!(frame.batches().is_empty());
     assert!(probe.resolved.borrow().is_empty());
 }
@@ -208,7 +232,7 @@ fn short_copies_nonfinite_vertices_and_unreferenced_geometry_reject() {
         let records = if component == 5 {
             Vec::new()
         } else {
-            vec![RenderBatch::Atlas { first: 0, count: 3 }.into()]
+            vec![RenderBatch::Atlas { first: 0, count: 3 }]
         };
         let (stream, info, probe) = source(records, vec![vertex; 3]);
         probe.short.set(component == 4);
@@ -242,7 +266,7 @@ fn invalid_frame_header_never_calls_the_producer() {
 #[test]
 fn failed_resource_resolution_cleans_partial_work_and_allows_retry() {
     let (stream, info, probe) = source(
-        vec![RenderBatch::Texture { first: 0 }.into(), RenderBatch::Item { rect: RECT, clip: CLIP }.into()],
+        vec![RenderBatch::Texture { first: 0 }, RenderBatch::Item { rect: RECT, clip: CLIP }],
         vec![RenderVertex::default(); 4],
     );
     let mut frame = PreparedFrame::default();

@@ -93,8 +93,8 @@ impl IPlatformWindow for WindowObject {
         Ok(if self.input.poll(destination)? { PollStatus::Event } else { PollStatus::Idle })
     }
     /// Keeps DOM composition active at committed editable focus without stealing external page focus.
-    fn text_input(&self, area: TextInputAreaAbi) -> Result<(), NcStatus> {
-        let area = match TextInputArea::try_from(area)? {
+    fn text_input(&self, area: TextInputArea) -> Result<(), NcStatus> {
+        let area = match area {
             TextInputArea::None => None,
             TextInputArea::Area(area) if area.width >= 0 && area.height >= 0 => Some(area),
             _ => return Err(NC_E_INVALID_ARG),

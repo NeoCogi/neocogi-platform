@@ -43,7 +43,7 @@ pub struct PreparedFrame<Texture, Item> {
     /// Final validated geometry, reused across submissions.
     vertices: Vec<RenderVertex>,
     /// Pointer-free incoming records, reused rather than allocated once per frame.
-    records: Vec<RenderBatchAbi>,
+    records: Vec<RenderBatch>,
     /// Ordered resolved operations, empty after failed preparation.
     batches: Vec<Batch<Texture, Item>>,
 }
@@ -109,7 +109,7 @@ impl<Texture, Item> PreparedFrame<Texture, Item> {
         self.records.try_reserve(info.batch_count as usize).map_err(|_| NC_E_OUT_OF_MEMORY)?;
         self.batches.try_reserve(info.batch_count as usize).map_err(|_| NC_E_OUT_OF_MEMORY)?;
         self.vertices.resize(info.vertex_count as usize, RenderVertex::default());
-        self.records.resize(info.batch_count as usize, RenderBatch::Atlas { first: 0, count: 0 }.into());
+        self.records.resize(info.batch_count as usize, RenderBatch::Atlas { first: 0, count: 0 });
         if stream.vertices(info.invocation, NcCopyToBufferOffset::new(0, &mut self.vertices))? != info.vertex_count
             || stream.batches(info.invocation, NcCopyToBufferOffset::new(0, &mut self.records))? != info.batch_count
             || self
@@ -127,7 +127,7 @@ impl<Texture, Item> PreparedFrame<Texture, Item> {
         };
         let mut used = 0u32;
         for record in &self.records {
-            let (first, count) = match RenderBatch::try_from(*record).map_err(|_| NC_E_INVALID_ARG)? {
+            let (first, count) = match *record {
                 RenderBatch::Atlas { first, count } if count > 0 && count.is_multiple_of(3) => (first, count),
                 RenderBatch::Texture { first } => (first, 4),
                 RenderBatch::Item { rect, clip } if contains(rect, clip) && contains(viewport, clip) => continue,
@@ -143,7 +143,7 @@ impl<Texture, Item> PreparedFrame<Texture, Item> {
         }
         // Only resource calls can fail from here; partial native snapshots are discarded by read() on error.
         for (index, record) in self.records.iter().enumerate() {
-            self.batches.push(match RenderBatch::try_from(*record).map_err(|_| NC_E_INVALID_ARG)? {
+            self.batches.push(match *record {
                 RenderBatch::Atlas { first, count } => Batch::Atlas(first as usize..(first + count) as usize),
                 RenderBatch::Texture { first } => Batch::Texture {
                     vertices: self.vertices[first as usize..first as usize + 4]

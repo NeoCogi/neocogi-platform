@@ -303,7 +303,7 @@ impl BrowserInputHost {
     pub(super) fn poll(&self, destination: ComRef<'_, IInputSinkAbi>) -> Result<bool, NcStatus> {
         let pending = self.queue.borrow_mut().events.pop_front();
         let Some(PendingInput { event, text }) = pending else { return Ok(false) };
-        destination.input(event.into(), NcCopyFromBufferOffset::new(0, text.as_bytes()))?;
+        destination.input(event, NcCopyFromBufferOffset::new(0, text.as_bytes()))?;
         Ok(true)
     }
 

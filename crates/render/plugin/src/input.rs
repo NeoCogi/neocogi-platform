@@ -187,7 +187,7 @@ impl IPlatformWindow for WindowObject {
                 Transition::Changed => return Ok(PollStatus::Event),
                 Transition::Close => return Ok(PollStatus::Close),
                 Transition::Input(event, text) => {
-                    destination.input(event.into(), NcCopyFromBufferOffset::new(0, text.as_bytes()))?;
+                    destination.input(event, NcCopyFromBufferOffset::new(0, text.as_bytes()))?;
                     return Ok(PollStatus::Event);
                 }
             }
@@ -196,8 +196,7 @@ impl IPlatformWindow for WindowObject {
     }
 
     /// Converts physical editor placement to logical window pixels and preserves active composition.
-    fn text_input(&self, area: TextInputAreaAbi) -> Result<(), NcStatus> {
-        let area = TextInputArea::try_from(area)?;
+    fn text_input(&self, area: TextInputArea) -> Result<(), NcStatus> {
         if matches!(area, TextInputArea::Area(Rect { width, height, .. }) if width < 0 || height < 0) {
             return Err(NC_E_INVALID_ARG);
         }

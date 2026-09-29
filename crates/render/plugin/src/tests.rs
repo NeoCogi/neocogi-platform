@@ -12,7 +12,7 @@ struct Input {
     /// Atlas background and image quads share the same native coordinate convention.
     vertices: Vec<RenderVertex>,
     /// Validated pointer-free painter order.
-    batches: Vec<RenderBatchAbi>,
+    batches: Vec<RenderBatch>,
     /// Background image authenticated by the tested renderer.
     background: ComPtr<ITextureAbi>,
     /// Later overlay image proves that custom GPU work does not move to the end of the frame.
@@ -43,7 +43,7 @@ impl IRenderStream for Empty {
         panic!("nested renderer read a stream")
     }
     /// No record read is allowed before the nested render gate rejects.
-    fn batches(&self, _: u64, _: NcCopyToBufferOffset<'_, RenderBatchAbi>) -> Result<u32, NcStatus> {
+    fn batches(&self, _: u64, _: NcCopyToBufferOffset<'_, RenderBatch>) -> Result<u32, NcStatus> {
         panic!("nested renderer read batches")
     }
     /// The empty source has no texture capability.
@@ -93,7 +93,7 @@ impl IRenderStream for Stream {
         Ok(self.input.vertices.len() as u32)
     }
     /// One bulk read supplies complete ordering metadata.
-    fn batches(&self, _: u64, mut output: NcCopyToBufferOffset<'_, RenderBatchAbi>) -> Result<u32, NcStatus> {
+    fn batches(&self, _: u64, mut output: NcCopyToBufferOffset<'_, RenderBatch>) -> Result<u32, NcStatus> {
         output.as_mut_slice().copy_from_slice(&self.input.batches);
         Ok(self.input.batches.len() as u32)
     }
@@ -189,10 +189,10 @@ fn native_order_ownership_reentry_and_final_release() {
             .chain(quad(Rect { x: 28, y: 28, width: 8, height: 8 }))
             .collect(),
         batches: vec![
-            RenderBatch::Atlas { first: 0, count: 6 }.into(),
-            RenderBatch::Texture { first: 6 }.into(),
-            RenderBatch::Item { rect: bounds, clip: bounds }.into(),
-            RenderBatch::Texture { first: 10 }.into(),
+            RenderBatch::Atlas { first: 0, count: 6 },
+            RenderBatch::Texture { first: 6 },
+            RenderBatch::Item { rect: bounds, clip: bounds },
+            RenderBatch::Texture { first: 10 },
         ],
         background: background.clone(),
         foreign_texture: RefCell::new(None),
@@ -310,10 +310,10 @@ struct InputProbe {
 }
 impl IInputSink for InputProbe {
     /// Records the attempted transition before checking recursive polling and returning the injected error.
-    fn input(&self, event: UiInputAbi, text: NcCopyFromBufferOffset<'_, u8>) -> Result<(), NcStatus> {
+    fn input(&self, event: UiInput, text: NcCopyFromBufferOffset<'_, u8>) -> Result<(), NcStatus> {
         self.received
             .borrow_mut()
-            .push((UiInput::try_from(event)?, std::str::from_utf8(text.as_slice()).unwrap().to_owned()));
+            .push((event, std::str::from_utf8(text.as_slice()).unwrap().to_owned()));
         if let Some(window) = &self.window {
             assert_eq!(window.poll(self.empty.as_ref().unwrap().as_com_ref()), Err(PLATFORM_E_BUSY));
         }
@@ -365,7 +365,7 @@ fn input_delivery(unknown: &ComPtr<IUnknown>, device: &Weak<Device>) {
         &[(UiInput::Text, "first é".to_owned()), (UiInput::Text, "second ☃".to_owned())]
     );
     assert_eq!(
-        window.text_input(TextInputArea::Area(Rect { x: 0, y: 0, width: -1, height: 1 }).into()),
+        window.text_input(TextInputArea::Area(Rect { x: 0, y: 0, width: -1, height: 1 })),
         Err(NC_E_INVALID_ARG)
     );
     drop(sink);
