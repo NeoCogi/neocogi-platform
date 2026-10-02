@@ -20,9 +20,9 @@ struct Rect {
     height: i32,
 }
 
-#[version(2)]
+#[version(3)]
 /// Simple RGBA color stored with independently addressable 8-bit components.
-#[persistence(sequence)]
+/// Persistence uses the ordinary ordered NCB fields; the former sequence policy is retired.
 struct Color {
     /// Red channel.
     r: u8,
