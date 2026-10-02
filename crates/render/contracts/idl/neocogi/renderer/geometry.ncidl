@@ -20,9 +20,9 @@ struct Rect {
     height: i32,
 }
 
-#[version(1)]
+#[version(2)]
 /// Simple RGBA color stored with independently addressable 8-bit components.
-#[deserialize(sequence)]
+#[persistence(sequence)]
 struct Color {
     /// Red channel.
     r: u8,
