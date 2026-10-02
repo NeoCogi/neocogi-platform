@@ -13,8 +13,12 @@ module = "neocogi.platform"
 source = "idl/neocogi/platform"
 
 [dependencies]
-neocogi-com = { workspace = true, default-features = false, features = ["macros"] }
+neocogi-com = { workspace = true, default-features = false, features = ["macros", "alloc"] }
 neocogi-renderer-contracts.workspace = true
+
+[features]
+default = ["std"]
+std = ["neocogi-com/std"]
 
 [build-dependencies]
 neocogi-idl.workspace = true

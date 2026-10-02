@@ -8,7 +8,13 @@
 #![no_std]
 #![deny(missing_docs)]
 
+#[cfg(feature = "std")]
+extern crate std;
+
 include!(concat!(env!("OUT_DIR"), "/neocogi_platform.include.rs"));
 
 mod helpers;
 pub use helpers::*;
+
+#[cfg(feature = "std")]
+pub mod path;
