@@ -1,6 +1,6 @@
 //! Boundary tests use real generated COM calls and concrete resource values, without requiring a GPU.
 use super::*;
-use neocogi_com::{com_object, NcCopyToBufferOffset};
+use neocogi_com::{com_object, NcOutputWriter};
 use std::{
     cell::{Cell, RefCell},
     rc::Rc,
@@ -55,19 +55,19 @@ struct Source {
 }
 impl IRenderStream for Source {
     /// Copies at offset zero and optionally simulates a short producer read.
-    fn vertices(&self, invocation: u64, mut output: NcCopyToBufferOffset<'_, RenderVertex>) -> Result<u32, NcStatus> {
+    fn vertices(&self, invocation: u64, mut output: NcOutputWriter<'_, RenderVertex>) -> Result<u32, NcStatus> {
         assert_eq!(invocation, 1);
         assert_eq!(output.offset(), 0);
         self.probe.copies.set(self.probe.copies.get() + 1);
-        output.as_mut_slice().copy_from_slice(&self.vertices);
+        output.extend_from_slice(&self.vertices)?;
         Ok((self.vertices.len() as u32).saturating_sub(u32::from(self.probe.short.get())))
     }
     /// Copies the complete ordered ABI records with no per-operation foreign call.
-    fn batches(&self, invocation: u64, mut output: NcCopyToBufferOffset<'_, RenderBatch>) -> Result<u32, NcStatus> {
+    fn batches(&self, invocation: u64, mut output: NcOutputWriter<'_, RenderBatch>) -> Result<u32, NcStatus> {
         assert_eq!(invocation, 1);
         assert_eq!(output.offset(), 0);
         self.probe.copies.set(self.probe.copies.get() + 1);
-        output.as_mut_slice().copy_from_slice(&self.records);
+        output.extend_from_slice(&self.records)?;
         Ok(self.records.len() as u32)
     }
     /// A mismatch would expose a batch-index bug in the reader.
@@ -190,6 +190,7 @@ fn invalid_record_tag_rejects_in_the_generated_buffer_codec() {
         _offset: u64,
         count: u64,
         output: *mut <RenderBatch as neocogi_com::ComValue>::Wire,
+        prefix: *mut u64,
         written: *mut u32,
     ) -> NcStatus {
         if count != 2 { return NC_E_INVALID_ARG; }
@@ -201,6 +202,7 @@ fn invalid_record_tag_rejects_in_the_generated_buffer_codec() {
         unsafe {
             output.write(good);
             output.add(1).write(bad);
+            prefix.write(2);
             written.write(2);
         }
         neocogi_com::NC_OK

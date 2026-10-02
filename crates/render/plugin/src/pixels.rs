@@ -14,11 +14,11 @@ impl AtlasPixels {
     pub(super) fn read(source: ComRef<'_, IRgbaImageAbi>) -> Result<Self, NcStatus> {
         let size = source.size()?;
         let count = neocogi_renderer_contracts::rgba_bytes(size)?;
-        let mut pixels = Vec::new();
-        // Bounds are checked before allocation, and a failed foreign copy remains unpublished.
-        pixels.try_reserve_exact(count).map_err(|_| neocogi_com::NC_E_OUT_OF_MEMORY)?;
-        pixels.resize(count, 0);
-        source.pixels(neocogi_com::NcCopyToBufferOffset::new(0, &mut pixels))?;
+        let mut output = neocogi_com::NcOutputBuffer::new();
+        // Header bounds precede reservation; short copies cannot reach a GPU upload.
+        source.pixels(output.output(0, count))?;
+        if output.len() != count { return Err(neocogi_com::NC_E_INVALID_ARG); }
+        let pixels = output.into_vec();
         Ok(Self { size, pixels })
     }
 
@@ -36,7 +36,7 @@ impl AtlasPixels {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use neocogi_com::NcCopyToBufferOffset;
+    use neocogi_com::NcOutputWriter;
 
     #[com_object(interfaces(IRgbaImage))]
     /// A renderer-only image proves that upload has no dependency on UI metadata contracts.
@@ -54,13 +54,13 @@ mod tests {
             Ok(self.size)
         }
         /// Copies one known texel or propagates the requested source failure.
-        fn pixels(&self, mut output: NcCopyToBufferOffset<'_, u8>) -> Result<(), NcStatus> {
+        fn pixels(&self, mut output: NcOutputWriter<'_, u8>) -> Result<(), NcStatus> {
             self.copies.set(self.copies.get() + 1);
             if self.fail_copy {
                 return Err(neocogi_com::NC_E_LOAD_FAILED);
             }
-            assert_eq!((output.offset(), output.len()), (0, 4));
-            output.as_mut_slice().copy_from_slice(&[11, 22, 33, 44]);
+            assert_eq!((output.offset(), output.capacity()), (0, 4));
+            output.extend_from_slice(&[11, 22, 33, 44])?;
             Ok(())
         }
     }

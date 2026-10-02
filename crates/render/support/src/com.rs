@@ -1,6 +1,6 @@
 //! Complete-frame validation shared by platform assemblies before they acquire native GPU frames.
 use neocogi_renderer_contracts::*;
-use neocogi_com::{ComPtr, ComRef, NcCopyToBufferOffset, NcStatus, NC_E_INVALID_ARG, NC_E_OUT_OF_MEMORY};
+use neocogi_com::{ComPtr, ComRef, NcStatus, NC_E_INVALID_ARG, NC_E_OUT_OF_MEMORY};
 use std::ops::Range;
 
 /// Concrete renderer-owned resource resolution; implementations authenticate canonical COM identities.
@@ -41,9 +41,9 @@ pub enum Batch<Texture, Item> {
 /// Reusable bulk-copy storage. All foreign reads and ownership checks finish before native submission.
 pub struct PreparedFrame<Texture, Item> {
     /// Final validated geometry, reused across submissions.
-    vertices: Vec<RenderVertex>,
+    vertices: neocogi_com::NcOutputBuffer<RenderVertex>,
     /// Pointer-free incoming records, reused rather than allocated once per frame.
-    records: Vec<RenderBatch>,
+    records: neocogi_com::NcOutputBuffer<RenderBatch>,
     /// Ordered resolved operations, empty after failed preparation.
     batches: Vec<Batch<Texture, Item>>,
 }
@@ -52,8 +52,8 @@ impl<Texture, Item> Default for PreparedFrame<Texture, Item> {
     /// Construction needs no device, resource default values, or GPU allocation.
     fn default() -> Self {
         Self {
-            vertices: Vec::new(),
-            records: Vec::new(),
+            vertices: neocogi_com::NcOutputBuffer::new(),
+            records: neocogi_com::NcOutputBuffer::new(),
             batches: Vec::new(),
         }
     }
@@ -62,7 +62,7 @@ impl<Texture, Item> Default for PreparedFrame<Texture, Item> {
 impl<Texture, Item> PreparedFrame<Texture, Item> {
     /// Gives native execution immutable access to the complete prepared vertex buffer.
     pub fn vertices(&self) -> &[RenderVertex] {
-        &self.vertices
+        self.vertices.as_slice()
     }
     /// Gives native execution immutable access to the validated painter-order operations.
     pub fn batches(&self) -> &[Batch<Texture, Item>] {
@@ -105,15 +105,14 @@ impl<Texture, Item> PreparedFrame<Texture, Item> {
             return Err(NC_E_INVALID_ARG);
         }
         // Checked reservation reports allocation failure before receiver storage is published or used by a driver.
-        self.vertices.try_reserve(info.vertex_count as usize).map_err(|_| NC_E_OUT_OF_MEMORY)?;
-        self.records.try_reserve(info.batch_count as usize).map_err(|_| NC_E_OUT_OF_MEMORY)?;
         self.batches.try_reserve(info.batch_count as usize).map_err(|_| NC_E_OUT_OF_MEMORY)?;
-        self.vertices.resize(info.vertex_count as usize, RenderVertex::default());
-        self.records.resize(info.batch_count as usize, RenderBatch::Atlas { first: 0, count: 0 });
-        if stream.vertices(info.invocation, NcCopyToBufferOffset::new(0, &mut self.vertices))? != info.vertex_count
-            || stream.batches(info.invocation, NcCopyToBufferOffset::new(0, &mut self.records))? != info.batch_count
+        if stream.vertices(info.invocation, self.vertices.output(0, info.vertex_count as usize))? != info.vertex_count
+            || stream.batches(info.invocation, self.records.output(0, info.batch_count as usize))? != info.batch_count
+            || self.vertices.len() != info.vertex_count as usize
+            || self.records.len() != info.batch_count as usize
             || self
                 .vertices
+                .as_slice()
                 .iter()
                 .any(|v| !v.x.is_finite() || !v.y.is_finite() || !v.u.is_finite() || !v.v.is_finite())
         {
@@ -126,7 +125,7 @@ impl<Texture, Item> PreparedFrame<Texture, Item> {
             height: info.size.height,
         };
         let mut used = 0u32;
-        for record in &self.records {
+        for record in self.records.as_slice() {
             let (first, count) = match *record {
                 RenderBatch::Atlas { first, count } if count > 0 && count.is_multiple_of(3) => (first, count),
                 RenderBatch::Texture { first } => (first, 4),
@@ -142,11 +141,11 @@ impl<Texture, Item> PreparedFrame<Texture, Item> {
             return Err(NC_E_INVALID_ARG);
         }
         // Only resource calls can fail from here; partial native snapshots are discarded by read() on error.
-        for (index, record) in self.records.iter().enumerate() {
+        for (index, record) in self.records.as_slice().iter().enumerate() {
             self.batches.push(match *record {
                 RenderBatch::Atlas { first, count } => Batch::Atlas(first as usize..(first + count) as usize),
                 RenderBatch::Texture { first } => Batch::Texture {
-                    vertices: self.vertices[first as usize..first as usize + 4]
+                    vertices: self.vertices.as_slice()[first as usize..first as usize + 4]
                         .try_into()
                         .expect("validated four-vertex range"),
                     texture: resources.texture(stream.texture(info.invocation, index as u32)?)?,

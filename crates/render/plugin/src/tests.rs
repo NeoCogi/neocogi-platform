@@ -1,7 +1,7 @@
 //! Native acceptance uses the production platform constructor and real COM resource calls.
 //! Run explicitly with a usable SDL video driver; ordinary unit runs do not open OS windows.
 use super::*;
-use neocogi_com::{NcCopyToBufferOffset, INcStringComPtrExt};
+use neocogi_com::{NcOutputWriter, INcStringComPtrExt};
 use rs_math3d::{Mat4f, Vec2f, Vec3f};
 
 
@@ -39,11 +39,11 @@ struct Input {
 struct Empty;
 impl IRenderStream for Empty {
     /// Nested render must fail before consulting even this harmless source.
-    fn vertices(&self, _: u64, _: NcCopyToBufferOffset<'_, RenderVertex>) -> Result<u32, NcStatus> {
+    fn vertices(&self, _: u64, _: NcOutputWriter<'_, RenderVertex>) -> Result<u32, NcStatus> {
         panic!("nested renderer read a stream")
     }
     /// No record read is allowed before the nested render gate rejects.
-    fn batches(&self, _: u64, _: NcCopyToBufferOffset<'_, RenderBatch>) -> Result<u32, NcStatus> {
+    fn batches(&self, _: u64, _: NcOutputWriter<'_, RenderBatch>) -> Result<u32, NcStatus> {
         panic!("nested renderer read batches")
     }
     /// The empty source has no texture capability.
@@ -63,7 +63,7 @@ struct Stream {
 }
 impl IRenderStream for Stream {
     /// Reentry and resource destruction happen while the renderer owns detached preparation storage.
-    fn vertices(&self, _: u64, mut output: NcCopyToBufferOffset<'_, RenderVertex>) -> Result<u32, NcStatus> {
+    fn vertices(&self, _: u64, mut output: NcOutputWriter<'_, RenderVertex>) -> Result<u32, NcStatus> {
         assert_eq!(
             self.input.renderer.render(info(), self.input.atlas.as_com_ref(), self.input.empty.as_com_ref()),
             Err(RENDER_E_BUSY)
@@ -89,12 +89,12 @@ impl IRenderStream for Stream {
             assert_eq!(self.input.device.upgrade().unwrap().retired.borrow().len(), 1);
         }
         self.input.reentries.set(self.input.reentries.get() + 1);
-        output.as_mut_slice().copy_from_slice(&self.input.vertices);
+        output.extend_from_slice(&self.input.vertices)?;
         Ok(self.input.vertices.len() as u32)
     }
     /// One bulk read supplies complete ordering metadata.
-    fn batches(&self, _: u64, mut output: NcCopyToBufferOffset<'_, RenderBatch>) -> Result<u32, NcStatus> {
-        output.as_mut_slice().copy_from_slice(&self.input.batches);
+    fn batches(&self, _: u64, mut output: NcOutputWriter<'_, RenderBatch>) -> Result<u32, NcStatus> {
+        output.extend_from_slice(&self.input.batches)?;
         Ok(self.input.batches.len() as u32)
     }
     /// Overall batch indices select their exact image rather than using a separate untyped resource list.
