@@ -1,5 +1,5 @@
-#[version(1)]
-/// Ordered draw record whose explicit tag and plain payload cross the plugin ABI.
+#[version(2)]
+/// Ordered draw record whose declaration-order tag and plain payload cross the plugin ABI.
 enum RenderBatch: u8 {
     /// Primary-image triangles already clipped and tessellated by the frame producer.
     Atlas {
@@ -7,19 +7,19 @@ enum RenderBatch: u8 {
         first: u32,
         /// Positive vertex count divisible by three.
         count: u32,
-    } = 1,
+    },
     /// Four clipped vertices in top-left, top-right, bottom-right, bottom-left order.
     Texture {
         /// First of exactly four vertices; stream.texture(batch_index) supplies the owned resource.
         first: u32,
-    } = 2,
+    },
     /// Backend-specific work; stream.item(batch_index) supplies a capability from that renderer.
     Item {
         /// Positive, unclipped content rectangle in drawable pixels.
         rect: Rect,
         /// Positive intersection of content, producer clip, and drawable viewport.
         clip: Rect,
-    } = 3,
+    },
 }
 
 #[version(1)]
