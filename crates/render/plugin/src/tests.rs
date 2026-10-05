@@ -4,6 +4,8 @@ use super::*;
 use neocogi_com::{NcOutputWriter, INcStringComPtrExt};
 use rs_math3d::{Mat4f, Vec2f, Vec3f};
 
+#[cfg(feature = "glow")]
+mod mesh_geometry;
 
 /// Shared ordered stream fixture can inject native reentry and release a resource during bulk copying.
 struct Input {

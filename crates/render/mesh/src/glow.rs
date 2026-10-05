@@ -86,10 +86,10 @@ impl GlMeshResources {
         if submission.mesh.is_empty() {
             return Ok(());
         }
-        let Some(viewport) = gl_rect(args.content_area, args.dimensions.width, args.dimensions.height, framebuffer_size) else {
+        let Some(viewport) = gl_rect(args.content_area, args.dimensions.width, args.dimensions.height, framebuffer_size)? else {
             return Ok(());
         };
-        let Some(scissor) = gl_rect(args.view, args.dimensions.width, args.dimensions.height, framebuffer_size) else {
+        let Some(scissor) = gl_rect(args.view, args.dimensions.width, args.dimensions.height, framebuffer_size)? else {
             return Ok(());
         };
 
@@ -226,19 +226,105 @@ unsafe fn set_matrix(gl: &glow::Context, program: glow::Program, name: &str, mat
 }
 
 /// Converts a logical top-left rectangle into a clamped GL bottom-left pixel rectangle.
-fn gl_rect(rect: Recti, logical_width: i32, logical_height: i32, framebuffer: (u32, u32)) -> Option<(i32, i32, i32, i32)> {
+/// Empty logical intersections produce no draw. Unrepresentable framebuffer extents report
+/// a capability error before native viewport/scissor calls, rather than wrapping or skipping.
+/// This preserves the existing bounded viewport policy; full-content projection is separate.
+fn gl_rect(rect: Recti, logical_width: i32, logical_height: i32, framebuffer: (u32, u32)) -> Result<Option<(i32, i32, i32, i32)>, String> {
     if logical_width <= 0 || logical_height <= 0 || rect.width <= 0 || rect.height <= 0 {
-        return None;
+        return Ok(None);
     }
-    let scale_x = framebuffer.0 as f32 / logical_width as f32;
-    let scale_y = framebuffer.1 as f32 / logical_height as f32;
-    let left = ((rect.x as f32) * scale_x).floor().clamp(0.0, framebuffer.0 as f32) as i32;
-    let right = (((rect.x + rect.width) as f32) * scale_x).ceil().clamp(0.0, framebuffer.0 as f32) as i32;
-    let top = ((rect.y as f32) * scale_y).floor().clamp(0.0, framebuffer.1 as f32) as i32;
-    let bottom = (((rect.y + rect.height) as f32) * scale_y).ceil().clamp(0.0, framebuffer.1 as f32) as i32;
+    let framebuffer_width = i32::try_from(framebuffer.0).map_err(|_| "mesh framebuffer width exceeds GL's signed extent".to_owned())?;
+    let framebuffer_height = i32::try_from(framebuffer.1).map_err(|_| "mesh framebuffer height exceeds GL's signed extent".to_owned())?;
+    let (left, right) = clipped_pixel_span(rect.x, rect.width, logical_width, framebuffer_width);
+    let (top, bottom) = clipped_pixel_span(rect.y, rect.height, logical_height, framebuffer_height);
     let width = right - left;
     let height = bottom - top;
-    (width > 0 && height > 0).then_some((left, framebuffer.1 as i32 - bottom, width, height))
+    Ok((width > 0 && height > 0).then_some((left, framebuffer_height - bottom, width, height)))
+}
+
+/// Intersects one positive logical extent, then scales its edges outward into drawable pixels.
+/// Callers validate positive logical/rectangle extents and a nonnegative signed pixel extent.
+/// Widening before addition preserves the importer's entire i32 rectangle domain. After
+/// clipping, each product and the ceil adjustment are below 2^62, and final edges fit pixels.
+fn clipped_pixel_span(origin: i32, extent: i32, logical: i32, pixels: i32) -> (i32, i32) {
+    let limit = i64::from(logical);
+    let pixels = i64::from(pixels);
+    let near = i64::from(origin).clamp(0, limit);
+    let far = (i64::from(origin) + i64::from(extent)).clamp(0, limit);
+    let near_pixel = near * pixels / limit;
+    let far_pixel = (far * pixels + limit - 1) / limit;
+    (near_pixel as i32, far_pixel as i32)
+}
+
+#[cfg(test)]
+mod geometry_tests {
+    use super::*;
+
+    /// Both origin-plus-extent axes retain mathematical edges beyond i32::MAX.
+    #[test]
+    fn wide_content_edges_remain_visible() {
+        for (rect, expected) in [
+            (Recti::new(1, 0, i32::MAX, 32), (1, 0, 31, 32)),
+            (Recti::new(0, 1, 32, i32::MAX), (0, 0, 32, 31)),
+            (Recti::new(1, 1, i32::MAX, i32::MAX), (1, 0, 31, 31)),
+            (Recti::new(i32::MIN + 17, 0, i32::MAX, 32), (0, 0, 16, 32)),
+            (Recti::new(0, i32::MIN + 17, 32, i32::MAX), (0, 16, 32, 16)),
+        ] {
+            assert_eq!(gl_rect(rect, 32, 32, (32, 32)).unwrap(), Some(expected));
+        }
+    }
+
+    /// Fractional scaling rounds outward, including exact edges at precision-sensitive magnitudes.
+    #[test]
+    fn scaling_has_exact_integer_edges() {
+        assert_eq!(gl_rect(Recti::new(1, 1, 1, 1), 3, 3, (5, 5)).unwrap(), Some((1, 1, 3, 3)));
+        let large = 16_777_217;
+        assert_eq!(
+            gl_rect(Recti::new(large, 0, 1, 1), i32::MAX, 1, (i32::MAX as u32, 1)).unwrap(),
+            Some((large, 0, 1, 1))
+        );
+        assert_eq!(clipped_pixel_span(1, i32::MAX, i32::MAX, i32::MAX), (1, i32::MAX));
+        assert_eq!(clipped_pixel_span(i32::MAX - 1, 1, i32::MAX, i32::MAX), (i32::MAX - 1, i32::MAX));
+    }
+
+    /// Scaled edges tightly enclose each intersection across extreme coordinates and scale ratios.
+    #[test]
+    fn extreme_coordinate_grid_has_tight_outward_rounding() {
+        for origin in [i32::MIN, i32::MIN + 17, -32, -1, 0, 1, 31, i32::MAX - 1, i32::MAX] {
+            for extent in [1, 2, 32, i32::MAX] {
+                for logical in [1, 3, 32, 16_777_217, i32::MAX] {
+                    for pixels in [0, 1, 5, 32, i32::MAX] {
+                        let (near, far) = clipped_pixel_span(origin, extent, logical, pixels);
+                        assert!(0 <= near && near <= far && far <= pixels);
+                        // i128 residual inequalities verify exact floor/ceil independently
+                        // of the implementation's quotient and ceil-adjustment expressions.
+                        let divisor = i128::from(logical);
+                        let exact_near = i128::from(origin).clamp(0, divisor) * i128::from(pixels);
+                        let exact_far = (i128::from(origin) + i128::from(extent)).clamp(0, divisor) * i128::from(pixels);
+                        assert!(i128::from(near) * divisor <= exact_near && (i128::from(near) + 1) * divisor > exact_near);
+                        assert!(i128::from(far) * divisor >= exact_far && (i128::from(far) - 1) * divisor < exact_far);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Only empty/invisible rectangles skip; unsupported signed GL extents return an error.
+    #[test]
+    fn empty_intersections_and_framebuffer_limits_are_explicit() {
+        for rect in [
+            Recti::new(i32::MIN, 0, i32::MAX, 32),
+            Recti::new(32, 0, i32::MAX, 32),
+            Recti::new(0, 32, 32, 1),
+            Recti::new(0, 0, 0, 32),
+        ] {
+            assert_eq!(gl_rect(rect, 32, 32, (32, 32)).unwrap(), None);
+        }
+        assert_eq!(gl_rect(Recti::new(0, 0, 32, 32), 0, 32, (32, 32)).unwrap(), None);
+        assert_eq!(gl_rect(Recti::new(0, 0, 32, 32), 32, 32, (0, 32)).unwrap(), None);
+        assert!(gl_rect(Recti::new(0, 0, 32, 32), 32, 32, (u32::MAX, 32)).unwrap_err().contains("width"));
+        assert!(gl_rect(Recti::new(0, 0, 32, 32), 32, 32, (32, u32::MAX)).unwrap_err().contains("height"));
+    }
 }
 
 /// OpenGL ES 3 shader transforming real mesh vertices on the GPU.

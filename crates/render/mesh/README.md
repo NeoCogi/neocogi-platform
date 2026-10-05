@@ -21,6 +21,17 @@ frame-slot fence completes; WGPU command buffers retain their referenced GPU
 handles after preparation advances. The platform validates finite geometry,
 triangle indices, and transforms before publishing scene changes.
 
+Glow/WebGL rectangle conversion computes origin-plus-extent in `i64`, clips those
+mathematical edges to the logical frame, then scales outward with exact integer
+division. Positive content rectangles may have far edges beyond `i32::MAX`;
+a contained visible clip remains admissible. Only bounded pixel edges narrow.
+A framebuffer extent that cannot fit GL's signed arguments reports a backend
+error before viewport/scissor calls. Empty intersections produce no draw.
+
+The current mesh backends still use a bounded content viewport. Preserving the
+unclipped scene mapping independently of the scissor is the separate open F10
+issue; the wide-arithmetic repair does not claim to resolve that projection rule.
+
 The former demo-owned package names and contract identity are removed. Rebuild
 applications and plugins together against the new mesh contract. No compatibility
 aliases or parallel implementations are retained.
