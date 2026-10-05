@@ -33,7 +33,7 @@ impl IRenderStream for MeshStream {
 }
 
 /// Accepted wide x/y edges draw pixels and leave the following ordinary frame usable.
-/// The bounded reference checks F07 arithmetic only; full-content projection remains F10.
+/// The bounded reference checks both widened arithmetic and fitting to the visible client area.
 #[test]
 #[ignore = "requires SDL GL; run with SDL_VIDEODRIVER=offscreen"]
 fn wide_mesh_edges_draw_and_recover_through_generated_com() {
@@ -74,6 +74,11 @@ fn wide_mesh_edges_draw_and_recover_through_generated_com() {
     };
     let ordinary = draw(bounds, bounds);
     for (wide, visible) in [
+        (Rect { x: -16, ..bounds }, Rect { width: 16, ..bounds }),
+        (Rect { y: -16, ..bounds }, Rect { height: 16, ..bounds }),
+        (Rect { x: 16, ..bounds }, Rect { x: 16, width: 16, ..bounds }),
+        (Rect { y: 16, ..bounds }, Rect { y: 16, height: 16, ..bounds }),
+        (bounds, Rect { x: 7, y: 5, width: 19, height: 13 }),
         (Rect { x: 1, width: i32::MAX, ..bounds }, Rect { x: 1, width: 31, ..bounds }),
         (Rect { y: 1, height: i32::MAX, ..bounds }, Rect { y: 1, height: 31, ..bounds }),
         (

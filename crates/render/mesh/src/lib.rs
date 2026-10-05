@@ -9,6 +9,9 @@ use std::sync::Arc;
 
 use rs_math3d::Mat4f;
 
+#[cfg(all(test, not(any(feature = "glow", feature = "webgl")), any(feature = "vulkan", feature = "wgpu")))]
+mod pixel_tests;
+
 #[cfg(any(feature = "glow", feature = "webgl"))]
 mod glow;
 #[cfg(all(not(feature = "webgl"), not(feature = "glow"), feature = "vulkan"))]

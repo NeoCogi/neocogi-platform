@@ -24,3 +24,6 @@ neocogi-render-vulkan = { workspace = true, optional = true }
 neocogi-render-wgpu = { workspace = true, optional = true }
 rs-math3d.workspace = true
 wgpu = { workspace = true, optional = true }
+
+[dev-dependencies]
+pollster.workspace = true

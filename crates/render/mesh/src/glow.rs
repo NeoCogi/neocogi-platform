@@ -86,9 +86,6 @@ impl GlMeshResources {
         if submission.mesh.is_empty() {
             return Ok(());
         }
-        let Some(viewport) = gl_rect(args.content_area, args.dimensions.width, args.dimensions.height, framebuffer_size)? else {
-            return Ok(());
-        };
         let Some(scissor) = gl_rect(args.view, args.dimensions.width, args.dimensions.height, framebuffer_size)? else {
             return Ok(());
         };
@@ -104,9 +101,9 @@ impl GlMeshResources {
         let mesh = &self.meshes[mesh_index];
         let gl = &self.gl;
         unsafe {
-            // The application's viewport is independent of the UI projection. Its scissor both
-            // enforces microui clipping and limits the local depth clear to the visible widget.
-            gl.viewport(viewport.0, viewport.1, viewport.2, viewport.3);
+            // Fit the whole scene to its visible client area. One conversion drives both GPU
+            // rectangles, including outward scaling and GL's bottom-left coordinate convention.
+            gl.viewport(scissor.0, scissor.1, scissor.2, scissor.3);
             gl.scissor(scissor.0, scissor.1, scissor.2, scissor.3);
             gl.enable(glow::SCISSOR_TEST);
             gl.enable(glow::DEPTH_TEST);

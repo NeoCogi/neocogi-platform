@@ -4,6 +4,9 @@ use super::*;
 use crate::MeshSubmission;
 use rs_math3d::{Vec2f, Vec3f};
 
+#[path = "vulkan_pixel_tests.rs"]
+mod pixels;
+
 /// Minimal Vulkan owner; tests drop every uploaded mesh before dropping this device.
 struct TestDevice {
     /// Parent instance must outlive its logical device.
@@ -12,6 +15,8 @@ struct TestDevice {
     device: ash::Device,
     /// Memory properties belonging to the selected physical device.
     memory_properties: vk::PhysicalDeviceMemoryProperties,
+    /// Graphics family used for the pixel fixture's command pool.
+    family: u32,
 }
 
 impl TestDevice {
@@ -34,7 +39,7 @@ impl TestDevice {
         let queues = [vk::DeviceQueueCreateInfo::default().queue_family_index(family).queue_priorities(&priorities)];
         let device = unsafe { instance.create_device(physical, &vk::DeviceCreateInfo::default().queue_create_infos(&queues), None) }.unwrap();
         let memory_properties = unsafe { instance.get_physical_device_memory_properties(physical) };
-        Self { instance, device, memory_properties }
+        Self { instance, device, memory_properties, family }
     }
 
     /// Simulates preparation after one of two slots has completed; no GPU commands are submitted.

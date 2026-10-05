@@ -133,17 +133,15 @@ impl VulkanApplicationRenderer for MeshRenderer {
             return Ok(());
         };
         let pipeline = self.pipeline.as_ref().ok_or("Vulkan mesh pipeline was not prepared")?;
-        let Some(viewport_rect) = surface_rect(args.content_area, (context.logical_width, context.logical_height), context.extent) else {
-            return Ok(());
-        };
         let Some(scissor_rect) = surface_rect(args.view, (context.logical_width, context.logical_height), context.extent) else {
             return Ok(());
         };
         let viewport = vk::Viewport {
-            x: viewport_rect.x as f32,
-            y: viewport_rect.y as f32,
-            width: viewport_rect.width as f32,
-            height: viewport_rect.height as f32,
+            // One physical rectangle fits the entire scene and bounds its rasterization.
+            x: scissor_rect.x as f32,
+            y: scissor_rect.y as f32,
+            width: scissor_rect.width as f32,
+            height: scissor_rect.height as f32,
             min_depth: 0.0,
             max_depth: 1.0,
         };

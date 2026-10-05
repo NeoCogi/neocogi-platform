@@ -28,9 +28,24 @@ a contained visible clip remains admissible. Only bounded pixel edges narrow.
 A framebuffer extent that cannot fit GL's signed arguments reports a backend
 error before viewport/scissor calls. Empty intersections produce no draw.
 
-The current mesh backends still use a bounded content viewport. Preserving the
-unclipped scene mapping independently of the scissor is the separate open F10
-issue; the wide-arithmetic repair does not claim to resolve that projection rule.
+## Visible client area
+
+Mesh scenes fit their complete projection into the final visible client area.
+`RenderItemArgs.view` drives both viewport and scissor through one backend
+conversion. `content_area` remains the full allocation for layout and generic
+render-item consumers; it does not determine mesh raster mapping. Moving a
+client partly offscreen, or clipping it inside a parent, therefore refits the
+whole scene into the remaining rectangle. An empty visible area emits no draw.
+
+The application owns camera projection. It must use the visible width/height
+for aspect and subtract the visible local origin when normalizing pointer input.
+The full demo's mesh and 3D grid do this during input and again during paint,
+after layout settles. Paint may edit scene transforms because those edits do
+not mutate UI geometry. Captured pointers may remain outside the visible area.
+Framebuffer scaling and backend Y conventions belong to the renderer.
+
+This is the user-selected F10 policy. The original review's crop-of-full-scene
+acceptance criterion was superseded; ordinary widget layout is unchanged.
 
 The former demo-owned package names and contract identity are removed. Rebuild
 applications and plugins together against the new mesh contract. No compatibility

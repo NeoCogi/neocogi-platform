@@ -8,6 +8,10 @@ use wgpu::util::DeviceExt;
 
 use crate::{MeshBuffers, MeshCommand, MeshSubmission, MeshVertex};
 
+#[cfg(test)]
+#[path = "wgpu_tests.rs"]
+mod tests;
+
 /// Application renderer owning the mesh renderer's WGPU mesh pipeline and prepared frame resources.
 pub struct MeshRenderer {
     /// Pipeline state recreated only if the surface color format changes.
@@ -89,9 +93,6 @@ impl WgpuApplicationRenderer for MeshRenderer {
         };
         let pipeline = self.pipeline.as_ref().ok_or("mesh pipeline was not prepared")?;
         let target = (args.dimensions.width.max(1) as u32, args.dimensions.height.max(1) as u32);
-        let Some(viewport) = surface_rect(args.content_area, target) else {
-            return Ok(());
-        };
         let Some(scissor) = surface_rect(args.view, target) else {
             return Ok(());
         };
@@ -100,7 +101,8 @@ impl WgpuApplicationRenderer for MeshRenderer {
         pass.set_bind_group(0, &prepared.bind_group, &[]);
         pass.set_vertex_buffer(0, prepared.geometry.vertex_buffer.slice(..));
         pass.set_index_buffer(prepared.geometry.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-        pass.set_viewport(viewport.0 as f32, viewport.1 as f32, viewport.2 as f32, viewport.3 as f32, 0.0, 1.0);
+        // Scene projection belongs to the visible client area, which also bounds rasterization.
+        pass.set_viewport(scissor.0 as f32, scissor.1 as f32, scissor.2 as f32, scissor.3 as f32, 0.0, 1.0);
         pass.set_scissor_rect(scissor.0, scissor.1, scissor.2, scissor.3);
         pass.draw_indexed(0..prepared.geometry.index_count, 0, 0..1);
         Ok(())

@@ -63,12 +63,14 @@ use std::{error::Error, fmt};
 pub struct RenderItemArgs {
     /// Dimensions of the active backend frame.
     pub dimensions: Dimensioni,
-    /// Rectangle describing the widget's content area.
+    /// Full widget content allocation, independent of its visible region.
+    /// Fixed-material mesh items fit to `view`; other item owners define their mapping explicitly.
     pub content_area: Rect<i32>,
     /// Final visible region after operation, content-area, and viewport clipping.
     ///
     /// This value is authoritative; item implementations do not need to intersect it with `content_area`
-    /// again.
+    /// again. Fixed-material mesh renderers use this same rectangle for viewport and scissor;
+    /// the application supplies a projection whose aspect matches its visible client area.
     pub view: Rect<i32>,
 }
 
