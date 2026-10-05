@@ -127,9 +127,9 @@ count to bound ear-clipping work. These budgets reset with the frame, not with
 individual widget paint scopes. Exceeding a limit returns `NC_E_OUT_OF_RANGE`.
 Final clipped vertex/batch limits remain separate.
 
-GFX draw errors preserve complete vertex/batch coverage and leave the recording
-frame active. A caller can continue recording or submit earlier completed work,
-subject to the remaining frame budget, or call `cancel()`. Multi-primitive draws
+Within an active frame, GFX draw errors preserve complete vertex/batch coverage
+and keep that frame active. A caller can continue recording or submit earlier
+completed work, subject to the remaining frame budget, or call `cancel()`. Multi-primitive draws
 can retain complete earlier primitives if a later primitive fails; this does
 not promise whole-operation rollback. Attempted calls retain their budget charges.
 `begin()` returns `NC_E_BUSY` until the active frame ends through `submit()` or
