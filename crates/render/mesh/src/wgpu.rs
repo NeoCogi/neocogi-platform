@@ -43,7 +43,7 @@ impl Default for MeshRenderer {
 impl WgpuApplicationRenderer for MeshRenderer {
     type Command = MeshCommand;
 
-    /// Builds native buffers and uniforms before the shared render pass borrows them.
+    /// Builds native buffers and uniforms before any ordered item pass borrows them.
     fn prepare(&mut self, context: WgpuApplicationPrepareContext<'_>, commands: &[&Self::Command]) -> Result<(), String> {
         let needs_pipeline = self
             .pipeline

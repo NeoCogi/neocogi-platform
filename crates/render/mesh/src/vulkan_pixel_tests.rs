@@ -464,3 +464,118 @@ fn visible_client_preserves_surrounding_painted_color() {
         }
     }
 }
+
+/// Identical silhouettes with different depths and normals produce distinguishable scene colors.
+fn depth_command(z: f32, normal_z: f32) -> MeshCommand {
+    let MeshCommand::DrawMesh(mut submission) = crate::pixel_tests::triangle_command();
+    let vertices = submission
+        .mesh
+        .vertices()
+        .iter()
+        .map(|vertex| {
+            let mut vertex = *vertex;
+            vertex.position.z = z;
+            vertex.normal.z = normal_z;
+            vertex
+        })
+        .collect();
+    submission.mesh = MeshBuffers::from_vecs(vertices, vec![0, 1, 2]);
+    MeshCommand::DrawMesh(submission)
+}
+
+/// Painter order dominates across scenes; self-occlusion still dominates inside one scene.
+#[test]
+#[ignore = "requires a Vulkan device"]
+fn independent_mesh_items_keep_depth_local_with_ordered_color_and_self_occlusion() {
+    let gpu = TestDevice::new();
+    let mut target = PixelTarget::new(&gpu, vk::Extent2D { width: 32, height: 32 });
+    let mut renderer = MeshRenderer::new();
+    let near = depth_command(-0.6, 1.);
+    let far = depth_command(0.6, -1.);
+    let full = Recti::new(0, 0, 32, 32);
+    let args = RenderItemArgs {
+        dimensions: Dimensioni::new(32, 32),
+        content_area: full,
+        view: full,
+    };
+    let near_only = target.draw(&mut renderer, &[PixelDraw::Mesh { args, command: &near }]);
+    let far_only = target.draw(&mut renderer, &[PixelDraw::Mesh { args, command: &far }]);
+    assert_ne!(near_only, far_only, "the two scene materials must be distinguishable");
+    for _ in 0..3 {
+        assert_eq!(
+            target.draw(
+                &mut renderer,
+                &[PixelDraw::Mesh { args, command: &near }, PixelDraw::Mesh { args, command: &far },]
+            ),
+            far_only,
+            "a later farther independent scene wins painter order"
+        );
+        assert_eq!(
+            target.draw(
+                &mut renderer,
+                &[PixelDraw::Mesh { args, command: &far }, PixelDraw::Mesh { args, command: &near },]
+            ),
+            near_only,
+            "reversing independent items reverses their color result"
+        );
+    }
+    let rect = vk::Rect2D {
+        offset: vk::Offset2D::default(),
+        extent: target.extent,
+    };
+    let color = || PixelDraw::Color { rect, rgba: [0., 1., 0., 1.] };
+    let painted_reference = target.draw(&mut renderer, &[color(), PixelDraw::Mesh { args, command: &far }]);
+    assert_eq!(
+        target.draw(
+            &mut renderer,
+            &[PixelDraw::Mesh { args, command: &near }, color(), PixelDraw::Mesh { args, command: &far },]
+        ),
+        painted_reference,
+        "intervening color replacement cannot leave stale scene depth"
+    );
+    let interior = RenderItemArgs { view: Recti::new(7, 5, 19, 13), ..args };
+    let partial = target.draw(&mut renderer, &[PixelDraw::Mesh { args: interior, command: &far }]);
+    let mut expected_partial = near_only.clone();
+    for (destination, source) in expected_partial.chunks_exact_mut(4).zip(partial.chunks_exact(4)) {
+        if source != [0, 0, 0, 255] {
+            destination.copy_from_slice(source);
+        }
+    }
+    assert_eq!(
+        target.draw(
+            &mut renderer,
+            &[PixelDraw::Mesh { args, command: &near }, PixelDraw::Mesh { args: interior, command: &far },]
+        ),
+        expected_partial,
+        "local depth clear preserves prior color outside the later silhouette"
+    );
+    let clipped_reference = target.draw(&mut renderer, &[color(), PixelDraw::Mesh { args: interior, command: &far }]);
+    assert_eq!(
+        target.draw(
+            &mut renderer,
+            &[
+                PixelDraw::Mesh { args, command: &near },
+                color(),
+                PixelDraw::Mesh { args: interior, command: &far },
+            ]
+        ),
+        clipped_reference,
+        "interior item clear must preserve surrounding painted color"
+    );
+
+    // Both silhouettes in one submission share depth, so the nearer first triangle must survive.
+    let MeshCommand::DrawMesh(near_mesh) = &near;
+    let MeshCommand::DrawMesh(far_mesh) = &far;
+    let mut vertices = near_mesh.mesh.vertices().to_vec();
+    vertices.extend_from_slice(far_mesh.mesh.vertices());
+    let combined = MeshCommand::DrawMesh(MeshSubmission {
+        mesh: MeshBuffers::from_vecs(vertices, vec![0, 1, 2, 3, 4, 5]),
+        pvm: Mat4f::identity(),
+        view_model: Mat4f::identity(),
+    });
+    assert_eq!(
+        target.draw(&mut renderer, &[PixelDraw::Mesh { args, command: &combined }]),
+        near_only,
+        "depth testing must still hide the farther triangle within one scene"
+    );
+}

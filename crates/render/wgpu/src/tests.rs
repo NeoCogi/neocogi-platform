@@ -37,19 +37,18 @@ fn texture_upload_failures_are_returned_without_poisoning_later_uploads() {
 }
 
 /// Reads a completed tiny RGBA target through the actual queue, preserving row orientation.
-fn pixels(renderer: &WgpuRenderer, id: TextureId) -> Vec<u8> {
-    let size = id.size();
+fn texture_pixels(device: &wgpu::Device, queue: &wgpu::Queue, texture: &wgpu::Texture, size: Dimensioni) -> Vec<u8> {
     let stride = (size.width as u32 * 4).div_ceil(256) * 256;
-    let buffer = renderer.device.create_buffer(&wgpu::BufferDescriptor {
+    let buffer = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("surface readback"),
         size: u64::from(stride) * size.height as u64,
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
         mapped_at_creation: false,
     });
-    let mut encoder = renderer.device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
     encoder.copy_texture_to_buffer(
         wgpu::TexelCopyTextureInfo {
-            texture: &renderer.textures[&id]._texture,
+            texture,
             mip_level: 0,
             origin: wgpu::Origin3d::ZERO,
             aspect: wgpu::TextureAspect::All,
@@ -68,10 +67,10 @@ fn pixels(renderer: &WgpuRenderer, id: TextureId) -> Vec<u8> {
             depth_or_array_layers: 1,
         },
     );
-    renderer.queue.submit(Some(encoder.finish()));
+    queue.submit(Some(encoder.finish()));
     let (send, receive) = std::sync::mpsc::channel();
     buffer.slice(..).map_async(wgpu::MapMode::Read, move |result| send.send(result).unwrap());
-    renderer.device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+    device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
     receive.recv().unwrap().unwrap();
     let mapped = buffer.slice(..).get_mapped_range().unwrap();
     let result = mapped
@@ -81,6 +80,11 @@ fn pixels(renderer: &WgpuRenderer, id: TextureId) -> Vec<u8> {
     drop(mapped);
     buffer.unmap();
     result
+}
+
+/// Reads the production UI-only texture while keeping its independent atlas and format contract.
+fn pixels(renderer: &WgpuRenderer, id: TextureId) -> Vec<u8> {
+    texture_pixels(&renderer.device, &renderer.queue, &renderer.textures[&id]._texture, id.size())
 }
 
 /// Real texture passes preserve source orientation and older outputs without touching window extent.
@@ -128,3 +132,6 @@ fn independent_texture_frames_preserve_pixels_and_native_surface_configuration()
     renderer.destroy_texture(next);
     renderer.destroy_texture(first);
 }
+
+#[path = "depth_tests.rs"]
+mod depth;

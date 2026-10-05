@@ -48,7 +48,7 @@ pub const APPLICATION_DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::D
 
 /// Native WGPU capabilities available while application resources are prepared for one frame.
 ///
-/// Preparation runs before the shared render pass begins. Applications may upload buffers through
+/// Preparation runs once before any item render pass begins. Applications may upload buffers through
 /// `queue` and may encode transfer or compute work through `encoder`; this prevents the extension
 /// API from collapsing custom rendering into CPU-generated UI triangles.
 pub struct WgpuApplicationPrepareContext<'a> {
@@ -86,10 +86,11 @@ pub trait WgpuApplicationRenderer: 'static {
         Ok(())
     }
 
-    /// Records one application command into the active surface render pass.
+    /// Records one independent application command into the active surface render pass.
     ///
-    /// The pass already contains the color and depth attachments. Implementations set their own
-    /// pipeline, bind groups, viewport, scissor, vertex/index buffers, and draw state. The immutable
+    /// The pass retains previously painted color and starts with depth cleared to 1.0. Draws
+    /// inside this command share depth; the next command starts a fresh depth scope. Implementations
+    /// set their own pipeline, bind groups, viewport, scissor, vertex/index buffers, and draw state. The immutable
     /// receiver is intentional: all allocation and mutation happens during `prepare`, allowing GPU
     /// resources borrowed by a WGPU render pass to remain stable for the pass lifetime.
     fn render<'pass>(
@@ -118,8 +119,8 @@ impl WgpuApplicationRenderer for () {
 
 // WGPU backend overview:
 // - UI/custom draws are described as `RenderCommand`s while building the frame.
-// - `end` packs all vertex payloads into one upload buffer, then replays the commands in a single
-//   render pass while switching bind groups/scissor state between draws.
+// - `end` packs UI vertex payloads into one upload buffer, then replays painter order with a fresh
+//   depth scope for every independent application command and retained color between passes.
 // - The swapchain surface is reconfigured on resize; theme selection replaces the immutable atlas.
 
 #[repr(C)]
@@ -226,7 +227,7 @@ enum FrameTarget {
 struct DepthTarget {
     /// Owning texture; the view alone does not keep the native allocation alive.
     _texture: wgpu::Texture,
-    /// View attached to the shared render pass for application depth testing.
+    /// View reused across item passes; every pass clears it and discards its completed depth.
     view: wgpu::TextureView,
 }
 
@@ -896,6 +897,23 @@ where
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("neocogi.ui.encoder") });
 
+        self.record_commands(&mut encoder, &view, atlas)?;
+        self.queue.submit(Some(encoder.finish()));
+        Ok(match target {
+            FrameTarget::Window(frame) => Some(frame),
+            FrameTarget::Texture { .. } => None,
+        })
+    }
+
+    /// Prepares one ordered command stream and records it into an already selected attachment.
+    /// Presentation and offscreen admission remain in `finish_target`. Every independent application
+    /// item starts with fresh depth; color and UI painter order survive pass boundaries.
+    fn record_commands(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        view: &wgpu::TextureView,
+        atlas: Option<TextureId>,
+    ) -> Result<(), FrameError> {
         // Give the concrete application renderer one preparation phase before any render-pass
         // resource is borrowed. It may create pipelines, resize buffers, upload data, or encode
         // compute/transfer work needed by the application commands in this frame.
@@ -913,7 +931,7 @@ where
                     WgpuApplicationPrepareContext {
                         device: &self.device,
                         queue: &self.queue,
-                        encoder: &mut encoder,
+                        encoder,
                         color_format: self.config.format,
                         width: self.width,
                         height: self.height,
@@ -1009,22 +1027,33 @@ where
             self.queue.write_buffer(&self.staging_vertex_buffer, 0, packed_upload.as_slice());
         }
 
-        {
-            // The render pass replays each prepared draw by switching bind groups/scissors and
-            // slicing the shared staging vertex buffer to the right subrange.
+        // The first pass includes leading UI and the first application item. Each later item
+        // starts another pass; following UI stays with that item until the next boundary. There
+        // is always one pass, even for an empty frame, so the frame clear cannot disappear.
+        let ends = self.commands.iter().enumerate()
+            .filter_map(|(index, command)| matches!(command, RenderCommand::Application { .. }).then_some(index))
+            .skip(1)
+            .chain(std::iter::once(self.commands.len()));
+        let mut start = 0;
+        let mut application_index = 0usize;
+        for end in ends {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("neocogi.ui.render_pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
+                    view,
                     depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: self.clear_color.r as f64 / 255.0,
-                            g: self.clear_color.g as f64 / 255.0,
-                            b: self.clear_color.b as f64 / 255.0,
-                            a: self.clear_color.a as f64 / 255.0,
-                        }),
+                        load: if start == 0 {
+                            wgpu::LoadOp::Clear(wgpu::Color {
+                                r: self.clear_color.r as f64 / 255.0,
+                                g: self.clear_color.g as f64 / 255.0,
+                                b: self.clear_color.b as f64 / 255.0,
+                                a: self.clear_color.a as f64 / 255.0,
+                            })
+                        } else {
+                            wgpu::LoadOp::Load
+                        },
                         store: wgpu::StoreOp::Store,
                     },
                 })],
@@ -1033,7 +1062,8 @@ where
                         view: &self.depth_target.view,
                         depth_ops: Some(wgpu::Operations {
                             load: wgpu::LoadOp::Clear(1.0),
-                            store: wgpu::StoreOp::Store,
+                            // No later item or frame consumes this pass's depth history.
+                            store: wgpu::StoreOp::Discard,
                         }),
                         stencil_ops: None,
                     })
@@ -1046,8 +1076,7 @@ where
             });
             pass.set_scissor_rect(0, 0, self.width, self.height);
 
-            let mut application_index = 0usize;
-            for (command, prepared) in self.commands.iter().zip(prepared_draws.iter()) {
+            for (command, prepared) in self.commands[start..end].iter().zip(prepared_draws[start..end].iter()) {
                 match command {
                     RenderCommand::Application { args, command } => {
                         // A failed command abandons this encoder instead of presenting a partial frame.
@@ -1090,13 +1119,10 @@ where
                     }
                 }
             }
+            start = end;
         }
 
-        self.queue.submit(Some(encoder.finish()));
-        Ok(match target {
-            FrameTarget::Window(frame) => Some(frame),
-            FrameTarget::Texture { .. } => None,
-        })
+        Ok(())
     }
 
     /// Creates a backend-owned sampled texture and its bind group.

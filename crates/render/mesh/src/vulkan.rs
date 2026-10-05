@@ -115,7 +115,8 @@ impl VulkanApplicationRenderer for MeshRenderer {
         )
     }
 
-    /// Records one native indexed mesh draw inside the backend-owned render pass.
+    /// Clears item-local depth and records one indexed mesh draw inside the backend-owned pass.
+    /// Color stays in painter order, while triangles inside this item still test against each other.
     fn render(
         &self,
         context: VulkanApplicationRenderContext<'_>,
@@ -157,7 +158,17 @@ impl VulkanApplicationRenderer for MeshRenderer {
         matrices[..16].copy_from_slice(matrix_values(&pvm));
         matrices[16..].copy_from_slice(matrix_values(&submission.view_model));
 
+        // Independent painter-ordered scenes never inherit an earlier item's depth. The clear
+        // touches depth only, inside the same bounded physical rectangle used for this draw.
+        let clear = vk::ClearAttachment::default()
+            .aspect_mask(vk::ImageAspectFlags::DEPTH)
+            .clear_value(vk::ClearValue { depth_stencil: vk::ClearDepthStencilValue { depth: 1.0, stencil: 0 } });
+        let clear_rect = vk::ClearRect::default().rect(scissor).base_array_layer(0).layer_count(1);
+        // SAFETY: The backend lends an active compatible graphics pass with a depth attachment.
+        // Its live command buffer, prepared buffers and pipeline outlive recording/submission;
+        // the clear rectangle is clipped to the framebuffer and addresses its sole array layer.
         unsafe {
+            context.device.cmd_clear_attachments(context.command_buffer, &[clear], &[clear_rect]);
             context
                 .device
                 .cmd_bind_pipeline(context.command_buffer, vk::PipelineBindPoint::GRAPHICS, pipeline.pipeline);

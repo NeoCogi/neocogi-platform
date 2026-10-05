@@ -47,6 +47,30 @@ Framebuffer scaling and backend Y conventions belong to the renderer.
 This is the user-selected F10 policy. The original review's crop-of-full-scene
 acceptance criterion was superseded; ordinary widget layout is unchanged.
 
+## Independent depth per item
+
+Each painter-ordered mesh item starts with depth 1.0, retaining previously
+painted color. A farther scene painted later therefore appears above an earlier
+independent scene, including after an intervening UI background. Triangles
+inside one item still share depth and occlude one another. Inserting the same
+scene twice also creates two independent item scopes; depth belongs to a draw
+position, not to the scene object or the whole frame.
+
+Glow/WebGL clears depth inside the item's scissor. Vulkan clears only the depth
+attachment inside the same visible rectangle before its indexed draw. WGPU
+starts a new pass before each additional application item, loads prior color,
+and clears the existing depth target. Leading UI and the first item share the
+initial pass; following UI stays with that item until the next boundary. Frames
+with zero or one application item still use one pass. Depth is discarded at
+pass completion because later items and frames never consume it. The repair
+adds pass boundaries for multiple items and allocates no per-item depth images.
+
+Application preparation remains once per frame, command indices span all
+passes, and UI draws restore their complete pipeline state. WGPU recording
+errors abandon the encoder before submission; Vulkan's existing acquired-frame
+failure policy remains unchanged. Public offscreen UI surfaces stay depth-free
+and reject application mesh commands.
+
 The former demo-owned package names and contract identity are removed. Rebuild
 applications and plugins together against the new mesh contract. No compatibility
 aliases or parallel implementations are retained.
