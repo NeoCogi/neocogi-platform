@@ -127,6 +127,22 @@ count to bound ear-clipping work. These budgets reset with the frame, not with
 individual widget paint scopes. Exceeding a limit returns `NC_E_OUT_OF_RANGE`.
 Final clipped vertex/batch limits remain separate.
 
+GFX draw errors preserve complete vertex/batch coverage and leave the recording
+frame active. A caller can continue recording or submit earlier completed work,
+subject to the remaining frame budget, or call `cancel()`. Multi-primitive draws
+can retain complete earlier primitives if a later primitive fails; this does
+not promise whole-operation rollback. Attempted calls retain their budget charges.
+`begin()` returns `NC_E_BUSY` until the active frame ends through `submit()` or
+`cancel()`. Both ending operations release retained resources; the next valid
+`begin()` resets frame contents and budget while reusing buffer capacity.
+
+For a texture quad, CPU vertex and batch capacity are reserved before either
+recorded length changes. Failure returns `NC_E_OUT_OF_MEMORY`, appends neither
+the quad nor its batch, and releases the temporary texture reference. A successful
+capacity increase can survive the other reservation's failure. The texture already
+exists; these reservations do not allocate GPU storage. Ordinary UI replay cancels
+on every draw or submission error and propagates the original status.
+
 Solid replay stages at most 256 triangles on the UI stack and converts one
 triangle at a time in GFX, replacing full-range retained conversion buffers.
 These intake checks cover the COM drawing boundaries; internal manager chrome
