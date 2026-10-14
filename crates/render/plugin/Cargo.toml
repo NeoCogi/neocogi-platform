@@ -15,6 +15,7 @@ name = "nc_render"
 crate-type = ["rlib"]
 
 [features]
+# Cargo adds feature flags to defaults; alternate backends require --no-default-features.
 default = ["glow"]
 webgl = ["dep:glow", "dep:neocogi-render-webgl", "neocogi-render-mesh/webgl"]
 glow = ["dep:glow", "dep:neocogi-render-glow", "neocogi-render-mesh/glow"]
