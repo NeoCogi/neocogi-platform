@@ -38,6 +38,7 @@ neocogi-com = { workspace = true, default-features = false, features = ["macros"
 glow = { workspace = true, optional = true }
 
 [dev-dependencies]
+tempfile.workspace = true
 # Native and browser unit tests own their runtime; they must not require a deployed shared library.
 neocogi-com = { workspace = true, features = ["static-runtime"] }
 
