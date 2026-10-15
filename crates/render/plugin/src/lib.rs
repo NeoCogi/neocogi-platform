@@ -5,6 +5,10 @@
 //! native handles or add another dynamic call boundary to every frame.
 #![deny(missing_docs)]
 
+// Native link metadata propagates to this DLL without embedding runtime state.
+#[cfg(all(feature = "dynamic-plugin", not(target_arch = "wasm32")))]
+use neocogi_native_runtime_link as _;
+
 #[cfg(not(any(feature = "webgl", feature = "glow", feature = "vulkan", feature = "wgpu")))]
 compile_error!("select exactly one renderer feature: glow, vulkan, wgpu, or webgl");
 #[cfg(any(
