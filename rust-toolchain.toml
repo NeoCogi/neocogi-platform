@@ -1,5 +1,6 @@
-# Artifact dependencies are nightly Cargo functionality. Library consumers may
-# continue using stable Rust outside this development workspace.
+# Native workspace linkage, artifact dependencies and the complete min-size
+# profile use nightly. Portable SDK consumers keep stable Rust outside this
+# development workspace. rust-src supplies target std for ordinary Cargo builds.
 [toolchain]
 channel = "nightly-2026-09-29"
 profile = "minimal"
