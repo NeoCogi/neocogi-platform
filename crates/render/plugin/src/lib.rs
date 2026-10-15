@@ -15,7 +15,7 @@ compile_error!("select exactly one renderer feature: glow, vulkan, wgpu, or webg
 compile_error!(
     "renderer features are mutually exclusive: Cargo adds --features to the default Glow selection.\n\
      Disable defaults when selecting another backend, e.g. --no-default-features --features vulkan.\n\
-     For a complete Vulkan demo package run: cargo run -p cargo-neocogi -- run --assembly full --variant vulkan --release"
+     For a Vulkan demo run: cargo run -p neocogi-demo-full --release --no-default-features --features dynamic,vulkan"
 );
 #[cfg(all(feature = "webgl", not(target_arch = "wasm32")))]
 compile_error!("the webgl renderer plugin requires wasm32");

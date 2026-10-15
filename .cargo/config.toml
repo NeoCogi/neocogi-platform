@@ -1,3 +1,7 @@
+[unstable]
+# Native development compositions use Cargo-provided cdylib artifacts.
+bindeps = true
+
 [alias]
 # Build against a distinct min-size platform so its codegen flags never affect normal Linux builds.
 # Nightly is selected explicitly by the caller because rustup chooses a toolchain before Cargo runs.
