@@ -14,8 +14,8 @@ interface IPlatformWindow {
 }
 
 #[version(1)]
-/// Constructible platform root whose native-window factory is its concrete API.
-factory Platform: IRenderDiagnostics {
+/// Constructible platform root whose native-window interface is its concrete API.
+interface Platform: IRenderDiagnostics {
     /// Creates an independent native window using only a renderer-neutral initial image.
     fn create_window(
         &self,

@@ -89,7 +89,7 @@ interface IMeshScene: IRenderItem {
 }
 
 #[version(1)]
-/// Reusable mesh scene factory exposed alongside the window's ordinary renderer interfaces.
+/// Reusable mesh scene interface exposed alongside the window's ordinary renderer interfaces.
 interface IMeshScenes {
     /// Creates an empty scene with identity transforms; its resources retain this window/device.
     fn create_scene(&self) -> Result<ComPtr<IMeshScene>>;
