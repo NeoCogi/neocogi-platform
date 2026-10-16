@@ -1,7 +1,13 @@
 *.vscode/
+!.vscode/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/launch.json
+!.vscode/settings.json
 *.idea/
 *target/
 *.lock
+__pycache__/
 SDL2.*
 
 # COM compatibility fixtures deliberately pin producer dependencies.
