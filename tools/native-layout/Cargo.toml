@@ -1,0 +1,15 @@
+[package]
+name = "neocogi-native-layout"
+version = "0.0.0"
+edition = "2024"
+publish = false
+description = "Compile-time copying of Cargo artifacts and application resources"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2.workspace = true
+quote.workspace = true
+syn.workspace = true
+tempfile.workspace = true

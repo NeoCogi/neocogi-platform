@@ -13,6 +13,15 @@ panic-immediate-abort = true
 # rebuilt. libtest isolates panic expectations in child processes for abort mode.
 panic-abort-tests = true
 profile-rustflags = true
+trim-paths = true
+
+# Deployed binaries and embedded panic/debug locations must not disclose the
+# checkout, Cargo home or compiler installation. Debug unremap sidecars stay local.
+[profile.dev]
+trim-paths = "all"
+
+[profile.release]
+trim-paths = "all"
 
 [profile.min-size]
 panic = "immediate-abort"
@@ -30,3 +39,7 @@ rustflags = []
 [alias]
 # Convenience only: the profile itself owns all target compiler settings.
 build-min-size = ["build", "--profile", "min-size"]
+
+# Use relative Mach-O identities without enabling rustc's inferred build rpaths.
+[target.'cfg(target_vendor = "apple")']
+rustflags = ["-Zosx-rpath-install-name"]
