@@ -6,7 +6,9 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Renderer-neutral COM contracts shared by NeoCogi graphics producers and backends"
-links = "nc_contract_neocogi_renderer"
+# Cargo owner for IDL module `neocogi.renderer`: UTF-8 bytes encoded as hex.
+# Demangle by decoding hex pairs after `nc_contract_`; this is not a library name.
+links = "nc_contract_6e656f636f67692e72656e6465726572"
 
 [package.metadata.neocogi-contract]
 module = "neocogi.renderer"

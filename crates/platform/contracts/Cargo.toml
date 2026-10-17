@@ -6,7 +6,9 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Platform input and native-window ABI contracts for NeoCogi"
-links = "nc_contract_neocogi_platform"
+# Cargo owner for IDL module `neocogi.platform`: UTF-8 bytes encoded as hex.
+# Demangle by decoding hex pairs after `nc_contract_`; this is not a library name.
+links = "nc_contract_6e656f636f67692e706c6174666f726d"
 
 [package.metadata.neocogi-contract]
 module = "neocogi.platform"

@@ -4,7 +4,9 @@ version = "0.0.0"
 edition.workspace = true
 license.workspace = true
 publish = false
-links = "nc_contract_neocogi_render_mesh"
+# Cargo owner for IDL module `neocogi.render.mesh`: UTF-8 bytes encoded as hex.
+# Demangle by decoding hex pairs after `nc_contract_`; this is not a library name.
+links = "nc_contract_6e656f636f67692e72656e6465722e6d657368"
 
 [package.metadata.neocogi-contract]
 module = "neocogi.render.mesh"
