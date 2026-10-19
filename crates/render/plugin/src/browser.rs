@@ -8,7 +8,7 @@ impl PlatformObject {
     /// one WebGL context. Applications style canvas elements using ordinary page CSS.
     pub(super) fn window(&self, title: &str, size: Size, atlas: ComRef<'_, IRgbaImageAbi>) -> Result<WindowObject, NcStatus> {
         let pixels = AtlasPixels::read(atlas)?;
-        self.canvas(title, size, atlas.add_ref(), pixels).map_err(|error| {
+        self.canvas(title, size, atlas.try_add_ref()?, pixels).map_err(|error| {
             *self.diagnostic.borrow_mut() = error;
             PLATFORM_E_BACKEND
         })

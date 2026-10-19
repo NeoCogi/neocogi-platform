@@ -87,9 +87,10 @@ impl RenderState {
         }
         // The image projection deliberately carries no fonts, names, theme records, or catalog.
         // Those higher-level meanings have already been resolved before renderer submission.
+        let retained = source.try_add_ref().map_err(|status| status.to_string())?;
         let pixels = AtlasPixels::read(source).map_err(|status| status.to_string())?;
         self.gpu.replace_atlas(pixels.image())?;
-        self.atlas = source.add_ref();
+        self.atlas = retained;
         Ok(())
     }
 }

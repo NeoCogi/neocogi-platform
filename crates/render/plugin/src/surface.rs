@@ -79,12 +79,13 @@ fn validate_size(size: Size) -> Result<(), NcStatus> {
 impl SurfaceAtlas {
     /// Uploads through the same device as the output, with no native atlas replacement.
     fn upload(device: &Rc<Device>, gpu: &mut gpu::Gpu, source: ComRef<'_, IRgbaImageAbi>) -> Result<Self, NcStatus> {
+        let retained = source.try_add_ref()?;
         let pixels = AtlasPixels::read(source)?;
         let image = pixels.image();
         let id = TextureId::for_upload(image.width, image.height, image.pixels).map_err(|_| NC_E_INVALID_ARG)?;
         gpu.create_texture(id, image.pixels).map_err(|error| device.failure(error))?;
         Ok(Self {
-            source: source.add_ref(),
+            source: retained,
             image: retain_texture(device.clone(), id),
         })
     }

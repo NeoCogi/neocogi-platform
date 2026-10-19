@@ -87,13 +87,15 @@ fn await_result(promise: js_sys::Promise, completion: ComPtr<IClipboardCompletio
 impl ITextClipboard for WindowObject {
     /// Browser denial is an asynchronous failed receipt, never an empty successful paste.
     fn read(&self, completion: ComRef<'_, IClipboardCompletionAbi>) -> Result<(), NcStatus> {
-        await_result(browser_clipboard()?.read_text(), completion.add_ref(), true);
+        let completion = completion.try_add_ref()?;
+        await_result(browser_clipboard()?.read_text(), completion, true);
         Ok(())
     }
     /// The promise resolves before the requesting editor may remove cut text.
     fn write(&self, input: NcCopyFromBufferOffset<'_, u8>, completion: ComRef<'_, IClipboardCompletionAbi>) -> Result<(), NcStatus> {
         let text = text(input)?;
-        await_result(browser_clipboard()?.write_text(text), completion.add_ref(), false);
+        let completion = completion.try_add_ref()?;
+        await_result(browser_clipboard()?.write_text(text), completion, false);
         Ok(())
     }
 }
