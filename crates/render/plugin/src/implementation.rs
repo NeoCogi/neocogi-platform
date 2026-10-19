@@ -80,7 +80,7 @@ struct RenderState {
     atlas: ComPtr<IRgbaImageAbi>,
 }
 impl RenderState {
-    /// Copies and uploads candidate pixels before retaining the new image identity.
+    /// Retains the candidate first, then publishes its identity after successful upload.
     fn prepare_atlas(&mut self, source: ComRef<'_, IRgbaImageAbi>) -> Result<(), String> {
         if self.atlas.as_raw().object == source.as_raw().object {
             return Ok(());
