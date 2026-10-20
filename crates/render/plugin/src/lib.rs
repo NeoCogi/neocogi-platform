@@ -38,3 +38,7 @@ compile_error!("wasm32 rendering requires the webgl feature");
     all(target_arch = "wasm32", feature = "webgl", not(any(feature = "glow", feature = "vulkan", feature = "wgpu"))),
 ))]
 include!("implementation.rs");
+
+// This unit-test executable owns one runtime; normal library builds never embed it.
+#[cfg(test)]
+extern crate nc_com as _;

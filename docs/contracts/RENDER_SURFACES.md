@@ -48,7 +48,7 @@ rebinding when the native swapchain is rebuilt.
 Native acceptance can be run with:
 
 ```sh
-SDL_VIDEODRIVER=offscreen cargo test -p neocogi-render-plugin --features neocogi-com/static-runtime --lib -- --ignored --test-threads=1
+SDL_VIDEODRIVER=offscreen cargo test -p neocogi-render-plugin --features neocogi-com/runtime --lib -- --ignored --test-threads=1
 ```
 
 The surface test checks asymmetric source orientation, old snapshot pixels after
