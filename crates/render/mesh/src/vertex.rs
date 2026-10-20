@@ -86,18 +86,16 @@ mod tests {
             },
         ];
         let packed = PackedVertices::new(&vertices).unwrap();
-        let floats: Vec<_> = packed
-            .as_bytes()
-            .chunks_exact(4)
-            .map(|bytes| f32::from_ne_bytes(bytes.try_into().unwrap()))
-            .collect();
+        let floats: Vec<_> = packed.as_bytes().as_chunks::<4>().0.iter().map(|bytes| f32::from_ne_bytes(*bytes)).collect();
         assert_eq!(floats, [1., 2., 3., 4., 5., 6., 7., 8., -1., -2., -3., -4., -5., -6., -7., -8.]);
         assert_eq!(packed.as_bytes().len(), 2 * STRIDE);
         assert!(PackedVertices::new(&[]).unwrap().as_bytes().is_empty());
         let indices = [0_u32, 1, u32::MAX];
         let decoded: Vec<_> = index_bytes(&indices)
-            .chunks_exact(4)
-            .map(|bytes| u32::from_ne_bytes(bytes.try_into().unwrap()))
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|bytes| u32::from_ne_bytes(*bytes))
             .collect();
         assert_eq!(decoded, indices);
         assert!(index_bytes(&[]).is_empty());

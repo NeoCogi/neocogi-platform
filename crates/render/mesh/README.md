@@ -12,6 +12,14 @@ This is a fixed material capability, not an arbitrary shader or material system.
 Glow/WebGL, Vulkan, and WGPU each preserve native resource ownership inside their
 backend. Rust command values and GPU handles never cross the public COM boundary.
 
+`MeshVertex` describes semantic application fields, with no native layout promise.
+COM transport uses its checked wire format; GPU uploads use the private
+[renderer-owned vertex format](src/vertex.rs). Each new upload converts named
+position/normal/UV fields into initialized float arrays. All three backends derive
+attribute offsets and stride from that format. The temporary encoding is dropped
+after upload; the original shared mesh arrays still own cache identity. A COM
+application-layout change therefore cannot change what the shader reads.
+
 Choose the same backend feature as the renderer plugin. All three backends
 cache immutable vertex and index buffers by the shared allocation identity of
 `MeshBuffers`, so repeated draws reuse geometry uploads while transforms remain
@@ -74,3 +82,24 @@ and reject application mesh commands.
 The former demo-owned package names and contract identity are removed. Rebuild
 applications and plugins together against the new mesh contract. No compatibility
 aliases or parallel implementations are retained.
+
+## Native pixel regressions
+
+The ordinary unit suite checks exact position/normal/UV bytes across multiple
+vertices and empty input, independently of the compiler's chosen application
+layout. GPU tests execute the production upload and shader paths and read actual
+framebuffers. They require native drivers and are explicitly enabled by
+`scripts/test-demo.sh <glow|vulkan|wgpu>`, which is run by each native CI job.
+The GL fixture also checks that repeated draws retain the original GPU buffer.
+
+For a focused offscreen GL run:
+
+```sh
+SDL_VIDEODRIVER=offscreen cargo test -p neocogi-render-mesh \
+  --no-default-features --features glow --lib -- --include-ignored --test-threads=1
+```
+
+Use `--features vulkan` or `--features wgpu` for the other native framebuffer
+fixtures. A normal unit run leaves these driver-dependent tests ignored.
+The Suzanne regression record
+preserves the original mismatch, failing Vulkan control and subsequent verification.

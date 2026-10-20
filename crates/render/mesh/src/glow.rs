@@ -8,6 +8,10 @@ use neocogi_render_glow::{GlApplicationRenderContext, GlApplicationRenderer, cre
 
 use crate::{MeshBuffers, MeshCommand, MeshSubmission, vertex};
 
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[path = "glow_tests.rs"]
+mod tests;
+
 /// Application renderer owning the mesh renderer's GL program and mesh buffers.
 pub struct MeshRenderer {
     /// Lazily created resources, initialized only if a frame actually contains a mesh command.

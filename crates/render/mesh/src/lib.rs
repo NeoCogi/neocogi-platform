@@ -12,7 +12,7 @@ use rs_math3d::Mat4f;
 #[cfg(any(test, feature = "glow", feature = "webgl", feature = "vulkan", feature = "wgpu"))]
 mod vertex;
 
-#[cfg(all(test, not(any(feature = "glow", feature = "webgl")), any(feature = "vulkan", feature = "wgpu")))]
+#[cfg(all(test, any(feature = "vulkan", feature = "wgpu", all(feature = "glow", not(target_arch = "wasm32")))))]
 mod pixel_tests;
 
 #[cfg(any(feature = "glow", feature = "webgl"))]
