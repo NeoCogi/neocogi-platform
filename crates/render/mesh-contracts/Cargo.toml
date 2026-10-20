@@ -14,7 +14,7 @@ source = "idl/neocogi/render/mesh.ncidl"
 
 [dependencies]
 neocogi-renderer-contracts.workspace = true
-neocogi-com = { workspace = true, features = ["macros"] }
+neocogi-com = { workspace = true }
 rs-math3d.workspace = true
 
 [build-dependencies]

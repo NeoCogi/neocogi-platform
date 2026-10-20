@@ -15,7 +15,7 @@ module = "neocogi.renderer"
 source = "idl/neocogi/renderer"
 
 [dependencies]
-neocogi-com = { workspace = true, features = ["macros"] }
+neocogi-com = { workspace = true }
 rs-math3d.workspace = true
 
 [build-dependencies]
