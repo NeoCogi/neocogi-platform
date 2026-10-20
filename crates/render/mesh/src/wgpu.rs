@@ -6,7 +6,7 @@ use neocogi_render_core::prelude::Recti;
 use neocogi_render_wgpu::{APPLICATION_DEPTH_FORMAT, WgpuApplicationPrepareContext, WgpuApplicationRenderer};
 use wgpu::util::DeviceExt;
 
-use crate::{MeshBuffers, MeshCommand, MeshSubmission, MeshVertex};
+use crate::{MeshBuffers, MeshCommand, MeshSubmission, vertex};
 
 #[cfg(test)]
 #[path = "wgpu_tests.rs"]
@@ -66,7 +66,7 @@ impl WgpuApplicationRenderer for MeshRenderer {
                     let geometry = match self.meshes.iter().find(|mesh| mesh.source.same_storage(&submission.mesh)) {
                         Some(mesh) => Rc::clone(mesh),
                         None => {
-                            let mesh = Rc::new(MeshGeometry::new(context.device, &submission.mesh));
+                            let mesh = Rc::new(MeshGeometry::new(context.device, &submission.mesh)?);
                             self.meshes.push(Rc::clone(&mesh));
                             mesh
                         }
@@ -115,7 +115,7 @@ struct MeshPipeline {
     color_format: wgpu::TextureFormat,
     /// Bind-group layout containing two transform matrices.
     bind_group_layout: wgpu::BindGroupLayout,
-    /// Depth-tested triangle-list pipeline for [`MeshVertex`].
+    /// Depth-tested triangle-list pipeline for the renderer's encoded vertex format.
     pipeline: wgpu::RenderPipeline,
 }
 
@@ -152,22 +152,22 @@ impl MeshPipeline {
                 entry_point: Some("vs_main"),
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
                 buffers: &[Some(wgpu::VertexBufferLayout {
-                    array_stride: mem::size_of::<MeshVertex>() as u64,
+                    array_stride: vertex::STRIDE as u64,
                     step_mode: wgpu::VertexStepMode::Vertex,
                     attributes: &[
                         wgpu::VertexAttribute {
                             format: wgpu::VertexFormat::Float32x3,
-                            offset: 0,
+                            offset: vertex::POSITION_OFFSET as u64,
                             shader_location: 0,
                         },
                         wgpu::VertexAttribute {
                             format: wgpu::VertexFormat::Float32x3,
-                            offset: 12,
+                            offset: vertex::NORMAL_OFFSET as u64,
                             shader_location: 1,
                         },
                         wgpu::VertexAttribute {
                             format: wgpu::VertexFormat::Float32x2,
-                            offset: 24,
+                            offset: vertex::UV_OFFSET as u64,
                             shader_location: 2,
                         },
                     ],
@@ -225,23 +225,24 @@ struct MeshGeometry {
 
 impl MeshGeometry {
     /// Creates both GPU buffers once for an immutable mesh allocation.
-    fn new(device: &wgpu::Device, source: &MeshBuffers) -> Self {
+    fn new(device: &wgpu::Device, source: &MeshBuffers) -> Result<Self, String> {
+        let vertices = vertex::PackedVertices::new(source.vertices())?;
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("render.mesh.vertices"),
-            contents: bytes(source.vertices()),
+            contents: vertices.as_bytes(),
             usage: wgpu::BufferUsages::VERTEX,
         });
         let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("render.mesh.indices"),
-            contents: bytes(source.indices()),
+            contents: vertex::index_bytes(source.indices()),
             usage: wgpu::BufferUsages::INDEX,
         });
-        Self {
+        Ok(Self {
             source: source.clone(),
             vertex_buffer,
             index_buffer,
             index_count: source.indices().len() as u32,
-        }
+        })
     }
 }
 
@@ -264,7 +265,7 @@ impl PreparedMesh {
         };
         let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("render.mesh.uniforms"),
-            contents: bytes(std::slice::from_ref(&uniforms)),
+            contents: uniform_bytes(&uniforms),
             usage: wgpu::BufferUsages::UNIFORM,
         });
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -303,10 +304,15 @@ fn matrix_values(matrix: &rs_math3d::Mat4f) -> [f32; 16] {
     values
 }
 
-/// Reinterprets plain GPU input data as a byte slice for immutable buffer creation.
-fn bytes<T>(values: &[T]) -> &[u8] {
-    // SAFETY: the returned slice borrows the contiguous input and spans exactly its byte size.
-    unsafe { slice::from_raw_parts(values.as_ptr().cast::<u8>(), mem::size_of_val(values)) }
+/// Borrows the shader's two fully initialized dense matrices, never an arbitrary Rust record.
+fn uniform_bytes(values: &MeshUniforms) -> &[u8] {
+    const {
+        assert!(mem::size_of::<MeshUniforms>() == 128);
+        assert!(mem::offset_of!(MeshUniforms, pvm) == 0);
+        assert!(mem::offset_of!(MeshUniforms, view_model) == 64);
+    }
+    // SAFETY: the C fields are initialized float arrays; the assertions exclude all padding.
+    unsafe { slice::from_raw_parts(std::ptr::from_ref(values).cast::<u8>(), mem::size_of_val(values)) }
 }
 
 /// Clamps one logical top-left rectangle to the current WGPU render target.

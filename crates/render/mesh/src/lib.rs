@@ -9,6 +9,9 @@ use std::sync::Arc;
 
 use rs_math3d::Mat4f;
 
+#[cfg(any(test, feature = "glow", feature = "webgl", feature = "vulkan", feature = "wgpu"))]
+mod vertex;
+
 #[cfg(all(test, not(any(feature = "glow", feature = "webgl")), any(feature = "vulkan", feature = "wgpu")))]
 mod pixel_tests;
 
@@ -32,7 +35,7 @@ pub use neocogi_render_mesh_contracts::MeshVertex;
 /// Immutable CPU mesh storage shared between retained scene state and frame commands.
 #[derive(Clone)]
 pub struct MeshBuffers {
-    /// Contiguous vertex storage uploaded by the selected application renderer.
+    /// Semantic vertex storage encoded into the renderer's private GPU layout at upload.
     vertices: Arc<[MeshVertex]>,
     /// Triangle-list indices interpreted as unsigned 32-bit GPU indices.
     indices: Arc<[u32]>,

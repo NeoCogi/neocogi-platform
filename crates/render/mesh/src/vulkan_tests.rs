@@ -1,7 +1,7 @@
 //! Native allocation/lifetime checks exercise the real upload path without a window or GPU draws.
 
 use super::*;
-use crate::MeshSubmission;
+use crate::{MeshSubmission, MeshVertex};
 use rs_math3d::{Vec2f, Vec3f};
 
 #[path = "vulkan_pixel_tests.rs"]

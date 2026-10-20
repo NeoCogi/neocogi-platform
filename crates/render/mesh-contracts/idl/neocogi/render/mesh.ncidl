@@ -59,7 +59,7 @@ struct Matrix4 {
 }
 
 #[version(1)]
-/// Plain vertex format shared by all mesh renderer backends.
+/// Semantic application vertex; renderers encode their own GPU byte representation.
 struct MeshVertex {
     /// Object-space position; every component must be finite.
     position: Vector3,

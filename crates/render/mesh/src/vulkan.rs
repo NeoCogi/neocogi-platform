@@ -7,7 +7,7 @@ use neocogi_render_core::prelude::Recti;
 use neocogi_render_vulkan::{VulkanApplicationPrepareContext, VulkanApplicationRenderContext, VulkanApplicationRenderer, VulkanApplicationResult};
 use rs_math3d::Mat4f;
 
-use crate::{MeshCommand, MeshBuffers, MeshVertex};
+use crate::{MeshCommand, MeshBuffers, vertex};
 
 #[cfg(test)]
 #[path = "vulkan_tests.rs"]
@@ -162,7 +162,9 @@ impl VulkanApplicationRenderer for MeshRenderer {
         // touches depth only, inside the same bounded physical rectangle used for this draw.
         let clear = vk::ClearAttachment::default()
             .aspect_mask(vk::ImageAspectFlags::DEPTH)
-            .clear_value(vk::ClearValue { depth_stencil: vk::ClearDepthStencilValue { depth: 1.0, stencil: 0 } });
+            .clear_value(vk::ClearValue {
+                depth_stencil: vk::ClearDepthStencilValue { depth: 1.0, stencil: 0 },
+            });
         let clear_rect = vk::ClearRect::default().rect(scissor).base_array_layer(0).layer_count(1);
         // SAFETY: The backend lends an active compatible graphics pass with a depth attachment.
         // Its live command buffer, prepared buffers and pipeline outlive recording/submission;
@@ -180,9 +182,13 @@ impl VulkanApplicationRenderer for MeshRenderer {
                 .cmd_bind_index_buffer(context.command_buffer, prepared.index.buffer, 0, vk::IndexType::UINT32);
             context.device.cmd_set_viewport(context.command_buffer, 0, &[viewport]);
             context.device.cmd_set_scissor(context.command_buffer, 0, &[scissor]);
-            context
-                .device
-                .cmd_push_constants(context.command_buffer, pipeline.layout, vk::ShaderStageFlags::VERTEX, 0, bytes(&matrices));
+            context.device.cmd_push_constants(
+                context.command_buffer,
+                pipeline.layout,
+                vk::ShaderStageFlags::VERTEX,
+                0,
+                matrix_bytes(&matrices),
+            );
             context.device.cmd_draw_indexed(context.command_buffer, prepared.index_count, 1, 0, 0, 0);
         }
         Ok(())
@@ -240,24 +246,24 @@ impl MeshPipeline {
         ];
         let binding = vk::VertexInputBindingDescription::default()
             .binding(0)
-            .stride(mem::size_of::<MeshVertex>() as u32)
+            .stride(vertex::STRIDE as u32)
             .input_rate(vk::VertexInputRate::VERTEX);
         let attributes = [
             vk::VertexInputAttributeDescription::default()
                 .binding(0)
                 .location(0)
                 .format(vk::Format::R32G32B32_SFLOAT)
-                .offset(0),
+                .offset(vertex::POSITION_OFFSET as u32),
             vk::VertexInputAttributeDescription::default()
                 .binding(0)
                 .location(1)
                 .format(vk::Format::R32G32B32_SFLOAT)
-                .offset(12),
+                .offset(vertex::NORMAL_OFFSET as u32),
             vk::VertexInputAttributeDescription::default()
                 .binding(0)
                 .location(2)
                 .format(vk::Format::R32G32_SFLOAT)
-                .offset(24),
+                .offset(vertex::UV_OFFSET as u32),
         ];
         let vertex_input = vk::PipelineVertexInputStateCreateInfo::default()
             .vertex_binding_descriptions(slice::from_ref(&binding))
@@ -323,7 +329,7 @@ impl Drop for MeshPipeline {
 struct PreparedMesh {
     /// Retains the allocation identity used for lookup; other CPU owners keep this upload cached.
     source: MeshBuffers,
-    /// Vertex allocation containing application-owned [`MeshVertex`] data.
+    /// Vertex allocation containing the renderer's encoded position/normal/UV format.
     vertex: VulkanBuffer,
     /// Index allocation containing the triangle-list u32 data.
     index: VulkanBuffer,
@@ -334,8 +340,14 @@ struct PreparedMesh {
 impl PreparedMesh {
     /// Creates and fills both buffers once; subsequent frames only bind these immutable objects.
     fn new(device: &ash::Device, memory_properties: &vk::PhysicalDeviceMemoryProperties, mesh: &MeshBuffers) -> VulkanApplicationResult<Self> {
-        let vertex = VulkanBuffer::new(device, memory_properties, bytes(mesh.vertices()), vk::BufferUsageFlags::VERTEX_BUFFER)?;
-        let index = VulkanBuffer::new(device, memory_properties, bytes(mesh.indices()), vk::BufferUsageFlags::INDEX_BUFFER)?;
+        let vertices = vertex::PackedVertices::new(mesh.vertices())?;
+        let vertex = VulkanBuffer::new(device, memory_properties, vertices.as_bytes(), vk::BufferUsageFlags::VERTEX_BUFFER)?;
+        let index = VulkanBuffer::new(
+            device,
+            memory_properties,
+            vertex::index_bytes(mesh.indices()),
+            vk::BufferUsageFlags::INDEX_BUFFER,
+        )?;
         Ok(Self {
             source: mesh.clone(),
             vertex,
@@ -479,9 +491,9 @@ fn matrix_values(matrix: &Mat4f) -> &[f32] {
     unsafe { slice::from_raw_parts(matrix.col.as_ptr().cast::<f32>(), 16) }
 }
 
-/// Reinterprets plain GPU input values as bytes for upload or push constants.
-fn bytes<T>(values: &[T]) -> &[u8] {
-    // SAFETY: the output shares the input lifetime and spans its exact contiguous byte size.
+/// Borrows exactly two initialized column-major matrices for the shader's push constants.
+fn matrix_bytes(values: &[f32; 32]) -> &[u8] {
+    // SAFETY: the float array has no padding, is fully initialized and remains borrowed.
     unsafe { slice::from_raw_parts(values.as_ptr().cast::<u8>(), mem::size_of_val(values)) }
 }
 

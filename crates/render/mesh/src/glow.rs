@@ -6,7 +6,7 @@ use glow::HasContext;
 use neocogi_render_core::{RenderItemArgs, prelude::Recti};
 use neocogi_render_glow::{GlApplicationRenderContext, GlApplicationRenderer, create_program};
 
-use crate::{MeshBuffers, MeshCommand, MeshSubmission, MeshVertex};
+use crate::{MeshBuffers, MeshCommand, MeshSubmission, vertex};
 
 /// Application renderer owning the mesh renderer's GL program and mesh buffers.
 pub struct MeshRenderer {
@@ -119,13 +119,13 @@ impl GlMeshResources {
             gl.bind_buffer(glow::ARRAY_BUFFER, Some(mesh.vertex_buffer));
             gl.bind_buffer(glow::ELEMENT_ARRAY_BUFFER, Some(mesh.index_buffer));
 
-            // MeshVertex and its rs-math3d vectors are repr(C), so these offsets match their float fields.
+            // Shader attributes describe our encoded GPU payload, never the COM application's layout.
             gl.enable_vertex_attrib_array(0);
-            gl.vertex_attrib_pointer_f32(0, 3, glow::FLOAT, false, std::mem::size_of::<MeshVertex>() as i32, 0);
+            gl.vertex_attrib_pointer_f32(0, 3, glow::FLOAT, false, vertex::STRIDE as i32, vertex::POSITION_OFFSET as i32);
             gl.enable_vertex_attrib_array(1);
-            gl.vertex_attrib_pointer_f32(1, 3, glow::FLOAT, false, std::mem::size_of::<MeshVertex>() as i32, 12);
+            gl.vertex_attrib_pointer_f32(1, 3, glow::FLOAT, false, vertex::STRIDE as i32, vertex::NORMAL_OFFSET as i32);
             gl.enable_vertex_attrib_array(2);
-            gl.vertex_attrib_pointer_f32(2, 2, glow::FLOAT, false, std::mem::size_of::<MeshVertex>() as i32, 24);
+            gl.vertex_attrib_pointer_f32(2, 2, glow::FLOAT, false, vertex::STRIDE as i32, vertex::UV_OFFSET as i32);
 
             set_matrix(gl, self.program, "uPvm", &submission.pvm)?;
             set_matrix(gl, self.program, "uViewModel", &submission.view_model)?;
@@ -165,6 +165,7 @@ struct GlMesh {
 impl GlMesh {
     /// Allocates and uploads immutable geometry, rolling back partial handle creation.
     fn new(gl: Rc<glow::Context>, source: &MeshBuffers) -> Result<Self, String> {
+        let vertices = vertex::PackedVertices::new(source.vertices())?;
         let vertex_buffer = unsafe { gl.create_buffer() }.map_err(|error| format!("create mesh vertex buffer failed: {error}"))?;
         let index_buffer = match unsafe { gl.create_buffer() } {
             Ok(buffer) => buffer,
@@ -177,11 +178,11 @@ impl GlMesh {
         };
         unsafe {
             gl.bind_buffer(glow::ARRAY_BUFFER, Some(vertex_buffer));
-            gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, bytes(source.vertices()), glow::STATIC_DRAW);
+            gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, vertices.as_bytes(), glow::STATIC_DRAW);
             // Upload through ARRAY_BUFFER so preparation does not mutate the
             // renderer's vertex-array element binding before a draw begins.
             gl.bind_buffer(glow::ARRAY_BUFFER, Some(index_buffer));
-            gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, bytes(source.indices()), glow::STATIC_DRAW);
+            gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, vertex::index_bytes(source.indices()), glow::STATIC_DRAW);
             gl.bind_buffer(glow::ARRAY_BUFFER, None);
         }
         Ok(Self {
@@ -202,14 +203,6 @@ impl Drop for GlMesh {
             self.gl.delete_buffer(self.vertex_buffer);
         }
     }
-}
-
-/// Reinterprets a plain repr(C) slice as bytes for native buffer upload.
-fn bytes<T>(values: &[T]) -> &[u8] {
-    // SAFETY: the returned slice borrows the original contiguous allocation and uses its exact
-    // byte length. MeshVertex and u32 contain no references or invalid padding requirements for a
-    // raw GPU copy.
-    unsafe { std::slice::from_raw_parts(values.as_ptr().cast::<u8>(), std::mem::size_of_val(values)) }
 }
 
 /// Uploads one rs-math3d column-major matrix to a named uniform.
