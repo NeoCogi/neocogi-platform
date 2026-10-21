@@ -101,5 +101,5 @@ SDL_VIDEODRIVER=offscreen cargo test -p neocogi-render-mesh \
 
 Use `--features vulkan` or `--features wgpu` for the other native framebuffer
 fixtures. A normal unit run leaves these driver-dependent tests ignored.
-The Suzanne regression record
-preserves the original mismatch, failing Vulkan control and subsequent verification.
+The [pixel fixtures](src/pixel_tests.rs) exercise the production upload and shader
+layout; normal unit tests also check named-field GPU conversion and cache identity.

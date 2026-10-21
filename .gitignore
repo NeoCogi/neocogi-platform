@@ -12,3 +12,6 @@ SDL2.*
 
 # COM compatibility fixtures deliberately pin producer dependencies.
 !crates/com/**/Cargo.lock
+
+# Local run artifacts and archived reproduction data stay outside Git.
+/docs/measurements/
