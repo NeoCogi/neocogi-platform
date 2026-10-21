@@ -69,7 +69,7 @@ fn wide_mesh_edges_draw_and_recover_through_generated_com() {
         let mut access = owner.access().unwrap();
         let pixels = access.state().gpu.last_pixels().to_vec();
         assert_eq!(pixels.len(), 32 * 32 * 4);
-        assert!(pixels.chunks_exact(4).any(|pixel| pixel != [0, 0, 0, 255]), "the mesh must emit visible pixels");
+        assert!(pixels.as_chunks::<4>().0.iter().any(|pixel| *pixel != [0, 0, 0, 255]), "the mesh must emit visible pixels");
         pixels
     };
     let ordinary = draw(bounds, bounds);

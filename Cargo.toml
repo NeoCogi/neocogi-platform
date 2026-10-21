@@ -26,9 +26,9 @@ repository = "https://github.com/NeoCogi/neocogi-platform"
 [workspace.dependencies]
 neocogi-renderer-contracts = { path = "crates/render/contracts" }
 neocogi-platform-contracts = { path = "crates/platform/contracts" }
-neocogi-com = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "1de21a46a2477b23e2c15957bbcb1ac2c9b2ea2b", version = "0.0.0", default-features = false }
+neocogi-com = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "8181d2ccec7055360559e241dd88f074bcac4311", version = "0.0.0", default-features = false }
 neocogi-native-layout = { path = "tools/native-layout" }
-neocogi-idl = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "1de21a46a2477b23e2c15957bbcb1ac2c9b2ea2b", version = "0.0.0" }
+neocogi-idl = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "8181d2ccec7055360559e241dd88f074bcac4311", version = "0.0.0" }
 prettyplease = "0.2"
 proc-macro2 = { version = "1", features = ["span-locations"] }
 quote = "1"
@@ -50,7 +50,6 @@ glow = "0.18"
 png = "0.18"
 miniz_oxide = { version = "0.8.9", default-features = false }
 pollster = "1"
-rand = "0.10"
 raw-window-handle = "0.6"
 rs-math3d = "0.13"
 sdl2 = { version = "0.38", features = ["raw-window-handle"] }

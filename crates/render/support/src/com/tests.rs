@@ -193,7 +193,9 @@ fn invalid_record_tag_rejects_in_the_generated_buffer_codec() {
         prefix: *mut u64,
         written: *mut u32,
     ) -> NcStatus {
-        if count != 2 { return NC_E_INVALID_ARG; }
+        if count != 2 {
+            return NC_E_INVALID_ARG;
+        }
         let good = neocogi_com::encode_inline(&RenderBatch::Texture { first: 0 }).unwrap();
         let mut bad = good;
         bad.tag = 255;

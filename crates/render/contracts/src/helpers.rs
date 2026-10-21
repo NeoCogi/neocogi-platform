@@ -167,8 +167,20 @@ mod interpolation_tests {
     /// Finite opposite extremes must produce bounded attributes, including at either endpoint.
     #[test]
     fn finite_extremes_interpolate_without_overflow() {
-        let left = RenderVertex { x: -f32::MAX, y: f32::MAX, u: -f32::MAX, v: f32::MAX, rgba: 0 };
-        let right = RenderVertex { x: f32::MAX, y: -f32::MAX, u: f32::MAX, v: -f32::MAX, rgba: u32::MAX };
+        let left = RenderVertex {
+            x: -f32::MAX,
+            y: f32::MAX,
+            u: -f32::MAX,
+            v: f32::MAX,
+            rgba: 0,
+        };
+        let right = RenderVertex {
+            x: f32::MAX,
+            y: -f32::MAX,
+            u: f32::MAX,
+            v: -f32::MAX,
+            rgba: u32::MAX,
+        };
         for amount in [0.0, 0.25, 0.5, 0.75, 1.0] {
             let value = RenderVertex::lerp(left, right, amount);
             assert!([value.x, value.y, value.u, value.v].into_iter().all(f32::is_finite));

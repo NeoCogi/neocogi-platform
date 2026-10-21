@@ -39,7 +39,12 @@ impl TestDevice {
         let queues = [vk::DeviceQueueCreateInfo::default().queue_family_index(family).queue_priorities(&priorities)];
         let device = unsafe { instance.create_device(physical, &vk::DeviceCreateInfo::default().queue_create_infos(&queues), None) }.unwrap();
         let memory_properties = unsafe { instance.get_physical_device_memory_properties(physical) };
-        Self { instance, device, memory_properties, family }
+        Self {
+            instance,
+            device,
+            memory_properties,
+            family,
+        }
     }
 
     /// Simulates preparation after one of two slots has completed; no GPU commands are submitted.

@@ -163,7 +163,7 @@ impl Uniforms {
     /// Encodes the exact shader block without reading a Rust object representation.
     fn bytes(&self) -> [u8; 16] {
         let mut bytes = [0; 16];
-        for (slot, value) in bytes.chunks_exact_mut(4).zip(self.screen_size.iter().chain(&self._pad)) {
+        for (slot, value) in bytes.as_chunks_mut::<4>().0.iter_mut().zip(self.screen_size.iter().chain(&self._pad)) {
             slot.copy_from_slice(&value.to_ne_bytes());
         }
         bytes
@@ -908,12 +908,7 @@ where
     /// Prepares one ordered command stream and records it into an already selected attachment.
     /// Presentation and offscreen admission remain in `finish_target`. Every independent application
     /// item starts with fresh depth; color and UI painter order survive pass boundaries.
-    fn record_commands(
-        &mut self,
-        encoder: &mut wgpu::CommandEncoder,
-        view: &wgpu::TextureView,
-        atlas: Option<TextureId>,
-    ) -> Result<(), FrameError> {
+    fn record_commands(&mut self, encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView, atlas: Option<TextureId>) -> Result<(), FrameError> {
         // Give the concrete application renderer one preparation phase before any render-pass
         // resource is borrowed. It may create pipelines, resize buffers, upload data, or encode
         // compute/transfer work needed by the application commands in this frame.
@@ -1030,7 +1025,10 @@ where
         // The first pass includes leading UI and the first application item. Each later item
         // starts another pass; following UI stays with that item until the next boundary. There
         // is always one pass, even for an empty frame, so the frame clear cannot disappear.
-        let ends = self.commands.iter().enumerate()
+        let ends = self
+            .commands
+            .iter()
+            .enumerate()
             .filter_map(|(index, command)| matches!(command, RenderCommand::Application { .. }).then_some(index))
             .skip(1)
             .chain(std::iter::once(self.commands.len()));
