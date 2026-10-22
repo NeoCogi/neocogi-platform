@@ -20,6 +20,11 @@ attribute offsets and stride from that format. The temporary encoding is dropped
 after upload; the original shared mesh arrays still own cache identity. A COM
 application-layout change therefore cannot change what the shader reads.
 
+Glow/WebGL uploads index data as `ELEMENT_ARRAY_BUFFER` under the mesh renderer's
+private vertex array. WebGL assigns the buffer's vertex/index role on its first
+binding, so index uploads must never use `ARRAY_BUFFER`. The upload preserves
+the UI renderer's independent vertex-array bindings.
+
 Choose the same backend feature as the renderer plugin. All three backends
 cache immutable vertex and index buffers by the shared allocation identity of
 `MeshBuffers`, so repeated draws reuse geometry uploads while transforms remain

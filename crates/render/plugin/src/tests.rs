@@ -7,6 +7,15 @@ use rs_math3d::{Mat4f, Vec2f, Vec3f};
 #[cfg(feature = "glow")]
 mod mesh_geometry;
 
+/// SDL permits one process-wide video owner and event pump. Each fixture keeps
+/// this permit until all of its native windows, contexts and resources drop.
+static NATIVE_SESSION: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Serializes complete native fixture lifetimes even under the parallel harness.
+fn native_session() -> std::sync::MutexGuard<'static, ()> {
+    NATIVE_SESSION.lock().expect("earlier native fixture panicked")
+}
+
 /// Shared ordered stream fixture can inject native reentry and release a resource during bulk copying.
 struct Input {
     /// Immutable atlas passed explicitly to every native render, including reentry probes.
@@ -155,6 +164,7 @@ fn mesh(scene: &ComPtr<IMeshSceneAbi>) {
 #[test]
 #[ignore = "requires a native SDL display; use SDL_VIDEODRIVER=offscreen for Glow or a native display for Vulkan/WGPU"]
 fn native_order_ownership_reentry_and_final_release() {
+    let _session = native_session();
     let platform = PlatformObject::default();
     let assets = neocogi_demo_assets::load_bundle().unwrap();
     let atlas = assets.image().unwrap();

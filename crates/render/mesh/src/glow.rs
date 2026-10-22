@@ -98,7 +98,7 @@ impl GlMeshResources {
         let mesh_index = match self.meshes.iter().position(|mesh| mesh.source.same_storage(&submission.mesh)) {
             Some(index) => index,
             None => {
-                self.meshes.push(GlMesh::new(self.gl.clone(), &submission.mesh)?);
+                self.meshes.push(GlMesh::new(self.gl.clone(), self.vertex_array, &submission.mesh)?);
                 self.meshes.len() - 1
             }
         };
@@ -167,8 +167,10 @@ struct GlMesh {
 }
 
 impl GlMesh {
-    /// Allocates and uploads immutable geometry, rolling back partial handle creation.
-    fn new(gl: Rc<glow::Context>, source: &MeshBuffers) -> Result<Self, String> {
+    /// Uploads immutable geometry under the owning renderer's private vertex
+    /// array, rolling back partial handle creation. WebGL fixes a buffer's
+    /// vertex/index role on its first binding; those roles are never interchanged.
+    fn new(gl: Rc<glow::Context>, vertex_array: glow::VertexArray, source: &MeshBuffers) -> Result<Self, String> {
         let vertices = vertex::PackedVertices::new(source.vertices())?;
         let vertex_buffer = unsafe { gl.create_buffer() }.map_err(|error| format!("create mesh vertex buffer failed: {error}"))?;
         let index_buffer = match unsafe { gl.create_buffer() } {
@@ -183,10 +185,13 @@ impl GlMesh {
         unsafe {
             gl.bind_buffer(glow::ARRAY_BUFFER, Some(vertex_buffer));
             gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, vertices.as_bytes(), glow::STATIC_DRAW);
-            // Upload through ARRAY_BUFFER so preparation does not mutate the
-            // renderer's vertex-array element binding before a draw begins.
-            gl.bind_buffer(glow::ARRAY_BUFFER, Some(index_buffer));
-            gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, vertex::index_bytes(source.indices()), glow::STATIC_DRAW);
+            // ELEMENT_ARRAY_BUFFER belongs to the selected VAO. Use our own
+            // array so index upload neither changes UI bindings nor assigns the
+            // buffer WebGL's incompatible vertex-data role on its first bind.
+            gl.bind_vertex_array(Some(vertex_array));
+            gl.bind_buffer(glow::ELEMENT_ARRAY_BUFFER, Some(index_buffer));
+            gl.buffer_data_u8_slice(glow::ELEMENT_ARRAY_BUFFER, vertex::index_bytes(source.indices()), glow::STATIC_DRAW);
+            gl.bind_vertex_array(None);
             gl.bind_buffer(glow::ARRAY_BUFFER, None);
         }
         Ok(Self {

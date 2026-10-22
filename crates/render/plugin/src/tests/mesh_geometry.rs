@@ -37,6 +37,7 @@ impl IRenderStream for MeshStream {
 #[test]
 #[ignore = "requires SDL GL; run with SDL_VIDEODRIVER=offscreen"]
 fn wide_mesh_edges_draw_and_recover_through_generated_com() {
+    let _session = native_session();
     let size = Size { width: 32, height: 32 };
     let assets = neocogi_demo_assets::load_bundle().unwrap();
     let atlas = assets.image().unwrap();
