@@ -166,7 +166,7 @@ fn mesh(scene: &ComPtr<IMeshSceneAbi>) {
 fn native_order_ownership_reentry_and_final_release() {
     let _session = native_session();
     let platform = PlatformObject::default();
-    let assets = neocogi_demo_assets::load_bundle().unwrap();
+    let assets = neocogi_demo_assets::load_bundle(crate::host_runtime()).unwrap();
     let atlas = assets.image().unwrap();
     let native = platform.window("COM GPU acceptance", SIZE, atlas.as_com_ref()).unwrap();
     let device = Rc::downgrade(&native.device);
@@ -251,7 +251,10 @@ fn native_order_ownership_reentry_and_final_release() {
     let oversized = oversized.into_revision(assets.as_com_ref()).unwrap();
     let oversized_atlas = oversized.image().unwrap();
     assert_eq!(renderer.prepare_atlas(oversized_atlas.as_com_ref()), Err(RENDER_E_BACKEND));
-    assert_eq!(device.upgrade().unwrap().render.borrow().as_ref().unwrap().atlas.as_raw().object, atlas.as_raw().object);
+    assert_eq!(
+        device.upgrade().unwrap().render.borrow().as_ref().unwrap().atlas.as_raw().object,
+        atlas.as_raw().object
+    );
     renderer.render(info(), atlas.as_com_ref(), stream.as_com_ref()).unwrap();
     // The foreign scene has a valid ABI but belongs to a different native window/context.
     let foreign = platform.window("COM foreign resource owner", SIZE, atlas.as_com_ref()).unwrap();

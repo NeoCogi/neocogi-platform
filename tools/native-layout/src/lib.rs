@@ -74,16 +74,6 @@ pub fn stage_library(input: TokenStream) -> TokenStream {
             .ok_or_else(|| io::Error::other("Cargo library filename must be UTF-8"))?;
         let root = output_root(&source)?;
         copy_file(&source, &root.join("lib").join(filename))?;
-        // Windows resolves initial imports beside the executable before main.
-        if filename == "nc_com.dll" {
-            copy_file(&source, &root.join(filename))?;
-            for import in ["nc_com.dll.lib", "libnc_com.dll.a"] {
-                let input = source.with_file_name(import);
-                if input.is_file() {
-                    copy_file(&input, &root.join("lib-imports").join(import))?;
-                }
-            }
-        }
         Ok(filename.to_owned())
     })();
     match result {

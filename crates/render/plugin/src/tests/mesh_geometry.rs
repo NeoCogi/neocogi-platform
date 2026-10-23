@@ -39,7 +39,7 @@ impl IRenderStream for MeshStream {
 fn wide_mesh_edges_draw_and_recover_through_generated_com() {
     let _session = native_session();
     let size = Size { width: 32, height: 32 };
-    let assets = neocogi_demo_assets::load_bundle().unwrap();
+    let assets = neocogi_demo_assets::load_bundle(crate::host_runtime()).unwrap();
     let atlas = assets.image().unwrap();
     let native = PlatformObject::default().window("wide mesh arithmetic", size, atlas.as_com_ref()).unwrap();
     let device = Rc::downgrade(&native.device);
@@ -70,7 +70,10 @@ fn wide_mesh_edges_draw_and_recover_through_generated_com() {
         let mut access = owner.access().unwrap();
         let pixels = access.state().gpu.last_pixels().to_vec();
         assert_eq!(pixels.len(), 32 * 32 * 4);
-        assert!(pixels.as_chunks::<4>().0.iter().any(|pixel| *pixel != [0, 0, 0, 255]), "the mesh must emit visible pixels");
+        assert!(
+            pixels.as_chunks::<4>().0.iter().any(|pixel| *pixel != [0, 0, 0, 255]),
+            "the mesh must emit visible pixels"
+        );
         pixels
     };
     let ordinary = draw(bounds, bounds);

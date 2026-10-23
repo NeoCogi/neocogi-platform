@@ -19,7 +19,7 @@ webgl = ["dep:glow", "dep:neocogi-render-webgl", "neocogi-render-mesh/webgl"]
 glow = ["dep:glow", "dep:neocogi-render-glow", "neocogi-render-mesh/glow"]
 vulkan = ["dep:neocogi-render-vulkan", "neocogi-render-mesh/vulkan"]
 wgpu = ["dep:neocogi-render-wgpu", "neocogi-render-mesh/wgpu"]
-dynamic-plugin = ["dep:neocogi-native-runtime-link"]
+dynamic-plugin = []
 
 [dependencies]
 neocogi-renderer-contracts.workspace = true
@@ -44,7 +44,6 @@ neocogi-com-runtime.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 # Native target code and its shared runtime use the same Cargo profile.
-neocogi-native-runtime-link = { workspace = true, optional = true }
 sdl2.workspace = true
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]

@@ -5,10 +5,6 @@
 //! native handles or add another dynamic call boundary to every frame.
 #![deny(missing_docs)]
 
-// Native link metadata propagates to this DLL without embedding runtime state.
-#[cfg(all(feature = "dynamic-plugin", not(target_arch = "wasm32")))]
-use neocogi_native_runtime_link as _;
-
 #[cfg(not(any(feature = "webgl", feature = "glow", feature = "vulkan", feature = "wgpu")))]
 compile_error!("select exactly one renderer feature: glow, vulkan, wgpu, or webgl");
 #[cfg(any(
@@ -42,3 +38,10 @@ include!("implementation.rs");
 // This unit-test executable owns one runtime; normal library builds never embed it.
 #[cfg(test)]
 extern crate nc_com as _;
+
+/// Initializes the selected implementation owned by this test executable.
+#[cfg(test)]
+pub(crate) fn host_runtime() -> neocogi_com::Runtime {
+    // SAFETY: this explicit host owns the complete immutable process-lived graph.
+    unsafe { neocogi_com::Runtime::__from_host_api(nc_com::initialize_process()) }.expect("compatible test host")
+}
