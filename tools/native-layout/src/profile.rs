@@ -1,4 +1,4 @@
-//! Build-only destination policy shared by staging macros and native link setup.
+//! Build-only destination policy for staged native artifacts and resources.
 //!
 //! The pinned Cargo layout marks each target/profile directory with .cargo-lock.
 //! Walking ancestors of a Cargo-supplied path avoids reconstructing unit hashes,
