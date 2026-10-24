@@ -21,9 +21,9 @@ readme = "README.md"
 repository = "https://github.com/NeoCogi/neocogi-platform"
 
 [workspace.dependencies]
-neocogi-com = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "18e219963d891813452ca3fe673a62e23d071cbe", version = "0.0.0", default-features = false }
+neocogi-com = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "d3fedef14f4c88208f677f78bafe5eb0d6d5991c", version = "0.0.0", default-features = false }
 neocogi-native-layout = { path = "tools/native-layout" }
-neocogi-idl = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "18e219963d891813452ca3fe673a62e23d071cbe", version = "0.0.0" }
+neocogi-idl = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "d3fedef14f4c88208f677f78bafe5eb0d6d5991c", version = "0.0.0" }
 prettyplease = "0.2"
 proc-macro2 = { version = "1", features = ["span-locations"] }
 quote = "1"
