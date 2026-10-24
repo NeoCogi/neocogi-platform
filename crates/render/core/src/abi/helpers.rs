@@ -3,7 +3,7 @@
 //! These helpers validate local values and do not contribute to the module's
 //! generated ABI description or declaration identities.
 
-use crate::*;
+use crate::abi::*;
 use neocogi_com::{NC_E_INVALID_ARG, NcStatus};
 use rs_math3d::{Color4b, Vec2f, color4b};
 

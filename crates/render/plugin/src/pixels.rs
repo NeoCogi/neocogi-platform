@@ -13,7 +13,7 @@ impl AtlasPixels {
     /// Reads only allocation bounds and pixels; fonts, names and appearances belong to the UI.
     pub(super) fn read(source: ComRef<'_, IRgbaImageAbi>) -> Result<Self, NcStatus> {
         let size = source.size()?;
-        let count = neocogi_renderer_contracts::rgba_bytes(size)?;
+        let count = neocogi_render_core::abi::rgba_bytes(size)?;
         let mut output = neocogi_com::NcOutputBuffer::new();
         // Header bounds precede reservation; short copies cannot reach a GPU upload.
         source.pixels(output.output(0, count))?;

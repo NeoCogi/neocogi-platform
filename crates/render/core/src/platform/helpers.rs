@@ -1,6 +1,6 @@
 //! Rust validation conveniences layered over the generated platform ABI.
 
-use crate::*;
+use crate::platform::*;
 use neocogi_com::{NC_E_INVALID_ARG, NcStatus};
 
 impl Default for Point {

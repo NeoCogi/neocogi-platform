@@ -1,10 +1,7 @@
 [workspace]
 resolver = "3"
 members = [
-    "crates/render/contracts",
     "crates/render/mesh",
-    "crates/render/mesh-contracts",
-    "crates/platform/contracts",
     "crates/render/plugin",
     "crates/render/core",
     "crates/render/support",
@@ -24,16 +21,13 @@ readme = "README.md"
 repository = "https://github.com/NeoCogi/neocogi-platform"
 
 [workspace.dependencies]
-neocogi-renderer-contracts = { path = "crates/render/contracts" }
-neocogi-platform-contracts = { path = "crates/platform/contracts" }
-neocogi-com = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "f0481bf3194864596476e7c0ecc81e17c1ddb462", version = "0.0.0", default-features = false }
+neocogi-com = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "5f2867de0730d360e54c7c53682f5592311723c7", version = "0.0.0", default-features = false }
 neocogi-native-layout = { path = "tools/native-layout" }
-neocogi-idl = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "f0481bf3194864596476e7c0ecc81e17c1ddb462", version = "0.0.0" }
+neocogi-idl = { git = "ssh://git@github.com/NeoCogi/neocogi-com.git", rev = "5f2867de0730d360e54c7c53682f5592311723c7", version = "0.0.0" }
 prettyplease = "0.2"
 proc-macro2 = { version = "1", features = ["span-locations"] }
 quote = "1"
 syn = { version = "2", features = ["full", "extra-traits"] }
-neocogi-render-mesh-contracts = { path = "crates/render/mesh-contracts" }
 neocogi-render-mesh = { path = "crates/render/mesh", default-features = false }
 neocogi-render-core = { path = "crates/render/core" }
 neocogi-render-support = { path = "crates/render/support" }

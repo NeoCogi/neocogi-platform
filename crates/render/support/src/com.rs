@@ -1,5 +1,5 @@
 //! Complete-frame validation shared by platform assemblies before they acquire native GPU frames.
-use neocogi_renderer_contracts::*;
+use neocogi_render_core::abi::*;
 use neocogi_com::{ComPtr, ComRef, NcStatus, NC_E_INVALID_ARG, NC_E_OUT_OF_MEMORY};
 use std::ops::Range;
 

@@ -8,5 +8,5 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-neocogi-renderer-contracts.workspace = true
+neocogi-render-core.workspace = true
 neocogi-com = { workspace = true, features = ["std"] }

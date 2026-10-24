@@ -9,5 +9,8 @@ description = "Backend-neutral renderer SPI for NeoCogi"
 publish = false
 
 [dependencies]
-neocogi-renderer-contracts.workspace = true
+neocogi-com = { workspace = true, features = ["alloc", "std", "macros"] }
 rs-math3d.workspace = true
+
+[build-dependencies]
+neocogi-idl.workspace = true

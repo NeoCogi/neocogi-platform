@@ -1,7 +1,7 @@
 //! DOM ownership and translation for the canvas host; widgets never depend on browser objects.
 
 use std::{cell::RefCell, rc::Rc, collections::VecDeque};
-use neocogi_platform_contracts::*;
+use neocogi_render_core::platform::*;
 use neocogi_com::{ComRef, NcCopyFromBufferOffset, NcStatus};
 use wasm_bindgen::{JsCast, closure::Closure};
 use web_sys::{Event, EventTarget, FocusEvent, HtmlCanvasElement, HtmlTextAreaElement, KeyboardEvent, PointerEvent, WheelEvent};

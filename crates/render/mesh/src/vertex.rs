@@ -68,7 +68,7 @@ pub(crate) fn index_bytes(indices: &[u32]) -> &[u8] {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use neocogi_render_mesh_contracts::{Vector2, Vector3};
+    use neocogi_render_mesh::abi::{Vector2, Vector3};
 
     /// Distinct values in every field and vertex pin what the shaders read at each byte offset.
     #[test]

@@ -15,7 +15,7 @@ vulkan = ["dep:ash", "dep:neocogi-render-vulkan"]
 wgpu = ["dep:neocogi-render-wgpu", "dep:wgpu"]
 
 [dependencies]
-neocogi-render-mesh-contracts.workspace = true
+neocogi-com = { workspace = true, features = ["alloc", "std", "macros"] }
 ash = { workspace = true, optional = true }
 glow = { workspace = true, optional = true }
 neocogi-render-core.workspace = true
@@ -30,3 +30,6 @@ pollster.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 sdl2.workspace = true
+
+[build-dependencies]
+neocogi-idl.workspace = true

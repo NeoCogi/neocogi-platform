@@ -3,7 +3,7 @@
 use std::{error::Error, fmt};
 
 /// Maximum accepted byte count for one packed RGBA image.
-pub const MAX_IMAGE_BYTES: usize = neocogi_renderer_contracts::MAX_IMAGE_BYTES;
+pub const MAX_IMAGE_BYTES: usize = neocogi_render_core::abi::MAX_IMAGE_BYTES;
 
 /// Borrowed packed RGBA pixels with explicit signed dimensions.
 #[derive(Copy, Clone, Debug)]

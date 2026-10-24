@@ -2,9 +2,11 @@
 //!
 //! This crate owns mesh shaders, pipelines, immutable geometry, and backend recording.
 //! Native GPU types remain private to the selected backend; applications submit typed
-//! scene data through `neocogi-render-mesh-contracts` and ordinary render items.
+//! scene data through `neocogi_render_mesh::abi` and ordinary render items.
 #![deny(missing_docs)]
 
+extern crate self as neocogi_render_mesh;
+extern crate alloc;
 use std::sync::Arc;
 
 use rs_math3d::Mat4f;
@@ -30,7 +32,7 @@ pub use self::vulkan::MeshRenderer;
 pub use self::wgpu::MeshRenderer;
 
 /// Canonical application vertex shared with the typed COM mesh upload contract.
-pub use neocogi_render_mesh_contracts::MeshVertex;
+pub use neocogi_render_mesh::abi::MeshVertex;
 
 /// Immutable CPU mesh storage shared between retained scene state and frame commands.
 #[derive(Clone)]
@@ -112,3 +114,6 @@ mod identity_tests {
         assert!(!source.externally_retained());
     }
 }
+
+/// Shared IDL bindings and their Rust conveniences.
+pub mod abi;

@@ -5,16 +5,13 @@
 //! translate native events into copied logical input and accept only a narrow
 //! RGBA image when constructing a window.
 
-#![no_std]
 #![deny(missing_docs)]
 
-#[cfg(feature = "std")]
 extern crate std;
 
-include!(concat!(env!("OUT_DIR"), "/neocogi_platform.include.rs"));
+include!(env!("IDL_NEOCOGI_PLATFORM"));
 
 mod helpers;
 pub use helpers::*;
 
-#[cfg(feature = "std")]
 pub mod path;

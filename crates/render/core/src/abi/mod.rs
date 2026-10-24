@@ -4,10 +4,9 @@
 //! or theme catalogs. UI and GFX plugins submit typed bulk frame data while a
 //! renderer plugin owns native textures, devices, and presentation.
 
-#![no_std]
 #![deny(missing_docs)]
 
-include!(concat!(env!("OUT_DIR"), "/neocogi_renderer.include.rs"));
+include!(env!("IDL_NEOCOGI_RENDERER"));
 
 mod helpers;
 pub use helpers::*;

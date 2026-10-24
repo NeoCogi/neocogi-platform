@@ -22,8 +22,6 @@ wgpu = ["dep:neocogi-render-wgpu", "neocogi-render-mesh/wgpu"]
 dynamic-plugin = []
 
 [dependencies]
-neocogi-renderer-contracts.workspace = true
-neocogi-platform-contracts.workspace = true
 neocogi-render-core.workspace = true
 neocogi-render-webgl = { workspace = true, optional = true }
 neocogi-render-glow = { workspace = true, optional = true }
@@ -31,7 +29,6 @@ neocogi-render-vulkan = { workspace = true, optional = true }
 neocogi-render-wgpu = { workspace = true, optional = true }
 neocogi-render-support.workspace = true
 neocogi-render-mesh.workspace = true
-neocogi-render-mesh-contracts.workspace = true
 rs-math3d.workspace = true
 neocogi-com = { workspace = true, default-features = false, features = ["macros", "std"] }
 glow = { workspace = true, optional = true }
@@ -57,6 +54,3 @@ web-sys = { workspace = true, features = [
 ] }
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
-neocogi-ui-core-contracts.workspace = true
-neocogi-ui-nodes-contracts.workspace = true
-neocogi-gfx-contracts.workspace = true

@@ -5,6 +5,8 @@
 //! linking the UI runtime implementation into the renderer's shared library.
 #![deny(missing_docs)]
 
+extern crate self as neocogi_render_core;
+extern crate alloc;
 mod backend;
 mod color;
 mod image;
@@ -26,6 +28,11 @@ pub mod prelude {
         color4b, ortho4,
     };
 }
+
+/// Shared IDL bindings and their Rust conveniences.
+pub mod abi;
+/// Shared IDL bindings and their Rust conveniences.
+pub mod platform;
 
 /// Authored NCIDL sources owned by this Cargo contract package.
 pub const SCHEMA_ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/schemas");

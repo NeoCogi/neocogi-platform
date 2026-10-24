@@ -1,6 +1,6 @@
 //! Rust math conversions layered over the generated mesh transport values.
 
-use crate::{Matrix4, MeshVertex, Vector2, Vector3};
+use crate::abi::{Matrix4, MeshVertex, Vector2, Vector3};
 use rs_math3d::{Mat4f, Vec2f, Vec3f};
 
 impl Default for MeshVertex {

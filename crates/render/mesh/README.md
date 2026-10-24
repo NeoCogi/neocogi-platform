@@ -1,7 +1,7 @@
 # Fixed-material mesh rendering
 
 `neocogi-render-mesh` supplies the renderer plugin's reusable mesh scene backend.
-`neocogi-render-mesh-contracts` defines the `neocogi.render.mesh` ABI, including
+`neocogi-render-mesh` defines the `neocogi.render.mesh` ABI, including
 `IMeshScenes`, `IMeshScene`, vertices, and scene transforms. Applications query
 `IMeshScenes` from the platform window, create a scene, and retain it as an ordinary
 `IRenderItem`. The full and smoke demos are consumers of this capability.

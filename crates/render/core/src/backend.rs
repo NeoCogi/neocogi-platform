@@ -54,7 +54,7 @@
 
 use super::texture::TextureError;
 use crate::{Color, ImageSource, TextureId};
-pub use neocogi_renderer_contracts::RenderVertex as Vertex;
+pub use neocogi_render_core::abi::RenderVertex as Vertex;
 use rs_math3d::{Dimensioni, Rect};
 use std::{error::Error, fmt};
 

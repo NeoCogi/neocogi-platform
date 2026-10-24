@@ -1,8 +1,8 @@
 // The validated renderer implementation expands at crate root from lib.rs.
 // Its public surface and native owners are identical for each legal backend selection.
-use neocogi_platform_contracts::*;
-use neocogi_renderer_contracts::*;
-use neocogi_render_mesh_contracts::*;
+use neocogi_render_core::platform::*;
+use neocogi_render_core::abi::*;
+use neocogi_render_mesh::abi::*;
 use neocogi_render_mesh::{MeshBuffers, MeshSubmission};
 use neocogi_render_support::com::{PreparedFrame, Resources};
 use neocogi_render_core::TextureId;
@@ -35,7 +35,7 @@ use resources::{SceneRecord, TextureRecord};
 type Prepared = PreparedFrame<Rc<TextureRecord>, MeshSubmission>;
 
 #[derive(Default)]
-#[com_object(neocogi_platform_contracts::Platform)]
+#[com_object(neocogi_render_core::platform::Platform)]
 /// Native bootstrap; initialization is fallible and no native subsystem crosses the COM boundary.
 pub struct PlatformObject {
     /// One SDL event pump shared by this platform's windows.
@@ -227,25 +227,25 @@ fn identity<I: ComInterface>(interface: &ComPtr<I>) -> Result<usize, NcStatus> {
 #[cfg(feature = "glow")]
 /// Acquires one owned root; object construction remains on its typed methods.
 #[neocogi_com::plugin(name = "neocogi.render.glow")]
-fn acquire_root(_runtime: ::neocogi_com::Runtime) -> Result<neocogi_com::ComPtr<neocogi_platform_contracts::PlatformAbi>, neocogi_com::NcStatus> {
+fn acquire_root(_runtime: ::neocogi_com::Runtime) -> Result<neocogi_com::ComPtr<neocogi_render_core::platform::PlatformAbi>, neocogi_com::NcStatus> {
     PlatformObject::from_value(PlatformObject::default()).query()
 }
 #[cfg(feature = "vulkan")]
 /// Acquires one owned root; object construction remains on its typed methods.
 #[neocogi_com::plugin(name = "neocogi.render.vulkan")]
-fn acquire_root(_runtime: ::neocogi_com::Runtime) -> Result<neocogi_com::ComPtr<neocogi_platform_contracts::PlatformAbi>, neocogi_com::NcStatus> {
+fn acquire_root(_runtime: ::neocogi_com::Runtime) -> Result<neocogi_com::ComPtr<neocogi_render_core::platform::PlatformAbi>, neocogi_com::NcStatus> {
     PlatformObject::from_value(PlatformObject::default()).query()
 }
 #[cfg(feature = "wgpu")]
 /// Acquires one owned root; object construction remains on its typed methods.
 #[neocogi_com::plugin(name = "neocogi.render.wgpu")]
-fn acquire_root(_runtime: ::neocogi_com::Runtime) -> Result<neocogi_com::ComPtr<neocogi_platform_contracts::PlatformAbi>, neocogi_com::NcStatus> {
+fn acquire_root(_runtime: ::neocogi_com::Runtime) -> Result<neocogi_com::ComPtr<neocogi_render_core::platform::PlatformAbi>, neocogi_com::NcStatus> {
     PlatformObject::from_value(PlatformObject::default()).query()
 }
 #[cfg(feature = "webgl")]
 /// Acquires one owned root; object construction remains on its typed methods.
 #[neocogi_com::plugin(name = "neocogi.render.webgl")]
-fn acquire_root(_runtime: ::neocogi_com::Runtime) -> Result<neocogi_com::ComPtr<neocogi_platform_contracts::PlatformAbi>, neocogi_com::NcStatus> {
+fn acquire_root(_runtime: ::neocogi_com::Runtime) -> Result<neocogi_com::ComPtr<neocogi_render_core::platform::PlatformAbi>, neocogi_com::NcStatus> {
     PlatformObject::from_value(PlatformObject::default()).query()
 }
 // Only the native assembly owns the dynamic entrypoint; browser assembly uses static descriptors.
