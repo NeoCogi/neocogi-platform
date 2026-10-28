@@ -26,7 +26,6 @@ pub fn sources(repository: &str, local: &[&str]) -> neocogi_idl::cargo::SharedSo
         "crates/gfx/schemas",
         "crates/skin/schemas",
         "crates/ui/schemas",
-        "demos/schemas",
         "examples/schemas",
     ] {
         request = request.include_root(repository.join(relative));

@@ -6,9 +6,14 @@
 !.vscode/settings.json
 *.idea/
 *target/
-*.lock
 __pycache__/
 SDL2.*
 
 # Local run artifacts and archived reproduction data stay outside Git.
 /docs/measurements/
+
+# Local agent configuration and scratch workspaces.
+/.agents/
+/.codex/
+/.aws/
+/tmp/
