@@ -1,3 +1,7 @@
+[net]
+# The private COM Git dependency uses the caller's ordinary Git/SSH credentials.
+git-fetch-with-cli = true
+
 [unstable]
 # Native development compositions use Cargo-provided cdylib artifacts.
 bindeps = true

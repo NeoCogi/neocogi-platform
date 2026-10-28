@@ -37,7 +37,7 @@ glow = { workspace = true, optional = true }
 tempfile.workspace = true
 # Native and browser unit tests own their runtime; they must not require a deployed shared library.
 neocogi-com = { workspace = true, features = ["runtime"] }
-neocogi-com-runtime.workspace = true
+neocogi-com-host.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 # Native target code and its shared runtime use the same Cargo profile.

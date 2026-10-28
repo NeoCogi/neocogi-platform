@@ -37,11 +37,11 @@ include!("implementation.rs");
 
 // This unit-test executable owns one runtime; normal library builds never embed it.
 #[cfg(test)]
-extern crate nc_com as _;
+extern crate neocogi_com_host as _;
 
 /// Initializes the selected implementation owned by this test executable.
 #[cfg(test)]
 pub(crate) fn host_runtime() -> neocogi_com::Runtime {
     // SAFETY: this explicit host owns the complete immutable process-lived graph.
-    unsafe { neocogi_com::Runtime::__from_host_api(nc_com::initialize_process()) }.expect("compatible test host")
+    unsafe { neocogi_com::Runtime::__from_host_api(neocogi_com_host::initialize_process()) }.expect("compatible test host")
 }
