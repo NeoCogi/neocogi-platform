@@ -76,7 +76,7 @@ working SDL native display for the surface test:
 
 ```sh
 cargo test -p neocogi-render-wgpu -- --ignored --test-threads=1
-cargo run -p neocogi-theme-editor --no-default-features --features monolith,embed-assets,wgpu
+cargo test -p neocogi-render-plugin --lib --no-default-features --features wgpu -- --include-ignored --test-threads=1
 ```
 
 The WGPU test reads actual rendered pixels, verifies top-left source orientation
@@ -89,7 +89,7 @@ Vulkan checks exercise actual readback and recovery with a native display:
 
 ```sh
 VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation cargo test -p neocogi-render-vulkan -- --include-ignored --test-threads=1
-cargo run -p neocogi-theme-editor --no-default-features --features monolith,embed-assets,vulkan
+cargo test -p neocogi-render-plugin --lib --no-default-features --features vulkan -- --include-ignored --test-threads=1
 ```
 
 The Khronos validation layer is optional and must be installed to enable it.
@@ -103,14 +103,6 @@ Each rendering session therefore keeps its own atlas allocation through color,
 metric, tint, and slicing edits. A resource rebuild supplies a new image and causes
 one upload per affected session. The surface regression counts actual source reads
 through repeated preparation, rendering, failed frames, and resizing.
-
-The theme-editor bridge consumes observations after both outer updates. Missing
-observations in the next dispatch mean the pane is hidden or excluded by modal
-routing: the bridge cancels the inner runtime once and pauses rendering while
-retaining its last image. This relies on the runtime's existing eligible-tree
-updates, not application hit testing. Native integration tests exercise outside
-release, native cancellation, modal obstruction, hide/show, and IME translation;
-the browser test also verifies composition and physical/CSS mapping at 2x DPI.
 
 The demo host polls input even when the drawable size is zero. Its native loop waits
 16 milliseconds between suspended iterations because this path does not present a
