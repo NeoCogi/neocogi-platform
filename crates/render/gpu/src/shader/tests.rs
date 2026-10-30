@@ -165,3 +165,23 @@ fn invalid_sources_and_entry_points_reject() {
     assert!(Shader::compile(GpuShaderStage::Vertex, &" ".repeat(MAX_SHADER_BYTES + 1), "main").is_err());
     assert!(Shader::compile(GpuShaderStage::Vertex, PROCEDURAL, &"a".repeat(129)).is_err());
 }
+
+/// Actual emitted code guards dynamic private writes as well as read-only uniform indexing.
+#[test]
+fn generated_graphics_artifacts_guard_dynamic_array_access() {
+    let source = r#"
+        struct Values { items:array<vec4<f32>,2>, indices:vec4<u32> }
+        @group(3) @binding(0) var<uniform> data:Values;
+        @fragment fn main() -> @location(0) vec4<f32> {
+            var local=array<vec4<f32>,2>(vec4(0.25),vec4(0.75));
+            local[data.indices.x]=vec4(1.0);
+            return data.items[data.indices.y]+local[0];
+        }
+    "#;
+    let shader = Shader::compile(GpuShaderStage::Fragment, source, "main").unwrap();
+    assert_eq!(shader.uniforms[0].byte_len, 48);
+    // The input contains no conditional control flow. This guard comes from actual
+    // compiler lowering of the dynamic write, rather than merely checking option values.
+    assert!(shader.glsl.contains("if ("), "private array writes must have a generated bounds guard");
+    assert!(!shader.spirv.is_empty());
+}

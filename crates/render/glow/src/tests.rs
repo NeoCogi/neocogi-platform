@@ -248,3 +248,143 @@ fn native_completion_owns_resource_and_command_charges() {
         assert_eq!(device.recording_usage(resources.as_com_ref()).unwrap(), (0, 0));
     }
 }
+
+/// Guarded GLSL must execute safely too; GLSL array policies alone do not inject Naga bounds checks.
+#[test]
+#[ignore = "requires SDL GL; run with SDL_VIDEODRIVER=offscreen"]
+fn dynamic_shader_indices_cannot_escape_uniform_or_private_storage() {
+    let _session = NATIVE_SESSION.lock().unwrap_or_else(|error| error.into_inner());
+    use neocogi_com::NcCopyFromBufferOffset;
+    use neocogi_render_gpu::{
+        GpuDevice,
+        abi::*,
+        source::{Bytes, PipelineDesc},
+    };
+    let sdl = sdl2::init().unwrap();
+    let video = sdl.video().unwrap();
+    video.gl_attr().set_context_profile(sdl2::video::GLProfile::GLES);
+    video.gl_attr().set_context_version(3, 0);
+    video.gl_attr().set_depth_size(24);
+    let window = video.window("GL shader bounds", 8, 8).opengl().hidden().build().unwrap();
+    let _context = window.gl_create_context().unwrap();
+    let gl = Rc::new(unsafe { glow::Context::from_loader_function(|name| video.gl_get_proc_address(name).cast()) });
+    let mut renderer = GLRenderer::new(gl.clone(), atlas(), 8, 8).unwrap();
+    let gpu = GpuDevice::new();
+    let controller = gpu.create_client(RenderClientLimits::default()).unwrap();
+    let resources = controller.resources().unwrap();
+    let source = Bytes::source(
+        br#"
+        @vertex fn vs(@builtin(vertex_index) i:u32) -> @builtin(position) vec4<f32> {
+            let p=array<vec2<f32>,3>(vec2(-1.,-1.),vec2(3.,-1.),vec2(-1.,3.));return vec4(p[i],0.5,1.);
+        }
+        struct Values { items:array<vec4<f32>,2>, indices:vec4<u32> }
+        @group(3) @binding(0) var<uniform> data:Values;
+        @fragment fn fs() -> @location(0) vec4<f32> {
+            var local=array<vec4<f32>,2>(vec4(0.25),vec4(0.75));
+            local[data.indices.x]=vec4(1.0);return data.items[data.indices.y]+local[0];
+        }
+    "#
+        .to_vec(),
+    );
+    let vs = resources
+        .create_shader(GpuShaderStage::Vertex, source.as_com_ref(), NcCopyFromBufferOffset::new(0, b"vs"))
+        .unwrap();
+    let fs = resources
+        .create_shader(GpuShaderStage::Fragment, source.as_com_ref(), NcCopyFromBufferOffset::new(0, b"fs"))
+        .unwrap();
+    let desc = PipelineDesc {
+        bindings: vec![GpuShaderBinding {
+            stage: GpuShaderStage::Fragment,
+            slot: 0,
+            kind: GpuBindingKind::Uniform,
+            byte_len: 48,
+        }],
+        ..Default::default()
+    }
+    .source()
+    .unwrap();
+    let pipeline = resources.create_pipeline(desc.as_com_ref(), vs.as_com_ref(), fs.as_com_ref()).unwrap();
+    let mut recording = gpu.broker().begin_frame().unwrap();
+    let root = Rect { x: 0, y: 0, width: 8, height: 8 };
+    let mut session = recording
+        .begin_view(RenderViewRoot { client: root, target: root }, resources.as_com_ref())
+        .unwrap();
+    let mut view = session.view().unwrap();
+    view.bind_pipeline(pipeline.as_com_ref()).unwrap();
+    let mut bytes = vec![0; 32];
+    for index in [2u32, 999, 0, 0] {
+        bytes.extend_from_slice(&index.to_le_bytes());
+    }
+    view.push_uniforms(GpuShaderStage::Fragment, 0, NcCopyFromBufferOffset::new(0, &bytes)).unwrap();
+    view.draw(3, 1, 0).unwrap();
+    view.finish().unwrap();
+    let owner = session.take_block().unwrap();
+    recording.finish().unwrap();
+    let prepared = renderer.prepare_block(&gpu.block_snapshot(owner.as_com_ref()).unwrap(), false).unwrap();
+    let info = FrameInfo::try_new(Dimensioni::new(8, 8), color(0, 0, 0, 255)).unwrap();
+    let mut frame = renderer.frame(info).unwrap();
+    frame.execute_block(&prepared, Size { width: 8, height: 8 });
+    frame.finish().unwrap();
+    // A native window may have an opaque RGB default framebuffer with no alpha channel.
+    assert_eq!(&pixel(&gl, 4, 4)[..3], &[64; 3]);
+}
+
+/// Legal client identifiers containing a builtin's spelling must survive native source normalization.
+#[test]
+#[ignore = "requires SDL GL; run with SDL_VIDEODRIVER=offscreen"]
+fn fragment_identifiers_containing_builtin_names_compile_and_render() {
+    let _session = NATIVE_SESSION.lock().unwrap_or_else(|error| error.into_inner());
+    use neocogi_com::NcCopyFromBufferOffset;
+    use neocogi_render_gpu::{
+        GpuDevice,
+        abi::*,
+        source::{Bytes, PipelineDesc},
+    };
+    let sdl = sdl2::init().unwrap();
+    let video = sdl.video().unwrap();
+    video.gl_attr().set_context_profile(sdl2::video::GLProfile::GLES);
+    video.gl_attr().set_context_version(3, 0);
+    video.gl_attr().set_depth_size(24);
+    let window = video.window("GL identifier normalization", 8, 8).opengl().hidden().build().unwrap();
+    let _context = window.gl_create_context().unwrap();
+    let gl = Rc::new(unsafe { glow::Context::from_loader_function(|name| video.gl_get_proc_address(name).cast()) });
+    let mut renderer = GLRenderer::new(gl.clone(), atlas(), 8, 8).unwrap();
+    let gpu = GpuDevice::new();
+    let controller = gpu.create_client(RenderClientLimits::default()).unwrap();
+    let resources = controller.resources().unwrap();
+    let source = Bytes::source(
+        br#"
+        fn my_gl_FragCoord_color(v:vec4<f32>) -> vec4<f32> { return v; }
+        @vertex fn vs(@builtin(vertex_index) i:u32) -> @builtin(position) vec4<f32> {
+            let p=array<vec2<f32>,3>(vec2(-1.,-1.),vec2(3.,-1.),vec2(-1.,3.));return vec4(p[i],0.5,1.);
+        }
+        @fragment fn fs() -> @location(0) vec4<f32> { return my_gl_FragCoord_color(vec4(0.25,0.5,0.75,1.)); }
+    "#
+        .to_vec(),
+    );
+    let vs = resources
+        .create_shader(GpuShaderStage::Vertex, source.as_com_ref(), NcCopyFromBufferOffset::new(0, b"vs"))
+        .unwrap();
+    let fs = resources
+        .create_shader(GpuShaderStage::Fragment, source.as_com_ref(), NcCopyFromBufferOffset::new(0, b"fs"))
+        .unwrap();
+    let desc = PipelineDesc::default().source().unwrap();
+    let pipeline = resources.create_pipeline(desc.as_com_ref(), vs.as_com_ref(), fs.as_com_ref()).unwrap();
+    let mut recording = gpu.broker().begin_frame().unwrap();
+    let root = Rect { x: 0, y: 0, width: 8, height: 8 };
+    let mut session = recording
+        .begin_view(RenderViewRoot { client: root, target: root }, resources.as_com_ref())
+        .unwrap();
+    let mut view = session.view().unwrap();
+    view.bind_pipeline(pipeline.as_com_ref()).unwrap();
+    view.draw(3, 1, 0).unwrap();
+    view.finish().unwrap();
+    let owner = session.take_block().unwrap();
+    recording.finish().unwrap();
+    let prepared = renderer.prepare_block(&gpu.block_snapshot(owner.as_com_ref()).unwrap(), false).unwrap();
+    let info = FrameInfo::try_new(Dimensioni::new(8, 8), color(0, 0, 0, 255)).unwrap();
+    let mut frame = renderer.frame(info).unwrap();
+    frame.execute_block(&prepared, Size { width: 8, height: 8 });
+    frame.finish().unwrap();
+    assert_eq!(&pixel(&gl, 4, 4)[..3], &[64, 128, 191]);
+}

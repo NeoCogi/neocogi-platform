@@ -56,7 +56,7 @@ trybuild = "=1.0.116"
 wasm-bindgen = "=0.2.127"
 web-sys = "=0.3.104"
 wgpu = "30"
-naga = { version = "=30.0.1", features = ["wgsl-in", "glsl-out", "spv-out"] }
+naga = { version = "=30.0.1", features = ["wgsl-in", "glsl-out", "spv-in", "spv-out"] }
 
 [profile.release]
 overflow-checks = false

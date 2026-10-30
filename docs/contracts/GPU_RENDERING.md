@@ -45,6 +45,24 @@ including unused declarations. A fragment entry emits exactly one `vec4<f32>`
 color at location zero. Portable location inputs use f32/u32 scalars or vectors.
 Shader linkage compares locations, shapes, interpolation and sampling qualifiers.
 
+Dynamic array and uniform-buffer accesses remain within valid storage. GL and
+Vulkan explicitly return zero for out-of-bounds reads and skip out-of-bounds
+private array writes. SPIR-V contains these guards. GLSL is emitted from the
+guarded SPIR-V imported back into compiler IR, because the GLSL writer does not
+itself lower array/buffer bounds policies. WGPU applies its checked translation
+to canonical WGSL; that translation may clamp an invalid index instead. Clients
+must not depend on a particular out-of-bounds result. Native robustness extensions
+are not required by the GL/Vulkan guards. Fragment-coordinate adaptation recognizes
+complete built-in identifier tokens and preserves ordinary identifiers containing
+the same text.
+
+WGSL source is limited to one MiB. Combined owned source, entry name, SPIR-V and
+GLSL are limited to four MiB per shader and the domain's remaining live-byte
+quota. Generated GLSL writes check that budget before growing their output
+allocation. Exhausted output quota returns `NC_E_OUT_OF_RANGE`; failed bounded
+output allocation returns `NC_E_OUT_OF_MEMORY`. These limits cover retained
+artifacts and generated text, rather than all compiler scratch memory or runtime.
+
 Min/max color and alpha blending compare unscaled source/destination values;
 their factor fields have no effect. Native adapters normalize ignored factors
 where their API requires a canonical value (WebGPU requires both to be One).

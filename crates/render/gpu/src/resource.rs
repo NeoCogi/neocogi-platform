@@ -543,6 +543,9 @@ impl IRenderResources for Factory {
             return Err(NC_E_INVALID_ARG);
         }
         let entry = std::str::from_utf8(entry.as_slice()).map_err(|_| NC_E_INVALID_ARG)?;
+        if entry.is_empty() || entry.len() > 128 || !matches!(stage, GpuShaderStage::Vertex | GpuShaderStage::Fragment) {
+            return Err(NC_E_INVALID_ARG);
+        }
         let len = usize::try_from(source.byte_count()?).map_err(|_| NC_E_OUT_OF_RANGE)?;
         if len == 0 || len > crate::shader::MAX_SHADER_BYTES {
             return Err(NC_E_OUT_OF_RANGE);
@@ -552,7 +555,12 @@ impl IRenderResources for Factory {
         let mut bytes = zeroed(len)?;
         read_bytes(source, len, |offset, chunk| bytes[offset..offset + chunk.len()].copy_from_slice(chunk))?;
         let text = std::str::from_utf8(&bytes).map_err(|_| NC_E_INVALID_ARG)?;
-        let artifact = Shader::compile(stage, text, entry).map_err(|_| NC_E_INVALID_ARG)?;
+        let remaining = usize::try_from(self.domain.account.remaining_bytes()).map_err(|_| NC_E_OUT_OF_RANGE)?;
+        let artifact = Shader::compile_bounded(stage, text, entry, remaining).map_err(|error| match error {
+            crate::shader::CompileError::Invalid(_) => NC_E_INVALID_ARG,
+            crate::shader::CompileError::Limit => NC_E_OUT_OF_RANGE,
+            crate::shader::CompileError::Allocation => NC_E_OUT_OF_MEMORY,
+        })?;
         let charge = self.domain.account.bytes(artifact.byte_len())?;
         drop(input_charge);
         self.domain.open()?;

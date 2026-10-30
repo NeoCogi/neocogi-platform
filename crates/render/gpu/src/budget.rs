@@ -73,6 +73,11 @@ impl Account {
         self.bytes.get()
     }
 
+    /// Cached/in-flight versions keep their charges; only actually unreserved bytes are available.
+    pub(crate) fn remaining_bytes(&self) -> u64 {
+        self.limits.live_bytes - self.bytes.get()
+    }
+
     /// Reserves live command/uniform capacity before allocating it.
     pub(crate) fn pending(self: &Rc<Self>, count: usize) -> Result<PendingCharge, NcStatus> {
         let count = u64::try_from(count).map_err(|_| NC_E_OUT_OF_RANGE)?;

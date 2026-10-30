@@ -10,6 +10,80 @@ use naga::{AddressSpace, Binding, Handle, ScalarKind, ShaderStage, Type, TypeInn
 
 /// Maximum UTF-8 source length admitted before parsing.
 pub const MAX_SHADER_BYTES: usize = 1024 * 1024;
+/// Combined owned WGSL, GLSL, SPIR-V and entry-name bytes in one portable artifact.
+pub const MAX_SHADER_ARTIFACT_BYTES: usize = 4 * 1024 * 1024;
+
+/// Factory errors keep malformed programs, exhausted output quota and allocation failure distinct.
+#[derive(Debug)]
+pub(crate) enum CompileError {
+    /// Invalid/unsupported source or compiler emission failure.
+    Invalid(String),
+    /// Admitted output cannot fit the hard profile or remaining domain-byte budget.
+    Limit,
+    /// Bounded output reservation failed without publishing a partial artifact.
+    Allocation,
+}
+impl From<String> for CompileError {
+    /// Preserve compiler diagnostics while keeping quota failures typed separately.
+    fn from(value: String) -> Self {
+        Self::Invalid(value)
+    }
+}
+impl From<&str> for CompileError {
+    /// Static profile diagnostics use the same invalid-program category.
+    fn from(value: &str) -> Self {
+        Self::Invalid(value.into())
+    }
+}
+impl std::fmt::Display for CompileError {
+    /// Pure Rust compilation exposes the same useful diagnostics without an ABI error-code wrapper.
+    fn fmt(&self, output: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Invalid(message) => output.write_str(message),
+            Self::Limit => output.write_str("shader artifact byte budget exceeded"),
+            Self::Allocation => output.write_str("shader artifact allocation failed"),
+        }
+    }
+}
+
+/// GLSL expansion cannot grow an unrestricted String before domain artifact admission.
+struct Output {
+    /// Complete initialized prefix only; allocation growth is capped at the selected limit.
+    text: String,
+    /// Remaining combined artifact budget after source, entry and SPIR-V bytes.
+    limit: usize,
+    /// First writer failure survives Naga's formatting-error conversion.
+    failure: Option<WriteFailure>,
+}
+/// Exact cause of a failed bounded formatting operation.
+#[derive(Clone, Copy)]
+enum WriteFailure {
+    /// Requested output would exceed the selected budget.
+    Limit,
+    /// A bounded reservation failed.
+    Allocation,
+}
+impl std::fmt::Write for Output {
+    /// Check complete writes before reserving or appending, including large initializer expansion.
+    fn write_str(&mut self, value: &str) -> std::fmt::Result {
+        if self.failure.is_some() {
+            return Err(std::fmt::Error);
+        }
+        let Some(required) = self.text.len().checked_add(value.len()).filter(|length| *length <= self.limit) else {
+            self.failure = Some(WriteFailure::Limit);
+            return Err(std::fmt::Error);
+        };
+        if required > self.text.capacity() {
+            let capacity = required.max(self.text.capacity().saturating_mul(2)).min(self.limit);
+            if self.text.try_reserve_exact(capacity - self.text.len()).is_err() {
+                self.failure = Some(WriteFailure::Allocation);
+                return Err(std::fmt::Error);
+            }
+        }
+        self.text.push_str(value);
+        Ok(())
+    }
+}
 
 /// Scalar/vector shape compared across independent shader modules and vertex layouts.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -80,10 +154,17 @@ impl Shader {
     /// Parses, validates the complete module, reflects one entry and emits both native artifacts.
     /// Driver allocation/linking remains a later fallible preparation operation.
     pub fn compile(stage: GpuShaderStage, source: &str, entry: &str) -> Result<Self, String> {
+        Self::compile_bounded(stage, source, entry, MAX_SHADER_ARTIFACT_BYTES).map_err(|error| error.to_string())
+    }
+
+    /// The factory supplies its actual remaining live-byte quota before generated output expands.
+    pub(crate) fn compile_bounded(stage: GpuShaderStage, source: &str, entry: &str, budget: usize) -> Result<Self, CompileError> {
         if source.is_empty() || source.len() > MAX_SHADER_BYTES || entry.is_empty() || entry.len() > 128 {
             return Err("shader source or entry length exceeds the graphics profile".into());
         }
         let native_stage = native_stage(stage)?;
+        let fixed = source.len().checked_add(entry.len()).ok_or(CompileError::Limit)?;
+        let available = budget.min(MAX_SHADER_ARTIFACT_BYTES).checked_sub(fixed).ok_or(CompileError::Limit)?;
         let module = naga::front::wgsl::parse_str(source).map_err(|error| error.emit_to_string(source))?;
         validate_module(&module)?;
         let info = naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::empty())
@@ -108,6 +189,33 @@ impl Shader {
         {
             return Err("fragment profile requires exactly one vec4<f32> color output at location 0".into());
         }
+        let spv_options = naga::back::spv::Options {
+            bounds_check_policies: bounds_checks(),
+            ..Default::default()
+        };
+        let spirv = naga::back::spv::write_vec(
+            &module,
+            &info,
+            &spv_options,
+            Some(&naga::back::spv::PipelineOptions {
+                shader_stage: native_stage,
+                entry_point: entry.into(),
+            }),
+        )
+        .map_err(|error| error.to_string())?;
+        let available = available
+            .checked_sub(spirv.len().checked_mul(4).ok_or(CompileError::Limit)?)
+            .ok_or(CompileError::Limit)?;
+        // Naga's GLSL writer currently applies image-load policies but does not lower array/
+        // buffer index policies. Reimport its guarded SPIR-V so those explicit branches become
+        // ordinary IR before GLSL emission. The importer restores canonical vertex coordinates;
+        // the final GLSL writer then performs its usual target conversion exactly once.
+        let gl_module = naga::front::spv::Frontend::new(spirv.iter().copied(), &naga::front::spv::Options::default())
+            .parse()
+            .map_err(|error| error.to_string())?;
+        let gl_info = naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::empty())
+            .validate(&gl_module)
+            .map_err(|error| error.to_string())?;
         let options = naga::back::glsl::Options {
             version: naga::back::glsl::Version::Embedded { version: 300, is_webgl: true },
             ..Default::default()
@@ -117,11 +225,19 @@ impl Shader {
             entry_point: entry.into(),
             multiview: None,
         };
-        let mut glsl = String::new();
-        let reflection = naga::back::glsl::Writer::new(&mut glsl, &module, &info, &options, &pipeline, naga::proc::BoundsCheckPolicies::default())
-            .map_err(|error| error.to_string())?
-            .write()
-            .map_err(|error| error.to_string())?;
+        let mut output = Output {
+            text: String::new(),
+            limit: available,
+            failure: None,
+        };
+        let emission =
+            naga::back::glsl::Writer::new(&mut output, &gl_module, &gl_info, &options, &pipeline, bounds_checks()).and_then(|mut writer| writer.write());
+        let reflection = emission.map_err(|error| match output.failure {
+            Some(WriteFailure::Limit) => CompileError::Limit,
+            Some(WriteFailure::Allocation) => CompileError::Allocation,
+            None => CompileError::Invalid(error.to_string()),
+        })?;
+        let glsl = output.text;
         let mut uniforms = Vec::new();
         let mut textures = Vec::new();
         let usage = info.get_entry_point(entry_index);
@@ -148,7 +264,13 @@ impl Shader {
                     uniforms.push(Uniform {
                         slot: binding.binding,
                         byte_len: actual_len,
-                        gl_block: reflection.uniforms.get(&handle).cloned().ok_or("missing emitted uniform reflection")?,
+                        gl_block: gl_module
+                            .global_variables
+                            .iter()
+                            .find(|(_, global)| global.binding == Some(binding) && global.space == AddressSpace::Uniform)
+                            .and_then(|(handle, _)| reflection.uniforms.get(&handle))
+                            .cloned()
+                            .ok_or("missing emitted uniform reflection")?,
                     });
                 }
                 AddressSpace::Handle if binding.group == texture_group => {}
@@ -156,9 +278,9 @@ impl Shader {
             }
         }
         for (gl_name, mapping) in &reflection.texture_mapping {
-            let image = module.global_variables[mapping.texture].binding.ok_or("sampled texture lacks a binding")?;
+            let image = gl_module.global_variables[mapping.texture].binding.ok_or("sampled texture lacks a binding")?;
             let sampler_handle = mapping.sampler.ok_or("graphics profile requires a paired sampler")?;
-            let sampler = module.global_variables[sampler_handle].binding.ok_or("sampler lacks a binding")?;
+            let sampler = gl_module.global_variables[sampler_handle].binding.ok_or("sampler lacks a binding")?;
             if image.group != texture_group
                 || sampler.group != texture_group
                 || image.binding >= 8
@@ -177,16 +299,6 @@ impl Shader {
         }
         uniforms.sort_by_key(|uniform| uniform.slot);
         textures.sort_by_key(|texture| texture.slot);
-        let spirv = naga::back::spv::write_vec(
-            &module,
-            &info,
-            &Default::default(),
-            Some(&naga::back::spv::PipelineOptions {
-                shader_stage: native_stage,
-                entry_point: entry.into(),
-            }),
-        )
-        .map_err(|error| error.to_string())?;
         Ok(Self {
             stage,
             entry: entry.into(),
@@ -203,6 +315,19 @@ impl Shader {
     /// Conservative owned-artifact bytes used before logical publication.
     pub fn byte_len(&self) -> usize {
         self.wgsl.len() + self.glsl.len() + self.spirv.len() * 4 + self.entry.len()
+    }
+}
+
+/// Naga is a translator and defaults to unchecked indexing. Clients do not gain authority
+/// beyond their own read-only bindings or private computation through undefined array access.
+/// Hardware robustness is deliberately not assumed by the direct GL/Vulkan adapters.
+fn bounds_checks() -> naga::proc::BoundsCheckPolicies {
+    use naga::proc::BoundsCheckPolicy::ReadZeroSkipWrite;
+    naga::proc::BoundsCheckPolicies {
+        index: ReadZeroSkipWrite,
+        buffer: ReadZeroSkipWrite,
+        image_load: ReadZeroSkipWrite,
+        binding_array: ReadZeroSkipWrite,
     }
 }
 

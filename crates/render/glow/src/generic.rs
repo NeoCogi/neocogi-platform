@@ -683,7 +683,23 @@ fn vertex_format(value: GpuVertexFormat) -> (i32, u32, bool) {
 
 /// Normalizes generated fragment position for direct presentation without exposing native names.
 fn fragment_source(source: &str, offscreen: bool) -> Result<(String, Option<String>), String> {
-    if offscreen || !source.contains("gl_FragCoord") {
+    if offscreen {
+        return Ok((source.into(), None));
+    }
+    // Generated GLSL identifiers are ASCII. A legal client identifier may contain the
+    // builtin spelling; normalize only complete identifier tokens, never those substrings.
+    let identifier = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_';
+    let builtin = "gl_FragCoord";
+    let occurrences: Vec<_> = source
+        .match_indices(builtin)
+        .filter_map(|(start, _)| {
+            let end = start + builtin.len();
+            let before = start > 0 && identifier(source.as_bytes()[start - 1]);
+            let after = end < source.len() && identifier(source.as_bytes()[end]);
+            (!before && !after).then_some(start)
+        })
+        .collect();
+    if occurrences.is_empty() {
         return Ok((source.into(), None));
     }
     // Choose a fresh identifier against the complete compiler output so a legal client local
@@ -697,7 +713,14 @@ fn fragment_source(source: &str, offscreen: bool) -> Result<(String, Option<Stri
         ordinal = ordinal.checked_add(1).ok_or("fragment private name space exhausted")?;
     };
     let expression = format!("vec4(gl_FragCoord.x, {name} - gl_FragCoord.y, gl_FragCoord.zw)");
-    let mut result = source.replace("gl_FragCoord", &expression);
+    let mut result = String::new();
+    let mut first = 0;
+    for start in occurrences {
+        result.push_str(&source[first..start]);
+        result.push_str(&expression);
+        first = start + builtin.len();
+    }
+    result.push_str(&source[first..]);
     // Naga emits all extension directives before precision declarations. Inserting here retains
     // the required directive ordering and declares the uniform before any generated function.
     let position = result.find("precision ").ok_or("missing canonical GLSL precision preamble")?;
