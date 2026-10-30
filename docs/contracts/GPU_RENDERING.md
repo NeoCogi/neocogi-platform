@@ -4,6 +4,8 @@ The renderer ABI describes buffers, sampled textures, samplers, shaders,
 graphics pipelines and bounded draw commands. Semantic meshes, cameras and
 materials belong to clients. GPU payloads use explicit bytes, vertex formats and
 uniform layouts; Rust or generated ncidl record layout never defines GPU layout.
+Rust clients can publish initialized bytes with `source::Bytes` and typed pipeline
+arrays with `source::PipelineDesc`; these helpers define no semantic geometry.
 
 Each public GPU resource has one `ComBox` owner. Renderers observe its lifetime
 through construction-proven `WeakLocalBox` and typed `WeakComBox` registrations.
@@ -35,6 +37,7 @@ non-comparison sampled 2D float textures/samplers. Storage, atomics, compute,
 workgroup state, binding arrays and additional color attachments are rejected,
 including unused declarations. A fragment entry emits exactly one `vec4<f32>`
 color at location zero. Portable location inputs use f32/u32 scalars or vectors.
+Shader linkage compares locations, shapes, interpolation and sampling qualifiers.
 
 Binding groups are 0 for vertex sampled pairs, 1 for vertex uniforms, 2 for
 fragment sampled pairs and 3 for fragment uniforms. There are four slots per
@@ -67,6 +70,31 @@ widgets and sequential views. Cancel/reset never refund attempted work. Host
 abort retires pending storage even without a GPU submission; successful finish
 preserves transferred immutable blocks. Invocation-bound painter and view objects
 cannot regain authority through a later widget's valid public token.
+
+Hosts install the separate `IRenderHost::recording_broker()` result through
+`UiRuntime::set_render_broker`. The runtime owns one recording frame around the
+entire paint traversal. Widgets receive only `IPainter::begin_render_view` and
+their restricted resource factory. Begin reserves the contribution's display-list
+position immediately. Finish seals it; the runtime transfers the block at that
+original position before another view begins or paint returns. Explicit cancel
+leaves an empty position. Unfinished or rejected work fails the paint invocation;
+retrying begin cannot erase that failure. Every return revokes escaped facades.
+
+The view's `info().client` is the actual visible client rectangle in widget-local
+coordinates. Its initial viewport is `(0,0,width,height)` relative to that root.
+The runtime derives both from committed content geometry and clipping; caller
+tokens or supplied painter rectangles cannot redefine them. Sealed blocks have
+exclusive owners through synchronous GFX submission and weak stream observers.
+The renderer authenticates them before native frame acquisition and rechecks all
+domain gates after the final foreign stream/image callback.
+
+Normalized graphics positions use positive Y upward and depth in `[0,1]`.
+Sampled texture row zero and fragment-position Y use the top-left convention.
+The GL executor privately normalizes direct presentation versus offscreen image
+storage, including fragment coordinates and front-face winding. It restores
+complete pipeline/binding state per draw. Its native caches retain device-free
+immutable versions; recorded blocks and domain controllers retain native lifetime
+separately, preventing an idle device-cache-domain ownership cycle.
 
 CPU admission/preparation rejection emits no native target commands. After native
 execution starts, immediate APIs cannot promise rollback. Errors propagate;

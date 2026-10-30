@@ -1,6 +1,8 @@
-#[version(2)]
+#[version(3)]
 /// Ordered draw record whose declaration-order tag and plain payload cross the plugin ABI.
 enum RenderBatch: u8 {
+    /// Sealed generic graphics block; stream.view(index) supplies its weak exclusive observer.
+    View,
     /// Primary-image triangles already clipped and tessellated by the frame producer.
     Atlas {
         /// First vertex, equal to the end of the preceding vertex-bearing batch.
@@ -52,9 +54,11 @@ struct RenderInfo {
     batch_count: u32,
 }
 
-#[version(1)]
+#[version(2)]
 /// Owned reusable frame storage readable only during its active submission.
 interface IRenderStream {
+    /// Observes a sealed block without manufacturing a second public resource owner.
+    fn view(&self, invocation: u64, batch: u32) -> Result<WeakComBox<IRenderViewBlock>>;
     /// Copies a bounded range into caller-owned storage; offsets count vertices.
     fn vertices(&self, invocation: u64, output: &mut [RenderVertex]) -> Result<u32>;
     /// Copies ordered tagged records; offsets count batches and records contain no pointers.

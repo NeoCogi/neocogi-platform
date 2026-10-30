@@ -498,3 +498,10 @@ interface IRenderClientFactory {
     /// Create independent domain limits and a host controller.
     fn create_client(&self, limits: RenderClientLimits) -> Result<ComBox<IRenderClientDomain>>;
 }
+
+#[version(1)]
+/// Trusted host-only assembly capability; never delegated to widgets.
+interface IRenderHost {
+    /// Creates a narrow CPU recording broker for installation into one UI runtime.
+    fn recording_broker(&self) -> Result<ComPtr<IRenderViewBroker>>;
+}

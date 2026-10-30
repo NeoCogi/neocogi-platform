@@ -8,7 +8,7 @@ use std::rc::Rc;
 
 use neocogi_render_core::{AtlasUploadError, FrameError, FrameInfo, ImageSource, RendererBackend, TextureError, TextureId};
 use neocogi_render_glow::{GLRenderer, GlFrame};
-pub use neocogi_render_glow::GlApplicationRenderer;
+pub use neocogi_render_glow::{GlApplicationRenderer, PreparedBlock};
 
 const VERTEX_SHADER: &str = "#version 300 es
 uniform highp mat4 uTransform;
@@ -57,6 +57,11 @@ impl<Application> WebGlCanvasRenderer<Application>
 where
     Application: GlApplicationRenderer,
 {
+    /// Realizes the common graphics vocabulary through the shared WebGL 2 executor.
+    pub fn prepare_block(&mut self, block: &neocogi_render_gpu::record::Block, offscreen: bool) -> Result<PreparedBlock, String> {
+        self.inner.prepare_block(block, offscreen)
+    }
+
     /// Creates a WebGL renderer with one strongly typed application GPU extension.
     pub fn new_with_application(gl: Rc<glow::Context>, atlas: ImageSource<'_>, width: u32, height: u32, application: Application) -> Result<Self, String> {
         // The wrapper selects only the UI shader dialect. Application shaders remain entirely

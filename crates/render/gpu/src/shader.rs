@@ -27,6 +27,10 @@ pub struct IoLocation {
     pub location: u32,
     /// Required scalar/vector interpretation.
     pub shape: IoShape,
+    /// Cross-stage interpolation must agree even when scalar/vector shapes match.
+    pub interpolation: Option<naga::Interpolation>,
+    /// Cross-stage sampling qualifier; matching names alone do not establish linkage.
+    pub sampling: Option<naga::Sampling>,
 }
 
 /// Uniform metadata copied out of compiler IR before publication.
@@ -286,7 +290,7 @@ fn validate_module(module: &naga::Module) -> Result<(), String> {
 /// Reflects location-bound scalars/vectors recursively through entry-point structs.
 fn collect_io(module: &naga::Module, ty: Handle<Type>, binding: Option<&Binding>, output: &mut Vec<IoLocation>) -> Result<(), String> {
     match binding {
-        Some(Binding::Location { location, .. }) => {
+        Some(Binding::Location { location, interpolation, sampling, .. }) => {
             if *location >= 16 || output.iter().any(|entry| entry.location == *location) {
                 return Err("graphics location exceeds profile or is duplicated".into());
             }
@@ -301,6 +305,8 @@ fn collect_io(module: &naga::Module, ty: Handle<Type>, binding: Option<&Binding>
             output.push(IoLocation {
                 location: *location,
                 shape: IoShape { kind: scalar.kind, components },
+                interpolation: *interpolation,
+                sampling: *sampling,
             });
         }
         Some(Binding::BuiltIn(_)) => {}

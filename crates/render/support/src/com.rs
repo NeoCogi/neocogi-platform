@@ -6,6 +6,11 @@ use std::ops::Range;
 /// Concrete renderer-owned resource resolution; implementations authenticate canonical COM identities.
 /// Calls happen during preparation, with no GPU frame or renderer-state borrow held.
 pub trait Resources {
+    /// Authenticates a sealed generic block; UI-only or legacy fixtures reject this capability.
+    fn view(&self, _view: neocogi_com::WeakComBox<IRenderViewBlockAbi>) -> Result<std::rc::Rc<neocogi_render_gpu::record::Block>, NcStatus> {
+        Err(NC_E_INVALID_ARG)
+    }
+
     /// Owned image record retaining its native device and allocation.
     type Texture;
     /// Owned application command snapshot retaining everything needed for this submission.
@@ -18,6 +23,8 @@ pub trait Resources {
 
 /// Validated operations contain native-owned resources and no foreign callable stream.
 pub enum Batch<Texture, Item> {
+    /// Authenticated immutable command block carrying its domain admission gate.
+    View(std::rc::Rc<neocogi_render_gpu::record::Block>),
     /// Contiguous triangle range in PreparedFrame::vertices, already checked for finite components.
     Atlas(Range<usize>),
     /// Complete quad and its authenticated image, retained through finish or abandonment.
@@ -130,6 +137,7 @@ impl<Texture, Item> PreparedFrame<Texture, Item> {
                 RenderBatch::Atlas { first, count } if count > 0 && count.is_multiple_of(3) => (first, count),
                 RenderBatch::Texture { first } => (first, 4),
                 RenderBatch::Item { rect, clip } if contains(rect, clip) && contains(viewport, clip) => continue,
+                RenderBatch::View => continue,
                 _ => return Err(NC_E_INVALID_ARG),
             };
             if first != used {
@@ -143,6 +151,13 @@ impl<Texture, Item> PreparedFrame<Texture, Item> {
         // Only resource calls can fail from here; partial native snapshots are discarded by read() on error.
         for (index, record) in self.records.as_slice().iter().enumerate() {
             self.batches.push(match *record {
+                RenderBatch::View => {
+                    let block = resources.view(stream.view(info.invocation, index as u32)?)?;
+                    if !neocogi_render_gpu::scope::contains(viewport, block.root.target) {
+                        return Err(NC_E_INVALID_ARG);
+                    }
+                    Batch::View(block)
+                }
                 RenderBatch::Atlas { first, count } => Batch::Atlas(first as usize..(first + count) as usize),
                 RenderBatch::Texture { first } => Batch::Texture {
                     vertices: self.vertices.as_slice()[first as usize..first as usize + 4]

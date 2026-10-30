@@ -69,6 +69,7 @@ impl PlatformObject {
         let window = gpu.window();
         host.queues.borrow_mut().insert(window.id(), VecDeque::new());
         let device = Rc::new(Device {
+            logical: neocogi_render_gpu::GpuDevice::new(),
             render: RefCell::new(Some(RenderState {
                 gpu,
                 atlas,

@@ -566,3 +566,31 @@ fn packed_color_footprint_uses_webgpu_alignment() {
         );
     }
 }
+
+/// Equal varying shapes with conflicting interpolation reject before any native driver linking.
+#[test]
+fn independent_shader_stages_require_matching_interpolation() {
+    let device = GpuDevice::new();
+    let (_controller, factory) = client(&device, RenderClientLimits::default());
+    for (vertex_interpolation, expected) in [("@interpolate(flat)", false), ("", true)] {
+        let code = format!(
+            r#"
+struct V {{ @builtin(position) p:vec4<f32>, @location(0) {vertex_interpolation} color:vec4<f32> }}
+@vertex fn vs() -> V {{ return V(vec4<f32>(0.0,0.0,0.5,1.0),vec4<f32>(1.0)); }}
+@fragment fn fs(@location(0) color:vec4<f32>) -> @location(0) vec4<f32> {{ return color; }}
+"#
+        );
+        let input = crate::source::Bytes::source(code.into_bytes());
+        let vertex = factory
+            .create_shader(GpuShaderStage::Vertex, input.as_com_ref(), NcCopyFromBufferOffset::new(0, b"vs"))
+            .unwrap();
+        let fragment = factory
+            .create_shader(GpuShaderStage::Fragment, input.as_com_ref(), NcCopyFromBufferOffset::new(0, b"fs"))
+            .unwrap();
+        let desc = crate::source::PipelineDesc::default().source().unwrap();
+        assert_eq!(
+            factory.create_pipeline(desc.as_com_ref(), vertex.as_com_ref(), fragment.as_com_ref()).is_ok(),
+            expected
+        );
+    }
+}

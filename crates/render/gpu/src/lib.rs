@@ -11,6 +11,7 @@ pub mod record;
 pub mod resource;
 pub mod scope;
 pub mod shader;
+pub mod source;
 
 pub use resource::GpuDevice;
 

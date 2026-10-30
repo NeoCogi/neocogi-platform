@@ -49,6 +49,11 @@ struct Input {
 /// A source owning no geometry models an empty frame for reentry attempts.
 struct Empty;
 impl IRenderStream for Empty {
+    /// This fixture carries no generic GPU block.
+    fn view(&self, _: u64, _: u32) -> Result<neocogi_com::WeakComBox<neocogi_render_core::abi::IRenderViewBlockAbi>, NcStatus> {
+        Err(neocogi_com::NC_E_INVALID_ARG)
+    }
+
     /// Nested render must fail before consulting even this harmless source.
     fn vertices(&self, _: u64, _: NcOutputWriter<'_, RenderVertex>) -> Result<u32, NcStatus> {
         panic!("nested renderer read a stream")
@@ -73,6 +78,11 @@ struct Stream {
     input: Rc<Input>,
 }
 impl IRenderStream for Stream {
+    /// This fixture carries no generic GPU block.
+    fn view(&self, _: u64, _: u32) -> Result<neocogi_com::WeakComBox<neocogi_render_core::abi::IRenderViewBlockAbi>, NcStatus> {
+        Err(neocogi_com::NC_E_INVALID_ARG)
+    }
+
     /// Reentry and resource destruction happen while the renderer owns detached preparation storage.
     fn vertices(&self, _: u64, mut output: NcOutputWriter<'_, RenderVertex>) -> Result<u32, NcStatus> {
         assert_eq!(

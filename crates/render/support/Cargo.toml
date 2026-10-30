@@ -8,5 +8,6 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+neocogi-render-gpu.workspace = true
 neocogi-render-core.workspace = true
 neocogi-com = { workspace = true, features = ["std"] }

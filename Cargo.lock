@@ -689,6 +689,7 @@ version = "0.0.0"
 dependencies = [
  "glow 0.18.0",
  "neocogi-render-core",
+ "neocogi-render-gpu",
  "neocogi-render-support",
  "sdl2",
 ]
@@ -730,6 +731,7 @@ dependencies = [
  "neocogi-com-host",
  "neocogi-render-core",
  "neocogi-render-glow",
+ "neocogi-render-gpu",
  "neocogi-render-mesh",
  "neocogi-render-support",
  "neocogi-render-vulkan",
@@ -749,6 +751,7 @@ version = "0.0.0"
 dependencies = [
  "neocogi-com",
  "neocogi-render-core",
+ "neocogi-render-gpu",
 ]
 
 [[package]]
@@ -770,6 +773,7 @@ dependencies = [
  "glow 0.18.0",
  "neocogi-render-core",
  "neocogi-render-glow",
+ "neocogi-render-gpu",
 ]
 
 [[package]]

@@ -8,6 +8,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+neocogi-render-gpu.workspace = true
 glow.workspace = true
 neocogi-render-core.workspace = true
 neocogi-render-glow.workspace = true

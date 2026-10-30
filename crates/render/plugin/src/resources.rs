@@ -205,6 +205,11 @@ impl Resources for Device {
 
 /// Window and offscreen sessions authenticate resources in the same concrete device registry.
 impl Resources for WindowObject {
+    /// Uses construction-proven exclusive identity, never a caller-provided device number.
+    fn view(&self, view: neocogi_com::WeakComBox<IRenderViewBlockAbi>) -> Result<Rc<neocogi_render_gpu::record::Block>, NcStatus> {
+        self.device.logical.block_snapshot(view.as_com_ref())
+    }
+
     type Texture = Rc<TextureRecord>;
     type Item = MeshSubmission;
 

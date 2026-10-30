@@ -54,6 +54,11 @@ struct Source {
     probe: Rc<Probe>,
 }
 impl IRenderStream for Source {
+    /// This fixture carries no generic GPU block.
+    fn view(&self, _: u64, _: u32) -> Result<neocogi_com::WeakComBox<neocogi_render_core::abi::IRenderViewBlockAbi>, NcStatus> {
+        Err(neocogi_com::NC_E_INVALID_ARG)
+    }
+
     /// Copies at offset zero and optionally simulates a short producer read.
     fn vertices(&self, invocation: u64, mut output: NcOutputWriter<'_, RenderVertex>) -> Result<u32, NcStatus> {
         assert_eq!(invocation, 1);

@@ -10,6 +10,11 @@ struct MeshStream {
     scene: ComPtr<IRenderItemAbi>,
 }
 impl IRenderStream for MeshStream {
+    /// This fixture carries no generic GPU block.
+    fn view(&self, _: u64, _: u32) -> Result<neocogi_com::WeakComBox<neocogi_render_core::abi::IRenderViewBlockAbi>, NcStatus> {
+        Err(neocogi_com::NC_E_INVALID_ARG)
+    }
+
     /// The mesh-only operation has no ordinary UI geometry.
     fn vertices(&self, _: u64, _: NcOutputWriter<'_, RenderVertex>) -> Result<u32, NcStatus> {
         Ok(0)

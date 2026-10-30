@@ -98,6 +98,8 @@ impl RenderState {
 struct Device {
     /// None throughout preparation and submission; reentrant GPU operations receive RENDER_E_BUSY.
     render: RefCell<Option<RenderState>>,
+    /// Generic resource provenance and CPU recording shared with this native device.
+    logical: neocogi_render_gpu::GpuDevice,
     /// Canonical COM identity maps contain weak native records and never own their COM objects.
     textures: RefCell<HashMap<usize, Weak<TextureRecord>>>,
     /// Application scenes use the same authentication rule as images.
@@ -159,6 +161,8 @@ impl Drop for RenderAccess<'_> {
 #[com_object(interfaces(
     IPlatformWindow,
     IRenderer,
+    IRenderClientFactory,
+    IRenderHost,
     ITextureFactory,
     IRenderSurfaceFactory,
     IMeshScenes,
@@ -189,6 +193,27 @@ impl Drop for Polling<'_> {
     }
 }
 
+#[com_object(interfaces(IRenderDeviceLease))]
+/// Private lifetime marker; no native operation or host projection can be queried from it.
+struct DeviceLease {
+    /// Public resource/domain owners keep the native context alive through final release.
+    _device: Rc<Device>,
+}
+impl IRenderDeviceLease for DeviceLease {}
+impl IRenderClientFactory for WindowObject {
+    /// Publishes only a narrow domain controller, then clients receive its separate factory.
+    fn create_client(&self, limits: RenderClientLimits) -> Result<neocogi_com::ComBox<IRenderClientDomainAbi>, NcStatus> {
+        let lease = DeviceLease::from_value(DeviceLease { _device: self.device.clone() }).query()?;
+        self.device.logical.create_client_with_lease(limits, lease)
+    }
+}
+impl IRenderHost for WindowObject {
+    /// Separate broker identity prevents indirect QueryInterface access to the window.
+    fn recording_broker(&self) -> Result<ComPtr<IRenderViewBrokerAbi>, NcStatus> {
+        Ok(self.device.logical.broker())
+    }
+}
+
 impl IRenderer for WindowObject {
     /// Takes owned device state so nested image methods cannot reenter native upload or submission.
     fn prepare_atlas(&self, atlas: ComRef<'_, IRgbaImageAbi>) -> Result<(), NcStatus> {
@@ -202,11 +227,17 @@ impl IRenderer for WindowObject {
         }
         let mut access = self.device.access()?;
         let state = access.state();
+        let _operation = self.device.logical.operation()?;
         state.prepared.read(info, stream, self).inspect_err(|error| {
             *self.device.diagnostic.borrow_mut() = format!("frame preparation failed: {error}");
         })?;
         // Reject malformed commands and foreign resource owners before changing GPU atlas state.
         state.prepare_atlas(atlas).map_err(|error| self.device.failure(error))?;
+        for batch in state.prepared.batches() {
+            if let neocogi_render_support::com::Batch::View(block) = batch {
+                block.admit()?;
+            }
+        }
         state.gpu.render(info, &state.prepared).map_err(|error| self.device.failure(error))
     }
 }

@@ -32,6 +32,8 @@
 //! This module implements the `RendererBackend` trait, texture uploads, UI batching, and optional custom
 //! mesh rendering for the demo application.
 
+mod generic;
+pub use generic::PreparedBlock;
 use core::slice;
 use std::{collections::HashMap, convert::Infallible, io, rc::Rc};
 
@@ -179,12 +181,19 @@ where
     target: DrawTarget,
     /// Application-owned native renderer invoked only for its concrete command type.
     application: Application,
+    /// Common graphics executor, isolated from the legacy UI vertex layout.
+    generic: generic::Executor,
 }
 
 impl<Application> GLRenderer<Application>
 where
     Application: GlApplicationRenderer,
 {
+    /// Realizes a sealed common graphics block before acquiring or clearing its target.
+    pub fn prepare_block(&mut self, block: &neocogi_render_gpu::record::Block, offscreen: bool) -> Result<PreparedBlock, String> {
+        self.generic.prepare(block, offscreen)
+    }
+
     /// Returns the full default framebuffer in the UI's top-left coordinates.
     fn full_clip(&self) -> Recti {
         Recti::new(0, 0, self.width as i32, self.height as i32)
@@ -458,8 +467,10 @@ where
             let ibo = index_buffer.into_inner();
             let program = program.into_inner();
 
+            let generic = generic::Executor::new(gl.clone())?;
             Ok(Self {
                 gl,
+                generic,
                 verts: Vec::new(),
                 indices: Vec::new(),
 
@@ -709,6 +720,23 @@ impl<Application> GlFrame<'_, Application>
 where
     Application: GlApplicationRenderer,
 {
+    /// Executes only already realized common commands at this exact painter-order boundary.
+    pub fn execute_block(&mut self, block: &PreparedBlock, logical: neocogi_render_gpu::abi::Size) {
+        if self.error.is_some() {
+            return;
+        }
+        self.backend.flush();
+        self.backend.bind_target(self.backend.full_clip());
+        let physical = neocogi_render_gpu::abi::Size {
+            width: self.backend.width as i32,
+            height: self.backend.height as i32,
+        };
+        let offscreen = matches!(self.backend.target, DrawTarget::Texture { .. });
+        if let Err(error) = self.backend.generic.execute(block, logical, physical, offscreen) {
+            self.error = Some(FrameError::new(error));
+        }
+    }
+
     /// Flushes preceding UI work and executes one typed application GPU command immediately.
     pub fn enqueue_application(&mut self, args: RenderItemArgs, command: Application::Command) {
         if self.error.is_some() {
@@ -812,6 +840,7 @@ where
     }
 
     fn frame(&mut self, info: FrameInfo) -> Result<Self::Frame<'_>, FrameError> {
+        self.generic.collect();
         let dimensions = info.dimensions();
         self.target = DrawTarget::Window;
         self.begin(dimensions.width, dimensions.height, info.clear());

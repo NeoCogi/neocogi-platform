@@ -146,13 +146,30 @@ impl Gpu {
         let [r, g, b, a] = info.clear.to_le_bytes();
         let dimensions = Dimensioni::new(info.size.width, info.size.height);
         let frame_info = FrameInfo::try_new(dimensions, Color { r, g, b, a }).map_err(|e| e.to_string())?;
+        // Resource compilation/upload finishes before any target acquire or attachment clear.
+        #[cfg(any(feature = "glow", feature = "webgl"))]
+        let blocks = prepared
+            .batches()
+            .iter()
+            .map(|batch| match batch {
+                Batch::View(block) => self.renderer.prepare_block(block, target.is_some()).map(Some),
+                _ => Ok(None),
+            })
+            .collect::<Result<Vec<_>, String>>()?;
         let mut frame = match target {
             None => self.renderer.frame(frame_info),
             Some((output, atlas)) => self.renderer.texture_frame(frame_info, output, atlas),
         }
         .map_err(|error| error.to_string())?;
-        for batch in prepared.batches() {
+        for (index, batch) in prepared.batches().iter().enumerate() {
             match batch {
+                Batch::View(_block) => {
+                    #[cfg(any(feature = "glow", feature = "webgl"))]
+                    frame.execute_block(blocks[index].as_ref().expect("prepared GPU block"), info.size);
+                    #[cfg(not(any(feature = "glow", feature = "webgl")))]
+                    return Err("generic command execution is not integrated for this backend".to_owned());
+                }
+
                 Batch::Atlas(range) => {
                     // Preparation already validated this as a complete contiguous triangle range;
                     // preserve that coarse unit through the native backend instead of replaying it
