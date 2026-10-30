@@ -496,6 +496,7 @@ fn incompatible_attribute_footprints_and_shader_shapes_reject() {
         (8, GpuVertexFormat::Float32x3, 0),
         (12, GpuVertexFormat::Uint32x3, 0),
         (12, GpuVertexFormat::Float32x3, 1),
+        (256, GpuVertexFormat::Float32x3, 0),
     ] {
         let layout: ComPtr<IGpuPipelineSourceAbi> = PipelineSource::from_value(PipelineSource {
             info: GpuPipelineInfo {
@@ -517,6 +518,51 @@ fn incompatible_attribute_footprints_and_shader_shapes_reject() {
             factory
                 .create_pipeline(layout.as_com_ref(), vertex.as_com_ref(), fragment.as_com_ref())
                 .is_err()
+        );
+    }
+}
+
+/// Even byte-normalized four-channel formats require portable four-byte attribute alignment.
+#[test]
+fn packed_color_footprint_uses_webgpu_alignment() {
+    let device = GpuDevice::new();
+    let (_controller, factory) = client(&device, RenderClientLimits::default());
+    let code = r#"
+@vertex fn vs(@location(0) color: vec4<f32>) -> @builtin(position) vec4<f32> { return vec4<f32>(color.xy, 0.0, 1.0); }
+@fragment fn fs() -> @location(0) vec4<f32> { return vec4<f32>(1.0); }
+"#;
+    let (input, _, _) = source(code.as_bytes().to_vec(), ReadMode::Exact);
+    let vertex = factory
+        .create_shader(GpuShaderStage::Vertex, input.as_com_ref(), NcCopyFromBufferOffset::new(0, b"vs"))
+        .unwrap();
+    let fragment = factory
+        .create_shader(GpuShaderStage::Fragment, input.as_com_ref(), NcCopyFromBufferOffset::new(0, b"fs"))
+        .unwrap();
+    for offset in [0, 1] {
+        let layout: ComPtr<IGpuPipelineSourceAbi> = PipelineSource::from_value(PipelineSource {
+            info: GpuPipelineInfo {
+                vertex_buffer_count: 1,
+                attribute_count: 1,
+                ..GpuPipelineInfo::default()
+            },
+            layouts: vec![GpuVertexBufferLayout {
+                slot: 0,
+                stride: 8,
+                step: GpuStepMode::Vertex,
+            }],
+            attributes: vec![GpuVertexAttribute {
+                location: 0,
+                slot: 0,
+                format: GpuVertexFormat::Unorm8x4,
+                offset,
+            }],
+            bindings: Vec::new(),
+        })
+        .query()
+        .unwrap();
+        assert_eq!(
+            factory.create_pipeline(layout.as_com_ref(), vertex.as_com_ref(), fragment.as_com_ref()).is_ok(),
+            offset == 0
         );
     }
 }

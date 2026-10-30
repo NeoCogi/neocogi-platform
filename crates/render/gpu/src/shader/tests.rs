@@ -123,6 +123,7 @@ struct Outputs { @location(0) a: vec4<f32>, @location(1) b: vec4<f32> }
 /// Header bounds, UTF-8 parsing and exact entry selection fail before backend resource work.
 #[test]
 fn invalid_sources_and_entry_points_reject() {
+    assert!(Shader::compile(GpuShaderStage::from_raw(255), PROCEDURAL, "vertex_main").is_err());
     assert!(Shader::compile(GpuShaderStage::Vertex, "", "main").is_err());
     assert!(Shader::compile(GpuShaderStage::Vertex, "not valid WGSL", "main").is_err());
     assert!(Shader::compile(GpuShaderStage::Vertex, PROCEDURAL, "missing").is_err());

@@ -272,7 +272,7 @@ struct GpuPipelineInfo {
 struct GpuVertexBufferLayout {
     /// Stream slot below eight.
     slot: u32,
-    /// Positive stride no greater than 2048 bytes.
+    /// Positive four-byte-aligned stride no greater than 252 bytes, portable to WebGL 2.
     stride: u32,
     /// Vertex or instance advancement.
     step: GpuStepMode,
@@ -335,9 +335,9 @@ struct RenderClientLimits {
     live_bytes: u64,
     /// Live command and uniform payload bytes.
     pending_bytes: u64,
-    /// Attempted draws per trusted CPU recording frame.
+    /// Attempted draws and regional clears per CPU frame, including automatic view initialization.
     frame_draws: u32,
-    /// Attempted vertex/index work, including instances and clipped draws.
+    /// Attempted vertex/index work, including instance multiplication and clipped/zero-instance scans.
     frame_indices: u64,
     /// Live public view metadata owners, including expired shells.
     live_views: u32,

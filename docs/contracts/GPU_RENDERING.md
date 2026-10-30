@@ -47,6 +47,11 @@ column strides and array strides agree with std140. Differing layouts reject.
 Final native block padding may be added privately. Each uniform input must match
 its reflected byte length. Vertex streams have explicit byte offsets, stride,
 step mode and formats. Index and vertex buffer roles are distinct for WebGL.
+The common profile limits strides to 252 bytes: WebGL 2 caps stride at 255,
+while WebGPU requires four-byte stride alignment. Attribute offsets use the
+minimum of four and the format size, including four-byte alignment for Unorm8x4.
+See the [WebGL 2 attribute rules](https://registry.khronos.org/webgl/specs/latest/2.0/#5.3)
+and [WebGPU vertex layout validation](https://gpuweb.github.io/gpuweb/#validating-gpuvertexbufferlayout).
 
 ## Scoped graphics authority
 

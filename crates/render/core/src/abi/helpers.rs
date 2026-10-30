@@ -22,6 +22,12 @@ pub const RENDER_E_BUSY: NcStatus = NcStatus::from_code(-1001);
 /// A texture or render item belongs to a different renderer device.
 pub const RENDER_E_OWNER: NcStatus = NcStatus::from_code(-1002);
 
+/// An invocation-bound graphics view or recording frame is no longer active.
+pub const RENDER_E_EXPIRED: NcStatus = NcStatus::from_code(-1003);
+
+/// An operation is illegal in the current recording/session state.
+pub const RENDER_E_STATE: NcStatus = NcStatus::from_code(-1004);
+
 /// A renderer backend failed; its diagnostics capability retains concrete detail.
 pub const RENDER_E_BACKEND: NcStatus = NcStatus::from_code(-1005);
 

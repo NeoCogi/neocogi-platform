@@ -54,7 +54,7 @@ pub(crate) fn create(
     for (index, layout) in layouts.iter().enumerate() {
         if layout.slot >= 8
             || layout.stride == 0
-            || layout.stride > 2048
+            || layout.stride > 252
             || layout.stride % 4 != 0
             || !matches!(layout.step, GpuStepMode::Vertex | GpuStepMode::Instance)
             || layouts[..index].iter().any(|previous| previous.slot == layout.slot)
@@ -148,7 +148,7 @@ pub(crate) fn vertex_format(format: GpuVertexFormat) -> Result<(u32, u32, IoShap
         GpuVertexFormat::Uint32x2 => (2, 8, 4, naga::ScalarKind::Uint),
         GpuVertexFormat::Uint32x3 => (3, 12, 4, naga::ScalarKind::Uint),
         GpuVertexFormat::Uint32x4 => (4, 16, 4, naga::ScalarKind::Uint),
-        GpuVertexFormat::Unorm8x4 => (4, 4, 1, naga::ScalarKind::Float),
+        GpuVertexFormat::Unorm8x4 => (4, 4, 4, naga::ScalarKind::Float),
         _ => return Err(NC_E_INVALID_ARG),
     };
     Ok((size, align, IoShape { kind, components }))

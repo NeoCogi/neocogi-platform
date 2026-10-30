@@ -44,10 +44,12 @@ pub(crate) struct Device {
     pub(crate) pipelines: RefCell<Registry<PipelineObject>>,
     /// Restricted factories are authenticated without querying a client object.
     pub(crate) factories: RefCell<HashMap<usize, FactoryEntry>>,
+    /// Sealed GPU blocks use construction-proven weak provenance too.
+    pub(crate) blocks: RefCell<Registry<crate::record::BlockObject>>,
     /// Checked monotonic backing identity; never exposed as provenance proof.
     next: Cell<u64>,
     /// A non-borrowing gate spanning foreign reads or native preparation.
-    busy: Cell<bool>,
+    pub(crate) busy: Cell<bool>,
 }
 
 /// Weak factory metadata prevents allocation-address reuse while its registry entry exists.
@@ -66,6 +68,8 @@ pub(crate) struct Domain {
     pub(crate) closed: Cell<bool>,
     /// Device-free allocation counters.
     pub(crate) account: Rc<Account>,
+    /// Weak pending sessions allow immediate close without retaining payloads.
+    pub(crate) sessions: RefCell<Vec<Weak<crate::record::SessionCore>>>,
     /// Optional native host lease; private caches never retain this domain.
     _native: Option<ComPtr<IRenderDeviceLeaseAbi>>,
 }
@@ -74,6 +78,17 @@ impl Domain {
     /// Rechecked after every foreign reader before publication or frame admission.
     pub(crate) fn open(&self) -> Result<(), NcStatus> {
         if self.closed.get() { Err(NC_E_DROPPED) } else { Ok(()) }
+    }
+
+    /// Close first, then drain pending payloads outside the registry borrow.
+    pub(crate) fn close(&self) {
+        self.closed.set(true);
+        let sessions = std::mem::take(&mut *self.sessions.borrow_mut());
+        for session in sessions {
+            if let Some(session) = session.upgrade() {
+                session.expire();
+            }
+        }
     }
 }
 
@@ -117,6 +132,7 @@ impl GpuDevice {
                 shaders: RefCell::new(HashMap::new()),
                 pipelines: RefCell::new(HashMap::new()),
                 factories: RefCell::new(HashMap::new()),
+                blocks: RefCell::new(HashMap::new()),
                 next: Cell::new(0),
                 busy: Cell::new(false),
             }),
@@ -148,6 +164,7 @@ impl GpuDevice {
             device: self.clone(),
             closed: Cell::new(false),
             account: Account::new(limits)?,
+            sessions: RefCell::new(Vec::new()),
             _native: native,
         });
         let factory: ComPtr<IRenderResourcesAbi> = Factory::from_value(Factory { domain: domain.clone() }).query()?;
@@ -306,7 +323,10 @@ resource_object!(ShaderObject, IGpuShader, ShaderVersion);
 resource_object!(PipelineObject, IGpuPipeline, PipelineVersion);
 
 /// Registers only locally constructed metadata before transferring the unique owner.
-fn publish<T: ComObject<Threading = ThreadLocal>, I: ComInterface>(registry: &RefCell<Registry<T>>, local: LocalBox<T>) -> Result<ComBox<I>, NcStatus> {
+pub(crate) fn publish<T: ComObject<Threading = ThreadLocal>, I: ComInterface>(
+    registry: &RefCell<Registry<T>>,
+    local: LocalBox<T>,
+) -> Result<ComBox<I>, NcStatus> {
     let projection = local.query::<I>()?;
     let key = projection.as_raw().object as usize;
     let entry = Entry {
@@ -354,14 +374,14 @@ impl IRenderClientDomain for DomainOwner {
     }
     /// Pending session retirement is handled through the shared domain gate.
     fn close(&mut self) -> Result<(), NcStatus> {
-        self.domain.closed.set(true);
+        self.domain.close();
         Ok(())
     }
 }
 impl Drop for DomainOwner {
     /// Controller removal revokes admission but does not free retained backing versions.
     fn drop(&mut self) {
-        self.domain.closed.set(true);
+        self.domain.close();
     }
 }
 

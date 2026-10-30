@@ -5,8 +5,11 @@
 #![deny(missing_docs)]
 
 mod budget;
+pub mod command;
 mod pipeline;
+pub mod record;
 pub mod resource;
+pub mod scope;
 pub mod shader;
 
 pub use resource::GpuDevice;

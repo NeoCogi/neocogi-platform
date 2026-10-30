@@ -11,6 +11,10 @@ pub(crate) struct Account {
     resources: Cell<u32>,
     /// Admitted immutable versions, including retained old versions.
     bytes: Cell<u64>,
+    /// Copied command/state storage retained by recording or sealed blocks.
+    pending: Cell<u64>,
+    /// Public view values, including retained expired shells.
+    views: Cell<u32>,
 }
 
 impl Account {
@@ -34,6 +38,8 @@ impl Account {
             limits,
             resources: Cell::new(0),
             bytes: Cell::new(0),
+            pending: Cell::new(0),
+            views: Cell::new(0),
         }))
     }
 
@@ -66,6 +72,41 @@ impl Account {
     pub(crate) fn live_bytes(&self) -> u64 {
         self.bytes.get()
     }
+
+    /// Reserves live command/uniform capacity before allocating it.
+    pub(crate) fn pending(self: &Rc<Self>, count: usize) -> Result<PendingCharge, NcStatus> {
+        let count = u64::try_from(count).map_err(|_| NC_E_OUT_OF_RANGE)?;
+        let next = self
+            .pending
+            .get()
+            .checked_add(count)
+            .filter(|n| *n <= self.limits.pending_bytes)
+            .ok_or(NC_E_OUT_OF_RANGE)?;
+        self.pending.set(next);
+        Ok(PendingCharge { account: self.clone(), count })
+    }
+
+    /// Retained terminal views still consume metadata quota until their ComBox drops.
+    pub(crate) fn view(self: &Rc<Self>) -> Result<ViewCharge, NcStatus> {
+        let next = self
+            .views
+            .get()
+            .checked_add(1)
+            .filter(|n| *n <= self.limits.live_views)
+            .ok_or(NC_E_OUT_OF_RANGE)?;
+        self.views.set(next);
+        Ok(ViewCharge(self.clone()))
+    }
+
+    /// Actual live command capacity, independent of frame counter resets.
+    pub(crate) fn pending_bytes(&self) -> u64 {
+        self.pending.get()
+    }
+
+    /// Actual retained view values, independent of weak metadata observations.
+    pub(crate) fn live_views(&self) -> u32 {
+        self.views.get()
+    }
 }
 
 /// One live public owner; weak observations do not retain its resource count.
@@ -88,5 +129,28 @@ impl Drop for ByteCharge {
     /// Refund only when the actual last version owner releases this token.
     fn drop(&mut self) {
         self.account.bytes.set(self.account.bytes.get() - self.count);
+    }
+}
+
+/// Copied command/state capacity; contains no renderer/domain owner.
+pub(crate) struct PendingCharge {
+    /// Device-free accounting owner.
+    account: Rc<Account>,
+    /// Admitted command storage bytes.
+    count: u64,
+}
+impl Drop for PendingCharge {
+    /// Refund only at actual payload release, including sealed/in-flight copies.
+    fn drop(&mut self) {
+        self.account.pending.set(self.account.pending.get() - self.count);
+    }
+}
+
+/// Client-facing view shell lifetime, independently from its revocable payload.
+pub(crate) struct ViewCharge(Rc<Account>);
+impl Drop for ViewCharge {
+    /// Expiration alone never resets the live-shell quota.
+    fn drop(&mut self) {
+        self.0.views.set(self.0.views.get() - 1);
     }
 }
