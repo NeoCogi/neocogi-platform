@@ -694,6 +694,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "neocogi-render-gpu"
+version = "0.0.0"
+dependencies = [
+ "naga",
+ "neocogi-com",
+ "neocogi-render-core",
+]
+
+[[package]]
 name = "neocogi-render-mesh"
 version = "0.0.0"
 dependencies = [

@@ -1,0 +1,496 @@
+// Generic graphics resources and bounded CPU recording. Native objects never cross this ABI.
+#[version(1)]
+/// The immutable native binding role of a byte buffer; WebGL forbids mixing these roles.
+enum GpuBufferRole: u8 {
+    /// Vertex or instance attribute storage.
+    Vertex,
+    /// Unsigned element-index storage.
+    Index,
+}
+
+#[version(1)]
+/// Programmable stages admitted by the portable graphics profile.
+enum GpuShaderStage: u8 {
+    /// Vertex processing.
+    Vertex,
+    /// Fragment color/depth processing.
+    Fragment,
+}
+
+#[version(1)]
+/// Little-endian unsigned elements in an index buffer.
+enum GpuIndexFormat: u8 {
+    /// Two-byte unsigned indices.
+    U16,
+    /// Four-byte unsigned indices.
+    U32,
+}
+
+#[version(1)]
+/// Explicit packed vertex formats, independent of Rust record layout.
+enum GpuVertexFormat: u8 {
+    /// One 32-bit float.
+    Float32,
+    /// Two 32-bit floats.
+    Float32x2,
+    /// Three 32-bit floats.
+    Float32x3,
+    /// Four 32-bit floats.
+    Float32x4,
+    /// One unsigned integer.
+    Uint32,
+    /// Two unsigned integers.
+    Uint32x2,
+    /// Three unsigned integers.
+    Uint32x3,
+    /// Four unsigned integers.
+    Uint32x4,
+    /// Four bytes normalized into floating-point channels.
+    Unorm8x4,
+}
+
+#[version(1)]
+/// Which draw index advances an attribute stream.
+enum GpuStepMode: u8 {
+    /// Advance for each vertex.
+    Vertex,
+    /// Advance for each instance.
+    Instance,
+}
+
+#[version(1)]
+/// Sampled texture formats in the portable profile.
+enum GpuTextureFormat: u8 {
+    /// Four linear normalized bytes.
+    Rgba8Unorm,
+    /// Four bytes with sRGB color transfer.
+    Rgba8Srgb,
+}
+
+#[version(1)]
+/// Sampling filter for one texture axis/magnification decision.
+enum GpuFilter: u8 {
+    /// Nearest texel.
+    Nearest,
+    /// Linear interpolation.
+    Linear,
+}
+
+#[version(1)]
+/// Behavior of sampled coordinates outside the unit square.
+enum GpuAddressMode: u8 {
+    /// Clamp to edge.
+    Clamp,
+    /// Repeat texels.
+    Repeat,
+    /// Mirror each repeated interval.
+    Mirror,
+}
+
+#[version(1)]
+/// Depth comparison against the current bounded attachment.
+enum GpuCompare: u8 {
+    /// Never comparison.
+    Never,
+    /// Less comparison.
+    Less,
+    /// Equal comparison.
+    Equal,
+    /// LessEqual comparison.
+    LessEqual,
+    /// Greater comparison.
+    Greater,
+    /// NotEqual comparison.
+    NotEqual,
+    /// GreaterEqual comparison.
+    GreaterEqual,
+    /// Always comparison.
+    Always,
+}
+
+#[version(1)]
+/// Primitive faces removed before rasterization.
+enum GpuCullMode: u8 {
+    /// Keep both orientations.
+    None,
+    /// Cull front faces.
+    Front,
+    /// Cull back faces.
+    Back,
+}
+
+#[version(1)]
+/// Front-facing winding after portable coordinate normalization.
+enum GpuFrontFace: u8 {
+    /// Counter-clockwise.
+    Ccw,
+    /// Clockwise.
+    Cw,
+}
+
+#[version(1)]
+/// Scalar or channel factor used by color/alpha blending.
+enum GpuBlendFactor: u8 {
+    /// Zero blend factor.
+    Zero,
+    /// One blend factor.
+    One,
+    /// SrcColor blend factor.
+    SrcColor,
+    /// OneMinusSrcColor blend factor.
+    OneMinusSrcColor,
+    /// DstColor blend factor.
+    DstColor,
+    /// OneMinusDstColor blend factor.
+    OneMinusDstColor,
+    /// SrcAlpha blend factor.
+    SrcAlpha,
+    /// OneMinusSrcAlpha blend factor.
+    OneMinusSrcAlpha,
+    /// DstAlpha blend factor.
+    DstAlpha,
+    /// OneMinusDstAlpha blend factor.
+    OneMinusDstAlpha,
+}
+
+#[version(1)]
+/// Operation combining scaled source and destination.
+enum GpuBlendOp: u8 {
+    /// Add blend operation.
+    Add,
+    /// Subtract blend operation.
+    Subtract,
+    /// ReverseSubtract blend operation.
+    ReverseSubtract,
+    /// Min blend operation.
+    Min,
+    /// Max blend operation.
+    Max,
+}
+
+#[version(1)]
+/// Read-only shader inputs allowed by the graphics profile.
+enum GpuBindingKind: u8 {
+    /// A reflected uniform block.
+    Uniform,
+    /// A two-dimensional sampled texture and sampler pair.
+    SampledTexture,
+}
+
+#[version(1)]
+/// Exhaustive recording state; terminal states cannot add commands.
+enum RenderViewState: u8 {
+    /// Accepting bounded state and draw commands.
+    Recording,
+    /// First error retained; cancellation or expiry required.
+    Rejected,
+    /// Complete immutable payload sealed for host harvest.
+    Committed,
+    /// Deliberately abandoned; no contribution.
+    Cancelled,
+    /// Host invocation ended or payload already transferred.
+    Expired,
+}
+
+#[version(1)]
+/// Fixed byte storage with a single portable native role.
+struct GpuBufferDesc {
+    /// Native binding role.
+    role: GpuBufferRole,
+    /// Exact positive length; all input bytes must be initialized.
+    byte_len: u64,
+}
+
+#[version(1)]
+/// Immutable texture shape; updates create versions, never resize.
+struct GpuTextureDesc {
+    /// Positive physical texel extent.
+    size: Size,
+    /// Interpretation of four tightly packed channels.
+    format: GpuTextureFormat,
+    /// The baseline profile requires one mip.
+    mip_count: u32,
+}
+
+#[version(1)]
+/// Immutable filtering and addressing state.
+struct GpuSamplerDesc {
+    /// Minification filter.
+    min_filter: GpuFilter,
+    /// Magnification filter.
+    mag_filter: GpuFilter,
+    /// Horizontal addressing.
+    address_u: GpuAddressMode,
+    /// Vertical addressing.
+    address_v: GpuAddressMode,
+}
+
+#[version(1)]
+/// Complete separate color and alpha blend equation.
+struct GpuBlendState {
+    /// Disable for exact source replacement.
+    enabled: bool,
+    /// Source color factor.
+    src_color: GpuBlendFactor,
+    /// Destination color factor.
+    dst_color: GpuBlendFactor,
+    /// Color equation.
+    color_op: GpuBlendOp,
+    /// Source alpha factor.
+    src_alpha: GpuBlendFactor,
+    /// Destination alpha factor.
+    dst_alpha: GpuBlendFactor,
+    /// Alpha equation.
+    alpha_op: GpuBlendOp,
+}
+
+#[version(1)]
+/// Triangle-list graphics state plus exact source-array counts.
+struct GpuPipelineInfo {
+    /// Color/alpha blending.
+    blend: GpuBlendState,
+    /// RGBA write bits in the low four bits.
+    color_write: u8,
+    /// Write passing depth values.
+    depth_write: bool,
+    /// Depth comparison; Always with depth_write false disables depth effects.
+    depth_compare: GpuCompare,
+    /// Face culling.
+    cull: GpuCullMode,
+    /// Front-facing winding.
+    front_face: GpuFrontFace,
+    /// At most eight distinct stream slots.
+    vertex_buffer_count: u32,
+    /// At most sixteen distinct attribute locations.
+    attribute_count: u32,
+    /// Exact reflected stage/slot resource declarations.
+    binding_count: u32,
+}
+
+#[version(1)]
+/// One declared stream and its byte stepping rule.
+struct GpuVertexBufferLayout {
+    /// Stream slot below eight.
+    slot: u32,
+    /// Positive stride no greater than 2048 bytes.
+    stride: u32,
+    /// Vertex or instance advancement.
+    step: GpuStepMode,
+}
+
+#[version(1)]
+/// One explicit attribute footprint within a stream.
+struct GpuVertexAttribute {
+    /// Shader input location below sixteen.
+    location: u32,
+    /// Declared stream slot.
+    slot: u32,
+    /// Packed source element format.
+    format: GpuVertexFormat,
+    /// Byte offset whose entire format fits inside stride.
+    offset: u32,
+}
+
+#[version(1)]
+/// Expected stage/slot resource class and reflected byte count.
+struct GpuShaderBinding {
+    /// Stage consuming this input.
+    stage: GpuShaderStage,
+    /// Uniform slot below four or texture slot below four.
+    slot: u32,
+    /// Uniform block or sampled texture/sampler pair.
+    kind: GpuBindingKind,
+    /// Exact reflected uniform size; zero for sampled textures.
+    byte_len: u32,
+}
+
+#[version(1)]
+/// Host-authoritative root expressed in two coordinate spaces.
+struct RenderViewRoot {
+    /// Final visible client rectangle in widget-local coordinates.
+    client: Rect,
+    /// Same region in logical target coordinates; extents must match.
+    target: Rect,
+}
+
+#[version(1)]
+/// Projection mapping and visibility are independent.
+struct RenderViewInfo {
+    /// Immutable widget-local visible root.
+    client: Rect,
+    /// Current viewport in root-client-local coordinates.
+    viewport: Rect,
+    /// Effective clip in root-client-local coordinates.
+    clip: Rect,
+    /// Current local origin zero and viewport extents.
+    bounds: Rect,
+}
+
+#[version(1)]
+/// Host-created quotas shared by all factory observations.
+struct RenderClientLimits {
+    /// Live public GPU resource owners.
+    resources: u32,
+    /// Live immutable CPU/native version admission bytes.
+    live_bytes: u64,
+    /// Live command and uniform payload bytes.
+    pending_bytes: u64,
+    /// Attempted draws per trusted CPU recording frame.
+    frame_draws: u32,
+    /// Attempted vertex/index work, including instances and clipped draws.
+    frame_indices: u64,
+    /// Live public view metadata owners, including expired shells.
+    live_views: u32,
+    /// Maximum client stack depth, including root; at most 64.
+    stack_depth: u32,
+}
+
+#[version(1)]
+/// Exclusive logical byte buffer; renderer observers never promote ownership.
+interface IGpuBuffer {}
+
+#[version(1)]
+/// Exclusive sampled texture, deliberately distinct from ordinary immutable ITexture.
+interface IGpuTexture {}
+
+#[version(1)]
+/// Exclusive immutable sampler state.
+interface IGpuSampler {}
+
+#[version(1)]
+/// Exclusive validated portable shader; pipelines retain private artifact snapshots.
+interface IGpuShader {}
+
+#[version(1)]
+/// Exclusive logical graphics pipeline with private target-compatible native variants.
+interface IGpuPipeline {}
+
+#[version(1)]
+/// Immutable bounded CPU bytes copied synchronously before logical publication.
+interface IGpuDataSource {
+    /// Exact total byte length.
+    fn byte_count(&self) -> Result<u64>;
+    /// Initialize exactly the requested offset/capacity; short successful prefixes reject.
+    fn read(&self, output: &mut [u8]) -> Result<()>;
+}
+
+#[version(1)]
+/// Copied pipeline header and bounded typed layout declarations.
+interface IGpuPipelineSource {
+    /// Returns fixed state and exact array lengths.
+    fn info(&self) -> Result<GpuPipelineInfo>;
+    /// Copies stream layouts at the requested element offset.
+    fn vertex_buffers(&self, output: &mut [GpuVertexBufferLayout]) -> Result<()>;
+    /// Copies attribute layouts at the requested element offset.
+    fn attributes(&self, output: &mut [GpuVertexAttribute]) -> Result<()>;
+    /// Copies stage resource declarations at the requested element offset.
+    fn bindings(&self, output: &mut [GpuShaderBinding]) -> Result<()>;
+}
+
+#[version(1)]
+/// Restricted shareable factory; all created GPU resource owners are exclusive.
+interface IRenderResources {
+    /// Publish a complete logical buffer; native upload is later and fallible.
+    fn create_buffer(&self, desc: GpuBufferDesc, bytes: &IGpuDataSource) -> Result<ComBox<IGpuBuffer>>;
+    /// Publish tightly packed logical RGBA pixels, without exposing target attachments.
+    fn create_texture(&self, desc: GpuTextureDesc, pixels: &IGpuDataSource) -> Result<ComBox<IGpuTexture>>;
+    /// Create immutable portable filtering state.
+    fn create_sampler(&self, desc: GpuSamplerDesc) -> Result<ComBox<IGpuSampler>>;
+    /// Validate WGSL graphics profile and retain CPU artifacts for one UTF-8 entry point.
+    fn create_shader(&self, stage: GpuShaderStage, code: &IGpuDataSource, entry: &[u8]) -> Result<ComBox<IGpuShader>>;
+    /// Capture live shader artifacts and validate the complete pipeline layout.
+    fn create_pipeline(&self, desc: &IGpuPipelineSource, vertex: &IGpuShader, fragment: &IGpuShader) -> Result<ComBox<IGpuPipeline>>;
+    /// Atomically publish a replacement version; previously captured draws retain their versions.
+    fn update_buffer(&self, buffer: &IGpuBuffer, offset: u64, bytes: &IGpuDataSource) -> Result<()>;
+    /// Replace an exact tightly packed subrectangle in a new version.
+    fn update_texture(&self, texture: &IGpuTexture, rect: Rect, pixels: &IGpuDataSource) -> Result<()>;
+}
+
+#[version(1)]
+/// Invocation-bound exclusive graphics recorder; every operation checks its private lease.
+interface IRenderView {
+    /// Report root, projection mapping and visible clip separately.
+    fn info(&self) -> Result<RenderViewInfo>;
+    /// Push a contained child viewport without refitting to its clip.
+    fn push_view(&mut self, local: Rect) -> Result<RenderViewInfo>;
+    /// Narrow raster visibility without changing projection mapping.
+    fn push_clip(&mut self, local: Rect) -> Result<()>;
+    /// Restore the preceding stack entry; root underflow rejects.
+    fn pop(&mut self) -> Result<()>;
+    /// Restore root view/clip and stack depth; retain bindings, attachment depth and charges.
+    fn reset(&mut self) -> Result<()>;
+    /// Install a weakly observed pipeline binding.
+    fn bind_pipeline(&mut self, pipeline: &IGpuPipeline) -> Result<()>;
+    /// Install a vertex/instance stream; role and ranges are validated at draw admission.
+    fn bind_vertex_buffer(&mut self, slot: u32, buffer: &IGpuBuffer, offset: u64) -> Result<()>;
+    /// Install an index stream with explicit little-endian element format.
+    fn bind_index_buffer(&mut self, buffer: &IGpuBuffer, format: GpuIndexFormat, offset: u64) -> Result<()>;
+    /// Install a sampled texture/sampler pair in a stage slot.
+    fn bind_texture(&mut self, stage: GpuShaderStage, slot: u32, texture: &IGpuTexture, sampler: &IGpuSampler) -> Result<()>;
+    /// Copy exact reflected uniform bytes; no source pointer is retained.
+    fn push_uniforms(&mut self, stage: GpuShaderStage, slot: u32, bytes: &[u8]) -> Result<()>;
+    /// Capture live bindings, current versions and uniforms for a non-indexed triangle draw.
+    fn draw(&mut self, vertices: u32, instances: u32, first_vertex: u32) -> Result<()>;
+    /// Capture and validate all indexed vertex/instance ranges; base vertex and first instance are zero.
+    fn draw_indexed(&mut self, indices: u32, instances: u32, first_index: u32) -> Result<()>;
+    /// Replace color only inside the effective clip.
+    fn clear_color(&mut self, rgba: u32) -> Result<()>;
+    /// Replace finite normalized depth only inside the effective clip.
+    fn clear_depth(&mut self, depth: f32) -> Result<()>;
+    /// Seal a balanced complete payload exactly once; never submits or presents.
+    fn finish(&mut self) -> Result<()>;
+    /// Abandon and release pending storage without refunding attempted work.
+    fn cancel(&mut self) -> Result<()>;
+}
+
+#[version(1)]
+/// Host-owned sealed CPU commands; canonical identity recovers private immutable snapshots.
+interface IRenderViewBlock {
+}
+
+#[version(1)]
+/// Host-only owner of one revocable pending payload; never exposed by client QI.
+interface IRenderViewSession {
+    /// Transfer one exclusive client view at most once.
+    fn view(&mut self) -> Result<ComBox<IRenderView>>;
+    /// Inspect exhaustive session state.
+    fn state(&self) -> Result<RenderViewState>;
+    /// Move committed payload once; expire the client facade.
+    fn take_block(&mut self) -> Result<ComBox<IRenderViewBlock>>;
+    /// Revoke access and release all unmoved storage.
+    fn expire(&mut self) -> Result<()>;
+}
+
+#[version(1)]
+/// Trusted CPU traversal lifetime; cumulative domain charges survive sequential views.
+interface IRenderRecordingFrame {
+    /// Authenticate the factory and create a host session for committed root geometry.
+    fn begin_view(&mut self, root: RenderViewRoot, resources: &IRenderResources) -> Result<ComBox<IRenderViewSession>>;
+    /// End CPU recording only after all sessions were harvested/cancelled; never submits.
+    fn finish(&mut self) -> Result<()>;
+    /// Abandon unfinished sessions on error even when no GPU submission occurs.
+    fn abort(&mut self) -> Result<()>;
+}
+
+#[version(1)]
+/// Trusted recording bridge installed privately in a UI runtime.
+interface IRenderViewBroker {
+    /// Start one CPU traversal with fresh attempted-work counters.
+    fn begin_frame(&self) -> Result<ComBox<IRenderRecordingFrame>>;
+}
+
+#[version(1)]
+/// Exclusive host-only admission controller, on a different identity from its factory.
+interface IRenderClientDomain {
+    /// Delegate only this restricted shareable factory to clients.
+    fn resources(&self) -> Result<ComPtr<IRenderResources>>;
+    /// Close new admission while captured and in-flight storage retires normally.
+    fn close(&mut self) -> Result<()>;
+}
+
+#[version(1)]
+/// Trusted renderer capability for allocating separately controlled client domains.
+interface IRenderClientFactory {
+    /// Create independent domain limits and a host controller.
+    fn create_client(&self, limits: RenderClientLimits) -> Result<ComBox<IRenderClientDomain>>;
+}

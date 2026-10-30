@@ -1,0 +1,17 @@
+[package]
+name = "neocogi-render-gpu"
+version = "0.0.0"
+publish = false
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Portable graphics resources, shader validation and scoped CPU command recording"
+
+[dependencies]
+neocogi-render-core.workspace = true
+neocogi-com = { workspace = true, features = ["std", "macros"] }
+naga.workspace = true
+
+[dev-dependencies]
+neocogi-com = { workspace = true, features = ["runtime"] }
