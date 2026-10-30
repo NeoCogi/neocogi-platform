@@ -173,15 +173,17 @@ fn native_completion_owns_resource_and_command_charges() {
     let gl = Rc::new(unsafe { glow::Context::from_loader_function(|name| video.gl_get_proc_address(name).cast()) });
     let mut renderer = GLRenderer::new(gl.clone(), atlas(), 8, 8).unwrap();
     let info = FrameInfo::try_new(Dimensioni::new(8, 8), color(0, 0, 0, 255)).unwrap();
-    for complete in [true, false] {
+    for phase in 0..3 {
         let device = GpuDevice::new();
         let controller = device.create_client(RenderClientLimits::default()).unwrap();
         let resources = controller.resources().unwrap();
         let source = Bytes::source(
             br#"
+            struct Values { shift:vec4<f32> }
+            @group(1) @binding(0) var<uniform> values:Values;
             @vertex fn vs(@builtin(vertex_index) i:u32) -> @builtin(position) vec4<f32> {
                 let p = array<vec2<f32>, 3>(vec2(-1.,-1.), vec2(3.,-1.), vec2(-1.,3.));
-                return vec4(p[i], 0.5, 1.);
+                return vec4(p[i] + values.shift.xy, 0.5, 1.);
             }
             @fragment fn fs() -> @location(0) vec4<f32> { return vec4(1.,0.,0.,1.); }
         "#
@@ -193,7 +195,17 @@ fn native_completion_owns_resource_and_command_charges() {
         let fs = resources
             .create_shader(GpuShaderStage::Fragment, source.as_com_ref(), NcCopyFromBufferOffset::new(0, b"fs"))
             .unwrap();
-        let desc = PipelineDesc::default().source().unwrap();
+        let desc = PipelineDesc {
+            bindings: vec![GpuShaderBinding {
+                stage: GpuShaderStage::Vertex,
+                slot: 0,
+                kind: GpuBindingKind::Uniform,
+                byte_len: 16,
+            }],
+            ..Default::default()
+        }
+        .source()
+        .unwrap();
         let pipeline = resources.create_pipeline(desc.as_com_ref(), vs.as_com_ref(), fs.as_com_ref()).unwrap();
         let mut recording = device.broker().begin_frame().unwrap();
         let rect = Rect { x: 1, y: 1, width: 6, height: 6 };
@@ -202,6 +214,7 @@ fn native_completion_owns_resource_and_command_charges() {
             .unwrap();
         let mut view = session.view().unwrap();
         view.bind_pipeline(pipeline.as_com_ref()).unwrap();
+        view.push_uniforms(GpuShaderStage::Vertex, 0, NcCopyFromBufferOffset::new(0, &[0; 16])).unwrap();
         view.draw(3, 1, 0).unwrap();
         view.finish().unwrap();
         let owner = session.take_block().unwrap();
@@ -211,15 +224,17 @@ fn native_completion_owns_resource_and_command_charges() {
         drop((view, session, recording, owner, block, pipeline, vs, fs));
         let pending = device.recording_usage(resources.as_com_ref()).unwrap().0;
         assert!(pending > 0);
-        let mut frame = renderer.frame(info).unwrap();
-        frame.execute_block(&prepared, Size { width: 8, height: 8 });
-        if complete {
-            frame.finish().unwrap();
-        } else {
-            drop(frame);
+        if phase != 2 {
+            let mut frame = renderer.frame(info).unwrap();
+            frame.execute_block(&prepared, Size { width: 8, height: 8 });
+            if phase == 0 {
+                frame.finish().unwrap();
+            } else {
+                drop(frame);
+            }
+            assert_eq!(pixel(&gl, 4, 4), [255, 0, 0, 255]);
         }
         drop(prepared);
-        assert_eq!(pixel(&gl, 4, 4), [255, 0, 0, 255]);
         assert!(device.live_bytes(resources.as_com_ref()).unwrap() > 0);
         assert_eq!(device.recording_usage(resources.as_com_ref()).unwrap(), (pending, 0));
         // Finish immediate draws, seal any abandoned batch, then observe its fence. Tests avoid

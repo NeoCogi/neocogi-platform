@@ -10,9 +10,18 @@ use neocogi_render_gpu::{
 
 /// Obtains a real native adapter/device without requiring presentation or an SDL display.
 fn device() -> (wgpu::Device, wgpu::Queue) {
+    device_with_limits(wgpu::Limits::default())
+}
+
+/// A constrained buffer limit deterministically exercises the same invalid-buffer path as OOM.
+fn device_with_limits(limits: wgpu::Limits) -> (wgpu::Device, wgpu::Queue) {
     let instance = wgpu::Instance::default();
     let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default())).unwrap();
-    pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).unwrap()
+    pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+        required_limits: limits,
+        ..Default::default()
+    }))
+    .unwrap()
 }
 
 /// A client shader owns its color and depth semantics; the renderer only sees reflected bindings.
@@ -420,6 +429,187 @@ fn indexed_texture_case(operation: GpuBlendOp) {
     assert_eq!(pixel(0, 7), [0, 0, 255, 255]);
     assert_eq!(pixel(3, 7), [255, 255, 0, 255]);
     assert_eq!(pixel(6, 3), [255, 0, 255, 255]);
+    native.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+    executor.collect().unwrap();
+    assert_eq!(gpu.live_bytes(resources.as_com_ref()).unwrap(), 0);
+    assert_eq!(gpu.recording_usage(resources.as_com_ref()).unwrap(), (0, 0));
+    assert!(pollster::block_on(outer.pop()).is_none());
+}
+
+/// A clear-only block still initializes native uniform storage during preparation.
+fn clear_block(gpu: &GpuDevice, resources: &ComPtr<IRenderResourcesAbi>) -> ComBox<IRenderViewBlockAbi> {
+    let mut frame = gpu.broker().begin_frame().unwrap();
+    let root = Rect { x: 0, y: 0, width: 8, height: 8 };
+    let mut session = frame.begin_view(RenderViewRoot { client: root, target: root }, resources.as_com_ref()).unwrap();
+    let mut view = session.view().unwrap();
+    view.clear_color(0xff123456).unwrap();
+    view.finish().unwrap();
+    let block = session.take_block().unwrap();
+    frame.finish().unwrap();
+    block
+}
+
+/// No acquired/rendered frame is needed to preserve and retire preparatory upload accounting.
+#[test]
+#[ignore = "requires a native WGPU adapter, including a software adapter"]
+fn abandoned_preparation_retains_upload_capacity_until_completion() {
+    let (native, queue) = device();
+    let mut executor = crate::generic::Executor::new(&native, &queue);
+    let gpu = GpuDevice::new();
+    let controller = gpu.create_client(RenderClientLimits::default()).unwrap();
+    let resources = controller.resources().unwrap();
+    let owner = clear_block(&gpu, &resources);
+    let snapshot = gpu.block_snapshot(owner.as_com_ref()).unwrap();
+    let prepared = executor.prepare(&snapshot, wgpu::TextureFormat::Rgba8Unorm, true).unwrap();
+    let charged = gpu.recording_usage(resources.as_com_ref()).unwrap().0;
+    assert!(charged > 0);
+    drop((prepared, snapshot, owner));
+    assert_eq!(gpu.recording_usage(resources.as_com_ref()).unwrap(), (charged, 0));
+    // The upload was submitted during preparation on the existing queue, independently of any
+    // target acquisition. No later successful frame is required to make its completion progress.
+    native.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+    executor.collect().unwrap();
+    assert_eq!(gpu.recording_usage(resources.as_com_ref()).unwrap(), (0, 0));
+    drop(queue);
+}
+
+/// Native creation errors return through normal scopes, preserve retry, and never panic in mapping.
+#[test]
+#[ignore = "requires a native WGPU adapter, including a software adapter"]
+fn native_buffer_creation_failure_returns_error_without_panicking_or_leaking_scopes() {
+    let (native, queue) = device_with_limits(wgpu::Limits {
+        max_buffer_size: 16,
+        ..Default::default()
+    });
+    let outer = native.push_error_scope(wgpu::ErrorFilter::Validation);
+    let mut executor = crate::generic::Executor::new(&native, &queue);
+    let gpu = GpuDevice::new();
+    let controller = gpu.create_client(RenderClientLimits::default()).unwrap();
+    let resources = controller.resources().unwrap();
+    let owner = clear_block(&gpu, &resources);
+    let snapshot = gpu.block_snapshot(owner.as_com_ref()).unwrap();
+    for _ in 0..2 {
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            executor.prepare(&snapshot, wgpu::TextureFormat::Rgba8Unorm, true)
+        }));
+        let error = match result {
+            Ok(Err(error)) => error,
+            Ok(Ok(_)) => panic!("native buffer creation must fail"),
+            Err(_) => panic!("native creation failure must return an error"),
+        };
+        assert!(error.contains("maximum buffer size"), "unexpected native error: {error}");
+    }
+    assert!(pollster::block_on(outer.pop()).is_none());
+}
+
+/// A failed native preparation must retain earlier valid uploads after clearing unsuccessful caches.
+#[test]
+#[ignore = "requires a native WGPU adapter, including a software adapter"]
+fn partial_preparation_failure_keeps_resource_versions_charged_through_upload_completion() {
+    let (native, queue) = device_with_limits(wgpu::Limits {
+        max_buffer_size: 32,
+        ..Default::default()
+    });
+    let outer = native.push_error_scope(wgpu::ErrorFilter::Validation);
+    let mut executor = crate::generic::Executor::new(&native, &queue);
+    let gpu = GpuDevice::new();
+    let controller = gpu.create_client(RenderClientLimits::default()).unwrap();
+    let resources = controller.resources().unwrap();
+    let source = Bytes::source(
+        br#"
+        @vertex fn vs(@location(0) p:vec3<f32>) -> @builtin(position) vec4<f32> { return vec4(p,1.); }
+        @group(2) @binding(0) var image:texture_2d<f32>;
+        @group(2) @binding(1) var image_sampler:sampler;
+        struct Values { tint:vec4<f32> }
+        @group(3) @binding(0) var<uniform> values:Values;
+        @fragment fn fs() -> @location(0) vec4<f32> { return textureSample(image,image_sampler,vec2(0.5))*values.tint; }
+    "#
+        .to_vec(),
+    );
+    let vs = resources
+        .create_shader(GpuShaderStage::Vertex, source.as_com_ref(), NcCopyFromBufferOffset::new(0, b"vs"))
+        .unwrap();
+    let fs = resources
+        .create_shader(GpuShaderStage::Fragment, source.as_com_ref(), NcCopyFromBufferOffset::new(0, b"fs"))
+        .unwrap();
+    let desc = PipelineDesc {
+        state: Default::default(),
+        vertex_buffers: vec![GpuVertexBufferLayout {
+            slot: 0,
+            stride: 12,
+            step: GpuStepMode::Vertex,
+        }],
+        attributes: vec![GpuVertexAttribute {
+            location: 0,
+            slot: 0,
+            offset: 0,
+            format: GpuVertexFormat::Float32x3,
+        }],
+        bindings: vec![
+            GpuShaderBinding {
+                stage: GpuShaderStage::Fragment,
+                slot: 0,
+                kind: GpuBindingKind::SampledTexture,
+                byte_len: 0,
+            },
+            GpuShaderBinding {
+                stage: GpuShaderStage::Fragment,
+                slot: 0,
+                kind: GpuBindingKind::Uniform,
+                byte_len: 16,
+            },
+        ],
+    }
+    .source()
+    .unwrap();
+    let pipeline = resources.create_pipeline(desc.as_com_ref(), vs.as_com_ref(), fs.as_com_ref()).unwrap();
+    let vertices = resources
+        .create_buffer(
+            GpuBufferDesc {
+                role: GpuBufferRole::Vertex,
+                byte_len: 36,
+            },
+            Bytes::source(vec![0; 36]).as_com_ref(),
+        )
+        .unwrap();
+    let image = resources
+        .create_texture(
+            GpuTextureDesc {
+                size: Size { width: 2, height: 2 },
+                format: GpuTextureFormat::Rgba8Unorm,
+                mip_count: 1,
+            },
+            Bytes::source(vec![255; 16]).as_com_ref(),
+        )
+        .unwrap();
+    let sampler = resources.create_sampler(GpuSamplerDesc::default()).unwrap();
+    let mut recording = gpu.broker().begin_frame().unwrap();
+    let root = Rect { x: 0, y: 0, width: 8, height: 8 };
+    let mut session = recording
+        .begin_view(RenderViewRoot { client: root, target: root }, resources.as_com_ref())
+        .unwrap();
+    let mut view = session.view().unwrap();
+    view.bind_pipeline(pipeline.as_com_ref()).unwrap();
+    view.bind_vertex_buffer(0, vertices.as_com_ref(), 0).unwrap();
+    view.bind_texture(GpuShaderStage::Fragment, 0, image.as_com_ref(), sampler.as_com_ref())
+        .unwrap();
+    view.push_uniforms(GpuShaderStage::Fragment, 0, NcCopyFromBufferOffset::new(0, &[0; 16]))
+        .unwrap();
+    view.draw(3, 1, 0).unwrap();
+    view.finish().unwrap();
+    let owner = session.take_block().unwrap();
+    recording.finish().unwrap();
+    let snapshot = gpu.block_snapshot(owner.as_com_ref()).unwrap();
+    let error = match executor.prepare(&snapshot, wgpu::TextureFormat::Rgba8Unorm, true) {
+        Ok(_) => panic!("native vertex allocation must fail"),
+        Err(error) => error,
+    };
+    assert!(error.contains("maximum buffer size"), "unexpected error: {error}");
+    drop((snapshot, owner, view, session, recording, pipeline, vertices, image, sampler, vs, fs));
+    // The CPU versions include 36 vertex bytes and 16 image bytes. Both still have private
+    // upload owners even though the frame failed and its native caches have been invalidated.
+    assert!(gpu.live_bytes(resources.as_com_ref()).unwrap() >= 52);
+    assert!(gpu.recording_usage(resources.as_com_ref()).unwrap().0 > 0);
     native.poll(wgpu::PollType::wait_indefinitely()).unwrap();
     executor.collect().unwrap();
     assert_eq!(gpu.live_bytes(resources.as_com_ref()).unwrap(), 0);

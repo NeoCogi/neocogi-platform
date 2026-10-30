@@ -113,6 +113,14 @@ native allocations and device-free byte/capacity receipts until the queue's
 completion callback is observed. That callback owns only an atomic completion
 flag; UI-thread resource owners stay in the executor's completion collection.
 
+Preparation uploads have their own completion lifetime, including after native
+preparation failure or abandoned target acquisition. WGPU flushes initialization
+on the existing queue and retains typed buffer/image/uniform owners and command
+receipts until upload completion is observed. Explicit scoped buffer creation and
+aligned queue writes return native allocation errors without mapped-helper panics.
+GL/WebGL likewise fences preparatory uploads even when no frame is acquired.
+Frame abandonment never requires a later successful frame to retain that storage.
+
 CPU admission/preparation rejection emits no native target commands. After native
 execution starts, immediate APIs cannot promise rollback. Errors propagate;
 native hosts suppress explicit failed-frame swaps. This in-process contract does

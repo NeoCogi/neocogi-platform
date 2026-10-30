@@ -10,7 +10,6 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
 };
-use wgpu::util::DeviceExt;
 
 /// Native caches own device-free CPU versions; completion owns the exact prepared snapshots.
 pub(crate) struct Executor {
@@ -32,6 +31,8 @@ pub(crate) struct Executor {
     clears: HashMap<(wgpu::TextureFormat, bool, bool), Rc<ClearPipeline>>,
     /// Only a completion callback's atomic signal crosses threads; snapshots remain UI-thread owned.
     submitted: Vec<Submitted>,
+    /// Preparatory queue writes own their backings even when no frame ever submits.
+    uploads: Vec<Upload>,
 }
 
 macro_rules! allocation {
@@ -128,6 +129,22 @@ struct Submitted {
     done: Arc<AtomicBool>,
     /// Exact snapshots/accounting used by the submitted encoder.
     _blocks: Vec<PreparedBlock>,
+    /// Native initialization is submitted separately from attachment rendering on the same queue.
+    _uploads: Vec<Upload>,
+    /// Partial preparation retains original capacity without retaining domain authority.
+    _capacity: Vec<CommandCharge>,
+}
+
+/// Exact typed backing references for asynchronous initialization; none owns a client domain.
+enum Upload {
+    /// Vertex/index logical bytes remain charged while the native upload is in flight.
+    Buffer { _resource: Rc<Buffer> },
+    /// Image bytes remain charged independently from later frame acquisition.
+    Texture { _resource: Rc<Texture> },
+    /// Uniform pending bytes follow their native initialization as well as later draws.
+    Uniform { _resource: Rc<Uniform> },
+    /// Private clear values use the containing command's retained capacity receipt.
+    Clear { _buffer: wgpu::Buffer },
 }
 
 impl Executor {
@@ -143,6 +160,7 @@ impl Executor {
             uniforms: HashMap::new(),
             clears: HashMap::new(),
             submitted: Vec::new(),
+            uploads: Vec::new(),
         }
     }
 
@@ -161,9 +179,14 @@ impl Executor {
     /// Realizes a complete block under native error scopes before target acquisition or clearing.
     pub(crate) fn prepare(&mut self, block: &Block, format: wgpu::TextureFormat, depth: bool) -> Result<PreparedBlock, String> {
         self.collect()?;
+        // Reserve the completion owner before initiating native writes. A failed preparation
+        // still submits those writes and retains their storage without requiring a target frame.
+        self.submitted.try_reserve(1).map_err(|error| error.to_string())?;
+        let capacity = block.retain_capacity();
         let scopes =
             [wgpu::ErrorFilter::OutOfMemory, wgpu::ErrorFilter::Internal, wgpu::ErrorFilter::Validation].map(|filter| self.device.push_error_scope(filter));
         let result = self.prepare_inner(block, format, depth);
+        self.finish_uploads(capacity);
         let mut failure = None;
         for scope in scopes.into_iter().rev() {
             if let Some(error) = pollster::block_on(scope.pop()) {
@@ -182,6 +205,44 @@ impl Executor {
         } else {
             result
         }
+    }
+
+    /// Makes queued uploads progress even after preparation/acquisition failure or abandonment.
+    /// This uses the same device queue and emits no attachment commands or presentation.
+    fn finish_uploads(&mut self, capacity: Vec<CommandCharge>) {
+        if self.uploads.is_empty() {
+            return;
+        }
+        self.queue.submit([]);
+        let done = Arc::new(AtomicBool::new(false));
+        let callback = done.clone();
+        self.queue.on_submitted_work_done(move || callback.store(true, Ordering::Release));
+        self.submitted.push(Submitted {
+            done,
+            _blocks: Vec::new(),
+            _uploads: std::mem::take(&mut self.uploads),
+            _capacity: capacity,
+        });
+    }
+
+    /// Explicit creation and scoped queue writes propagate native failures without mapped-range
+    /// convenience helpers that panic when creation returns an invalid/OOM buffer.
+    fn upload_buffer(&self, bytes: &[u8], usage: wgpu::BufferUsages, label: &'static str) -> wgpu::Buffer {
+        let padded = bytes.len().div_ceil(4) * 4;
+        let raw = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some(label),
+            size: padded as u64,
+            usage: usage | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        if padded == bytes.len() {
+            self.queue.write_buffer(&raw, 0, bytes);
+        } else {
+            let mut data = bytes.to_vec();
+            data.resize(padded, 0);
+            self.queue.write_buffer(&raw, 0, &data);
+        }
+        raw
     }
 
     /// Converts only authenticated immutable CPU snapshots, without entering a native pass.
@@ -208,23 +269,20 @@ impl Executor {
 
     /// Uploads one immutable buffer; native WGPU copy alignment does not change logical bounds.
     fn buffer(&mut self, source: Rc<BufferVersion>) -> Rc<Buffer> {
-        self.buffers
-            .entry(source.id)
-            .or_insert_with(|| {
-                Rc::new(Buffer {
-                    raw: self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("neocogi.gpu.bytes"),
-                        contents: &source.bytes,
-                        usage: if source.desc.role == GpuBufferRole::Index {
-                            wgpu::BufferUsages::INDEX
-                        } else {
-                            wgpu::BufferUsages::VERTEX
-                        },
-                    }),
-                    source,
-                })
-            })
-            .clone()
+        if let Some(value) = self.buffers.get(&source.id) {
+            return value.clone();
+        }
+        let usage = if source.desc.role == GpuBufferRole::Index {
+            wgpu::BufferUsages::INDEX
+        } else {
+            wgpu::BufferUsages::VERTEX
+        };
+        let raw = self.upload_buffer(&source.bytes, usage, "neocogi.gpu.bytes");
+        let id = source.id;
+        let value = Rc::new(Buffer { raw, source });
+        self.uploads.push(Upload::Buffer { _resource: value.clone() });
+        self.buffers.insert(id, value.clone());
+        value
     }
 
     /// Uploads tightly packed top-left RGBA pixels without exposing attachment selection.
@@ -267,7 +325,9 @@ impl Executor {
                     size,
                 );
                 let view = raw.create_view(&wgpu::TextureViewDescriptor::default());
-                Rc::new(Texture { source, _raw: raw, view })
+                let value = Rc::new(Texture { source, _raw: raw, view });
+                self.uploads.push(Upload::Texture { _resource: value.clone() });
+                value
             })
             .clone()
     }
@@ -294,21 +354,17 @@ impl Executor {
 
     /// Copies initialized uniform bytes and pads only the native allocation's final extent.
     fn uniform(&mut self, source: Rc<UniformData>) -> Rc<Uniform> {
-        self.uniforms
-            .entry(Rc::as_ptr(&source) as usize)
-            .or_insert_with(|| {
-                let mut bytes = source.bytes.clone();
-                bytes.resize(bytes.len().div_ceil(16) * 16, 0);
-                Rc::new(Uniform {
-                    raw: self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("neocogi.gpu.uniform"),
-                        contents: &bytes,
-                        usage: wgpu::BufferUsages::UNIFORM,
-                    }),
-                    source,
-                })
-            })
-            .clone()
+        let key = Rc::as_ptr(&source) as usize;
+        if let Some(value) = self.uniforms.get(&key) {
+            return value.clone();
+        }
+        let mut bytes = source.bytes.clone();
+        bytes.resize(bytes.len().div_ceil(16) * 16, 0);
+        let raw = self.upload_buffer(&bytes, wgpu::BufferUsages::UNIFORM, "neocogi.gpu.uniform");
+        let value = Rc::new(Uniform { raw, source });
+        self.uploads.push(Upload::Uniform { _resource: value.clone() });
+        self.uniforms.insert(key, value.clone());
+        value
     }
 
     /// Captures every binding owner before constructing borrowed bind-group descriptors.
@@ -609,11 +665,8 @@ impl Executor {
         for (target, number) in bytes.as_chunks_mut::<4>().0.iter_mut().zip(color.into_iter().chain([value, 0., 0., 0.])) {
             target.copy_from_slice(&number.to_le_bytes());
         }
-        let buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("neocogi.gpu.clear.value"),
-            contents: &bytes,
-            usage: wgpu::BufferUsages::UNIFORM,
-        });
+        let buffer = self.upload_buffer(&bytes, wgpu::BufferUsages::UNIFORM, "neocogi.gpu.clear.value");
+        self.uploads.push(Upload::Clear { _buffer: buffer.clone() });
         let group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("neocogi.gpu.clear.bindings"),
             layout: &pipeline.layout,
@@ -683,7 +736,12 @@ impl Executor {
         let done = Arc::new(AtomicBool::new(false));
         let callback = done.clone();
         self.queue.on_submitted_work_done(move || callback.store(true, Ordering::Release));
-        self.submitted.push(Submitted { done, _blocks: blocks });
+        self.submitted.push(Submitted {
+            done,
+            _blocks: blocks,
+            _uploads: Vec::new(),
+            _capacity: Vec::new(),
+        });
     }
 }
 

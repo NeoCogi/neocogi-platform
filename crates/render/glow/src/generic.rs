@@ -23,6 +23,10 @@ pub(crate) struct Executor {
     pending: Vec<PreparedBlock>,
     /// Fences own only native snapshots and device-free accounting, never client domain authority.
     submitted: Vec<Submitted>,
+    /// Preparatory uploads can be in flight even when the target frame is never acquired.
+    uploads: Vec<Upload>,
+    /// Original command metadata follows preparatory native work through completion too.
+    upload_capacity: Vec<CommandCharge>,
 }
 
 macro_rules! native {
@@ -88,6 +92,20 @@ struct Submitted {
     fence: glow::Fence,
     /// Exact native allocations and logical byte/capacity receipts used by these commands.
     _blocks: Vec<PreparedBlock>,
+    /// Device-free CPU versions retain accounting after partial or abandoned preparation.
+    _uploads: Vec<Upload>,
+    /// Shared original command receipts bound preparation metadata until completion.
+    _capacity: Vec<CommandCharge>,
+}
+
+/// Upload retirement contains no domain/device-facade or public COM owner.
+enum Upload {
+    /// Vertex/index storage keeps its logical bytes reserved during driver initialization.
+    Buffer { _source: Rc<BufferVersion> },
+    /// Image initialization keeps the exact admitted pixel version charged.
+    Texture { _source: Rc<TextureVersion> },
+    /// Uniform initialization retains copied pending bytes.
+    Uniform { _source: Rc<UniformData> },
 }
 /// Complete native state for a single direct draw.
 struct PreparedDraw {
@@ -133,6 +151,8 @@ impl Executor {
             uniforms: HashMap::new(),
             pending: Vec::new(),
             submitted: Vec::new(),
+            uploads: Vec::new(),
+            upload_capacity: Vec::new(),
         })
     }
 
@@ -170,7 +190,7 @@ impl Executor {
     /// Seals issued immediate work on explicit completion or before the next preparation.
     /// Abandonment keeps pending owners here; it never issues a native call from a frame destructor.
     pub(crate) fn complete(&mut self) -> Result<(), String> {
-        if self.pending.is_empty() {
+        if self.pending.is_empty() && self.uploads.is_empty() {
             return Ok(());
         }
         self.submitted.try_reserve(1).map_err(|error| error.to_string())?;
@@ -181,6 +201,8 @@ impl Executor {
         self.submitted.push(Submitted {
             fence,
             _blocks: std::mem::take(&mut self.pending),
+            _uploads: std::mem::take(&mut self.uploads),
+            _capacity: std::mem::take(&mut self.upload_capacity),
         });
         Ok(())
     }
@@ -188,6 +210,18 @@ impl Executor {
     /// Creates every driver allocation before the host acquires/clears its native target.
     pub(crate) fn prepare(&mut self, block: &Block, offscreen: bool) -> Result<PreparedBlock, String> {
         self.collect()?;
+        let capacity = block.retain_capacity();
+        self.upload_capacity.try_reserve(capacity.len()).map_err(|error| error.to_string())?;
+        let before = self.uploads.len();
+        let result = self.prepare_inner(block, offscreen);
+        if self.uploads.len() > before {
+            self.upload_capacity.extend(capacity);
+        }
+        result
+    }
+
+    /// Partial native preparation has the same upload-completion lifetime as successful blocks.
+    fn prepare_inner(&mut self, block: &Block, offscreen: bool) -> Result<PreparedBlock, String> {
         let mut commands = Vec::new();
         commands.try_reserve_exact(block.commands.len()).map_err(|error| error.to_string())?;
         for command in &block.commands {
@@ -247,6 +281,8 @@ impl Executor {
         if let Some(buffer) = self.buffers.get(&source.id) {
             return Ok(buffer.clone());
         }
+        self.uploads.try_reserve(1).map_err(|error| error.to_string())?;
+        self.uploads.push(Upload::Buffer { _source: source.clone() });
         // SAFETY: Source bytes and role were checked by admission; private VAO owns index binding.
         let buffer = unsafe {
             let raw = self.gl.create_buffer()?;
@@ -272,6 +308,8 @@ impl Executor {
         if let Some(texture) = self.textures.get(&source.id) {
             return Ok(texture.clone());
         }
+        self.uploads.try_reserve(1).map_err(|error| error.to_string())?;
+        self.uploads.push(Upload::Texture { _source: source.clone() });
         // SAFETY: Complete tightly packed RGBA storage and dimensions were validated before capture.
         let texture = unsafe {
             let raw = self.gl.create_texture()?;
@@ -331,6 +369,8 @@ impl Executor {
         if let Some(uniform) = self.uniforms.get(&key) {
             return Ok(uniform.clone());
         }
+        self.uploads.try_reserve(1).map_err(|error| error.to_string())?;
+        self.uploads.push(Upload::Uniform { _source: source.clone() });
         // SAFETY: Reflected std140-compatible layout and exact source length were checked by draw.
         let uniform = unsafe {
             let raw = self.gl.create_buffer()?;
