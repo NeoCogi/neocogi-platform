@@ -131,6 +131,12 @@ fn ui_draws_clears_and_uploads_survive_application_gl_state() {
     // Native image upload must independently reset hostile unpack state.
     foreign.bind();
     let image = TextureId::for_upload(1, 1, &[255; 4]).unwrap();
+    // Admission must use this call's bytes, not the earlier slice that minted the key.
+    for length in [0, 1, 3, 5] {
+        assert!(matches!(renderer.create_texture(image, &vec![0; length]),
+            Err(TextureError::Image { source: neocogi_render_core::ImageValidationError::PixelLength { expected: 4, actual } }) if actual == length));
+        assert!(!renderer.textures.contains_key(&image));
+    }
     renderer.create_texture(image, &[255; 4]).unwrap();
     renderer.destroy_texture(image);
     // Abandoning an unexecuted target never manufactures a draw or completion submission.

@@ -312,6 +312,13 @@ impl VulkanRenderer {
 
     /// Creates a backend-owned sampled texture and tracks it by `TextureId`.
     fn create_texture(&mut self, id: TextureId, pixels: &[u8]) -> std::result::Result<(), TextureError> {
+        // Reject malformed storage before map reservation, native allocation or submission.
+        ImageSource {
+            width: id.width(),
+            height: id.height(),
+            pixels,
+        }
+        .validate()?;
         // Texture creation is the public backend boundary, so convert Vulkan's string-based
         // operational failures into the renderer's typed texture error without changing the
         // file-wide `Result<T>` used by unrelated swapchain and resource internals.
@@ -321,7 +328,7 @@ impl VulkanRenderer {
         self.textures
             .try_reserve(1)
             .map_err(|err| TextureError::backend(format!("failed to reserve texture ownership entry: {err}")))?;
-        // The opaque capability is the sole dimension source validated by the Context executor.
+        // Dimensions and actual storage have now been admitted together.
         let size = neocogi_render_gpu::abi::Size { width: id.width(), height: id.height() };
         let native = self
             .generic

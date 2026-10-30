@@ -87,6 +87,15 @@ fn independent_texture_frames_preserve_pixels_and_native_surface_configuration()
     let video = sdl.video().unwrap();
     let window = video.window("WGPU surface regression", 64, 64).hidden().build().unwrap();
     let mut renderer = WgpuRenderer::new(&window, 64, 64).unwrap();
+    let upload = TextureId::for_upload(1, 1, &[255; 4]).unwrap();
+    // Admission must use this call's bytes, not the earlier slice that minted the key.
+    for length in [0, 1, 3, 5] {
+        assert!(matches!(renderer.create_texture(upload, &vec![0; length]),
+            Err(TextureError::Image { source: neocogi_render_core::ImageValidationError::PixelLength { expected: 4, actual } }) if actual == length));
+        assert!(!renderer.textures.contains_key(&upload));
+    }
+    renderer.create_texture(upload, &[255; 4]).unwrap();
+    renderer.destroy_texture(upload);
     let source = [255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 0, 255];
     let gpu = neocogi_render_gpu::GpuDevice::new(
         nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)

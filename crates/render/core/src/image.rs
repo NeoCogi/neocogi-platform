@@ -5,6 +5,30 @@ use std::{error::Error, fmt};
 /// Maximum accepted byte count for one packed RGBA image.
 pub const MAX_IMAGE_BYTES: usize = neocogi_render_core::abi::MAX_IMAGE_BYTES;
 
+/// Checks positive RGBA dimensions and returns their exact addressable, bounded storage size.
+/// Render-target allocation uses this without fabricating an empty CPU upload.
+pub fn checked_rgba_len(width: i32, height: i32) -> Result<usize, ImageValidationError> {
+    if width <= 0 || height <= 0 {
+        return Err(ImageValidationError::DimensionsOutOfRange { width, height });
+    }
+    let width = width as usize;
+    let height = height as usize;
+    let expected = width
+        .checked_mul(height)
+        .and_then(|pixels| pixels.checked_mul(4))
+        .filter(|&bytes| bytes <= isize::MAX as usize)
+        .ok_or(ImageValidationError::SizeOverflow { width, height })?;
+    if expected > MAX_IMAGE_BYTES {
+        return Err(ImageValidationError::TooLarge {
+            width,
+            height,
+            required_bytes: expected,
+            maximum_bytes: MAX_IMAGE_BYTES,
+        });
+    }
+    Ok(expected)
+}
+
 /// Borrowed packed RGBA pixels with explicit signed dimensions.
 #[derive(Copy, Clone, Debug)]
 pub struct ImageSource<'a> {
@@ -19,25 +43,7 @@ pub struct ImageSource<'a> {
 impl ImageSource<'_> {
     /// Checks dimensions, addressable size, the shared allocation bound, and exact byte count.
     pub fn validate(self) -> Result<(), ImageValidationError> {
-        if self.width <= 0 || self.height <= 0 {
-            return Err(ImageValidationError::DimensionsOutOfRange { width: self.width, height: self.height });
-        }
-        let width = self.width as usize;
-        let height = self.height as usize;
-        let Some(expected) = width.checked_mul(height).and_then(|pixels| pixels.checked_mul(4)) else {
-            return Err(ImageValidationError::SizeOverflow { width, height });
-        };
-        if expected > isize::MAX as usize {
-            return Err(ImageValidationError::SizeOverflow { width, height });
-        }
-        if expected > MAX_IMAGE_BYTES {
-            return Err(ImageValidationError::TooLarge {
-                width,
-                height,
-                required_bytes: expected,
-                maximum_bytes: MAX_IMAGE_BYTES,
-            });
-        }
+        let expected = checked_rgba_len(self.width, self.height)?;
         if self.pixels.len() != expected {
             return Err(ImageValidationError::PixelLength { expected, actual: self.pixels.len() });
         }
@@ -109,3 +115,33 @@ impl fmt::Display for ImageValidationError {
 }
 
 impl Error for ImageValidationError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Extent-only allocation and pixel admission share arithmetic, but only uploads require bytes.
+    #[test]
+    fn extent_and_actual_pixel_admission_have_explicit_boundaries() {
+        assert_eq!(checked_rgba_len(1, 1), Ok(4));
+        for (width, height) in [(0, 1), (-1, 1), (1, 0), (1, -1)] {
+            assert_eq!(
+                checked_rgba_len(width, height),
+                Err(ImageValidationError::DimensionsOutOfRange { width, height })
+            );
+        }
+        assert!(matches!(checked_rgba_len(i32::MAX, i32::MAX), Err(ImageValidationError::SizeOverflow { .. })));
+        assert!(matches!(
+            checked_rgba_len(i32::MAX, 1),
+            Err(ImageValidationError::TooLarge { .. }) | Err(ImageValidationError::SizeOverflow { .. })
+        ));
+        for len in [0, 1, 3, 5] {
+            let bytes = vec![0; len];
+            assert_eq!(
+                ImageSource { width: 1, height: 1, pixels: &bytes }.validate(),
+                Err(ImageValidationError::PixelLength { expected: 4, actual: len })
+            );
+        }
+        assert_eq!(ImageSource { width: 1, height: 1, pixels: &[0; 4] }.validate(), Ok(()));
+    }
+}

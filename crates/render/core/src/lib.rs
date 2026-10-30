@@ -13,8 +13,8 @@ mod texture;
 
 pub use backend::{FrameError, FrameInfo, FrameInfoError, RendererBackend, RendererFrame};
 pub use color::{Color, color};
-pub use image::{ImageSource, ImageValidationError, MAX_IMAGE_BYTES};
-pub use texture::{RendererId, TextureError, TextureId};
+pub use image::{ImageSource, ImageValidationError, MAX_IMAGE_BYTES, checked_rgba_len};
+pub use texture::{TextureError, TextureId};
 
 /// Convenient imports for concrete backend implementations.
 pub mod prelude {

@@ -197,7 +197,18 @@ impl GLRenderer {
 
     /// Allocates either uploaded immutable pixels or an unpublished render image.
     fn create_image(&mut self, id: TextureId, pixels: Option<&[u8]>) -> Result<(), TextureError> {
-        // The opaque capability is the sole dimension source validated by the Context executor.
+        // A key cannot certify this new slice. Validate before reserving ownership or entering GL.
+        match pixels {
+            Some(pixels) => ImageSource {
+                width: id.width(),
+                height: id.height(),
+                pixels,
+            }
+            .validate()?,
+            None => {
+                neocogi_render_core::checked_rgba_len(id.width(), id.height())?;
+            }
+        }
         let dimensions = id.size();
 
         // Reserving the map entry can fail before any GL resource exists. Preserve that allocation

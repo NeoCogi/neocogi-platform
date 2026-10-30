@@ -436,11 +436,18 @@ impl WgpuRenderer {
     }
     /// Creates a backend-owned sampled texture and its bind group.
     fn create_texture(&mut self, id: TextureId, pixels: &[u8]) -> Result<(), TextureError> {
+        // Validate the actual slice before ownership reservation or native queue work.
+        ImageSource {
+            width: id.width(),
+            height: id.height(),
+            pixels,
+        }
+        .validate()?;
         // Reserve ownership storage before allocating native resources or replacing a live entry.
         self.textures
             .try_reserve(1)
             .map_err(|error| TextureError::backend(format!("failed to reserve texture ownership entry: {error}")))?;
-        // The opaque capability is the sole dimension source validated by the Context executor.
+        // Dimensions and actual storage have now been admitted together.
         let dimensions = id.size();
         // Keep the WGPU helper's useful string diagnostics local, then translate them at the
         // backend boundary so callers receive the crate-wide typed texture error.

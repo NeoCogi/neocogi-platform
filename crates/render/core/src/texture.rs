@@ -28,9 +28,9 @@
 // POSSIBILITY OF SUCH DAMAGE.
 //
 
-//! Context-owned external texture handles.
+//! Process-unique native texture keys and structured upload failures.
 
-use crate::{ImageSource, ImageValidationError};
+use crate::{ImageSource, ImageValidationError, checked_rgba_len};
 use rs_math3d::Dimensioni;
 use std::{
     error::Error,
@@ -39,7 +39,7 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
-/// Concrete failure returned while validating or creating a Context-owned texture.
+/// Concrete failure returned while validating or creating a native texture.
 ///
 /// Image validation, identifier allocation, and backend creation are separate failure classes.
 /// Keeping them in one enum gives every public texture-loading entry point the same inspectable
@@ -51,7 +51,7 @@ pub enum TextureError {
         /// Concrete dimension, storage, byte-count, or decoding failure.
         source: ImageValidationError,
     },
-    /// This Context has successfully allocated every available texture identifier.
+    /// The process has allocated every available native texture identifier.
     IdentifierSpaceExhausted,
     /// The rendering backend could not create or upload the validated texture.
     Backend {
@@ -107,75 +107,49 @@ impl Error for TextureError {
     }
 }
 
-/// Concrete identity assigned once to one context-owned render executor.
-///
-/// Keeping this wrapper distinct from other process-unique owners prevents an atlas, retained
-/// surface, or unrelated registry identity from being used as texture provenance inside the crate.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
-#[repr(transparent)]
-#[doc(hidden)]
-pub struct RendererId(NonZeroU64);
+/// Process-wide monotonic keys; exhaustion rejects rather than reusing a live or retired identity.
+static NEXT_TEXTURE_ID: AtomicU64 = AtomicU64::new(1);
 
-/// Process-wide monotonic source for renderer ownership identities.
-static NEXT_RENDERER_ID: AtomicU64 = AtomicU64::new(1);
-
-impl RendererId {
-    /// Allocates the identity retained by one newly constructed Context executor.
-    #[doc(hidden)]
-    pub fn allocate() -> Self {
-        // Relaxed ordering is sufficient: this counter establishes uniqueness but publishes no
-        // object memory. Exhaustion is terminal so a destroyed renderer identity is never reused.
-        let raw = NEXT_RENDERER_ID
-            .try_update(Ordering::Relaxed, Ordering::Relaxed, |value| value.checked_add(1))
-            .expect("renderer identity space exhausted");
-        Self(NonZeroU64::new(raw).expect("renderer identity allocator returned zero"))
-    }
+/// Allocates once from the supplied sequence without publishing memory or wrapping.
+fn allocate(counter: &AtomicU64) -> Result<NonZeroU64, TextureError> {
+    let raw = counter
+        .try_update(Ordering::Relaxed, Ordering::Relaxed, |value| value.checked_add(1))
+        .map_err(|_| TextureError::IdentifierSpaceExhausted)?;
+    Ok(NonZeroU64::new(raw).expect("texture key sequence starts at one"))
 }
 
-/// Handle referencing an external texture managed by one Context.
-///
-/// Equality and hashing include the owning Context executor, its local allocation slot, and the
-/// immutable dimensions carried by the handle. Two contexts can therefore issue the same local
-/// slot without either accepting, drawing, or destroying the other's texture.
+/// Process-unique native map key with immutable, admitted dimensions.
+/// This is not a COM capability or proof that any later upload slice has the right length.
+/// Device/provenance authentication belongs to the renderer's public COM resources.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct TextureId {
-    /// Process-unique identity of the Context executor that created this texture.
-    renderer: RendererId,
-    /// Monotonically allocated slot meaningful only within `renderer`.
-    slot: u32,
-    /// Texture width in pixels.
+    /// Never reused, including after a failed native creation or texture destruction.
+    key: NonZeroU64,
+    /// Positive, bounded width in pixels.
     width: i32,
-    /// Texture height in pixels.
+    /// Positive, bounded height in pixels.
     height: i32,
 }
 
 impl TextureId {
-    /// Allocates an offscreen image key after checking dimensions without CPU pixel storage.
+    /// Allocates an offscreen image key after checking extent without requiring CPU pixels.
     pub fn for_render_target(width: i32, height: i32) -> Result<Self, TextureError> {
-        // The shared validator supplies all dimension/allocation bounds. Only its
-        // missing-pixel result is expected for a GPU-produced image.
-        match (ImageSource { width, height, pixels: &[] }).validate() {
-            Err(ImageValidationError::PixelLength { .. }) => Ok(Self::new(RendererId::allocate(), 1, width, height)),
-            Err(error) => Err(error.into()),
-            Ok(()) => unreachable!("a positive RGBA image requires pixel storage"),
-        }
+        checked_rgba_len(width, height)?;
+        Ok(Self {
+            key: allocate(&NEXT_TEXTURE_ID)?,
+            width,
+            height,
+        })
     }
 
-    /// Allocates a native backend key after the shared image validator checks the complete upload.
-    /// This key stays inside the renderer plugin; callers receive an authenticated ITexture capability.
-    /// Direct Context texture allocation retains its existing owner until that API is removed in milestone 17.
-    #[doc(hidden)]
+    /// Allocates a key for admitted pixels; each later upload must validate its own slice again.
     pub fn for_upload(width: i32, height: i32, pixels: &[u8]) -> Result<Self, TextureError> {
         ImageSource { width, height, pixels }.validate()?;
-        Ok(Self::new(RendererId::allocate(), 1, width, height))
-    }
-
-    /// Creates one Context-owned texture capability with immutable dimensions.
-    #[doc(hidden)]
-    pub fn new(renderer: RendererId, slot: u32, width: i32, height: i32) -> Self {
-        // Only the private executor calls this production constructor after validating dimensions
-        // and before transferring the complete capability to its backend.
-        Self { renderer, slot, width, height }
+        Ok(Self {
+            key: allocate(&NEXT_TEXTURE_ID)?,
+            width,
+            height,
+        })
     }
 
     /// Returns the texture width in pixels.
@@ -191,14 +165,6 @@ impl TextureId {
     /// Returns the texture dimensions in pixels.
     pub fn size(self) -> Dimensioni {
         Dimensioni::new(self.width, self.height)
-    }
-
-    /// Creates an isolated opaque texture capability for unit tests without a Context.
-    #[doc(hidden)]
-    pub fn new_test(slot: u32, width: i32, height: i32) -> Self {
-        // A fresh owner prevents synthetic handles from accidentally comparing equal across tests;
-        // tests that exercise equality construct several IDs from one explicit RendererId instead.
-        Self::new(RendererId::allocate(), slot, width, height)
     }
 }
 
@@ -234,29 +200,19 @@ mod tests {
         assert!(Error::source(&backend).is_none());
     }
 
-    /// Verifies every component of an opaque texture capability participates in identity.
+    /// Separately issued keys never alias, while copying preserves the same map identity.
     #[test]
-    fn identity_includes_renderer_slot_and_immutable_dimensions() {
-        let renderer = RendererId::allocate();
-        let other_renderer = RendererId::allocate();
-        let texture = TextureId::new(renderer, 7, 32, 16);
-        let same = TextureId::new(renderer, 7, 32, 16);
-        let foreign = TextureId::new(other_renderer, 7, 32, 16);
-        let different_slot = TextureId::new(renderer, 8, 32, 16);
-        let different_width = TextureId::new(renderer, 7, 64, 16);
-        let different_height = TextureId::new(renderer, 7, 32, 8);
-
-        assert_eq!(texture, same);
-        assert_ne!(texture, foreign);
-        assert_ne!(texture, different_slot);
-        assert_ne!(texture, different_width);
-        assert_ne!(texture, different_height);
-
-        let textures = HashSet::from([texture]);
-        assert!(textures.contains(&same));
-        assert!(!textures.contains(&foreign));
-        assert!(!textures.contains(&different_slot));
-        assert!(!textures.contains(&different_width));
-        assert!(!textures.contains(&different_height));
+    fn keys_are_unique_and_exhaustion_never_wraps() {
+        let first = TextureId::for_render_target(1, 1).unwrap();
+        let second = TextureId::for_upload(1, 1, &[0; 4]).unwrap();
+        assert_ne!(first, second);
+        let keys = HashSet::from([first]);
+        assert!(keys.contains(&first));
+        assert!(!keys.contains(&second));
+        let sequence = AtomicU64::new(u64::MAX - 1);
+        assert_eq!(allocate(&sequence).unwrap().get(), u64::MAX - 1);
+        assert!(matches!(allocate(&sequence), Err(TextureError::IdentifierSpaceExhausted)));
+        assert!(matches!(allocate(&sequence), Err(TextureError::IdentifierSpaceExhausted)));
+        assert_eq!(sequence.load(Ordering::Relaxed), u64::MAX);
     }
 }

@@ -40,6 +40,13 @@ only into its private compositor domain. Client factories reject this bridge,
 and the imported resource exposes no conversion back to `ITexture`, native key,
 or renderer capability. Imported images cannot be updated through the factory.
 
+At the Rust backend boundary, `TextureId` is a process-unique map key with checked
+immutable dimensions. It is not an authenticated COM resource or a certificate for
+later byte slices. Every safe `RendererBackend::create_texture` validates its actual
+RGBA input before ownership reservation or native work. Uploaded storage must have
+exactly width × height × 4 bytes within the shared image budget; render-target
+allocation checks the same extent without pretending to upload an empty slice.
+
 Private CPU versions retain an imported image's COM lease until native capture.
 Native caches and submitted draws retain the shared native image allocation,
 passive weak version metadata and a device-free byte receipt. They never retain
