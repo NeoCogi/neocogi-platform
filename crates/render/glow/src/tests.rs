@@ -106,7 +106,11 @@ fn ui_draws_clears_and_uploads_survive_application_gl_state() {
     let foreign = ForeignState::new(gl.clone());
     foreign.bind();
     let mut renderer = GLRenderer::new(gl.clone(), 8, 8).unwrap();
-    let gpu = neocogi_render_gpu::GpuDevice::new();
+    let gpu = neocogi_render_gpu::GpuDevice::new(
+        nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
+            .query()
+            .unwrap(),
+    );
     let domain = gpu.create_ui_client(Default::default(), None).unwrap();
     let resources = domain.resources().unwrap();
     let root = neocogi_render_gpu::abi::Rect { x: 1, y: 1, width: 6, height: 6 };
@@ -158,7 +162,11 @@ fn native_completion_owns_resource_and_command_charges() {
     let mut renderer = GLRenderer::new(gl.clone(), 8, 8).unwrap();
     let info = FrameInfo::try_new(Dimensioni::new(8, 8), color(0, 0, 0, 255)).unwrap();
     for phase in 0..3 {
-        let device = GpuDevice::new();
+        let device = GpuDevice::new(
+            nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
+                .query()
+                .unwrap(),
+        );
         let controller = device.create_client(RenderClientLimits::default()).unwrap();
         let resources = controller.resources().unwrap();
         let source = Bytes::source(
@@ -253,7 +261,11 @@ fn dynamic_shader_indices_cannot_escape_uniform_or_private_storage() {
     let _context = window.gl_create_context().unwrap();
     let gl = Rc::new(unsafe { glow::Context::from_loader_function(|name| video.gl_get_proc_address(name).cast()) });
     let mut renderer = GLRenderer::new(gl.clone(), 8, 8).unwrap();
-    let gpu = GpuDevice::new();
+    let gpu = GpuDevice::new(
+        nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
+            .query()
+            .unwrap(),
+    );
     let controller = gpu.create_client(RenderClientLimits::default()).unwrap();
     let resources = controller.resources().unwrap();
     let source = Bytes::source(
@@ -333,7 +345,11 @@ fn fragment_identifiers_containing_builtin_names_compile_and_render() {
     let _context = window.gl_create_context().unwrap();
     let gl = Rc::new(unsafe { glow::Context::from_loader_function(|name| video.gl_get_proc_address(name).cast()) });
     let mut renderer = GLRenderer::new(gl.clone(), 8, 8).unwrap();
-    let gpu = GpuDevice::new();
+    let gpu = GpuDevice::new(
+        nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
+            .query()
+            .unwrap(),
+    );
     let controller = gpu.create_client(RenderClientLimits::default()).unwrap();
     let resources = controller.resources().unwrap();
     let source = Bytes::source(
@@ -371,4 +387,52 @@ fn fragment_identifiers_containing_builtin_names_compile_and_render() {
     frame.execute_block(&prepared);
     frame.finish().unwrap();
     assert_eq!(&pixel(&gl, 4, 4)[..3], &[64, 128, 191]);
+}
+
+/// A provider may spell standard main/precision differently from Naga. Driver
+/// pixels establish the semantic adapter, including canonical winding on both targets.
+#[test]
+#[ignore = "requires native GL ES3; run with SDL_VIDEODRIVER=offscreen"]
+fn shader_handoff_adapts_varied_glsl_and_culling() {
+    let _session = NATIVE_SESSION.lock().unwrap_or_else(|e| e.into_inner());
+    let sdl = sdl2::init().unwrap();
+    let video = sdl.video().unwrap();
+    video.gl_attr().set_context_profile(sdl2::video::GLProfile::GLES);
+    video.gl_attr().set_context_version(3, 0);
+    let window = video.window("shader handoff", 8, 8).opengl().hidden().build().unwrap();
+    let _context = window.gl_create_context().unwrap();
+    // SAFETY: SDL owns the current live context throughout every program/VAO operation.
+    let gl = unsafe { glow::Context::from_loader_function(|name| video.gl_get_proc_address(name).cast()) };
+    let vertex = "#version 300 es\nvoid main();\nvoid /* entry */ main(void){ highp vec2 p[3]=vec2[3](vec2(-.8,-.8),vec2(.8,-.8),vec2(0.,.8)); gl_Position=vec4(p[gl_VertexID],.25,1.); gl_Position=vec4(gl_Position.x,-gl_Position.y,2.*gl_Position.z-gl_Position.w,gl_Position.w); }";
+    let fragment = "#version 300 es\n#if 0\nprecision highp float;\n#endif\nlayout(location=0) out highp vec4 color;\nvoid main(){ color=vec4(gl_FragCoord.y / 8.,0.,0.,1.); }";
+    for offscreen in [false, true] {
+        let vertex = shader_adapter::vertex(vertex, offscreen).unwrap();
+        let (fragment, height) = shader_adapter::fragment(fragment, offscreen).unwrap();
+        let program = create_program(&gl, &vertex, &fragment).unwrap();
+        // SAFETY: linked program and VAO are created in this current context;
+        // no client data pointer is used by the procedural draw.
+        unsafe {
+            let vao = gl.create_vertex_array().unwrap();
+            gl.bind_vertex_array(Some(vao));
+            gl.use_program(Some(program));
+            if let Some(height) = height {
+                let location = gl.get_uniform_location(program, &height);
+                gl.uniform_1_f32(location.as_ref(), 8.);
+            }
+            gl.viewport(0, 0, 8, 8);
+            gl.enable(glow::CULL_FACE);
+            gl.cull_face(glow::BACK);
+            gl.front_face(if offscreen { glow::CW } else { glow::CCW });
+            gl.clear_color(0., 0., 0., 1.);
+            gl.clear(glow::COLOR_BUFFER_BIT);
+            gl.draw_arrays(glow::TRIANGLES, 0, 3);
+            let mut pixel = [0u8; 4];
+            gl.read_pixels(4, 3, 1, 1, glow::RGBA, glow::UNSIGNED_BYTE, glow::PixelPackData::Slice(Some(&mut pixel)));
+            let expected = if offscreen { 112i32 } else { 143 };
+            assert!((pixel[0] as i32 - expected).abs() <= 1, "offscreen={offscreen}: {pixel:?}");
+            assert_eq!(gl.get_error(), glow::NO_ERROR);
+            gl.delete_vertex_array(vao);
+            gl.delete_program(program);
+        }
+    }
 }

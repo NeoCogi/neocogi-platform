@@ -132,7 +132,7 @@ fn graphics(resources: &ComPtr<IRenderResourcesAbi>, broker: &ComPtr<IRenderView
 #[ignore = "requires a native SDL display; use SDL_VIDEODRIVER=offscreen for Glow or a native display for Vulkan/WGPU"]
 fn native_order_ownership_reentry_and_final_release() {
     let _session = native_session();
-    let platform = PlatformObject::default();
+    let platform = PlatformObject::new(nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject).query().unwrap());
     let native = platform.window("COM GPU acceptance", SIZE).unwrap();
     let device = Rc::downgrade(&native.device);
     let unknown = WindowObject::from_value(native);
@@ -339,3 +339,4 @@ fn input_delivery(unknown: &ComPtr<IUnknown>, device: &Weak<Device>) {
     // No platform-owned sink reference remains after synchronous delivery.
     assert_eq!(Rc::strong_count(&received), 1);
 }
+

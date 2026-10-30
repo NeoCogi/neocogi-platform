@@ -110,7 +110,11 @@ impl Drop for ImageLease {
 /// UI import is host-only, immutable, same-domain authenticated and stripped before native retention.
 #[test]
 fn ui_image_import_separates_com_lifetime_from_native_byte_receipts() {
-    let device = GpuDevice::new();
+    let device = GpuDevice::new(
+        nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
+            .query()
+            .unwrap(),
+    );
     let (_client, ordinary) = client(&device, RenderClientLimits::default());
     let ui = device.create_ui_client(RenderClientLimits::default(), None).unwrap();
     let factory = ui.resources().unwrap();
@@ -162,7 +166,11 @@ fn buffer(factory: &ComPtr<IRenderResourcesAbi>, bytes: &[u8]) -> ComBox<IGpuBuf
 /// Large byte payloads avoid semantic-vertex codec limits and use bounded output chunks.
 #[test]
 fn exclusive_buffer_creation_reads_bounded_chunks_and_exposes_no_renderer() {
-    let device = GpuDevice::new();
+    let device = GpuDevice::new(
+        nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
+            .query()
+            .unwrap(),
+    );
     let (_owner, factory) = client(&device, RenderClientLimits::default());
     let bytes: Vec<_> = (0..SOURCE_CHUNK * 2 + 17).map(|n| n as u8).collect();
     let (source, reads, largest) = source(bytes.clone(), ReadMode::Exact);
@@ -187,7 +195,11 @@ fn exclusive_buffer_creation_reads_bounded_chunks_and_exposes_no_renderer() {
 /// No public owner promotion occurs; captured A/B versions determine actual byte retirement.
 #[test]
 fn weak_expiry_does_not_invalidate_snapshots_or_refund_retained_versions() {
-    let device = GpuDevice::new();
+    let device = GpuDevice::new(
+        nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
+            .query()
+            .unwrap(),
+    );
     let (_controller, factory) = client(&device, RenderClientLimits::default());
     let owner = buffer(&factory, &[1, 2, 3, 4]);
     let weak = owner.downgrade();
@@ -213,7 +225,11 @@ fn weak_expiry_does_not_invalidate_snapshots_or_refund_retained_versions() {
 /// Owner/resource limits reject before foreign bulk reads, and controller clones cannot reset them.
 #[test]
 fn quota_admission_precedes_bulk_copy_and_retained_versions_keep_their_charge() {
-    let device = GpuDevice::new();
+    let device = GpuDevice::new(
+        nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
+            .query()
+            .unwrap(),
+    );
     let limits = RenderClientLimits {
         resources: 1,
         live_bytes: 8,
@@ -246,7 +262,11 @@ fn quota_admission_precedes_bulk_copy_and_retained_versions_keep_their_charge() 
 /// Short prefixes/errors/changing headers roll back the entire unpublished candidate.
 #[test]
 fn failed_sources_preserve_current_buffer_and_release_candidate_charges() {
-    let device = GpuDevice::new();
+    let device = GpuDevice::new(
+        nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
+            .query()
+            .unwrap(),
+    );
     let (_controller, factory) = client(&device, RenderClientLimits::default());
     let owner = buffer(&factory, &[1, 2, 3, 4]);
     let a = device.buffer_snapshot(factory.as_com_ref(), owner.as_com_ref()).unwrap();
@@ -266,8 +286,16 @@ fn different_domains_devices_and_forged_buffers_reject() {
     /// Valid foreign COM implementation with no renderer provenance.
     struct Forged;
     impl IGpuBuffer for Forged {}
-    let device = GpuDevice::new();
-    let other = GpuDevice::new();
+    let device = GpuDevice::new(
+        nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
+            .query()
+            .unwrap(),
+    );
+    let other = GpuDevice::new(
+        nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
+            .query()
+            .unwrap(),
+    );
     let (_a, factory) = client(&device, RenderClientLimits::default());
     let (_b, foreign_factory) = client(&other, RenderClientLimits::default());
     let (_c, domain_factory) = client(&device, RenderClientLimits::default());
@@ -288,7 +316,11 @@ fn different_domains_devices_and_forged_buffers_reject() {
 /// Closing can happen inside a source callback; publication rechecks it with no borrowed account.
 #[test]
 fn close_during_source_read_rejects_publication_and_drop_closes_shared_factories() {
-    let device = GpuDevice::new();
+    let device = GpuDevice::new(
+        nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
+            .query()
+            .unwrap(),
+    );
     let (controller, factory) = client(&device, RenderClientLimits::default());
     let account = device.domain(factory.as_com_ref()).unwrap().account.clone();
     let (input, _, _) = source(vec![1; 4], ReadMode::Close(controller.downgrade()));
@@ -308,7 +340,11 @@ fn close_during_source_read_rejects_publication_and_drop_closes_shared_factories
 /// The resource reader/writer gate is never retained through a foreign read that removes its owner.
 #[test]
 fn owner_removal_during_update_rejects_final_commit_without_pinning_public_value() {
-    let device = GpuDevice::new();
+    let device = GpuDevice::new(
+        nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
+            .query()
+            .unwrap(),
+    );
     let (_controller, factory) = client(&device, RenderClientLimits::default());
     let owner = buffer(&factory, &[1; 4]);
     let weak = owner.downgrade();
@@ -325,7 +361,11 @@ fn owner_removal_during_update_rejects_final_commit_without_pinning_public_value
 /// CPU input methods cannot borrow native/device preparation state recursively.
 #[test]
 fn factory_reentry_returns_busy_and_the_outer_copy_remains_valid() {
-    let device = GpuDevice::new();
+    let device = GpuDevice::new(
+        nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
+            .query()
+            .unwrap(),
+    );
     let (_controller, factory) = client(&device, RenderClientLimits::default());
     let status = Rc::new(Cell::new(None));
     let (input, _, _) = source(vec![7; 4], ReadMode::Reenter(factory.clone(), status.clone()));
@@ -339,7 +379,11 @@ fn factory_reentry_returns_busy_and_the_outer_copy_remains_valid() {
 /// Texture patches can cross output-chunk and pixel-row boundaries without touching other texels.
 #[test]
 fn texture_update_captures_old_pixels_and_copies_only_the_admitted_patch() {
-    let device = GpuDevice::new();
+    let device = GpuDevice::new(
+        nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
+            .query()
+            .unwrap(),
+    );
     let (_controller, factory) = client(&device, RenderClientLimits::default());
     let (pixels, _, _) = source(vec![7; 256 * 256 * 4], ReadMode::Exact);
     let owner = factory
@@ -373,7 +417,11 @@ fn texture_update_captures_old_pixels_and_copies_only_the_admitted_patch() {
 /// All pointer-free descriptors still reject unknown open-enum and inconsistent size values.
 #[test]
 fn malformed_descriptors_and_overflowing_updates_reject_before_bulk_reads() {
-    let device = GpuDevice::new();
+    let device = GpuDevice::new(
+        nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
+            .query()
+            .unwrap(),
+    );
     let (_controller, factory) = client(&device, RenderClientLimits::default());
     let (input, reads, _) = source(vec![1; 4], ReadMode::Exact);
     assert!(
@@ -429,7 +477,11 @@ fn native_lifetime_token_retires_independently_from_cached_cpu_versions() {
             self.dropped.set(true);
         }
     }
-    let device = GpuDevice::new();
+    let device = GpuDevice::new(
+        nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
+            .query()
+            .unwrap(),
+    );
     let dropped = Rc::new(Cell::new(false));
     let lease: ComPtr<IRenderDeviceLeaseAbi> = Lease::from_value(Lease { dropped: dropped.clone() }).query().unwrap();
     let controller = device.create_client_with_lease(RenderClientLimits::default(), lease).unwrap();
@@ -498,7 +550,11 @@ fn shader(factory: &ComPtr<IRenderResourcesAbi>, stage: GpuShaderStage, entry: &
 /// The native pipeline owns immutable artifacts, not shared promotions of its shader inputs.
 #[test]
 fn pipeline_retains_shader_artifacts_after_exclusive_shader_owners_expire() {
-    let device = GpuDevice::new();
+    let device = GpuDevice::new(
+        nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
+            .query()
+            .unwrap(),
+    );
     let (_controller, factory) = client(&device, RenderClientLimits::default());
     let vertex = shader(&factory, GpuShaderStage::Vertex, b"vs");
     let fragment = shader(&factory, GpuShaderStage::Fragment, b"fs");
@@ -545,7 +601,11 @@ fn pipeline_retains_shader_artifacts_after_exclusive_shader_owners_expire() {
 /// Correctly typed but inconsistent descriptors cannot defer validation to a native driver.
 #[test]
 fn incompatible_attribute_footprints_and_shader_shapes_reject() {
-    let device = GpuDevice::new();
+    let device = GpuDevice::new(
+        nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
+            .query()
+            .unwrap(),
+    );
     let (_controller, factory) = client(&device, RenderClientLimits::default());
     let vertex = shader(&factory, GpuShaderStage::Vertex, b"vs");
     let fragment = shader(&factory, GpuShaderStage::Fragment, b"fs");
@@ -582,7 +642,11 @@ fn incompatible_attribute_footprints_and_shader_shapes_reject() {
 /// Even byte-normalized four-channel formats require portable four-byte attribute alignment.
 #[test]
 fn packed_color_footprint_uses_webgpu_alignment() {
-    let device = GpuDevice::new();
+    let device = GpuDevice::new(
+        nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
+            .query()
+            .unwrap(),
+    );
     let (_controller, factory) = client(&device, RenderClientLimits::default());
     let code = r#"
 @vertex fn vs(@location(0) color: vec4<f32>) -> @builtin(position) vec4<f32> { return vec4<f32>(color.xy, 0.0, 1.0); }
@@ -627,7 +691,11 @@ fn packed_color_footprint_uses_webgpu_alignment() {
 /// Equal varying shapes with conflicting interpolation reject before any native driver linking.
 #[test]
 fn independent_shader_stages_require_matching_interpolation() {
-    let device = GpuDevice::new();
+    let device = GpuDevice::new(
+        nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
+            .query()
+            .unwrap(),
+    );
     let (_controller, factory) = client(&device, RenderClientLimits::default());
     for (vertex_interpolation, expected) in [("@interpolate(flat)", false), ("", true)] {
         let code = format!(

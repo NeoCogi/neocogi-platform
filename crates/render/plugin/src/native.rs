@@ -66,11 +66,10 @@ impl PlatformObject {
         let window = gpu.window();
         host.queues.borrow_mut().insert(window.id(), VecDeque::new());
         let device = Rc::new(Device {
-            logical: neocogi_render_gpu::GpuDevice::new(),
+            logical: neocogi_render_gpu::GpuDevice::new(self.compiler.clone()),
             render: RefCell::new(Some(RenderState { gpu, prepared: Prepared::default() })),
             textures: RefCell::default(),
             retired: RefCell::default(),
-            diagnostic: RefCell::default(),
             window,
             host,
         });
@@ -94,7 +93,7 @@ mod tests {
     /// Invalid envelope values reject before SDL/window/device construction.
     #[test]
     fn invalid_window_requests_do_not_initialize_native_services() {
-        let local = PlatformObject::into_local(PlatformObject::default());
+        let local = PlatformObject::into_local(PlatformObject::new(nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject).query().unwrap()));
         let platform = local.query::<PlatformAbi>().unwrap();
         for size in [Size { width: 0, height: 8 }, Size { width: 8, height: -1 }] {
             assert_eq!(

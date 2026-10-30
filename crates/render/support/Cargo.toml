@@ -11,3 +11,6 @@ repository.workspace = true
 neocogi-render-gpu.workspace = true
 neocogi-render-core.workspace = true
 neocogi-com = { workspace = true, features = ["std"] }
+
+[dev-dependencies]
+neocogi-shader-compiler.workspace = true

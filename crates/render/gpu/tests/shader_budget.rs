@@ -1,6 +1,6 @@
 //! Observe real compiler allocations across the generated COM resource factory.
 use neocogi_com::{NcCopyFromBufferOffset, NC_E_OUT_OF_RANGE};
-use neocogi_render_gpu::{abi::*, shader::Shader, source::Bytes, GpuDevice};
+use neocogi_render_gpu::{abi::*, source::Bytes, GpuDevice};
 use std::{
     alloc::{GlobalAlloc, Layout, System},
     cell::Cell,
@@ -56,7 +56,11 @@ const EXPANDING: &str = r#"
 /// The factory must stop output expansion before allocating the artifact it cannot admit.
 #[test]
 fn generated_output_obeys_remaining_domain_quota_before_large_allocation() {
-    let device = GpuDevice::new();
+    let device = GpuDevice::new(
+        nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
+            .query()
+            .unwrap(),
+    );
     let domain = device.create_client(RenderClientLimits { live_bytes: 65536, ..Default::default() }).unwrap();
     let factory = domain.resources().unwrap();
     let source = Bytes::source(EXPANDING.as_bytes().to_vec());
@@ -70,6 +74,23 @@ fn generated_output_obeys_remaining_domain_quota_before_large_allocation() {
     // rather than merely observing the status returned after an unbounded String grows.
     assert!(largest <= 256 * 1024, "compiler requested {largest} bytes before quota rejection");
     assert_eq!(device.live_bytes(factory.as_com_ref()).unwrap(), 0);
-    let artifact = Shader::compile(GpuShaderStage::Fragment, EXPANDING, "fs").unwrap();
+    let root: neocogi_com::ComPtr<neocogi_shader_core::abi::ShaderCompilerAbi> =
+        nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
+            .query()
+            .unwrap();
+    let report = root
+        .compile(
+            neocogi_shader_core::abi::ShaderCompileRequest {
+                stage: GpuShaderStage::Fragment,
+                max_output_bytes: 4194304,
+            },
+            NcCopyFromBufferOffset::new(0, EXPANDING.as_bytes()),
+            NcCopyFromBufferOffset::new(0, b"fs"),
+        )
+        .unwrap();
+    let artifact = neocogi_shader_core::PreparedShader::new(report, GpuShaderStage::Fragment, b"fs", 4194304)
+        .unwrap()
+        .copy()
+        .unwrap();
     assert!(artifact.glsl.len() > 1024 * 1024, "the fixture must exercise real output amplification");
 }

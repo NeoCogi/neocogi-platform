@@ -99,7 +99,11 @@ const PROCEDURAL: &str = r#"
 /// Trusted UI provenance changes depth authority without adding another draw vocabulary.
 #[test]
 fn host_ui_domains_seal_without_depth_initialization_and_cannot_clear_depth() {
-    let device = GpuDevice::new();
+    let device = GpuDevice::new(
+        nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
+            .query()
+            .unwrap(),
+    );
     let ui = device.create_ui_client(RenderClientLimits::default(), None).unwrap();
     let client = device.create_client(RenderClientLimits::default()).unwrap();
     for (controller, is_ui) in [(&ui, true), (&client, false)] {
@@ -128,7 +132,11 @@ fn host_ui_domains_seal_without_depth_initialization_and_cannot_clear_depth() {
 /// UI pipelines cannot test or write attachment depth even on a window target that has depth.
 #[test]
 fn host_ui_pipeline_admission_excludes_depth_state() {
-    let device = GpuDevice::new();
+    let device = GpuDevice::new(
+        nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
+            .query()
+            .unwrap(),
+    );
     let controller = device.create_ui_client(RenderClientLimits::default(), None).unwrap();
     let resources = controller.resources().unwrap();
     let source = crate::source::Bytes::source(PROCEDURAL.as_bytes().to_vec());
@@ -206,7 +214,11 @@ fn vertex_pipeline(factory: &ComPtr<IRenderResourcesAbi>) -> ComBox<IGpuPipeline
 /// Captured data survives resource owner removal and a successfully finished CPU frame.
 #[test]
 fn draws_snapshot_versions_in_order_and_finished_owner_drop_preserves_the_block() {
-    let device = GpuDevice::new();
+    let device = GpuDevice::new(
+        nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
+            .query()
+            .unwrap(),
+    );
     let (_controller, factory) = client(&device, RenderClientLimits::default());
     let pipeline = vertex_pipeline(&factory);
     let vertices = buffer(&factory, GpuBufferRole::Vertex, floats(&[0.0; 9]));
@@ -245,7 +257,11 @@ fn draws_snapshot_versions_in_order_and_finished_owner_drop_preserves_the_block(
 /// Native lowering retains capacity without retaining a block, public facade or domain.
 #[test]
 fn lowered_capacity_receipts_survive_blocks_and_refund_only_after_the_last_copy() {
-    let device = GpuDevice::new();
+    let device = GpuDevice::new(
+        nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
+            .query()
+            .unwrap(),
+    );
     let (_controller, factory) = client(&device, RenderClientLimits::default());
     let mut frame = device.broker().begin_frame().unwrap();
     let mut session = frame.begin_view(root(), factory.as_com_ref()).unwrap();
@@ -268,7 +284,11 @@ fn lowered_capacity_receipts_survive_blocks_and_refund_only_after_the_last_copy(
 /// Dropping a bound public owner before a consuming draw rejects without pinning it.
 #[test]
 fn weak_bindings_do_not_keep_resource_owners_alive() {
-    let device = GpuDevice::new();
+    let device = GpuDevice::new(
+        nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
+            .query()
+            .unwrap(),
+    );
     let (_controller, factory) = client(&device, RenderClientLimits::default());
     let pipeline = vertex_pipeline(&factory);
     let vertices = buffer(&factory, GpuBufferRole::Vertex, floats(&[0.0; 9]));
@@ -291,7 +311,11 @@ fn weak_bindings_do_not_keep_resource_owners_alive() {
 /// Host expiry releases payload/capacity even while a client keeps the ComBox facade.
 #[test]
 fn retained_expired_views_keep_only_bounded_shells_and_cannot_reactivate() {
-    let device = GpuDevice::new();
+    let device = GpuDevice::new(
+        nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
+            .query()
+            .unwrap(),
+    );
     let (_controller, factory) = client(
         &device,
         RenderClientLimits {
@@ -333,7 +357,11 @@ fn retained_expired_views_keep_only_bounded_shells_and_cannot_reactivate() {
 /// Abandoned CPU traversals restore admission without needing a native render call.
 #[test]
 fn frame_drop_aborts_pending_work_and_old_finished_drop_cannot_abort_a_new_frame() {
-    let device = GpuDevice::new();
+    let device = GpuDevice::new(
+        nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
+            .query()
+            .unwrap(),
+    );
     let (_controller, factory) = client(&device, RenderClientLimits::default());
     let broker = device.broker();
     let mut first = broker.begin_frame().unwrap();
@@ -358,7 +386,11 @@ fn frame_drop_aborts_pending_work_and_old_finished_drop_cannot_abort_a_new_frame
 /// Attempts span sessions, including cancelled/empty work and automatic regional depth setup.
 #[test]
 fn per_frame_work_is_not_refunded_by_cancel_or_sequential_view_creation() {
-    let device = GpuDevice::new();
+    let device = GpuDevice::new(
+        nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
+            .query()
+            .unwrap(),
+    );
     let (_controller, factory) = client(
         &device,
         RenderClientLimits {
@@ -389,7 +421,11 @@ fn per_frame_work_is_not_refunded_by_cancel_or_sequential_view_creation() {
 /// Explicit nested depth/color clears carry their bounded target rectangles and exact values.
 #[test]
 fn scoped_clears_flatten_clips_and_reset_does_not_clear_attachment_depth() {
-    let device = GpuDevice::new();
+    let device = GpuDevice::new(
+        nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
+            .query()
+            .unwrap(),
+    );
     let (_controller, factory) = client(&device, RenderClientLimits::default());
     let mut frame = device.broker().begin_frame().unwrap();
     let mut session = frame.begin_view(root(), factory.as_com_ref()).unwrap();
@@ -425,7 +461,11 @@ fn scoped_clears_flatten_clips_and_reset_does_not_clear_attachment_depth() {
 /// Closed-domain commands retire even when committed, and private provenance survives clear-only data.
 #[test]
 fn domain_close_drains_sealed_pending_work_and_rejects_already_harvested_admission() {
-    let device = GpuDevice::new();
+    let device = GpuDevice::new(
+        nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
+            .query()
+            .unwrap(),
+    );
     let (mut controller, factory) = client(&device, RenderClientLimits::default());
     let account = device.domain(factory.as_com_ref()).unwrap().account.clone();
     let mut frame = device.broker().begin_frame().unwrap();
@@ -459,8 +499,16 @@ fn other_device_blocks_factories_and_client_qi_cannot_recover_host_authority() {
     /// Correct interface, no registered renderer provenance.
     struct Forged;
     impl IRenderViewBlock for Forged {}
-    let device = GpuDevice::new();
-    let other = GpuDevice::new();
+    let device = GpuDevice::new(
+        nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
+            .query()
+            .unwrap(),
+    );
+    let other = GpuDevice::new(
+        nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
+            .query()
+            .unwrap(),
+    );
     let (_controller, factory) = client(&device, RenderClientLimits::default());
     let (_other_controller, foreign) = client(&other, RenderClientLimits::default());
     let mut frame = device.broker().begin_frame().unwrap();
@@ -481,7 +529,11 @@ fn other_device_blocks_factories_and_client_qi_cannot_recover_host_authority() {
 /// Zero-instance calls still consume CPU scanning budget and cannot bypass bounded index work.
 #[test]
 fn zero_instance_index_work_and_unsupported_restart_values_reject() {
-    let device = GpuDevice::new();
+    let device = GpuDevice::new(
+        nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
+            .query()
+            .unwrap(),
+    );
     let (_controller, factory) = client(
         &device,
         RenderClientLimits {
@@ -514,7 +566,11 @@ fn zero_instance_index_work_and_unsupported_restart_values_reject() {
 #[test]
 fn index_range_alignment_vertex_coverage_and_invalid_depth_reject_atomically() {
     for case in 0..5 {
-        let device = GpuDevice::new();
+        let device = GpuDevice::new(
+            nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
+                .query()
+                .unwrap(),
+        );
         let (_controller, factory) = client(&device, RenderClientLimits::default());
         let pipeline = vertex_pipeline(&factory);
         let vertices = buffer(&factory, GpuBufferRole::Vertex, floats(&[0.0; 9]));
@@ -548,7 +604,11 @@ fn index_range_alignment_vertex_coverage_and_invalid_depth_reject_atomically() {
 #[test]
 fn unbalanced_stack_and_root_pop_reject_and_cancel_permits_host_finish() {
     for unbalanced in [false, true] {
-        let device = GpuDevice::new();
+        let device = GpuDevice::new(
+            nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
+                .query()
+                .unwrap(),
+        );
         let (_controller, factory) = client(&device, RenderClientLimits::default());
         let mut frame = device.broker().begin_frame().unwrap();
         let mut session = frame.begin_view(root(), factory.as_com_ref()).unwrap();
@@ -576,7 +636,11 @@ fn instance_streams_are_validated_independently_and_capture_each_binding() {
 @fragment fn fs() -> @location(0) vec4<f32> { return vec4<f32>(1.0); }
 "#;
     for valid in [false, true] {
-        let device = GpuDevice::new();
+        let device = GpuDevice::new(
+            nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
+                .query()
+                .unwrap(),
+        );
         let (_controller, factory) = client(&device, RenderClientLimits::default());
         let pipeline = make_pipeline(
             &factory,
@@ -646,7 +710,11 @@ struct Out { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32> 
 @vertex fn vs(@location(0) position: vec3<f32>) -> Out { return Out(vec4<f32>(position, 1.0), vec2<f32>(0.5)); }
 @fragment fn fs(input: Out) -> @location(0) vec4<f32> { return textureSample(image, image_sampler, input.uv) * tint.color; }
 "#;
-    let device = GpuDevice::new();
+    let device = GpuDevice::new(
+        nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
+            .query()
+            .unwrap(),
+    );
     let (_controller, factory) = client(&device, RenderClientLimits::default());
     let pipeline = make_pipeline(
         &factory,

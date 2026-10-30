@@ -132,6 +132,18 @@ pub(crate) struct ByteCharge {
     /// Exact logical version charge.
     count: u64,
 }
+impl ByteCharge {
+    /// Refund unused provider capacity without transferring ownership or allocating.
+    pub(crate) fn shrink(&mut self, count: usize) -> Result<(), NcStatus> {
+        let count = u64::try_from(count).map_err(|_| NC_E_OUT_OF_RANGE)?;
+        if count > self.count {
+            return Err(NC_E_OUT_OF_RANGE);
+        }
+        self.account.bytes.set(self.account.bytes.get() - (self.count - count));
+        self.count = count;
+        Ok(())
+    }
+}
 impl Drop for ByteCharge {
     /// Refund only when the actual last version owner releases this token.
     fn drop(&mut self) {

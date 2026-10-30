@@ -9,10 +9,7 @@ use neocogi_render_core::abi::GpuShaderStage;
 use neocogi_shader_core::{Shader, IoLocation, IoShape, Uniform, SampledTexture, ShaderScalar, ShaderInterpolation, ShaderSampling};
 use naga::{AddressSpace, Binding, Handle, ScalarKind, ShaderStage, Type, TypeInner};
 
-/// Maximum UTF-8 source length admitted before parsing.
-pub const MAX_SHADER_BYTES: usize = 1024 * 1024;
-/// Combined owned WGSL, GLSL, SPIR-V and entry-name bytes in one portable artifact.
-pub const MAX_SHADER_ARTIFACT_BYTES: usize = 4 * 1024 * 1024;
+use neocogi_shader_core::{MAX_SHADER_BYTES, MAX_SHADER_ARTIFACT_BYTES};
 
 /// Factory errors keep malformed programs, exhausted output quota and allocation failure distinct.
 #[derive(Debug)]

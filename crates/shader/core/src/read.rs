@@ -114,7 +114,16 @@ impl PreparedShader {
         let glsl = string(&self.glsl, self.info.glsl_byte_count as usize)?;
         let spirv = spirv_words(&self.spirv, self.info.spirv_word_count as usize)?;
         let metadata = reflection(&self.report, self.info.stage, self.info.glsl_byte_count as usize)?;
-        if !same_info(self.info, self.report.info()?) || metadata != (self.inputs.clone(), self.outputs.clone(), self.uniforms.clone(), self.textures.clone()) {
+        if !same_info(self.info, self.report.info()?)
+            || metadata.0 != self.inputs
+            || metadata.1 != self.outputs
+            || metadata.2 != self.uniforms
+            || metadata.3 != self.textures
+            || self.entry.byte_len()? != self.info.entry_point_byte_count
+            || self.wgsl.byte_len()? != self.info.wgsl_byte_count
+            || self.glsl.byte_len()? != self.info.glsl_byte_count
+            || self.spirv.len()? != self.info.spirv_word_count * 4
+        {
             return Err(NC_E_INVALID_ARG);
         }
         Ok(Shader {

@@ -88,7 +88,11 @@ fn independent_texture_frames_preserve_pixels_and_native_surface_configuration()
     let window = video.window("WGPU surface regression", 64, 64).hidden().build().unwrap();
     let mut renderer = WgpuRenderer::new(&window, 64, 64).unwrap();
     let source = [255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 0, 255];
-    let gpu = neocogi_render_gpu::GpuDevice::new();
+    let gpu = neocogi_render_gpu::GpuDevice::new(
+        nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
+            .query()
+            .unwrap(),
+    );
     let domain = gpu.create_ui_client(Default::default(), None).unwrap();
     let resources = domain.resources().unwrap();
     let root = neocogi_render_gpu::abi::Rect { x: 0, y: 0, width: 2, height: 2 };

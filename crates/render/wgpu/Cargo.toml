@@ -16,6 +16,7 @@ sdl2.workspace = true
 wgpu.workspace = true
 
 [dev-dependencies]
+neocogi-shader-compiler.workspace = true
 neocogi-com = { workspace = true, features = ["runtime"] }
 # Native lifetime regressions observe actual unreleased images; deployed builds keep counters off.
 wgpu = { workspace = true, features = ["counters"] }

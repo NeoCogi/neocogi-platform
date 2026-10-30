@@ -82,7 +82,11 @@ fn regional_depth_clears_ordered_views_and_completion_keep_their_contracts() {
     let (native, queue) = device();
     let outer = native.push_error_scope(wgpu::ErrorFilter::Validation);
     let mut executor = crate::generic::Executor::new(&native, &queue);
-    let gpu = GpuDevice::new();
+    let gpu = GpuDevice::new(
+        nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
+            .query()
+            .unwrap(),
+    );
     let controller = gpu.create_client(RenderClientLimits::default()).unwrap();
     let resources = controller.resources().unwrap();
     let pipeline = pipeline(&resources, 15);
@@ -231,7 +235,11 @@ fn indexed_texture_case(operation: GpuBlendOp, imported: bool) {
     let (native, queue) = device();
     let outer = native.push_error_scope(wgpu::ErrorFilter::Validation);
     let mut executor = crate::generic::Executor::new(&native, &queue);
-    let gpu = GpuDevice::new();
+    let gpu = GpuDevice::new(
+        nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
+            .query()
+            .unwrap(),
+    );
     let controller = if imported {
         gpu.create_ui_client(RenderClientLimits::default(), None)
     } else {
@@ -488,7 +496,11 @@ fn clear_block(gpu: &GpuDevice, resources: &ComPtr<IRenderResourcesAbi>) -> ComB
 fn abandoned_preparation_retains_upload_capacity_until_completion() {
     let (native, queue) = device();
     let mut executor = crate::generic::Executor::new(&native, &queue);
-    let gpu = GpuDevice::new();
+    let gpu = GpuDevice::new(
+        nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
+            .query()
+            .unwrap(),
+    );
     let controller = gpu.create_client(RenderClientLimits::default()).unwrap();
     let resources = controller.resources().unwrap();
     let owner = clear_block(&gpu, &resources);
@@ -516,7 +528,11 @@ fn native_buffer_creation_failure_returns_error_without_panicking_or_leaking_sco
     });
     let outer = native.push_error_scope(wgpu::ErrorFilter::Validation);
     let mut executor = crate::generic::Executor::new(&native, &queue);
-    let gpu = GpuDevice::new();
+    let gpu = GpuDevice::new(
+        nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
+            .query()
+            .unwrap(),
+    );
     let controller = gpu.create_client(RenderClientLimits::default()).unwrap();
     let resources = controller.resources().unwrap();
     let owner = clear_block(&gpu, &resources);
@@ -545,7 +561,11 @@ fn partial_preparation_failure_keeps_resource_versions_charged_through_upload_co
     });
     let outer = native.push_error_scope(wgpu::ErrorFilter::Validation);
     let mut executor = crate::generic::Executor::new(&native, &queue);
-    let gpu = GpuDevice::new();
+    let gpu = GpuDevice::new(
+        nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
+            .query()
+            .unwrap(),
+    );
     let controller = gpu.create_client(RenderClientLimits::default()).unwrap();
     let resources = controller.resources().unwrap();
     let source = Bytes::source(
@@ -720,7 +740,11 @@ fn import_native_image(
 fn imported_preparation_flushes_initialization_before_refunding_native_storage() {
     let (native, queue) = device();
     let mut executor = crate::generic::Executor::new(&native, &queue);
-    let gpu = GpuDevice::new();
+    let gpu = GpuDevice::new(
+        nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
+            .query()
+            .unwrap(),
+    );
     let controller = gpu.create_ui_client(RenderClientLimits { live_bytes: 8, ..Default::default() }, None).unwrap();
     let resources = controller.resources().unwrap();
     let mut images = HashMap::new();

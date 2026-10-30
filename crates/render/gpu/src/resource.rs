@@ -33,6 +33,11 @@ pub struct GpuDevice {
 
 /// Registries hold only construction-proven weak observers, never resource owners.
 pub(crate) struct Device {
+    /// Required compiler capability, acquired once by the renderer assembly.
+    compiler: ComPtr<neocogi_shader_core::abi::ShaderCompilerAbi>,
+    /// One bounded diagnostic shared with the native renderer. Interior mutability
+    /// supports shareable COM methods, with no borrow across foreign calls.
+    diagnostic: RefCell<String>,
     /// Exclusive buffer objects constructed by this device.
     pub(crate) buffers: RefCell<Registry<BufferObject>>,
     /// Exclusive texture objects constructed by this device.
@@ -127,17 +132,13 @@ impl Drop for Operation {
     }
 }
 
-impl Default for GpuDevice {
-    /// Starts an empty device with independent provenance and monotonic identities.
-    fn default() -> Self {
-        Self::new()
-    }
-}
 impl GpuDevice {
     /// Creates no native object and retains no UI or client capability.
-    pub fn new() -> Self {
+    pub fn new(compiler: ComPtr<neocogi_shader_core::abi::ShaderCompilerAbi>) -> Self {
         Self {
             inner: Rc::new(Device {
+                compiler,
+                diagnostic: RefCell::new(String::new()),
                 buffers: RefCell::new(HashMap::new()),
                 textures: RefCell::new(HashMap::new()),
                 samplers: RefCell::new(HashMap::new()),
@@ -149,6 +150,22 @@ impl GpuDevice {
                 busy: Cell::new(false),
             }),
         }
+    }
+
+    /// Copies current bounded detail for the native diagnostic facade.
+    pub fn diagnostic(&self) -> String {
+        self.inner.diagnostic.borrow().clone()
+    }
+
+    /// Replaces detail after formatting outside the store borrow; no foreign code
+    /// runs while it is borrowed. The store owns at most 4 KiB of UTF-8 text.
+    pub fn set_diagnostic(&self, mut detail: String) {
+        let mut end = detail.len().min(neocogi_shader_core::MAX_DIAGNOSTIC_BYTES);
+        while !detail.is_char_boundary(end) {
+            end -= 1;
+        }
+        detail.truncate(end);
+        *self.inner.diagnostic.borrow_mut() = detail;
     }
 
     /// Creates a host controller for a purely logical domain, useful for independent CPU clients.
@@ -660,31 +677,66 @@ impl IRenderResources for Factory {
     ) -> Result<ComBox<IGpuShaderAbi>, NcStatus> {
         let _operation = self.domain.device.operation()?;
         self.domain.open()?;
-        if entry.offset() != 0 {
-            return Err(NC_E_INVALID_ARG);
-        }
-        let entry = std::str::from_utf8(entry.as_slice()).map_err(|_| NC_E_INVALID_ARG)?;
-        if entry.is_empty() || entry.len() > 128 || !matches!(stage, GpuShaderStage::Vertex | GpuShaderStage::Fragment) {
-            return Err(NC_E_INVALID_ARG);
-        }
-        let len = usize::try_from(source.byte_count()?).map_err(|_| NC_E_OUT_OF_RANGE)?;
-        if len == 0 || len > crate::shader::MAX_SHADER_BYTES {
-            return Err(NC_E_OUT_OF_RANGE);
-        }
-        let owner = self.domain.account.resource()?;
-        let input_charge = self.domain.account.bytes(len)?;
-        let mut bytes = zeroed(len)?;
-        read_bytes(source, len, |offset, chunk| bytes[offset..offset + chunk.len()].copy_from_slice(chunk))?;
-        let text = std::str::from_utf8(&bytes).map_err(|_| NC_E_INVALID_ARG)?;
-        let remaining = usize::try_from(self.domain.account.remaining_bytes()).map_err(|_| NC_E_OUT_OF_RANGE)?;
-        let artifact = Shader::compile_bounded(stage, text, entry, remaining).map_err(|error| match error {
-            crate::shader::CompileError::Invalid(_) => NC_E_INVALID_ARG,
-            crate::shader::CompileError::Limit => NC_E_OUT_OF_RANGE,
-            crate::shader::CompileError::Allocation => NC_E_OUT_OF_MEMORY,
+        self.domain.device.set_diagnostic(String::new());
+        // The busy gate and provider receipt enclose every callback and final Release.
+        // Input allocations die before their receipt; native publication follows the
+        // final foreign destructor and a fresh domain-open check.
+        let imported = (|| {
+            if entry.offset() != 0 {
+                return Err(NC_E_INVALID_ARG);
+            }
+            let entry = entry.as_slice();
+            if entry.is_empty()
+                || entry.len() > 128
+                || std::str::from_utf8(entry).is_err()
+                || !matches!(stage, GpuShaderStage::Vertex | GpuShaderStage::Fragment)
+            {
+                return Err(NC_E_INVALID_ARG);
+            }
+            let mut expected = [0u8; 128];
+            expected[..entry.len()].copy_from_slice(entry);
+            let len = usize::try_from(source.byte_count()?).map_err(|_| NC_E_OUT_OF_RANGE)?;
+            self.domain.open()?;
+            if len == 0 || len > crate::shader::MAX_SHADER_BYTES {
+                return Err(NC_E_OUT_OF_RANGE);
+            }
+            let owner = self.domain.account.resource()?;
+            let input_charge = self.domain.account.bytes(len)?;
+            let mut bytes = zeroed(len)?;
+            read_bytes(source, len, |offset, chunk| bytes[offset..offset + chunk.len()].copy_from_slice(chunk))?;
+            self.domain.open()?;
+            let cap = (self.domain.account.remaining_bytes().min(crate::shader::MAX_SHADER_ARTIFACT_BYTES as u64)) as usize;
+            let mut provider_charge = self.domain.account.bytes(cap)?;
+            let result = self.domain.device.inner.compiler.compile(
+                neocogi_shader_core::abi::ShaderCompileRequest { stage, max_output_bytes: cap as u64 },
+                NcCopyFromBufferOffset::new(0, &bytes),
+                NcCopyFromBufferOffset::new(0, &expected[..entry.len()]),
+            );
+            drop(bytes);
+            drop(input_charge);
+            let report = result?;
+            let status = NcStatus::from_code(report.status()?);
+            if status != neocogi_com::NC_OK {
+                use neocogi_com::INcStringComPtrExt;
+                let detail = report.diagnostic()?.to_string_bounded(neocogi_shader_core::MAX_DIAGNOSTIC_BYTES)?;
+                self.domain.device.set_diagnostic(detail);
+                return Err(status.normalize_error());
+            }
+            let prepared = neocogi_shader_core::PreparedShader::new(report, stage, &expected[..entry.len()], cap)?;
+            provider_charge.shrink(prepared.byte_len())?;
+            let charge = self.domain.account.bytes(prepared.byte_len())?;
+            let artifact = prepared.copy()?;
+            drop(prepared);
+            drop(provider_charge);
+            self.domain.open()?;
+            Ok((owner, charge, artifact))
+        })();
+        let (owner, charge, artifact) = imported.map_err(|status| {
+            if self.domain.device.inner.diagnostic.borrow().is_empty() {
+                self.domain.device.set_diagnostic(format!("shader creation failed: {status}"));
+            }
+            status
         })?;
-        let charge = self.domain.account.bytes(artifact.byte_len())?;
-        drop(input_charge);
-        self.domain.open()?;
         let current = Rc::new(ShaderVersion {
             id: self.domain.device.next()?,
             artifact,
@@ -819,3 +871,6 @@ pub(crate) fn publish_pipeline(domain: &Rc<Domain>, version: PipelineVersion, ow
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod compiler_tests;

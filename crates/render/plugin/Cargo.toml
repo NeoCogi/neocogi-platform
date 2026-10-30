@@ -23,6 +23,7 @@ dynamic-plugin = []
 
 [dependencies]
 neocogi-render-gpu.workspace = true
+neocogi-shader-core.workspace = true
 neocogi-render-core.workspace = true
 neocogi-render-webgl = { workspace = true, optional = true }
 neocogi-render-glow = { workspace = true, optional = true }
@@ -30,10 +31,11 @@ neocogi-render-vulkan = { workspace = true, optional = true }
 neocogi-render-wgpu = { workspace = true, optional = true }
 neocogi-render-support.workspace = true
 rs-math3d.workspace = true
-neocogi-com = { workspace = true, default-features = false, features = ["macros", "std"] }
+neocogi-com = { workspace = true, default-features = false, features = ["macros", "std", "runtime"] }
 glow = { workspace = true, optional = true }
 
 [dev-dependencies]
+neocogi-shader-compiler.workspace = true
 tempfile.workspace = true
 # Native and browser unit tests own their runtime; they must not require a deployed shared library.
 neocogi-com = { workspace = true, features = ["runtime"] }

@@ -436,17 +436,10 @@ impl Executor {
         if let Some(pipeline) = self.pipelines.get(&key) {
             return Ok(pipeline.clone());
         }
-        // Naga's GL transform targets top-left offscreen storage. Direct presentation needs the
-        // inverse Y transform; normalized depth conversion stays identical in both variants.
-        let vertex = if offscreen {
-            source.vertex.artifact.glsl.clone()
-        } else {
-            source.vertex.artifact.glsl.replace(
-                "gl_Position.yz = vec2(-gl_Position.y, gl_Position.z * 2.0 - gl_Position.w);",
-                "gl_Position.z = gl_Position.z * 2.0 - gl_Position.w;",
-            )
-        };
-        let (fragment, height_name) = fragment_source(&source.fragment.artifact.glsl, offscreen)?;
+        // The compiler promises one fixed clip transform. The renderer owns the
+        // presentation correction and fragment-origin convention for this target.
+        let vertex = super::shader_adapter::vertex(&source.vertex.artifact.glsl, offscreen)?;
+        let (fragment, height_name) = super::shader_adapter::fragment(&source.fragment.artifact.glsl, offscreen)?;
         let raw = super::create_program(&self.gl, &vertex, &fragment).map_err(|error| error.to_string())?;
         // SAFETY: The new program is linked in this current context; the generated name is unique.
         let target_height = height_name.and_then(|name| unsafe { self.gl.get_uniform_location(raw, &name) });
@@ -723,51 +716,4 @@ fn vertex_format(value: GpuVertexFormat) -> (i32, u32, bool) {
         GpuVertexFormat::Uint32x4 => (4, glow::UNSIGNED_INT, false),
         _ => (4, glow::UNSIGNED_BYTE, true),
     }
-}
-
-/// Normalizes generated fragment position for direct presentation without exposing native names.
-fn fragment_source(source: &str, offscreen: bool) -> Result<(String, Option<String>), String> {
-    if offscreen {
-        return Ok((source.into(), None));
-    }
-    // Generated GLSL identifiers are ASCII. A legal client identifier may contain the
-    // builtin spelling; normalize only complete identifier tokens, never those substrings.
-    let identifier = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_';
-    let builtin = "gl_FragCoord";
-    let occurrences: Vec<_> = source
-        .match_indices(builtin)
-        .filter_map(|(start, _)| {
-            let end = start + builtin.len();
-            let before = start > 0 && identifier(source.as_bytes()[start - 1]);
-            let after = end < source.len() && identifier(source.as_bytes()[end]);
-            (!before && !after).then_some(start)
-        })
-        .collect();
-    if occurrences.is_empty() {
-        return Ok((source.into(), None));
-    }
-    // Choose a fresh identifier against the complete compiler output so a legal client local
-    // cannot shadow the injected uniform. Only canonical translated GLSL reaches this boundary.
-    let mut ordinal = 0u32;
-    let name = loop {
-        let name = format!("nc_target_height_{ordinal}");
-        if !source.contains(&name) {
-            break name;
-        }
-        ordinal = ordinal.checked_add(1).ok_or("fragment private name space exhausted")?;
-    };
-    let expression = format!("vec4(gl_FragCoord.x, {name} - gl_FragCoord.y, gl_FragCoord.zw)");
-    let mut result = String::new();
-    let mut first = 0;
-    for start in occurrences {
-        result.push_str(&source[first..start]);
-        result.push_str(&expression);
-        first = start + builtin.len();
-    }
-    result.push_str(&source[first..]);
-    // Naga emits all extension directives before precision declarations. Inserting here retains
-    // the required directive ordering and declares the uniform before any generated function.
-    let position = result.find("precision ").ok_or("missing canonical GLSL precision preamble")?;
-    result.insert_str(position, &format!("uniform highp float {name};\n"));
-    Ok((result, Some(name)))
 }

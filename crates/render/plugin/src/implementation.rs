@@ -30,15 +30,23 @@ use resources::TextureRecord;
 /// Prepared resources are concrete native records, never erased objects or callbacks.
 type Prepared = PreparedFrame;
 
-#[derive(Default)]
 #[com_object(neocogi_render_core::platform::Platform)]
 /// Native bootstrap; initialization is fallible and no native subsystem crosses the COM boundary.
 pub struct PlatformObject {
+    /// Required CPU compiler acquired before any native subsystem is constructed.
+    compiler: ComPtr<neocogi_shader_core::abi::ShaderCompilerAbi>,
     /// One SDL event pump shared by this platform's windows.
     #[cfg(not(target_arch = "wasm32"))]
     host: RefCell<Option<Rc<NativeHost>>>,
     /// Owned detail from the most recent failed native construction.
     diagnostic: RefCell<String>,
+}
+
+impl PlatformObject {
+    /// Explicit dependency injection; there is no implicit linked compiler fallback.
+    pub fn new(compiler:ComPtr<neocogi_shader_core::abi::ShaderCompilerAbi>)->Self {
+        Self {compiler,#[cfg(not(target_arch="wasm32"))] host:RefCell::new(None),diagnostic:RefCell::new(String::new())}
+    }
 }
 
 impl Platform for PlatformObject {
@@ -78,8 +86,6 @@ struct Device {
     textures: RefCell<HashMap<usize, Weak<TextureRecord>>>,
     /// Final texture releases during a detached frame wait until native execution has ended.
     retired: RefCell<Vec<TextureId>>,
-    /// Owned detail survives failed preparation, upload, submission or presentation.
-    diagnostic: RefCell<String>,
     /// Polling can access a live SDL owner even while renderer state is detached.
     window: gpu::Window,
     /// SDL subsystems outlive the backend and every native window clone.
@@ -102,7 +108,7 @@ impl Device {
     }
     /// Preserves native backend failure text rather than erasing it into a status alone.
     fn failure(&self, error: impl std::fmt::Display) -> NcStatus {
-        *self.diagnostic.borrow_mut() = error.to_string();
+        self.logical.set_diagnostic(error.to_string());
         RENDER_E_BACKEND
     }
     /// Deletes immediately when idle; a live frame's ownership transaction drains the same queue on Drop.
@@ -223,7 +229,7 @@ impl IRenderer for WindowObject {
         let state = access.state();
         let _operation = self.device.logical.operation()?;
         state.prepared.read(info, stream, self).inspect_err(|error| {
-            *self.device.diagnostic.borrow_mut() = format!("frame preparation failed: {error}");
+            self.device.logical.set_diagnostic(format!("frame preparation failed: {error}"));
         })?;
         state.gpu.render(info, &state.prepared).map_err(|error| self.device.failure(error))
     }
@@ -231,7 +237,7 @@ impl IRenderer for WindowObject {
 impl IRenderDiagnostics for WindowObject {
     /// Retains a copy so subsequent native failures cannot mutate an earlier diagnostic.
     fn diagnostic(&self) -> Result<ComPtr<INcStringAbi>, NcStatus> {
-        Ok(NcString::from_utf8_str(&self.device.diagnostic.borrow()))
+        Ok(NcString::from_utf8_str(&self.device.logical.diagnostic()))
     }
 }
 
@@ -243,27 +249,27 @@ fn identity<I: ComInterface>(interface: &ComPtr<I>) -> Result<usize, NcStatus> {
 
 #[cfg(feature = "glow")]
 /// Acquires one owned root; object construction remains on its typed methods.
-#[neocogi_com::plugin(name = "neocogi.render.glow")]
-fn acquire_root(_runtime: ::neocogi_com::Runtime) -> Result<neocogi_com::ComPtr<neocogi_render_core::platform::PlatformAbi>, neocogi_com::NcStatus> {
-    PlatformObject::from_value(PlatformObject::default()).query()
+#[neocogi_com::plugin(name = "neocogi.render.glow", dependencies = [neocogi_shader_core::SHADER_COMPILER_PLUGIN_ID])]
+fn acquire_root(runtime: ::neocogi_com::Runtime) -> Result<neocogi_com::ComPtr<neocogi_render_core::platform::PlatformAbi>, neocogi_com::NcStatus> {
+    PlatformObject::from_value(PlatformObject::new(runtime.acquire_plugin_root(neocogi_shader_core::SHADER_COMPILER_PLUGIN_ID)?)).query()
 }
 #[cfg(feature = "vulkan")]
 /// Acquires one owned root; object construction remains on its typed methods.
-#[neocogi_com::plugin(name = "neocogi.render.vulkan")]
-fn acquire_root(_runtime: ::neocogi_com::Runtime) -> Result<neocogi_com::ComPtr<neocogi_render_core::platform::PlatformAbi>, neocogi_com::NcStatus> {
-    PlatformObject::from_value(PlatformObject::default()).query()
+#[neocogi_com::plugin(name = "neocogi.render.vulkan", dependencies = [neocogi_shader_core::SHADER_COMPILER_PLUGIN_ID])]
+fn acquire_root(runtime: ::neocogi_com::Runtime) -> Result<neocogi_com::ComPtr<neocogi_render_core::platform::PlatformAbi>, neocogi_com::NcStatus> {
+    PlatformObject::from_value(PlatformObject::new(runtime.acquire_plugin_root(neocogi_shader_core::SHADER_COMPILER_PLUGIN_ID)?)).query()
 }
 #[cfg(feature = "wgpu")]
 /// Acquires one owned root; object construction remains on its typed methods.
-#[neocogi_com::plugin(name = "neocogi.render.wgpu")]
-fn acquire_root(_runtime: ::neocogi_com::Runtime) -> Result<neocogi_com::ComPtr<neocogi_render_core::platform::PlatformAbi>, neocogi_com::NcStatus> {
-    PlatformObject::from_value(PlatformObject::default()).query()
+#[neocogi_com::plugin(name = "neocogi.render.wgpu", dependencies = [neocogi_shader_core::SHADER_COMPILER_PLUGIN_ID])]
+fn acquire_root(runtime: ::neocogi_com::Runtime) -> Result<neocogi_com::ComPtr<neocogi_render_core::platform::PlatformAbi>, neocogi_com::NcStatus> {
+    PlatformObject::from_value(PlatformObject::new(runtime.acquire_plugin_root(neocogi_shader_core::SHADER_COMPILER_PLUGIN_ID)?)).query()
 }
 #[cfg(feature = "webgl")]
 /// Acquires one owned root; object construction remains on its typed methods.
-#[neocogi_com::plugin(name = "neocogi.render.webgl")]
-fn acquire_root(_runtime: ::neocogi_com::Runtime) -> Result<neocogi_com::ComPtr<neocogi_render_core::platform::PlatformAbi>, neocogi_com::NcStatus> {
-    PlatformObject::from_value(PlatformObject::default()).query()
+#[neocogi_com::plugin(name = "neocogi.render.webgl", dependencies = [neocogi_shader_core::SHADER_COMPILER_PLUGIN_ID])]
+fn acquire_root(runtime: ::neocogi_com::Runtime) -> Result<neocogi_com::ComPtr<neocogi_render_core::platform::PlatformAbi>, neocogi_com::NcStatus> {
+    PlatformObject::from_value(PlatformObject::new(runtime.acquire_plugin_root(neocogi_shader_core::SHADER_COMPILER_PLUGIN_ID)?)).query()
 }
 // Only the native assembly owns the dynamic entrypoint; browser assembly uses static descriptors.
 

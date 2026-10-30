@@ -428,3 +428,5 @@ pub fn create_program(gl: &glow::Context, vertex_shader_source: &str, fragment_s
         Ok(program.into_inner())
     }
 }
+
+mod shader_adapter;

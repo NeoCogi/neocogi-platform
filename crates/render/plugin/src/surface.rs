@@ -141,6 +141,6 @@ impl IRenderer for Surface {
 impl IRenderDiagnostics for Surface {
     /// Copies the shared device diagnostic independently of later failures.
     fn diagnostic(&self) -> Result<ComPtr<INcStringAbi>, NcStatus> {
-        Ok(NcString::from_utf8_str(&self.device.diagnostic.borrow()))
+        Ok(NcString::from_utf8_str(&self.device.logical.diagnostic()))
     }
 }

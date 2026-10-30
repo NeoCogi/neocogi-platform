@@ -714,6 +714,7 @@ dependencies = [
  "neocogi-render-core",
  "neocogi-render-gpu",
  "neocogi-render-support",
+ "neocogi-shader-compiler",
  "sdl2",
 ]
 
@@ -721,9 +722,10 @@ dependencies = [
 name = "neocogi-render-gpu"
 version = "0.0.0"
 dependencies = [
- "naga",
  "neocogi-com",
  "neocogi-render-core",
+ "neocogi-shader-compiler",
+ "neocogi-shader-core",
 ]
 
 [[package]]
@@ -741,6 +743,8 @@ dependencies = [
  "neocogi-render-vulkan",
  "neocogi-render-webgl",
  "neocogi-render-wgpu",
+ "neocogi-shader-compiler",
+ "neocogi-shader-core",
  "rs-math3d",
  "sdl2",
  "tempfile",
@@ -756,6 +760,7 @@ dependencies = [
  "neocogi-com",
  "neocogi-render-core",
  "neocogi-render-gpu",
+ "neocogi-shader-compiler",
 ]
 
 [[package]]
@@ -768,6 +773,7 @@ dependencies = [
  "neocogi-render-core",
  "neocogi-render-gpu",
  "neocogi-render-support",
+ "neocogi-shader-compiler",
  "raw-window-handle",
  "sdl2",
 ]
@@ -789,6 +795,7 @@ dependencies = [
  "neocogi-com",
  "neocogi-render-core",
  "neocogi-render-gpu",
+ "neocogi-shader-compiler",
  "pollster",
  "raw-window-handle",
  "sdl2",

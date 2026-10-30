@@ -388,7 +388,11 @@ fn regional_depth_and_copied_uniforms_preserve_surrounding_targets() {
     let core = core();
     let mut target = Target::new(core.clone(), 64, 64);
     let mut executor = Executor::new(core.clone()).unwrap();
-    let gpu = GpuDevice::new();
+    let gpu = GpuDevice::new(
+        nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
+            .query()
+            .unwrap(),
+    );
     let controller = gpu.create_client(RenderClientLimits::default()).unwrap();
     let resources = controller.resources().unwrap();
     let pipeline = pipeline(&resources, 15);
@@ -486,7 +490,11 @@ fn generated_bounds_guards_execute_on_the_native_driver() {
     let core = core();
     let mut target = Target::new(core.clone(), 8, 8);
     let mut executor = Executor::new(core).unwrap();
-    let gpu = GpuDevice::new();
+    let gpu = GpuDevice::new(
+        nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
+            .query()
+            .unwrap(),
+    );
     let controller = gpu.create_client(RenderClientLimits::default()).unwrap();
     let resources = controller.resources().unwrap();
     let source = Bytes::source(
@@ -562,7 +570,11 @@ fn indexed_texture_case(operation: GpuBlendOp, imported: bool) {
     let core = core();
     let mut target = Target::new(core.clone(), 8, 8);
     let mut executor = Executor::new(core).unwrap();
-    let gpu = GpuDevice::new();
+    let gpu = GpuDevice::new(
+        nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
+            .query()
+            .unwrap(),
+    );
     let controller = if imported {
         gpu.create_ui_client(RenderClientLimits::default(), None)
     } else {
@@ -758,7 +770,11 @@ fn front_face_and_culling_match_canonical_winding() {
     let core = core();
     let mut target = Target::new(core.clone(), 8, 8);
     let mut executor = Executor::new(core).unwrap();
-    let gpu = GpuDevice::new();
+    let gpu = GpuDevice::new(
+        nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
+            .query()
+            .unwrap(),
+    );
     let controller = gpu.create_client(RenderClientLimits::default()).unwrap();
     let resources = controller.resources().unwrap();
     for (front_face, cull, visible) in [
@@ -797,7 +813,11 @@ fn escaped_prepared_block_keeps_only_its_cache_free_native_core_alive() {
     let weak = Rc::downgrade(&core);
     let target = Target::new(core.clone(), 8, 8);
     let mut executor = Executor::new(core.clone()).unwrap();
-    let gpu = GpuDevice::new();
+    let gpu = GpuDevice::new(
+        nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
+            .query()
+            .unwrap(),
+    );
     let controller = gpu.create_client(RenderClientLimits::default()).unwrap();
     let resources = controller.resources().unwrap();
     let pipeline = pipeline(&resources, 15);
@@ -868,7 +888,11 @@ fn logical_images_exceeding_native_dimensions_reject_before_native_allocation() 
         assert!(core.image_extent(vk::Format::R8G8B8A8_UNORM, width, 1, vk::ImageUsageFlags::SAMPLED).is_err());
         return;
     }
-    let gpu = GpuDevice::new();
+    let gpu = GpuDevice::new(
+        nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
+            .query()
+            .unwrap(),
+    );
     let controller = gpu.create_client(RenderClientLimits::default()).unwrap();
     let resources = controller.resources().unwrap();
     let bytes = Bytes::source(vec![255; width as usize * 4]);
@@ -983,7 +1007,11 @@ fn private_output_uses_production_pass_upload_and_completion_paths() {
         },
         framebuffer: Some(framebuffer),
     };
-    let gpu = GpuDevice::new();
+    let gpu = GpuDevice::new(
+        nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
+            .query()
+            .unwrap(),
+    );
     let domain = gpu.create_ui_client(Default::default(), None).unwrap();
     let resources = domain.resources().unwrap();
     let colors = [255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 0, 255];
