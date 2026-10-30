@@ -796,6 +796,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "neocogi-shader-compiler"
+version = "0.0.0"
+dependencies = [
+ "naga",
+ "neocogi-com",
+ "neocogi-idl",
+ "neocogi-render-core",
+ "neocogi-shader-core",
+]
+
+[[package]]
+name = "neocogi-shader-core"
+version = "0.0.0"
+dependencies = [
+ "neocogi-com",
+ "neocogi-idl",
+ "neocogi-render-core",
+]
+
+[[package]]
 name = "num-traits"
 version = "0.2.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"

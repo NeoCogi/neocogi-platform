@@ -1,0 +1,208 @@
+extern neocogi.renderer;
+use neocogi.renderer::GpuShaderStage;
+
+#[version(1)]
+/// Portable 32-bit location scalar families.
+enum ShaderScalar: u8 {
+    /// IEEE floating point.
+    Float32,
+    /// Unsigned integer.
+    Uint32,
+}
+
+#[version(1)]
+/// Direction relative to the selected entry point.
+enum ShaderDirection: u8 {
+    /// Entry argument location.
+    Input,
+    /// Entry result location.
+    Output,
+}
+
+#[version(1)]
+/// Cross-stage interpolation, including absent qualifiers.
+enum ShaderInterpolation: u8 {
+    /// None interpolation.
+    None,
+    /// Perspective interpolation.
+    Perspective,
+    /// Linear interpolation.
+    Linear,
+    /// Flat interpolation.
+    Flat,
+}
+
+#[version(1)]
+/// Cross-stage sampling qualifier, including absent qualifiers.
+enum ShaderSampling: u8 {
+    /// None sampling.
+    None,
+    /// Center sampling.
+    Center,
+    /// Centroid sampling.
+    Centroid,
+    /// Sample sampling.
+    Sample,
+    /// First sampling.
+    First,
+    /// Either sampling.
+    Either,
+}
+
+#[version(1)]
+/// Synchronous read-only graphics compilation request.
+struct ShaderCompileRequest {
+    /// Selected vertex or fragment stage.
+    stage: GpuShaderStage,
+    /// Maximum combined WGSL, entry, SPIR-V and GLSL payload bytes.
+    max_output_bytes: u64,
+}
+
+#[version(1)]
+/// Optional immutable summary derived from the exported objects.
+struct ShaderInfo {
+    /// Selected graphics stage.
+    stage: GpuShaderStage,
+    /// Number of independently accessible input items.
+    input_count: u32,
+    /// Number of independently accessible output items.
+    output_count: u32,
+    /// Number of independently accessible uniform items.
+    uniform_count: u32,
+    /// Number of independently accessible sampled_texture items.
+    sampled_texture_count: u32,
+    /// Exact entry point byte count.
+    entry_point_byte_count: u64,
+    /// Exact wgsl byte count.
+    wgsl_byte_count: u64,
+    /// Exact spirv word count.
+    spirv_word_count: u64,
+    /// Exact glsl byte count.
+    glsl_byte_count: u64,
+}
+
+#[version(1)]
+/// One portable scalar/vector location.
+struct ShaderLocationInfo {
+    /// Selected graphics stage.
+    stage: GpuShaderStage,
+    /// Entry-relative direction.
+    direction: ShaderDirection,
+    /// Unique location below sixteen.
+    location: u32,
+    /// 32-bit component family.
+    scalar: ShaderScalar,
+    /// Scalar/vector width from one through four.
+    components: u8,
+    /// Cross-stage interpolation.
+    interpolation: ShaderInterpolation,
+    /// Cross-stage sample qualification.
+    sampling: ShaderSampling,
+}
+
+#[version(1)]
+/// One active read-only uniform block.
+struct ShaderUniformInfo {
+    /// Selected graphics stage.
+    stage: GpuShaderStage,
+    /// Stage-local slot below four.
+    slot: u32,
+    /// Exact WGSL block size, at most 16 KiB.
+    byte_len: u32,
+}
+
+#[version(1)]
+/// One active paired texture and sampler.
+struct ShaderSampledTextureInfo {
+    /// Selected graphics stage.
+    stage: GpuShaderStage,
+    /// Stage-local paired slot below four.
+    slot: u32,
+}
+
+#[version(1)]
+/// Stateless CPU-only portable compiler; native driver realization stays fallible.
+interface ShaderCompiler {
+    /// Returns a complete success or a rejected report; no partial artifacts.
+    fn compile(&self, request: ShaderCompileRequest, source: &[u8], entry: &[u8]) -> Result<ComPtr<IShaderCompilation>>;
+}
+
+#[version(1)]
+/// Immutable outcome whose exports independently outlive the report.
+interface IShaderCompilation {
+    /// Compilation status; transport errors remain outer failures.
+    fn status(&self) -> Result<i32>;
+    /// Owned diagnostic capped at 4096 UTF-8 bytes.
+    fn diagnostic(&self) -> Result<ComPtr<INcString>>;
+    /// Optional counts; not required to use exports.
+    fn info(&self) -> Result<ShaderInfo>;
+    /// Selected entry, owned independently.
+    fn entry_point(&self) -> Result<ComPtr<INcString>>;
+    /// Naga-validated canonical WGSL.
+    fn wgsl(&self) -> Result<ComPtr<INcString>>;
+    /// Guarded SPIR-V words encoded little endian.
+    fn spirv(&self) -> Result<ComPtr<INcBytes>>;
+    /// ES 300 standard main; vertex clip output is (x,-y,2z-w,w).
+    fn glsl(&self) -> Result<ComPtr<INcString>>;
+    /// Owned input location collection.
+    fn inputs(&self) -> Result<ComPtr<IShaderLocations>>;
+    /// Owned output location collection.
+    fn outputs(&self) -> Result<ComPtr<IShaderLocations>>;
+    /// Owned uniform collection.
+    fn uniforms(&self) -> Result<ComPtr<IShaderUniforms>>;
+    /// Owned sampled-pair collection.
+    fn sampled_textures(&self) -> Result<ComPtr<IShaderSampledTextures>>;
+}
+
+#[version(1)]
+/// Immutable bounded typed collection; returned items survive collection release.
+interface IShaderLocations {
+    /// Number of items.
+    fn len(&self) -> Result<u32>;
+    /// Retains an item, or returns OUT_OF_RANGE.
+    fn get(&self, index: u32) -> Result<ComPtr<IShaderLocation>>;
+}
+
+#[version(1)]
+/// Immutable bounded typed collection; returned items survive collection release.
+interface IShaderUniforms {
+    /// Number of items.
+    fn len(&self) -> Result<u32>;
+    /// Retains an item, or returns OUT_OF_RANGE.
+    fn get(&self, index: u32) -> Result<ComPtr<IShaderUniform>>;
+}
+
+#[version(1)]
+/// Immutable bounded typed collection; returned items survive collection release.
+interface IShaderSampledTextures {
+    /// Number of items.
+    fn len(&self) -> Result<u32>;
+    /// Retains an item, or returns OUT_OF_RANGE.
+    fn get(&self, index: u32) -> Result<ComPtr<IShaderSampledTexture>>;
+}
+
+#[version(1)]
+/// Independent immutable reflection item with no parent or code owner.
+interface IShaderLocation {
+    /// Copied portable metadata.
+    fn info(&self) -> Result<ShaderLocationInfo>;
+}
+
+#[version(1)]
+/// Independent immutable reflection item with no parent or code owner.
+interface IShaderUniform {
+    /// Copied portable metadata.
+    fn info(&self) -> Result<ShaderUniformInfo>;
+    /// Owned native identifier matching emitted GLSL.
+    fn glsl_block_name(&self) -> Result<ComPtr<INcString>>;
+}
+
+#[version(1)]
+/// Independent immutable reflection item with no parent or code owner.
+interface IShaderSampledTexture {
+    /// Copied portable metadata.
+    fn info(&self) -> Result<ShaderSampledTextureInfo>;
+    /// Owned native identifier matching emitted GLSL.
+    fn glsl_name(&self) -> Result<ComPtr<INcString>>;
+}
+

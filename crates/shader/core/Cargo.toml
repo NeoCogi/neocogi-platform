@@ -1,0 +1,16 @@
+[package]
+name = "neocogi-shader-core"
+version = "0.0.0"
+publish = false
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Owned shader compiler contracts and bounded artifact readers"
+
+[dependencies]
+neocogi-com = { workspace = true, features = ["std", "macros"] }
+neocogi-render-core.workspace = true
+
+[build-dependencies]
+neocogi-idl.workspace = true

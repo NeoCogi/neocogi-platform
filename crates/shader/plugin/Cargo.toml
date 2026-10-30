@@ -1,0 +1,26 @@
+[package]
+name = "neocogi-shader-compiler"
+version = "0.0.0"
+publish = false
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "CPU-only portable shader compiler COM provider"
+
+[lib]
+name = "nc_shader_compiler"
+crate-type = ["rlib", "cdylib"]
+
+[features]
+default = []
+dynamic-plugin = []
+
+[dependencies]
+neocogi-com = { workspace = true, features = ["std", "macros"] }
+neocogi-shader-core.workspace = true
+neocogi-render-core.workspace = true
+naga.workspace = true
+
+[build-dependencies]
+neocogi-idl.workspace = true

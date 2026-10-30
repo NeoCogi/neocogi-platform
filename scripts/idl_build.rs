@@ -4,6 +4,7 @@
 /// existing library definitions where ordinary Rust helper APIs exchange them.
 pub fn sources(repository: &str, local: &[&str]) -> neocogi_idl::cargo::SharedSources {
     let locations = [
+        ("neocogi.shader", "neocogi_shader_core::abi"),
         ("neocogi.ui.runtime.internal", "nc_ui::choice_menu::bindings"),
         ("neocogi.renderer", "neocogi_render_core::abi"),
         ("neocogi.platform", "neocogi_render_core::platform"),
@@ -22,6 +23,7 @@ pub fn sources(repository: &str, local: &[&str]) -> neocogi_idl::cargo::SharedSo
     let mut request = neocogi_idl::cargo::SharedSources::new(repository.join("crates/render/core/schemas"));
     for relative in [
         "crates/render/core/schemas",
+        "crates/shader/core/schemas",
         "crates/gfx/schemas",
         "crates/skin/schemas",
         "crates/ui/schemas",
