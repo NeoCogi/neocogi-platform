@@ -49,10 +49,7 @@ impl NativeHost {
 
 impl PlatformObject {
     /// Constructs the concrete native owner used by COM activation and native lifetime acceptance tests.
-    pub(super) fn window(&self, title: &str, size: Size, atlas: ComRef<'_, IRgbaImageAbi>) -> Result<WindowObject, NcStatus> {
-        // Validate pixel storage before creating a native window or borrowing SDL ownership.
-        let pixels = AtlasPixels::read(atlas)?;
-        let atlas = atlas.try_add_ref()?;
+    pub(super) fn window(&self, title: &str, size: Size) -> Result<WindowObject, NcStatus> {
         let mut owner = self.host.try_borrow_mut().map_err(|_| PLATFORM_E_BUSY)?;
         if owner.is_none() {
             *owner = Some(NativeHost::new().map_err(|error| {
@@ -62,7 +59,7 @@ impl PlatformObject {
         }
         let host = owner.as_ref().expect("host initialized").clone();
         drop(owner);
-        let gpu = gpu::Gpu::new(&host.video, title, size, pixels.image()).map_err(|error| {
+        let gpu = gpu::Gpu::new(&host.video, title, size).map_err(|error| {
             *self.diagnostic.borrow_mut() = error;
             PLATFORM_E_BACKEND
         })?;
@@ -70,11 +67,7 @@ impl PlatformObject {
         host.queues.borrow_mut().insert(window.id(), VecDeque::new());
         let device = Rc::new(Device {
             logical: neocogi_render_gpu::GpuDevice::new(),
-            render: RefCell::new(Some(RenderState {
-                gpu,
-                atlas,
-                prepared: Prepared::default(),
-            })),
+            render: RefCell::new(Some(RenderState { gpu, prepared: Prepared::default() })),
             textures: RefCell::default(),
             retired: RefCell::default(),
             diagnostic: RefCell::default(),
@@ -88,52 +81,33 @@ impl PlatformObject {
         })
     }
 }
-impl Drop for Device {
-    /// Removes event routing only when all resources have relinquished the native owner.
+impl Drop for WindowObject {
+    /// Input routing ends with the public window; graphics-only owners retain just native lifetime.
     fn drop(&mut self) {
-        self.host.queues.borrow_mut().remove(&self.window.id());
+        self.device.host.queues.borrow_mut().remove(&self.device.window.id());
     }
 }
 
 #[cfg(test)]
 mod tests {
-    //! Retention rejection must precede native host/window construction.
     use super::*;
-    use neocogi_com::NcOutputWriter;
-
-    #[com_object(interfaces(IRgbaImage), ownership = exclusive)]
-    /// Valid pixel data whose sole owner cannot be retained by a platform window.
-    struct ExclusivePixels;
-    impl IRgbaImage for ExclusivePixels {
-        fn size(&self) -> Result<Size, NcStatus> {
-            Ok(Size { width: 1, height: 1 })
-        }
-        fn pixels(&self, mut output: NcOutputWriter<'_, u8>) -> Result<(), NcStatus> {
-            output.extend_from_slice(&[0, 0, 0, 255])?;
-            Ok(())
-        }
-    }
-
-    /// Runs through generated Platform COM calls without requiring an SDL display.
+    /// Invalid envelope values reject before SDL/window/device construction.
     #[test]
-    fn exclusive_atlas_rejection_does_not_initialize_native_host() {
+    fn invalid_window_requests_do_not_initialize_native_services() {
         let local = PlatformObject::into_local(PlatformObject::default());
         let platform = local.query::<PlatformAbi>().unwrap();
-        let pixels = ExclusivePixels::into_box(ExclusivePixels).query::<IRgbaImageAbi>().unwrap();
-        let observed = pixels.downgrade();
+        for size in [Size { width: 0, height: 8 }, Size { width: 8, height: -1 }] {
+            assert_eq!(
+                platform.create_window(NcCopyFromBufferOffset::new(0, b"invalid"), size).unwrap_err(),
+                NC_E_INVALID_ARG
+            );
+        }
         assert_eq!(
             platform
-                .create_window(
-                    NcCopyFromBufferOffset::new(0, b"rejected atlas"),
-                    Size { width: 8, height: 8 },
-                    pixels.as_com_ref()
-                )
+                .create_window(NcCopyFromBufferOffset::new(0, &[0xff]), Size { width: 8, height: 8 })
                 .unwrap_err(),
             NC_E_INVALID_ARG
         );
         assert!(local.try_borrow().unwrap().host.borrow().is_none());
-        assert!(observed.is_alive());
-        drop(pixels);
-        assert!(!observed.is_alive());
     }
 }

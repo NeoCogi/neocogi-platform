@@ -1,85 +1,17 @@
 //! Real Vulkan image, submission, and window-lifetime regression tests.
 use super::*;
 
-/// Reads a completed RGBA image without changing the descriptor's shader-readable layout.
+/// Read actual native pixels through a completed transfer, preserving the source layout.
 fn pixels(renderer: &VulkanRenderer, id: TextureId) -> Vec<u8> {
-    let ctx = &renderer.context;
-    let image = &renderer.textures[&id].image;
-    let length = (image.extent.width * image.extent.height * 4) as usize;
-    let buffer = ctx
-        .create_buffer(
-            length as u64,
-            vk::BufferUsageFlags::TRANSFER_DST,
-            vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
-        )
-        .unwrap()
-        .guarded(&ctx.device);
-    ctx.single_time_commands(|command| {
-        let range = vk::ImageSubresourceRange::default()
-            .aspect_mask(vk::ImageAspectFlags::COLOR)
-            .level_count(1)
-            .layer_count(1);
-        let before = vk::ImageMemoryBarrier::default()
-            .image(image.raw())
-            .subresource_range(range)
-            .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-            .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-            .old_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-            .new_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
-            .src_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE | vk::AccessFlags::SHADER_READ)
-            .dst_access_mask(vk::AccessFlags::TRANSFER_READ);
-        let copy = vk::BufferImageCopy::default()
-            .image_subresource(vk::ImageSubresourceLayers::default().aspect_mask(vk::ImageAspectFlags::COLOR).layer_count(1))
-            .image_extent(vk::Extent3D {
-                width: image.extent.width,
-                height: image.extent.height,
-                depth: 1,
-            });
-        let after = vk::ImageMemoryBarrier::default()
-            .image(image.raw())
-            .subresource_range(range)
-            .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-            .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-            .old_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
-            .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-            .src_access_mask(vk::AccessFlags::TRANSFER_READ)
-            .dst_access_mask(vk::AccessFlags::SHADER_READ);
-        // SAFETY: Both images and the tightly packed destination remain live through queue idle.
-        unsafe {
-            ctx.device.cmd_pipeline_barrier(
-                command,
-                vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT | vk::PipelineStageFlags::FRAGMENT_SHADER,
-                vk::PipelineStageFlags::TRANSFER,
-                vk::DependencyFlags::empty(),
-                &[],
-                &[],
-                &[before],
-            );
-            ctx.device
-                .cmd_copy_image_to_buffer(command, image.raw(), vk::ImageLayout::TRANSFER_SRC_OPTIMAL, buffer.get().buffer, &[copy]);
-            ctx.device.cmd_pipeline_barrier(
-                command,
-                vk::PipelineStageFlags::TRANSFER,
-                vk::PipelineStageFlags::FRAGMENT_SHADER,
-                vk::DependencyFlags::empty(),
-                &[],
-                &[],
-                &[after],
-            );
-        }
-    })
-    .unwrap();
-    // SAFETY: Submission completed and the host-coherent mapping contains exactly `length` bytes.
-    unsafe {
-        let mapped = ctx
-            .device
-            .map_memory(buffer.get().memory(), 0, length as u64, vk::MemoryMapFlags::empty())
-            .unwrap();
-        let bytes = std::slice::from_raw_parts(mapped.cast::<u8>(), length).to_vec();
-        ctx.device.unmap_memory(buffer.get().memory());
-        bytes
-    }
+    crate::generic::tests::readback(
+        &renderer.context.core,
+        renderer.textures[&id].image.native.as_ref().unwrap(),
+        neocogi_render_gpu::abi::Size { width: id.width(), height: id.height() },
+    )
 }
+
+#[path = "../../gpu/tests/support/sampled.rs"]
+mod sampled;
 
 /// Real texture passes preserve source orientation and older outputs without touching window extent.
 #[test]
@@ -88,25 +20,32 @@ fn independent_texture_frames_preserve_pixels_and_native_surface_configuration()
     let sdl = sdl2::init().unwrap();
     let video = sdl.video().unwrap();
     let window = video.window("Vulkan surface regression", 64, 64).vulkan().hidden().build().unwrap();
-    let mut renderer = VulkanRenderer::new(&window, ImageSource { width: 1, height: 1, pixels: &[255; 4] }, 64, 64).unwrap();
+    let mut renderer = VulkanRenderer::new(&window, 64, 64).unwrap();
     let source = [255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 0, 255];
-    let atlas = TextureId::for_upload(2, 2, &source).unwrap();
-    renderer.create_texture(atlas, &source).unwrap();
+    let gpu = neocogi_render_gpu::GpuDevice::new();
+    let domain = gpu.create_ui_client(Default::default(), None).unwrap();
+    let resources = domain.resources().unwrap();
+    let size = neocogi_render_gpu::abi::Size { width: 2, height: 2 };
+    let owner = sampled::block(
+        &gpu,
+        &resources,
+        neocogi_render_gpu::abi::Rect { x: 0, y: 0, width: 2, height: 2 },
+        size,
+        &source,
+    );
+    let prepared = renderer.prepare_block(&gpu.block_snapshot(owner.as_com_ref()).unwrap(), true).unwrap();
     let first = TextureId::for_render_target(2, 2).unwrap();
     renderer.create_render_texture(first).unwrap();
     let info = FrameInfo::try_new(Dimensioni::new(2, 2), color(0, 0, 0, 255)).unwrap();
-    let mut frame = renderer.texture_frame(info, first, atlas).unwrap();
-    frame.push_quad(
-        [(0., 0., 0., 0.), (2., 0., 1., 0.), (2., 2., 1., 1.), (0., 2., 0., 1.)]
-            .map(|(x, y, u, v)| Vertex::new(Vec2f::new(x, y), Vec2f::new(u, v), color4b(255, 255, 255, 255))),
-    );
+    let mut frame = renderer.texture_frame(info, first).unwrap();
+    frame.execute_block(&prepared);
     frame.finish().unwrap();
     assert_eq!(pixels(&renderer, first), source);
     assert_eq!((renderer.context.extent.width, renderer.context.extent.height), (64, 64));
     let next = TextureId::for_render_target(3, 1).unwrap();
     renderer.create_render_texture(next).unwrap();
     renderer
-        .texture_frame(FrameInfo::try_new(Dimensioni::new(3, 1), color(17, 31, 63, 255)).unwrap(), next, atlas)
+        .texture_frame(FrameInfo::try_new(Dimensioni::new(3, 1), color(17, 31, 63, 255)).unwrap(), next)
         .unwrap()
         .finish()
         .unwrap();
@@ -118,7 +57,7 @@ fn independent_texture_frames_preserve_pixels_and_native_surface_configuration()
     // Abandonment before submission has acquired no swapchain image and must remain recoverable.
     drop(
         renderer
-            .texture_frame(FrameInfo::try_new(Dimensioni::new(3, 1), color(0, 0, 0, 255)).unwrap(), next, atlas)
+            .texture_frame(FrameInfo::try_new(Dimensioni::new(3, 1), color(0, 0, 0, 255)).unwrap(), next)
             .unwrap(),
     );
     assert!(!renderer.disabled);
@@ -130,7 +69,6 @@ fn independent_texture_frames_preserve_pixels_and_native_surface_configuration()
         .finish()
         .unwrap();
     assert_eq!(pixels(&renderer, first), source);
-    renderer.destroy_texture(atlas);
     renderer.destroy_texture(next);
     renderer.destroy_texture(first);
 }

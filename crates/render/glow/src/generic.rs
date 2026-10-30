@@ -79,7 +79,9 @@ impl Drop for Pipeline {
     }
 }
 
-/// Admitted command data contains no domain, device, COM callback, or mutable client state.
+/// Admitted native commands with no device facade, COM callbacks or mutable client state.
+/// Clones retain native GL allocations. Trusted Rust callers must keep the owning native
+/// context alive and current through execution and final drop; the COM plugin enforces this.
 #[derive(Clone)]
 pub struct PreparedBlock {
     /// Shared concrete data permits completion retention without copying command payloads.

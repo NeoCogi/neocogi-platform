@@ -1,76 +1,36 @@
-//! Complete-frame validation shared by platform assemblies before they acquire native GPU frames.
+//! Complete generic-frame validation before native target acquisition.
 use neocogi_render_core::abi::*;
-use neocogi_com::{ComPtr, ComRef, NcStatus, NC_E_INVALID_ARG, NC_E_OUT_OF_MEMORY};
-use std::ops::Range;
+use neocogi_com::{ComRef, NcStatus, WeakComBox, NC_E_INVALID_ARG, NC_E_OUT_OF_MEMORY};
+use neocogi_render_gpu::record::Block;
+use std::rc::Rc;
 
-/// Concrete renderer-owned resource resolution; implementations authenticate canonical COM identities.
-/// Calls happen during preparation, with no GPU frame or renderer-state borrow held.
+/// Trusted device assembly authenticates canonical block identities without calling client code.
 pub trait Resources {
-    /// Authenticates a sealed generic block; UI-only or legacy fixtures reject this capability.
-    fn view(&self, _view: neocogi_com::WeakComBox<IRenderViewBlockAbi>) -> Result<std::rc::Rc<neocogi_render_gpu::record::Block>, NcStatus> {
-        Err(NC_E_INVALID_ARG)
-    }
-
-    /// Owned image record retaining its native device and allocation.
-    type Texture;
-    /// Rejects resources not created by this renderer, without trusting a resource-reported owner number.
-    fn texture(&self, texture: ComPtr<ITextureAbi>) -> Result<Self::Texture, NcStatus>;
+    /// Resolve one weak exclusive observer to immutable data, retaining its domain admission gate.
+    fn view(&self, view: WeakComBox<IRenderViewBlockAbi>) -> Result<Rc<Block>, NcStatus>;
 }
 
-/// Validated operations contain native-owned resources and no foreign callable stream.
-pub enum Batch<Texture> {
-    /// Authenticated immutable command block carrying its domain admission gate.
-    View(std::rc::Rc<neocogi_render_gpu::record::Block>),
-    /// Contiguous triangle range in PreparedFrame::vertices, already checked for finite components.
-    Atlas(Range<usize>),
-    /// Complete quad and its authenticated image, retained through finish or abandonment.
-    Texture {
-        /// Top-left, top-right, bottom-right and bottom-left vertices.
-        vertices: [RenderVertex; 4],
-        /// Concrete allocation owned by this renderer.
-        texture: Texture,
-    },
+/// Reusable ordered block storage. Foreign callbacks finish before any native frame is acquired.
+#[derive(Default)]
+pub struct PreparedFrame {
+    /// Each snapshot retains its original domain and immutable resource versions through preparation.
+    blocks: Vec<Rc<Block>>,
 }
-
-/// Reusable bulk-copy storage. All foreign reads and ownership checks finish before native submission.
-pub struct PreparedFrame<Texture> {
-    /// Final validated geometry, reused across submissions.
-    vertices: neocogi_com::NcOutputBuffer<RenderVertex>,
-    /// Pointer-free incoming records, reused rather than allocated once per frame.
-    records: neocogi_com::NcOutputBuffer<RenderBatch>,
-    /// Ordered resolved operations, empty after failed preparation.
-    batches: Vec<Batch<Texture>>,
-}
-
-impl<Texture> Default for PreparedFrame<Texture> {
-    /// Construction needs no device, resource default values, or GPU allocation.
-    fn default() -> Self {
-        Self {
-            vertices: neocogi_com::NcOutputBuffer::new(),
-            records: neocogi_com::NcOutputBuffer::new(),
-            batches: Vec::new(),
-        }
+impl PreparedFrame {
+    /// Complete authenticated contributions in painter order.
+    pub fn blocks(&self) -> &[Rc<Block>] {
+        &self.blocks
     }
-}
 
-impl<Texture> PreparedFrame<Texture> {
-    /// Gives native execution immutable access to the complete prepared vertex buffer.
-    pub fn vertices(&self) -> &[RenderVertex] {
-        self.vertices.as_slice()
-    }
-    /// Gives native execution immutable access to the validated painter-order operations.
-    pub fn batches(&self) -> &[Batch<Texture>] {
-        &self.batches
-    }
-    /// Releases submitted resources after the native frame is gone, preserving bulk allocations.
+    /// Release CPU ownership outside native/device-state borrow guards, keeping vector capacity.
     pub fn clear(&mut self) {
-        self.batches.clear();
-        self.vertices.clear();
-        self.records.clear();
+        self.blocks.clear();
     }
-    /// Validates counts and all records, then resolves resources; failure leaves no retained operations.
-    /// The caller must own this storage across the call, never hold a RefCell guard while invoking it.
-    pub fn read<R: Resources<Texture = Texture>>(&mut self, info: RenderInfo, stream: ComRef<'_, IRenderStreamAbi>, resources: &R) -> Result<(), NcStatus> {
+
+    /// Validate the complete envelope and snapshot all blocks before native execution.
+    /// On any failure, release every partially prepared contribution. Callers own this storage
+    /// across foreign callbacks; this method rechecks all domain gates after the last callback.
+    pub fn read<R: Resources>(&mut self, info: RenderInfo, stream: ComRef<'_, IRenderStreamAbi>, resources: &R) -> Result<(), NcStatus> {
         self.clear();
         let result = self.read_once(info, stream, resources);
         if result.is_err() {
@@ -78,70 +38,30 @@ impl<Texture> PreparedFrame<Texture> {
         }
         result
     }
-    /// Copies and checks the complete input before resolving even the first foreign resource.
-    fn read_once<R: Resources<Texture = Texture>>(&mut self, info: RenderInfo, stream: ComRef<'_, IRenderStreamAbi>, resources: &R) -> Result<(), NcStatus> {
-        if info.invocation == 0
-            || info.size.width <= 0
-            || info.size.height <= 0
-            || info.vertex_count > MAX_RENDER_VERTICES
-            || info.batch_count > MAX_RENDER_BATCHES
-        {
+
+    /// Count limits precede reservations and callbacks; roots cannot extend beyond the drawable.
+    fn read_once<R: Resources>(&mut self, info: RenderInfo, stream: ComRef<'_, IRenderStreamAbi>, resources: &R) -> Result<(), NcStatus> {
+        if info.invocation == 0 || info.size.width <= 0 || info.size.height <= 0 || info.block_count > MAX_RENDER_BLOCKS {
             return Err(NC_E_INVALID_ARG);
         }
-        // Checked reservation reports allocation failure before receiver storage is published or used by a driver.
-        self.batches.try_reserve(info.batch_count as usize).map_err(|_| NC_E_OUT_OF_MEMORY)?;
-        if stream.vertices(info.invocation, self.vertices.output(0, info.vertex_count as usize))? != info.vertex_count
-            || stream.batches(info.invocation, self.records.output(0, info.batch_count as usize))? != info.batch_count
-            || self.vertices.len() != info.vertex_count as usize
-            || self.records.len() != info.batch_count as usize
-            || self
-                .vertices
-                .as_slice()
-                .iter()
-                .any(|v| !v.x.is_finite() || !v.y.is_finite() || !v.u.is_finite() || !v.v.is_finite())
-        {
-            return Err(NC_E_INVALID_ARG);
-        }
-        let viewport = Rect {
+        self.blocks.try_reserve(info.block_count as usize).map_err(|_| NC_E_OUT_OF_MEMORY)?;
+        let bounds = Rect {
             x: 0,
             y: 0,
             width: info.size.width,
             height: info.size.height,
         };
-        let mut used = 0u32;
-        for record in self.records.as_slice() {
-            let (first, count) = match *record {
-                RenderBatch::Atlas { first, count } if count > 0 && count.is_multiple_of(3) => (first, count),
-                RenderBatch::Texture { first } => (first, 4),
-                RenderBatch::View => continue,
-                _ => return Err(NC_E_INVALID_ARG),
-            };
-            if first != used {
+        for index in 0..info.block_count {
+            let block = resources.view(stream.view(info.invocation, index)?)?;
+            if !neocogi_render_gpu::scope::contains(bounds, block.root.target) {
                 return Err(NC_E_INVALID_ARG);
             }
-            used = used.checked_add(count).filter(|end| *end <= info.vertex_count).ok_or(NC_E_INVALID_ARG)?;
+            self.blocks.push(block);
         }
-        if used != info.vertex_count {
-            return Err(NC_E_INVALID_ARG);
-        }
-        // Only resource calls can fail from here; partial native snapshots are discarded by read() on error.
-        for (index, record) in self.records.as_slice().iter().enumerate() {
-            self.batches.push(match *record {
-                RenderBatch::View => {
-                    let block = resources.view(stream.view(info.invocation, index as u32)?)?;
-                    if !neocogi_render_gpu::scope::contains(viewport, block.root.target) {
-                        return Err(NC_E_INVALID_ARG);
-                    }
-                    Batch::View(block)
-                }
-                RenderBatch::Atlas { first, count } => Batch::Atlas(first as usize..(first + count) as usize),
-                RenderBatch::Texture { first } => Batch::Texture {
-                    vertices: self.vertices.as_slice()[first as usize..first as usize + 4]
-                        .try_into()
-                        .expect("validated four-vertex range"),
-                    texture: resources.texture(stream.texture(info.invocation, index as u32)?)?,
-                },
-            });
+        // Every foreign accessor has returned. A later callback may have closed an earlier
+        // controller, so admission is a complete-frame decision, never a per-accessor cache.
+        for block in &self.blocks {
+            block.admit()?;
         }
         Ok(())
     }

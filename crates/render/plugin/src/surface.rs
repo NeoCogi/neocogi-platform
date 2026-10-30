@@ -6,22 +6,11 @@
 
 use super::*;
 use super::resources::{publish_texture, retain_texture};
-use neocogi_render_support::com::Batch;
-
-/// Atlas pixels uploaded once for a surface, independent of the native window atlas.
-struct SurfaceAtlas {
-    /// Source identity makes repeated preparation of the same immutable image cheap.
-    source: ComPtr<IRgbaImageAbi>,
-    /// Private GPU allocation retires with its last session reference.
-    image: Rc<TextureRecord>,
-}
 
 /// Owned state detached while a surface prepares and submits one complete frame.
 struct SurfaceState {
     /// Requested drawable size; zero dimensions suspend rendering.
     size: Size,
-    /// Current atlas changes only after a candidate upload succeeds.
-    atlas: SurfaceAtlas,
     /// Last published immutable frame, retained through failed frames and resize.
     completed: Option<ComPtr<ITextureAbi>>,
 }
@@ -76,42 +65,18 @@ fn validate_size(size: Size) -> Result<(), NcStatus> {
     Ok(())
 }
 
-impl SurfaceAtlas {
-    /// Uploads through the same device as the output, with no native atlas replacement.
-    fn upload(device: &Rc<Device>, gpu: &mut gpu::Gpu, source: ComRef<'_, IRgbaImageAbi>) -> Result<Self, NcStatus> {
-        let retained = source.try_add_ref()?;
-        let pixels = AtlasPixels::read(source)?;
-        let image = pixels.image();
-        let id = TextureId::for_upload(image.width, image.height, image.pixels).map_err(|_| NC_E_INVALID_ARG)?;
-        gpu.create_texture(id, image.pixels).map_err(|error| device.failure(error))?;
-        Ok(Self {
-            source: retained,
-            image: retain_texture(device.clone(), id),
-        })
-    }
-
-    /// Replaces the session binding only after candidate pixels upload successfully.
-    fn prepare(&mut self, device: &Rc<Device>, gpu: &mut gpu::Gpu, source: ComRef<'_, IRgbaImageAbi>) -> Result<(), NcStatus> {
-        if self.source.as_raw().object != source.as_raw().object {
-            *self = Self::upload(device, gpu, source)?;
-        }
-        Ok(())
-    }
-}
-
 impl IRenderSurfaceFactory for WindowObject {
-    /// Publishes an independent session after validating size and uploading its private atlas.
-    fn create_surface(&self, size: Size, atlas: ComRef<'_, IRgbaImageAbi>) -> Result<ComPtr<IRenderSurfaceAbi>, NcStatus> {
+    /// Publishes an asset-independent session after validating its requested size.
+    fn create_surface(&self, size: Size) -> Result<ComPtr<IRenderSurfaceAbi>, NcStatus> {
         validate_size(size)?;
         let mut access = self.device.access()?;
         let gpu = &mut access.state().gpu;
         if !gpu.supports_surfaces() {
             return Err(self.device.failure("offscreen UI surfaces are unavailable on this backend"));
         }
-        let atlas = SurfaceAtlas::upload(&self.device, gpu, atlas)?;
         Surface::from_value(Surface {
             device: self.device.clone(),
-            state: RefCell::new(Some(SurfaceState { size, atlas, completed: None })),
+            state: RefCell::new(Some(SurfaceState { size, completed: None })),
         })
         .query()
     }
@@ -145,15 +110,8 @@ impl IRenderSurface for Surface {
 }
 
 impl IRenderer for Surface {
-    /// Changes this session's atlas without altering the editor's resident image.
-    fn prepare_atlas(&self, atlas: ComRef<'_, IRgbaImageAbi>) -> Result<(), NcStatus> {
-        let mut device = self.device.access()?;
-        let mut session = self.access()?;
-        session.state().atlas.prepare(&self.device, &mut device.state().gpu, atlas)
-    }
-
     /// Validates all commands, renders to fresh private storage, and then publishes atomically.
-    fn render(&self, info: RenderInfo, atlas: ComRef<'_, IRgbaImageAbi>, stream: ComRef<'_, IRenderStreamAbi>) -> Result<(), NcStatus> {
+    fn render(&self, info: RenderInfo, stream: ComRef<'_, IRenderStreamAbi>) -> Result<(), NcStatus> {
         let mut device = self.device.access()?;
         let mut session = self.access()?;
         let session = session.state();
@@ -163,21 +121,8 @@ impl IRenderer for Surface {
         let state = device.state();
         let _operation = self.device.logical.operation()?;
         state.prepared.read(info, stream, self.device.as_ref())?;
-        if state
-            .prepared
-            .batches()
-            .iter()
-            .any(|batch| matches!(batch, Batch::View(block) if !block.is_ui()))
-        {
+        if state.prepared.blocks().iter().any(|block| !block.is_ui()) {
             return Err(NC_E_INVALID_ARG);
-        }
-        session.atlas.prepare(&self.device, &mut state.gpu, atlas)?;
-        // Foreign stream/image callbacks may close a domain after its first snapshot.
-        // Recheck every immutable block after those calls and before touching the target.
-        for batch in state.prepared.batches() {
-            if let Batch::View(block) = batch {
-                block.admit()?;
-            }
         }
         let id = TextureId::for_render_target(info.size.width, info.size.height).map_err(|_| NC_E_INVALID_ARG)?;
         state.gpu.create_render_texture(id).map_err(|error| self.device.failure(error))?;
@@ -186,7 +131,7 @@ impl IRenderer for Surface {
         let output = retain_texture(self.device.clone(), id);
         state
             .gpu
-            .render_surface(info, &state.prepared, id, session.atlas.image.id)
+            .render_surface(info, &state.prepared, id)
             .map_err(|error| self.device.failure(error))?;
         session.completed = Some(publish_texture(output));
         Ok(())

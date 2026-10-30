@@ -9,29 +9,21 @@ fn texture_upload_failures_are_returned_without_poisoning_later_uploads() {
     let instance = wgpu::Instance::default();
     let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default())).unwrap();
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).unwrap();
-    let (_pipeline, _texture_pipeline, layout, sampler) = WgpuRenderer::create_pipeline(&device, wgpu::TextureFormat::Rgba8Unorm);
-    let uniforms = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("texture regression uniforms"),
-        size: 16,
-        usage: wgpu::BufferUsages::UNIFORM,
-        mapped_at_creation: false,
-    });
-
     // An outer scope catches any validation error the helper accidentally lets escape. A real
     // existing texture remains owned while each invalid replacement candidate is rejected.
     let outer = device.push_error_scope(wgpu::ErrorFilter::Validation);
-    let live = WgpuRenderer::create_gpu_texture(&device, &queue, &layout, &sampler, &uniforms, 1, 1, Some(&[255; 4])).unwrap();
+    let live = WgpuRenderer::create_gpu_texture(&device, &queue, 1, 1, Some(&[255; 4])).unwrap();
     let too_wide = device.limits().max_texture_dimension_2d + 1;
-    let dimensions = WgpuRenderer::create_gpu_texture(&device, &queue, &layout, &sampler, &uniforms, too_wide, 1, None);
+    let dimensions = WgpuRenderer::create_gpu_texture(&device, &queue, too_wide, 1, None);
     assert!(dimensions.err().unwrap().contains("dimension limit"));
-    let zero = WgpuRenderer::create_gpu_texture(&device, &queue, &layout, &sampler, &uniforms, 0, 1, None);
+    let zero = WgpuRenderer::create_gpu_texture(&device, &queue, 0, 1, None);
     assert!(zero.err().unwrap().contains("non-zero"));
 
     // Deliberately undersized bytes exercise asynchronous-shaped WGPU error scopes rather than
     // just the helper's dimension precheck. This must return Err instead of reporting success.
-    let invalid = WgpuRenderer::create_gpu_texture(&device, &queue, &layout, &sampler, &uniforms, 1, 1, Some(&[0; 3]));
+    let invalid = WgpuRenderer::create_gpu_texture(&device, &queue, 1, 1, Some(&[0; 3]));
     assert!(invalid.err().unwrap().contains("texture creation or upload failed"));
-    let replacement = WgpuRenderer::create_gpu_texture(&device, &queue, &layout, &sampler, &uniforms, 1, 1, Some(&[17; 4])).unwrap();
+    let replacement = WgpuRenderer::create_gpu_texture(&device, &queue, 1, 1, Some(&[17; 4])).unwrap();
     assert!(pollster::block_on(outer.pop()).is_none(), "helper scopes must own their diagnostics");
     drop((replacement, live));
 }
@@ -94,25 +86,26 @@ fn independent_texture_frames_preserve_pixels_and_native_surface_configuration()
     let sdl = sdl2::init().unwrap();
     let video = sdl.video().unwrap();
     let window = video.window("WGPU surface regression", 64, 64).hidden().build().unwrap();
-    let mut renderer = WgpuRenderer::new(&window, ImageSource { width: 1, height: 1, pixels: &[255; 4] }, 64, 64).unwrap();
+    let mut renderer = WgpuRenderer::new(&window, 64, 64).unwrap();
     let source = [255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 0, 255];
-    let atlas = TextureId::for_upload(2, 2, &source).unwrap();
-    renderer.create_texture(atlas, &source).unwrap();
+    let gpu = neocogi_render_gpu::GpuDevice::new();
+    let domain = gpu.create_ui_client(Default::default(), None).unwrap();
+    let resources = domain.resources().unwrap();
+    let root = neocogi_render_gpu::abi::Rect { x: 0, y: 0, width: 2, height: 2 };
+    let block = sampled::block(&gpu, &resources, root, neocogi_render_gpu::abi::Size { width: 2, height: 2 }, &source);
+    let prepared = renderer.prepare_block(&gpu.block_snapshot(block.as_com_ref()).unwrap(), true).unwrap();
     let first = TextureId::for_render_target(2, 2).unwrap();
     renderer.create_render_texture(first).unwrap();
     let info = FrameInfo::try_new(Dimensioni::new(2, 2), color(0, 0, 0, 255)).unwrap();
-    let mut frame = renderer.texture_frame(info, first, atlas).unwrap();
-    frame.push_quad(
-        [(0., 0., 0., 0.), (2., 0., 1., 0.), (2., 2., 1., 1.), (0., 2., 0., 1.)]
-            .map(|(x, y, u, v)| Vertex::new(Vec2f::new(x, y), Vec2f::new(u, v), color4b(255, 255, 255, 255))),
-    );
+    let mut frame = renderer.texture_frame(info, first).unwrap();
+    frame.execute_block(&prepared);
     frame.finish().unwrap();
     assert_eq!(pixels(&renderer, first), source);
     assert_eq!((renderer.config.width, renderer.config.height), (64, 64));
     let next = TextureId::for_render_target(3, 1).unwrap();
     renderer.create_render_texture(next).unwrap();
     renderer
-        .texture_frame(FrameInfo::try_new(Dimensioni::new(3, 1), color(17, 31, 63, 255)).unwrap(), next, atlas)
+        .texture_frame(FrameInfo::try_new(Dimensioni::new(3, 1), color(17, 31, 63, 255)).unwrap(), next)
         .unwrap()
         .finish()
         .unwrap();
@@ -128,10 +121,12 @@ fn independent_texture_frames_preserve_pixels_and_native_surface_configuration()
         .finish()
         .unwrap();
     assert_eq!(pixels(&renderer, first), source);
-    renderer.destroy_texture(atlas);
     renderer.destroy_texture(next);
     renderer.destroy_texture(first);
 }
 
 #[path = "generic_tests.rs"]
 mod generic;
+
+#[path = "../../gpu/tests/support/sampled.rs"]
+mod sampled;

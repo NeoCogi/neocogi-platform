@@ -76,16 +76,6 @@ impl Resources for Device {
     fn view(&self, view: neocogi_com::WeakComBox<IRenderViewBlockAbi>) -> Result<Rc<neocogi_render_gpu::record::Block>, NcStatus> {
         self.logical.block_snapshot(view.as_com_ref())
     }
-
-    type Texture = Rc<TextureRecord>;
-    /// Authentication never calls a resource-reported owner getter and never downcasts erased data.
-    fn texture(&self, texture: ComPtr<ITextureAbi>) -> Result<Self::Texture, NcStatus> {
-        let key = identity(&texture)?;
-        let registry = self.textures.try_borrow().map_err(|_| RENDER_E_BUSY)?;
-        let resolved = registry.get(&key).and_then(Weak::upgrade);
-        drop(registry);
-        resolved.ok_or(RENDER_E_OWNER)
-    }
 }
 
 /// Window and offscreen sessions authenticate resources in the same concrete device registry.
@@ -94,11 +84,15 @@ impl Resources for WindowObject {
     fn view(&self, view: neocogi_com::WeakComBox<IRenderViewBlockAbi>) -> Result<Rc<neocogi_render_gpu::record::Block>, NcStatus> {
         self.device.logical.block_snapshot(view.as_com_ref())
     }
+}
 
-    type Texture = Rc<TextureRecord>;
-
-    /// Delegates authentication without exposing or trusting a caller-provided device identifier.
-    fn texture(&self, texture: ComPtr<ITextureAbi>) -> Result<Self::Texture, NcStatus> {
-        self.device.texture(texture)
+impl Device {
+    /// Resolve ordinary immutable image identity only at trusted UI import, never during native execution.
+    pub(super) fn texture(&self, texture: ComPtr<ITextureAbi>) -> Result<Rc<TextureRecord>, NcStatus> {
+        let key = identity(&texture)?;
+        let registry = self.textures.try_borrow().map_err(|_| RENDER_E_BUSY)?;
+        let resolved = registry.get(&key).and_then(Weak::upgrade);
+        drop(registry);
+        resolved.ok_or(RENDER_E_OWNER)
     }
 }

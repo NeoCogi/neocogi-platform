@@ -77,11 +77,8 @@ impl Drop for ForeignState {
     }
 }
 
-/// Builds an entirely public, valid single-texel atlas for the renderer's sampling path.
-fn atlas() -> ImageSource<'static> {
-    // Rendering isolation tests need one white texel, not font/icon metadata or a UI skin.
-    ImageSource { width: 1, height: 1, pixels: &[255; 4] }
-}
+#[path = "../../gpu/tests/support/sampled.rs"]
+mod sampled;
 
 /// Reads the default framebuffer regardless of the application-side read-target binding.
 fn pixel(gl: &glow::Context, x: i32, y: i32) -> [u8; 4] {
@@ -108,46 +105,33 @@ fn ui_draws_clears_and_uploads_survive_application_gl_state() {
     let gl = Rc::new(unsafe { glow::Context::from_loader_function(|name| video.gl_get_proc_address(name).cast()) });
     let foreign = ForeignState::new(gl.clone());
     foreign.bind();
-    let mut renderer = GLRenderer::new(gl.clone(), atlas(), 8, 8).unwrap();
-    let vertices = [(1.0, 1.0), (7.0, 1.0), (7.0, 7.0), (1.0, 7.0)].map(|(x, y)| Vertex::new(Vec2f::new(x, y), Vec2f::new(0.5, 0.5), color4b(255, 0, 0, 255)));
-
-    // Both indexed UI draws and colored triangle draws must use the same state restoration.
-    for indexed in [true, false] {
+    let mut renderer = GLRenderer::new(gl.clone(), 8, 8).unwrap();
+    let gpu = neocogi_render_gpu::GpuDevice::new();
+    let domain = gpu.create_ui_client(Default::default(), None).unwrap();
+    let resources = domain.resources().unwrap();
+    let root = neocogi_render_gpu::abi::Rect { x: 1, y: 1, width: 6, height: 6 };
+    let block = sampled::block(&gpu, &resources, root, neocogi_render_gpu::abi::Size { width: 1, height: 1 }, &[255, 0, 0, 255]);
+    foreign.bind();
+    let prepared = renderer.prepare_block(&gpu.block_snapshot(block.as_com_ref()).unwrap(), false).unwrap();
+    let info = FrameInfo::try_new(Dimensioni::new(8, 8), color(17, 19, 23, 255)).unwrap();
+    for _ in 0..2 {
         foreign.bind();
-        renderer.begin(8, 8, color(17, 19, 23, 255));
+        let mut frame = renderer.frame(info).unwrap();
         assert_eq!(pixel(&gl, 0, 0), [17, 19, 23, 255]);
         foreign.bind();
-        if indexed {
-            renderer.push_quad_vertices(&vertices[0], &vertices[1], &vertices[2], &vertices[3]);
-            renderer.flush();
-        } else {
-            renderer.draw_colored_vertices(
-                Recti::new(1, 1, 6, 6),
-                &[vertices[0], vertices[1], vertices[2], vertices[2], vertices[3], vertices[0]],
-            );
-        }
+        frame.execute_block(&prepared);
+        frame.finish().unwrap();
         assert_eq!(pixel(&gl, 4, 4), [255, 0, 0, 255]);
         assert_eq!(pixel(&gl, 0, 0), [17, 19, 23, 255]);
     }
-
-    // Replacement must reset hostile unpack state too, and the uploaded texel must remain usable.
+    // Native image upload must independently reset hostile unpack state.
     foreign.bind();
-    renderer.replace_atlas(atlas()).unwrap();
-    renderer.begin(8, 8, color(0, 0, 0, 255));
-    renderer.draw_vertices(renderer.tex_o, &vertices, Some(&[0, 1, 2, 2, 3, 0]), renderer.full_clip());
-    assert_eq!(pixel(&gl, 4, 4), [255, 0, 0, 255]);
-
-    // The public frame contract must distinguish abandonment from explicit completion. A pending
-    // quad is CPU-only until finish; dropping it must leave the cleared framebuffer untouched.
-    let info = FrameInfo::try_new(Dimensioni::new(8, 8), color(0, 0, 0, 255)).unwrap();
-    let mut frame = renderer.frame(info).unwrap();
-    frame.push_quad(vertices);
-    drop(frame);
-    assert_eq!(pixel(&gl, 4, 4), [0, 0, 0, 255]);
-    let mut frame = renderer.frame(info).unwrap();
-    frame.push_quad(vertices);
-    frame.finish().unwrap();
-    assert_eq!(pixel(&gl, 4, 4), [255, 0, 0, 255]);
+    let image = TextureId::for_upload(1, 1, &[255; 4]).unwrap();
+    renderer.create_texture(image, &[255; 4]).unwrap();
+    renderer.destroy_texture(image);
+    // Abandoning an unexecuted target never manufactures a draw or completion submission.
+    drop(renderer.frame(info).unwrap());
+    assert_eq!(pixel(&gl, 4, 4), [17, 19, 23, 255]);
 }
 
 /// Actual native execution retains logical allocation charges after every public owner disappears.
@@ -171,7 +155,7 @@ fn native_completion_owns_resource_and_command_charges() {
     let _context = window.gl_create_context().unwrap();
     // SAFETY: SDL's current context remains owned until after every native object below drops.
     let gl = Rc::new(unsafe { glow::Context::from_loader_function(|name| video.gl_get_proc_address(name).cast()) });
-    let mut renderer = GLRenderer::new(gl.clone(), atlas(), 8, 8).unwrap();
+    let mut renderer = GLRenderer::new(gl.clone(), 8, 8).unwrap();
     let info = FrameInfo::try_new(Dimensioni::new(8, 8), color(0, 0, 0, 255)).unwrap();
     for phase in 0..3 {
         let device = GpuDevice::new();
@@ -226,7 +210,7 @@ fn native_completion_owns_resource_and_command_charges() {
         assert!(pending > 0);
         if phase != 2 {
             let mut frame = renderer.frame(info).unwrap();
-            frame.execute_block(&prepared, Size { width: 8, height: 8 });
+            frame.execute_block(&prepared);
             if phase == 0 {
                 frame.finish().unwrap();
             } else {
@@ -268,7 +252,7 @@ fn dynamic_shader_indices_cannot_escape_uniform_or_private_storage() {
     let window = video.window("GL shader bounds", 8, 8).opengl().hidden().build().unwrap();
     let _context = window.gl_create_context().unwrap();
     let gl = Rc::new(unsafe { glow::Context::from_loader_function(|name| video.gl_get_proc_address(name).cast()) });
-    let mut renderer = GLRenderer::new(gl.clone(), atlas(), 8, 8).unwrap();
+    let mut renderer = GLRenderer::new(gl.clone(), 8, 8).unwrap();
     let gpu = GpuDevice::new();
     let controller = gpu.create_client(RenderClientLimits::default()).unwrap();
     let resources = controller.resources().unwrap();
@@ -323,7 +307,7 @@ fn dynamic_shader_indices_cannot_escape_uniform_or_private_storage() {
     let prepared = renderer.prepare_block(&gpu.block_snapshot(owner.as_com_ref()).unwrap(), false).unwrap();
     let info = FrameInfo::try_new(Dimensioni::new(8, 8), color(0, 0, 0, 255)).unwrap();
     let mut frame = renderer.frame(info).unwrap();
-    frame.execute_block(&prepared, Size { width: 8, height: 8 });
+    frame.execute_block(&prepared);
     frame.finish().unwrap();
     // A native window may have an opaque RGB default framebuffer with no alpha channel.
     assert_eq!(&pixel(&gl, 4, 4)[..3], &[64; 3]);
@@ -348,7 +332,7 @@ fn fragment_identifiers_containing_builtin_names_compile_and_render() {
     let window = video.window("GL identifier normalization", 8, 8).opengl().hidden().build().unwrap();
     let _context = window.gl_create_context().unwrap();
     let gl = Rc::new(unsafe { glow::Context::from_loader_function(|name| video.gl_get_proc_address(name).cast()) });
-    let mut renderer = GLRenderer::new(gl.clone(), atlas(), 8, 8).unwrap();
+    let mut renderer = GLRenderer::new(gl.clone(), 8, 8).unwrap();
     let gpu = GpuDevice::new();
     let controller = gpu.create_client(RenderClientLimits::default()).unwrap();
     let resources = controller.resources().unwrap();
@@ -384,7 +368,7 @@ fn fragment_identifiers_containing_builtin_names_compile_and_render() {
     let prepared = renderer.prepare_block(&gpu.block_snapshot(owner.as_com_ref()).unwrap(), false).unwrap();
     let info = FrameInfo::try_new(Dimensioni::new(8, 8), color(0, 0, 0, 255)).unwrap();
     let mut frame = renderer.frame(info).unwrap();
-    frame.execute_block(&prepared, Size { width: 8, height: 8 });
+    frame.execute_block(&prepared);
     frame.finish().unwrap();
     assert_eq!(&pixel(&gl, 4, 4)[..3], &[64, 128, 191]);
 }

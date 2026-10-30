@@ -12,8 +12,6 @@ use std::{
 };
 mod clipboard;
 mod gpu;
-mod pixels;
-use pixels::AtlasPixels;
 #[cfg(not(target_arch = "wasm32"))]
 mod input;
 #[cfg(not(target_arch = "wasm32"))]
@@ -30,7 +28,7 @@ mod surface;
 use resources::TextureRecord;
 
 /// Prepared resources are concrete native records, never erased objects or callbacks.
-type Prepared = PreparedFrame<Rc<TextureRecord>>;
+type Prepared = PreparedFrame;
 
 #[derive(Default)]
 #[com_object(neocogi_render_core::platform::Platform)]
@@ -45,17 +43,12 @@ pub struct PlatformObject {
 
 impl Platform for PlatformObject {
     /// Validates input and publishes one complete native object only after the selected backend exists.
-    fn create_window(
-        &self,
-        title: NcCopyFromBufferOffset<'_, u8>,
-        size: Size,
-        atlas: ComRef<'_, IRgbaImageAbi>,
-    ) -> Result<ComPtr<IPlatformWindowAbi>, NcStatus> {
+    fn create_window(&self, title: NcCopyFromBufferOffset<'_, u8>, size: Size) -> Result<ComPtr<IPlatformWindowAbi>, NcStatus> {
         if title.offset() != 0 || size.width <= 0 || size.height <= 0 {
             return Err(NC_E_INVALID_ARG);
         }
         let title = std::str::from_utf8(title.as_slice()).map_err(|_| NC_E_INVALID_ARG)?;
-        Ok(WindowObject::from_value(self.window(title, size, atlas)?)
+        Ok(WindowObject::from_value(self.window(title, size)?)
             .query()
             .expect("native window declares IPlatformWindow"))
     }
@@ -69,30 +62,13 @@ impl IRenderDiagnostics for PlatformObject {
 
 /// Native renderer and reusable preparation storage are detached together across all foreign stream calls.
 struct RenderState {
-    /// Owns the native backend, its application renderer, context and presentation surface.
+    /// Owns the generic native backend, context and presentation surface.
     gpu: gpu::Gpu,
     /// Resource references are cleared before restoring this state, preventing a Device ownership cycle.
     prepared: Prepared,
-    /// Current immutable atlas image; a same-pointer preparation performs no copy or upload.
-    atlas: ComPtr<IRgbaImageAbi>,
-}
-impl RenderState {
-    /// Retains the candidate first, then publishes its identity after successful upload.
-    fn prepare_atlas(&mut self, source: ComRef<'_, IRgbaImageAbi>) -> Result<(), String> {
-        if self.atlas.as_raw().object == source.as_raw().object {
-            return Ok(());
-        }
-        // The image projection deliberately carries no fonts, names, theme records, or catalog.
-        // Those higher-level meanings have already been resolved before renderer submission.
-        let retained = source.try_add_ref().map_err(|status| status.to_string())?;
-        let pixels = AtlasPixels::read(source).map_err(|status| status.to_string())?;
-        self.gpu.replace_atlas(pixels.image())?;
-        self.atlas = retained;
-        Ok(())
-    }
 }
 
-/// Shared native lifetime retained by the window, every image and every editable scene.
+/// Shared native lifetime retained by window, image and generic graphics capabilities.
 struct Device {
     /// None throughout preparation and submission; reentrant GPU operations receive RENDER_E_BUSY.
     render: RefCell<Option<RenderState>>,
@@ -154,14 +130,7 @@ impl Drop for RenderAccess<'_> {
         *self.device.render.borrow_mut() = Some(state);
     }
 }
-#[com_object(interfaces(
-    IPlatformWindow,
-    IRenderer,
-    IRenderClientFactory,
-    ITextureFactory,
-    IRenderSurfaceFactory,
-    IRenderDiagnostics
-))]
+#[com_object(interfaces(IPlatformWindow, IRenderer, IRenderClientFactory, ITextureFactory, IRenderSurfaceFactory, IRenderDiagnostics))]
 /// One COM identity exposes OS polling, rendering and concrete resource factories.
 struct WindowObject {
     /// Resources retain this same native owner after the public window interface is released.
@@ -215,7 +184,11 @@ impl GraphicsHost {
 }
 impl IRenderHost for GraphicsHost {
     /// The private native registry authenticates ordinary image identity before logical import.
-    fn import_ui_texture(&self, resources: ComRef<'_, IRenderResourcesAbi>, image: ComRef<'_, ITextureAbi>) -> Result<neocogi_com::ComBox<IGpuTextureAbi>, NcStatus> {
+    fn import_ui_texture(
+        &self,
+        resources: ComRef<'_, IRenderResourcesAbi>,
+        image: ComRef<'_, ITextureAbi>,
+    ) -> Result<neocogi_com::ComBox<IGpuTextureAbi>, NcStatus> {
         let _access = self.device.access()?;
         let image = image.try_add_ref()?;
         let record = self.device.texture(image.clone())?;
@@ -241,13 +214,8 @@ impl IRenderHost for GraphicsHost {
 }
 
 impl IRenderer for WindowObject {
-    /// Takes owned device state so nested image methods cannot reenter native upload or submission.
-    fn prepare_atlas(&self, atlas: ComRef<'_, IRgbaImageAbi>) -> Result<(), NcStatus> {
-        let mut access = self.device.access()?;
-        access.state().prepare_atlas(atlas).map_err(|error| self.device.failure(error))
-    }
     /// Prepares the complete frame without borrowing native state, then executes and explicitly finishes it.
-    fn render(&self, info: RenderInfo, atlas: ComRef<'_, IRgbaImageAbi>, stream: ComRef<'_, IRenderStreamAbi>) -> Result<(), NcStatus> {
+    fn render(&self, info: RenderInfo, stream: ComRef<'_, IRenderStreamAbi>) -> Result<(), NcStatus> {
         if info.size != self.size()? {
             return Err(NC_E_INVALID_ARG);
         }
@@ -257,13 +225,6 @@ impl IRenderer for WindowObject {
         state.prepared.read(info, stream, self).inspect_err(|error| {
             *self.device.diagnostic.borrow_mut() = format!("frame preparation failed: {error}");
         })?;
-        // Reject malformed commands and foreign resource owners before changing GPU atlas state.
-        state.prepare_atlas(atlas).map_err(|error| self.device.failure(error))?;
-        for batch in state.prepared.batches() {
-            if let neocogi_render_support::com::Batch::View(block) = batch {
-                block.admit()?;
-            }
-        }
         state.gpu.render(info, &state.prepared).map_err(|error| self.device.failure(error))
     }
 }

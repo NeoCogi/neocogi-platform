@@ -19,15 +19,14 @@ interface IPlatformWindow {
     fn text_input(&self, area: TextInputArea) -> Result<()>;
 }
 
-#[version(1)]
+#[version(2)]
 /// Constructible platform root whose native-window interface is its concrete API.
 interface Platform: IRenderDiagnostics {
-    /// Creates an independent native window using only a renderer-neutral initial image.
+    /// Creates an independent native window and graphics device without UI assets.
     fn create_window(
         &self,
         title: &[u8],
         size: Size,
-        atlas: &IRgbaImage,
     ) -> Result<ComPtr<IPlatformWindow>>;
 }
 

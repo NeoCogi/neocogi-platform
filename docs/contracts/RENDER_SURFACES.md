@@ -2,15 +2,17 @@
 
 `IRenderSurfaceFactory` creates a two-dimensional offscreen session on the
 factory's existing GPU device. Query the returned `IRenderSurface` for
-`IRenderer` and pass that projection to the preview UI's install/render calls.
-Each session retains its own uploaded atlas; drawing another session must not
-replace it or repeatedly upload unchanged pixels.
+`IRenderer` and pass that projection to the preview UI's render calls. Bind the
+window's separate graphics host to each preview runtime before painting. Each
+runtime's GFX compositor owns its prepared atlas; asset installation takes only the
+candidate bundle. Creating windows and surfaces needs no initial image.
 
 The surface size is in physical pixels. Negative or oversized values fail;
 a zero component suspends frame submission. Resize changes the next requested
 extent and does not modify completed images. Rendering requires an exact,
-positive size and opaque clear color. This initial capability accepts atlas
-and texture batches; application-specific render items are explicitly rejected.
+positive size and opaque clear color. Surfaces accept only sealed blocks from a
+construction-authenticated private UI domain. Public client-domain work is rejected
+before output allocation, even when it uses the same generic command vocabulary.
 
 `completed_image` returns `NC_E_NOT_FOUND` before the first successful frame.
 After success it returns a normal immutable `ITexture`, with the same top-left
@@ -25,25 +27,22 @@ the completed preview texture. GPU allocations retire through the existing
 device ownership path after all public images and active submissions release
 them. Stream reads and resource authentication finish before GPU execution.
 
-Glow and WebGL implement the capability through framebuffer-backed textures.
-They upload each session's atlas independently and use a fresh output allocation
-for each frame, so published snapshots cannot be overwritten. WGPU uses the same
-independent-session ownership with RGBA8 render attachments and a UI-only pipeline
-without depth. WGPU texture passes never acquire/reconfigure a native surface;
-window passes retain their own format and application depth attachment. Error
-scopes complete before output publication or native presentation. WGPU retains
-in-flight native resources through its command submission lifetime.
+Glow and WebGL use framebuffer-backed textures and their common generic executor.
+WGPU uses RGBA8 render attachments without depth and its ordinary generic executor.
+Every backend allocates a fresh output for each completed frame, so later frames
+cannot overwrite published snapshots. Texture passes never acquire or reconfigure a
+native surface. Window passes retain their own target format and depth attachment.
+WGPU error scopes finish before publication and queue completion retains native owners.
 
-Vulkan uses a private RGBA8 render pass, framebuffer, pipeline, command pool,
-vertex upload, and completion fence. It shares the device's authenticated images
-and sampled descriptors. The render pass transitions completed pixels to
-shader-readable layout; the completion fence signals before publication.
-This first implementation waits for that one submission on the CPU. It makes
-ownership and failure recovery explicit, with a measurable synchronization cost.
-No native acquisition/presentation semaphores or frame slots participate.
-A submission/wait failure prevents unsafe command-storage reuse. A frame dropped
-before submission is recoverable. Descriptors follow the existing pool-generation
-rebinding when the native swapchain is rebuilt.
+Vulkan uses a private RGBA8 render pass, framebuffer, command pool, command buffer
+and completion fence, with the same generic pipeline/binding executor as window work.
+The shared native pass builder transitions completed pixels to shader-readable layout.
+The first implementation waits for that submission on the CPU before publication;
+this makes ownership explicit with a synchronization cost. Native acquisition and
+presentation semaphores do not participate. Submitted owners are installed before
+queue submission and retained if submission or waiting leaves completion uncertain.
+Dropping a frame before submission is recoverable. Native image initialization also
+uses the generic executor's completion-owned upload path.
 
 Native acceptance can be run with:
 
@@ -52,7 +51,7 @@ SDL_VIDEODRIVER=offscreen cargo test -p neocogi-render-plugin --features neocogi
 ```
 
 The surface test checks asymmetric source orientation, old snapshot pixels after
-later frames, unchanged window atlas identity, native allocation failure,
+later frames, independent compositor atlas identity, native allocation failure,
 suspended/resized output, surface release, and final device retirement. WebGL
 compilation is checked separately; compilation does not establish browser runtime
 coverage.
@@ -93,13 +92,13 @@ cargo test -p neocogi-render-plugin --lib --no-default-features --features vulka
 ```
 
 The Khronos validation layer is optional and must be installed to enable it.
-The tests cover private-atlas orientation, immutable retained outputs, changed
+The tests cover sampled-image orientation, immutable retained outputs, changed
 output extents, rejected allocation, pre-submission abandonment, and subsequent
 ordinary window rendering. All three native backends now expose surfaces;
 WebGL execution is validated separately from native Glow.
 
 Appearance publication retains the immutable `IAssetBundle::image()` identity.
-Each rendering session therefore keeps its own atlas allocation through color,
+Each GFX session therefore keeps its own atlas allocation through color,
 metric, tint, and slicing edits. A resource rebuild supplies a new image and causes
 one upload per affected session. The surface regression counts actual source reads
 through repeated preparation, rendering, failed frames, and resizing.

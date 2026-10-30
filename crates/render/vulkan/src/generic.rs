@@ -24,9 +24,9 @@ pub(crate) struct Core {
     /// Physical memory types used for explicit host/device allocations.
     memory: vk::PhysicalDeviceMemoryProperties,
     /// Preparation uploads and final graphics use this same queue.
-    queue: vk::Queue,
+    pub(super) queue: vk::Queue,
     /// Graphics family determines the executor's transient upload command pool.
-    family: u32,
+    pub(super) family: u32,
 }
 impl Core {
     /// Teardown cannot free children while completion is uncertain. Device loss permits native
@@ -260,6 +260,67 @@ pub(crate) struct Image {
 }
 impl Image {
     /// Transfers fully initialized same-device handles from an armed creation transaction.
+    /// Allocate one native image/view with device-limit checks and counted memory ownership.
+    /// Both initialized uploads and host color/depth attachments use this same transaction.
+    pub(crate) fn allocate(
+        core: &Rc<Core>,
+        size: Size,
+        format: vk::Format,
+        usage: vk::ImageUsageFlags,
+        aspect: vk::ImageAspectFlags,
+    ) -> Result<Rc<Self>, String> {
+        let core = core.clone();
+        let device = &core.device;
+        let extent = vk::Extent3D {
+            width: size.width as u32,
+            height: size.height as u32,
+            depth: 1,
+        };
+        core.image_extent(format, extent.width, extent.height, usage)?;
+        let image = ResourceGuard::new(
+            unsafe {
+                device.create_image(
+                    &vk::ImageCreateInfo::default()
+                        .image_type(vk::ImageType::TYPE_2D)
+                        .format(format)
+                        .extent(extent)
+                        .mip_levels(1)
+                        .array_layers(1)
+                        .samples(vk::SampleCountFlags::TYPE_1)
+                        .tiling(vk::ImageTiling::OPTIMAL)
+                        .usage(usage)
+                        .sharing_mode(vk::SharingMode::EXCLUSIVE)
+                        .initial_layout(vk::ImageLayout::UNDEFINED),
+                    None,
+                )
+            }
+            .map_err(|error| format!("create graphics image: {error:?}"))?,
+            |value| unsafe { device.destroy_image(value, None) },
+        );
+        let requirements = unsafe { device.get_image_memory_requirements(*image.get()) };
+        let kind = core
+            .memory_type(requirements.memory_type_bits, vk::MemoryPropertyFlags::DEVICE_LOCAL)
+            .or_else(|_| core.memory_type(requirements.memory_type_bits, vk::MemoryPropertyFlags::empty()))?;
+        let memory = core.allocate(&vk::MemoryAllocateInfo::default().allocation_size(requirements.size).memory_type_index(kind))?;
+        unsafe { device.bind_image_memory(*image.get(), memory.raw, 0) }.map_err(|error| format!("bind graphics image: {error:?}"))?;
+        let range = vk::ImageSubresourceRange::default().aspect_mask(aspect).level_count(1).layer_count(1);
+        let view = ResourceGuard::new(
+            unsafe {
+                device.create_image_view(
+                    &vk::ImageViewCreateInfo::default()
+                        .image(*image.get())
+                        .view_type(vk::ImageViewType::TYPE_2D)
+                        .format(format)
+                        .subresource_range(range),
+                    None,
+                )
+            }
+            .map_err(|error| format!("create graphics image view: {error:?}"))?,
+            |view| unsafe { device.destroy_image_view(view, None) },
+        );
+        Ok(Rc::new(Self::new(core.clone(), image.into_inner(), memory, view.into_inner())))
+    }
+
     pub(crate) fn new(core: Rc<Core>, raw: vk::Image, memory: Memory, view: vk::ImageView) -> Self {
         Self { _memory: memory, core, raw, view }
     }
@@ -279,7 +340,7 @@ struct Texture {
     /// Native storage drops before logical accounting if this is its final owner.
     native: Rc<Image>,
     /// Exact immutable version, currently containing no domain or native facade reference.
-    source: TextureReceipt,
+    source: Rc<TextureReceipt>,
 }
 /// Separate immutable sampling state and its logical receipt.
 struct Sampler {
@@ -411,8 +472,10 @@ struct Transfer {
     fence: vk::Fence,
     /// Host-visible upload source must outlive its queued copy.
     _staging: Allocation,
-    /// Destination and logical pixel receipt survive a failed preparation.
-    _texture: Rc<Texture>,
+    /// Destination survives any failed preparation without a COM/device-facade back-reference.
+    _image: Rc<Image>,
+    /// Generic allocations retain accounting; ordinary native images have no client-domain charge.
+    _receipt: Option<Rc<TextureReceipt>>,
 }
 impl Drop for Transfer {
     /// Successful wait or final device-idle/loss is required before this aggregate is released.
@@ -751,79 +814,56 @@ impl Executor {
                 .and_then(|image| image.image.native.as_ref())
                 .ok_or("imported UI image is unavailable on this device")?
                 .clone();
-            let value = Rc::new(Texture { native, source: source.receipt() });
+            let value = Rc::new(Texture {
+                native,
+                source: Rc::new(source.receipt()),
+            });
             self.textures.insert(source.id, value.clone());
             return Ok(value);
         }
-        let core = self.core.clone();
-        let device = &core.device;
-        let extent = vk::Extent3D {
-            width: source.desc.size.width as u32,
-            height: source.desc.size.height as u32,
-            depth: 1,
-        };
+        let receipt = Rc::new(source.receipt());
         let format = if source.desc.format == GpuTextureFormat::Rgba8Srgb {
             vk::Format::R8G8B8A8_SRGB
         } else {
             vk::Format::R8G8B8A8_UNORM
         };
-        core.image_extent(
+        let native = self.upload_image(
+            source.desc.size,
             format,
-            extent.width,
-            extent.height,
-            vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
+            source.pixels().ok_or("missing texture pixel storage")?,
+            Some(receipt.clone()),
         )?;
-        let image = ResourceGuard::new(
-            unsafe {
-                device.create_image(
-                    &vk::ImageCreateInfo::default()
-                        .image_type(vk::ImageType::TYPE_2D)
-                        .format(format)
-                        .extent(extent)
-                        .mip_levels(1)
-                        .array_layers(1)
-                        .samples(vk::SampleCountFlags::TYPE_1)
-                        .tiling(vk::ImageTiling::OPTIMAL)
-                        .usage(vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST)
-                        .sharing_mode(vk::SharingMode::EXCLUSIVE)
-                        .initial_layout(vk::ImageLayout::UNDEFINED),
-                    None,
-                )
-            }
-            .map_err(|error| format!("create graphics image: {error:?}"))?,
-            |value| unsafe { device.destroy_image(value, None) },
-        );
-        let requirements = unsafe { device.get_image_memory_requirements(*image.get()) };
-        let kind = core
-            .memory_type(requirements.memory_type_bits, vk::MemoryPropertyFlags::DEVICE_LOCAL)
-            .or_else(|_| core.memory_type(requirements.memory_type_bits, vk::MemoryPropertyFlags::empty()))?;
-        let memory = core.allocate(&vk::MemoryAllocateInfo::default().allocation_size(requirements.size).memory_type_index(kind))?;
-        unsafe { device.bind_image_memory(*image.get(), memory.raw, 0) }.map_err(|error| format!("bind graphics image: {error:?}"))?;
+        let value = Rc::new(Texture { native, source: receipt });
+        self.textures.insert(source.id, value.clone());
+        Ok(value)
+    }
+
+    /// Shared ordinary/generic initialization retains commands, source and destination before
+    /// submitting. A failed wait is terminal and keeps every referenced owner until idle/loss.
+    pub(crate) fn upload_image(&mut self, size: Size, format: vk::Format, pixels: &[u8], receipt: Option<Rc<TextureReceipt>>) -> Result<Rc<Image>, String> {
+        if self.unusable() {
+            return Err("Vulkan graphics executor is unavailable".into());
+        }
+        self.collect()?;
+        let core = self.core.clone();
+        let device = &core.device;
+        let native = Image::allocate(
+            &core,
+            size,
+            format,
+            vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
+            vk::ImageAspectFlags::COLOR,
+        )?;
+        let extent = vk::Extent3D {
+            width: size.width as u32,
+            height: size.height as u32,
+            depth: 1,
+        };
         let range = vk::ImageSubresourceRange::default()
             .aspect_mask(vk::ImageAspectFlags::COLOR)
             .level_count(1)
             .layer_count(1);
-        let view = ResourceGuard::new(
-            unsafe {
-                device.create_image_view(
-                    &vk::ImageViewCreateInfo::default()
-                        .image(*image.get())
-                        .view_type(vk::ImageViewType::TYPE_2D)
-                        .format(format)
-                        .subresource_range(range),
-                    None,
-                )
-            }
-            .map_err(|error| format!("create graphics image view: {error:?}"))?,
-            |view| unsafe { device.destroy_image_view(view, None) },
-        );
-        let native = Rc::new(Image::new(core.clone(), image.into_inner(), memory, view.into_inner()));
-        let value = Texture { native, source: source.receipt() };
-        let staging = Allocation::new(
-            &core,
-            source.pixels().ok_or("missing texture pixel storage")?,
-            vk::BufferUsageFlags::TRANSFER_SRC,
-        )?;
+        let staging = Allocation::new(&core, pixels, vk::BufferUsageFlags::TRANSFER_SRC)?;
         let command = unsafe {
             device.allocate_command_buffers(
                 &vk::CommandBufferAllocateInfo::default()
@@ -854,7 +894,7 @@ impl Executor {
                     .dst_access_mask(dst)
                     .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
                     .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-                    .image(value.native.raw)
+                    .image(native.raw)
                     .subresource_range(range)
             };
             device.cmd_pipeline_barrier(
@@ -874,7 +914,7 @@ impl Executor {
             let region = vk::BufferImageCopy::default()
                 .image_subresource(vk::ImageSubresourceLayers::default().aspect_mask(vk::ImageAspectFlags::COLOR).layer_count(1))
                 .image_extent(extent);
-            device.cmd_copy_buffer_to_image(*command.get(), staging.raw, value.native.raw, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &[region]);
+            device.cmd_copy_buffer_to_image(*command.get(), staging.raw, native.raw, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &[region]);
             device.cmd_pipeline_barrier(
                 *command.get(),
                 vk::PipelineStageFlags::TRANSFER,
@@ -893,8 +933,6 @@ impl Executor {
                 .end_command_buffer(*command.get())
                 .map_err(|error| format!("end image upload: {error:?}"))?;
         }
-        let id = value.source.id;
-        let value = Rc::new(value);
         self.transfers.try_reserve(1).map_err(|error| error.to_string())?;
         let command = command.into_inner();
         let fence = fence.into_inner();
@@ -904,7 +942,8 @@ impl Executor {
             command,
             fence,
             _staging: staging,
-            _texture: value.clone(),
+            _image: native.clone(),
+            _receipt: receipt,
         });
         // The aggregate is installed before submission: neither an error nor a failed wait can
         // release queued source/destination objects while native completion remains uncertain.
@@ -918,8 +957,7 @@ impl Executor {
             return Err(format!("complete graphics image upload: {error:?}"));
         }
         self.transfers.pop();
-        self.textures.insert(id, value.clone());
-        Ok(value)
+        Ok(native)
     }
 
     /// Host acquisition must also reject a failed executor, including frames without client blocks.
@@ -1305,4 +1343,4 @@ fn blend_op(value: GpuBlendOp) -> vk::BlendOp {
 
 #[cfg(test)]
 #[path = "generic_tests.rs"]
-mod tests;
+pub(crate) mod tests;

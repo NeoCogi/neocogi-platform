@@ -1,12 +1,14 @@
 //! Native acceptance uses the production platform constructor and real COM resource calls.
 //! Run explicitly with a usable SDL video driver; ordinary unit runs do not open OS windows.
 use super::*;
-use neocogi_com::{NcOutputWriter, INcStringComPtrExt};
+use neocogi_com::INcStringComPtrExt;
 use neocogi_com::ComBox;
+use neocogi_gfx_support::abi::RenderVertex;
 use neocogi_render_gpu::source::{Bytes, PipelineDesc};
 
 #[cfg(feature = "glow")]
 mod view_geometry;
+mod window_lifetime;
 
 /// SDL permits one process-wide video owner and event pump. Each fixture keeps
 /// this permit until all of its native windows, contexts and resources drop.
@@ -17,20 +19,8 @@ fn native_session() -> std::sync::MutexGuard<'static, ()> {
     NATIVE_SESSION.lock().expect("earlier native fixture panicked")
 }
 
-/// Shared ordered stream fixture can inject native reentry and release a resource during bulk copying.
+/// Shared ordered stream fixture can inject native reentry and release a resource during block access.
 struct Input {
-    /// Immutable atlas passed explicitly to every native render, including reentry probes.
-    atlas: ComPtr<IRgbaImageAbi>,
-    /// Atlas background and image quads share the same native coordinate convention.
-    vertices: Vec<RenderVertex>,
-    /// Validated pointer-free painter order.
-    batches: Vec<RenderBatch>,
-    /// Background image authenticated by the tested renderer.
-    background: ComPtr<ITextureAbi>,
-    /// Later overlay image proves that custom GPU work does not move to the end of the frame.
-    overlay: ComPtr<ITextureAbi>,
-    /// An optional foreign texture tests image ownership independently of scene ownership.
-    foreign_texture: RefCell<Option<ComPtr<ITextureAbi>>>,
     /// A foreign block injects a late canonical-provenance failure after an image was resolved.
     block: RefCell<ComBox<IRenderViewBlockAbi>>,
     /// A harmless empty stream supplies nested calls without creating a self-owning COM cycle.
@@ -54,19 +44,6 @@ impl IRenderStream for Empty {
     fn view(&self, _: u64, _: u32) -> Result<neocogi_com::WeakComBox<neocogi_render_core::abi::IRenderViewBlockAbi>, NcStatus> {
         Err(neocogi_com::NC_E_INVALID_ARG)
     }
-
-    /// Nested render must fail before consulting even this harmless source.
-    fn vertices(&self, _: u64, _: NcOutputWriter<'_, RenderVertex>) -> Result<u32, NcStatus> {
-        panic!("nested renderer read a stream")
-    }
-    /// No record read is allowed before the nested render gate rejects.
-    fn batches(&self, _: u64, _: NcOutputWriter<'_, RenderBatch>) -> Result<u32, NcStatus> {
-        panic!("nested renderer read batches")
-    }
-    /// The empty source has no texture capability.
-    fn texture(&self, _: u64, _: u32) -> Result<ComPtr<ITextureAbi>, NcStatus> {
-        Err(NC_E_INVALID_ARG)
-    }
 }
 #[com_object(interfaces(IRenderStream))]
 /// Foreign-style input uses real generated vtable calls into the native implementation.
@@ -77,18 +54,10 @@ struct Stream {
 impl IRenderStream for Stream {
     /// The overall batch index selects a sealed weak observer without a semantic item adapter.
     fn view(&self, _: u64, index: u32) -> Result<neocogi_com::WeakComBox<IRenderViewBlockAbi>, NcStatus> {
-        if index != 2 {
+        if index != 0 {
             return Err(NC_E_INVALID_ARG);
         }
-        Ok(self.input.block.borrow().downgrade())
-    }
-
-    /// Reentry and resource destruction happen while the renderer owns detached preparation storage.
-    fn vertices(&self, _: u64, mut output: NcOutputWriter<'_, RenderVertex>) -> Result<u32, NcStatus> {
-        assert_eq!(
-            self.input.renderer.render(info(), self.input.atlas.as_com_ref(), self.input.empty.as_com_ref()),
-            Err(RENDER_E_BUSY)
-        );
+        assert_eq!(self.input.renderer.render(info(), self.input.empty.as_com_ref()), Err(RENDER_E_BUSY));
         let factory: ComPtr<ITextureFactoryAbi> = self.input.renderer.query()?;
         assert_eq!(
             factory
@@ -113,21 +82,7 @@ impl IRenderStream for Stream {
             assert_eq!(self.input.device.upgrade().unwrap().retired.borrow().len(), 1);
         }
         self.input.reentries.set(self.input.reentries.get() + 1);
-        output.extend_from_slice(&self.input.vertices)?;
-        Ok(self.input.vertices.len() as u32)
-    }
-    /// One bulk read supplies complete ordering metadata.
-    fn batches(&self, _: u64, mut output: NcOutputWriter<'_, RenderBatch>) -> Result<u32, NcStatus> {
-        output.extend_from_slice(&self.input.batches)?;
-        Ok(self.input.batches.len() as u32)
-    }
-    /// Overall batch indices select their exact image rather than using a separate untyped resource list.
-    fn texture(&self, _: u64, index: u32) -> Result<ComPtr<ITextureAbi>, NcStatus> {
-        match index {
-            1 => Ok(self.input.foreign_texture.borrow().as_ref().unwrap_or(&self.input.background).clone()),
-            3 => Ok(self.input.overlay.clone()),
-            _ => Err(NC_E_INVALID_ARG),
-        }
+        Ok(self.input.block.borrow().downgrade())
     }
 }
 /// Small physical viewport keeps this GPU lifetime/order gate fast on software drivers too.
@@ -136,10 +91,9 @@ const SIZE: Size = Size { width: 64, height: 64 };
 fn info() -> RenderInfo {
     RenderInfo {
         size: SIZE,
-        clear: 0xff000000,
+        clear: 0xff00ff00,
         invocation: 1,
-        vertex_count: 14,
-        batch_count: 4,
+        block_count: 1,
     }
 }
 
@@ -179,9 +133,7 @@ fn graphics(resources: &ComPtr<IRenderResourcesAbi>, broker: &ComPtr<IRenderView
 fn native_order_ownership_reentry_and_final_release() {
     let _session = native_session();
     let platform = PlatformObject::default();
-    let assets = neocogi_demo_assets::load_bundle(crate::host_runtime()).unwrap();
-    let atlas = assets.image().unwrap();
-    let native = platform.window("COM GPU acceptance", SIZE, atlas.as_com_ref()).unwrap();
+    let native = platform.window("COM GPU acceptance", SIZE).unwrap();
     let device = Rc::downgrade(&native.device);
     let unknown = WindowObject::from_value(native);
     {
@@ -211,39 +163,23 @@ fn native_order_ownership_reentry_and_final_release() {
     let clients: ComPtr<IRenderClientFactoryAbi> = unknown.query().unwrap();
     let controller = clients.create_client(RenderClientLimits::default()).unwrap();
     let resources = controller.resources().unwrap();
-    let broker = unknown.query::<IPlatformWindowAbi>().unwrap().graphics_host().unwrap().recording_broker().unwrap();
+    let broker = unknown
+        .query::<IPlatformWindowAbi>()
+        .unwrap()
+        .graphics_host()
+        .unwrap()
+        .recording_broker()
+        .unwrap();
     let root = Rect { x: 0, y: 0, width: 64, height: 64 };
     let block = graphics(&resources, &broker, RenderViewRoot { client: root, target: root });
     let background = factory
         .create_texture(Size { width: 1, height: 1 }, NcCopyFromBufferOffset::new(0, &[0, 255, 0, 255]))
         .unwrap();
-    let overlay = factory
-        .create_texture(Size { width: 1, height: 1 }, NcCopyFromBufferOffset::new(0, &[255, 0, 0, 255]))
-        .unwrap();
     let spare = factory
         .create_texture(Size { width: 1, height: 1 }, NcCopyFromBufferOffset::new(0, &[0; 4]))
         .unwrap();
     let spare_key = identity(&spare).unwrap();
-    let bounds = Rect { x: 0, y: 0, width: 64, height: 64 };
-    // An opaque atlas backdrop must remain behind the images even when no custom item has
-    // flushed the atlas batch yet. The previous texture/item/texture fixture missed this boundary.
-    let backdrop = quad(bounds).map(|vertex| RenderVertex { u: 0., v: 0., rgba: 0xffff0000, ..vertex });
     let input = Rc::new(Input {
-        atlas: atlas.clone(),
-        vertices: [backdrop[0], backdrop[1], backdrop[2], backdrop[0], backdrop[2], backdrop[3]]
-            .into_iter()
-            .chain(quad(bounds))
-            .chain(quad(Rect { x: 28, y: 28, width: 8, height: 8 }))
-            .collect(),
-        batches: vec![
-            RenderBatch::Atlas { first: 0, count: 6 },
-            RenderBatch::Texture { first: 6 },
-            RenderBatch::View,
-            RenderBatch::Texture { first: 10 },
-        ],
-        background: background.clone(),
-        foreign_texture: RefCell::new(None),
-        overlay,
         block: RefCell::new(block),
         empty: Empty::from_value(Empty).query().unwrap(),
         renderer: renderer.clone(),
@@ -253,63 +189,49 @@ fn native_order_ownership_reentry_and_final_release() {
         reentries: Cell::new(0),
     });
     let stream: ComPtr<IRenderStreamAbi> = Stream::from_value(Stream { input: input.clone() }).query().unwrap();
-    renderer.render(info(), atlas.as_com_ref(), stream.as_com_ref()).unwrap();
+    renderer.render(info(), stream.as_com_ref()).unwrap();
     assert_eq!(input.reentries.get(), 1);
     {
         let owner = device.upgrade().unwrap();
         assert!(owner.retired.borrow().is_empty());
         assert!(!owner.textures.borrow().contains_key(&spare_key));
-        assert!(owner.render.borrow().as_ref().unwrap().prepared.batches().is_empty());
+        assert!(owner.render.borrow().as_ref().unwrap().prepared.blocks().is_empty());
         #[cfg(feature = "glow")]
         {
             let mut access = owner.access().unwrap();
             let pixels = access.state().gpu.last_pixels();
-            // Readback uses GL's bottom-up coordinates: center overlay is red, outside mesh is green.
-            assert_eq!(&pixels[(32 * 64 + 32) * 4..][..4], &[255, 0, 0, 255]);
+            assert_eq!(&pixels[(32 * 64 + 32) * 4..][..4], &[0, 0, 255, 255]);
             assert_eq!(&pixels[(2 * 64 + 2) * 4..][..4], &[0, 255, 0, 255]);
-            let mesh_pixel = &pixels[(20 * 64 + 32) * 4..][..4];
-            assert_ne!(mesh_pixel, &[0, 255, 0, 255]);
-            assert_ne!(mesh_pixel, &[255, 0, 0, 255]);
         }
     }
-    // A structurally valid, shallow atlas exceeds every tested device's 2D texture width while
-    // remaining below the portable byte limit. Rejection must leave the previous GPU atlas usable.
-    let mut oversized = neocogi_demo_assets::bundle_data().unwrap();
-    oversized.tables.size = Size { width: 131072, height: 1 };
-    oversized.pixels.to_mut().fill(255);
-    for glyph in oversized.tables.glyphs.to_mut() {
-        glyph.rect = Rect { x: 0, y: 0, width: 1, height: 1 };
-    }
-    for icon in oversized.tables.icons.to_mut() {
-        icon.rect = Rect { x: 0, y: 0, width: 1, height: 1 };
-    }
-    let oversized = oversized.into_revision(assets.as_com_ref()).unwrap();
-    let oversized_atlas = oversized.image().unwrap();
-    assert_eq!(renderer.prepare_atlas(oversized_atlas.as_com_ref()), Err(RENDER_E_BACKEND));
-    assert_eq!(
-        device.upgrade().unwrap().render.borrow().as_ref().unwrap().atlas.as_raw().object,
-        atlas.as_raw().object
-    );
-    renderer.render(info(), atlas.as_com_ref(), stream.as_com_ref()).unwrap();
     // The foreign scene has a valid ABI but belongs to a different native window/context.
-    let foreign = platform.window("COM foreign resource owner", SIZE, atlas.as_com_ref()).unwrap();
+    let foreign = platform.window("COM foreign resource owner", SIZE).unwrap();
     let foreign_device = Rc::downgrade(&foreign.device);
     let foreign = WindowObject::from_value(foreign);
     let foreign_clients: ComPtr<IRenderClientFactoryAbi> = foreign.query().unwrap();
     let foreign_controller = foreign_clients.create_client(RenderClientLimits::default()).unwrap();
     let foreign_resources = foreign_controller.resources().unwrap();
-    let foreign_broker = foreign.query::<IPlatformWindowAbi>().unwrap().graphics_host().unwrap().recording_broker().unwrap();
+    let foreign_broker = foreign
+        .query::<IPlatformWindowAbi>()
+        .unwrap()
+        .graphics_host()
+        .unwrap()
+        .recording_broker()
+        .unwrap();
     let foreign_block = graphics(&foreign_resources, &foreign_broker, RenderViewRoot { client: root, target: root });
     let foreign_factory: ComPtr<ITextureFactoryAbi> = foreign.query().unwrap();
     let foreign_texture = foreign_factory
         .create_texture(Size { width: 1, height: 1 }, NcCopyFromBufferOffset::new(0, &[0; 4]))
         .unwrap();
-    *input.foreign_texture.borrow_mut() = Some(foreign_texture);
-    assert_eq!(renderer.render(info(), atlas.as_com_ref(), stream.as_com_ref()), Err(RENDER_E_OWNER));
-    let foreign_texture = input.foreign_texture.borrow_mut().take();
-    drop(foreign_texture);
+    let graphics_host = unknown.query::<IPlatformWindowAbi>().unwrap().graphics_host().unwrap();
+    let ui_domain = graphics_host.create_ui_client(Default::default()).unwrap();
+    assert!(matches!(
+        graphics_host.import_ui_texture(ui_domain.resources().unwrap().as_com_ref(), foreign_texture.as_com_ref()),
+        Err(RENDER_E_OWNER)
+    ));
+    drop((ui_domain, graphics_host, foreign_texture));
     let original = input.block.replace(foreign_block);
-    assert_eq!(renderer.render(info(), atlas.as_com_ref(), stream.as_com_ref()), Err(RENDER_E_OWNER));
+    assert_eq!(renderer.render(info(), stream.as_com_ref()), Err(RENDER_E_OWNER));
     assert!(
         renderer
             .query::<IRenderDiagnosticsAbi>()
@@ -322,16 +244,16 @@ fn native_order_ownership_reentry_and_final_release() {
     );
     drop(input.block.replace(original));
     // A failed frame must not poison the next explicit native submission.
-    renderer.render(info(), atlas.as_com_ref(), stream.as_com_ref()).unwrap();
+    renderer.render(info(), stream.as_com_ref()).unwrap();
     // Replaying sealed data and replacing it with another immutable block must keep ordering
     // and native lifetime valid without retaining any public shader/pipeline owner.
     for _ in 0..4 {
-        renderer.render(info(), atlas.as_com_ref(), stream.as_com_ref()).unwrap();
+        renderer.render(info(), stream.as_com_ref()).unwrap();
     }
     let replacement = graphics(&resources, &broker, RenderViewRoot { client: root, target: root });
     drop(input.block.replace(replacement));
     for _ in 0..3 {
-        renderer.render(info(), atlas.as_com_ref(), stream.as_com_ref()).unwrap();
+        renderer.render(info(), stream.as_com_ref()).unwrap();
     }
     drop((foreign_resources, foreign_controller, foreign_clients, foreign_broker, foreign_factory, foreign));
     assert!(foreign_device.upgrade().is_none());

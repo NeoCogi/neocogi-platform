@@ -702,21 +702,12 @@ fn import_native_image(
     );
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
     let id = neocogi_render_core::TextureId::for_upload(2, 2, &[0; 16]).unwrap();
-    // The unused legacy UI bind group disappears with the UI executor cutover; import uses
-    // only the actual image and view. No mock GPU resource reaches the tested sampling path.
-    let layout = native.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: None, entries: &[] });
-    let bind_group = native.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: None,
-        layout: &layout,
-        entries: &[],
-    });
     images.insert(
         id,
         crate::GpuTexture {
             _texture: texture,
             view,
             render_target: false,
-            bind_group,
         },
     );
     let lease: ComPtr<ITextureAbi> = ImportedImage::from_value(ImportedImage(Size { width: 2, height: 2 })).query().unwrap();
@@ -728,13 +719,6 @@ fn import_native_image(
 #[ignore = "requires a native WGPU adapter with native allocation counters"]
 fn imported_preparation_flushes_initialization_before_refunding_native_storage() {
     let (native, queue) = device();
-    let (_window, _texture, layout, sampler) = WgpuRenderer::create_pipeline(&native, wgpu::TextureFormat::Rgba8Unorm);
-    let uniforms = native.create_buffer(&wgpu::BufferDescriptor {
-        label: None,
-        size: 16,
-        usage: wgpu::BufferUsages::UNIFORM,
-        mapped_at_creation: false,
-    });
     let mut executor = crate::generic::Executor::new(&native, &queue);
     let gpu = GpuDevice::new();
     let controller = gpu.create_ui_client(RenderClientLimits { live_bytes: 8, ..Default::default() }, None).unwrap();
@@ -743,7 +727,7 @@ fn imported_preparation_flushes_initialization_before_refunding_native_storage()
     let baseline = native.get_internal_counters().hal.texture_memory.read();
     for value in 0..8 {
         let pixels = [value, 0, 0, 255];
-        let image = WgpuRenderer::create_gpu_texture(&native, &queue, &layout, &sampler, &uniforms, 1, 1, Some(&pixels)).unwrap();
+        let image = WgpuRenderer::create_gpu_texture(&native, &queue, 1, 1, Some(&pixels)).unwrap();
         assert!(
             native.get_internal_counters().hal.texture_memory.read() > baseline,
             "this native regression requires observable image allocation counters"

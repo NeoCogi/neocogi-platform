@@ -6,16 +6,15 @@ use web_sys::HtmlCanvasElement;
 impl PlatformObject {
     /// Allocates an independent canvas for each COM window; no two devices accidentally share
     /// one WebGL context. Applications style canvas elements using ordinary page CSS.
-    pub(super) fn window(&self, title: &str, size: Size, atlas: ComRef<'_, IRgbaImageAbi>) -> Result<WindowObject, NcStatus> {
-        let pixels = AtlasPixels::read(atlas)?;
-        self.canvas(title, size, atlas.try_add_ref()?, pixels).map_err(|error| {
+    pub(super) fn window(&self, title: &str, size: Size) -> Result<WindowObject, NcStatus> {
+        self.canvas(title, size).map_err(|error| {
             *self.diagnostic.borrow_mut() = error;
             PLATFORM_E_BACKEND
         })
     }
 
     /// Owns partial DOM construction so listener or GPU failures leave no orphan canvas in the page.
-    fn canvas(&self, title: &str, size: Size, atlas: ComPtr<IRgbaImageAbi>, pixels: AtlasPixels) -> Result<WindowObject, String> {
+    fn canvas(&self, title: &str, size: Size) -> Result<WindowObject, String> {
         let document = web_sys::window().and_then(|window| window.document()).ok_or("browser document unavailable")?;
         let canvas = document
             .create_element("canvas")
@@ -30,15 +29,11 @@ impl PlatformObject {
         let mut pending = CanvasConstruction { canvas, committed: false };
         resize(&pending.canvas);
         let input = input::BrowserInputHost::new(&pending.canvas)?;
-        let gpu = gpu::Gpu::from_canvas(pending.canvas.clone(), pixels.image())?;
+        let gpu = gpu::Gpu::from_canvas(pending.canvas.clone())?;
         let window = gpu.window();
         let device = Rc::new(Device {
             logical: neocogi_render_gpu::GpuDevice::new(),
-            render: RefCell::new(Some(RenderState {
-                gpu,
-                atlas,
-                prepared: Prepared::default(),
-            })),
+            render: RefCell::new(Some(RenderState { gpu, prepared: Prepared::default() })),
             textures: RefCell::default(),
             retired: RefCell::default(),
             diagnostic: RefCell::default(),

@@ -53,27 +53,9 @@
 //! Public renderer integration types.
 
 use super::texture::TextureError;
-use crate::{Color, ImageSource, TextureId};
-pub use neocogi_render_core::abi::RenderVertex as Vertex;
-use rs_math3d::{Dimensioni, Rect};
+use crate::{Color, TextureId};
+use rs_math3d::Dimensioni;
 use std::{error::Error, fmt};
-
-/// Copied geometry for one owned COM render item at an ordered drawing boundary.
-#[derive(Copy, Clone, Debug)]
-pub struct RenderItemArgs {
-    /// Dimensions of the active backend frame.
-    pub dimensions: Dimensioni,
-    /// Full widget content allocation, independent of its visible region.
-    /// Fixed-material mesh items fit to `view`; other item owners define their mapping explicitly.
-    pub content_area: Rect<i32>,
-    /// Final visible region after operation, content-area, and viewport clipping.
-    ///
-    /// This value is authoritative; item implementations do not need to intersect it with `content_area`
-    /// again. Fixed-material mesh renderers use this same rectangle for viewport and scissor;
-    /// the application supplies a projection whose aspect matches its visible client area.
-    pub view: Rect<i32>,
-}
-
 /// Error returned when constructing frame metadata.
 #[derive(Copy, Clone, Debug)]
 pub enum FrameInfoError {
@@ -174,174 +156,33 @@ impl From<&str> for FrameError {
     }
 }
 
-/// Failure to upload and publish a replacement UI atlas in one renderer backend.
-///
-/// Theme switching uses a separate error from ordinary renderer textures because the atlas is a
-/// renderer-wide resource: a failed replacement must leave the previous atlas fully usable. The
-/// backend-specific diagnostic is captured as owned text at this concrete public boundary, so
-/// callers never need type erasure or backend-dependent generic error plumbing.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct AtlasUploadError {
-    /// Stable display representation of the backend allocation, upload, or binding failure.
-    message: String,
-}
-
-impl AtlasUploadError {
-    /// Creates an atlas-upload error from one displayable backend diagnostic.
-    pub fn new(message: impl Into<String>) -> Self {
-        // The originating driver value is often temporary, so retain the complete diagnostic as
-        // an owned string while preserving a dedicated, matchable atlas error type.
-        Self { message: message.into() }
-    }
-}
-
-impl fmt::Display for AtlasUploadError {
-    /// Writes the backend diagnostic without adding an unrelated texture classification.
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // The type itself identifies the operation; the retained message preserves backend detail.
-        self.message.fmt(formatter)
-    }
-}
-
-impl Error for AtlasUploadError {}
-
-impl From<String> for AtlasUploadError {
-    /// Preserves an owned backend diagnostic without another formatting allocation.
-    fn from(message: String) -> Self {
-        Self::new(message)
-    }
-}
-
-impl From<&str> for AtlasUploadError {
-    /// Copies a static or borrowed diagnostic into the independently owned public error.
-    fn from(message: &str) -> Self {
-        Self::new(message)
-    }
-}
-
-/// Active-frame geometry submission interface implemented by every backend frame.
+/// One exclusively borrowed native target. Only explicit finish submits or presents.
+/// Dropping an unfinished frame abandons its pending CPU work. Immediate APIs may already
+/// have executed draws; failure is not a GPU rollback guarantee.
 pub trait RendererFrame {
-    /// Completes and consumes this frame, reporting command, submission, or presentation failure.
-    ///
-    /// Backends may latch an error from an earlier infallible command and return it here. Dropping
-    /// an unfinished frame abandons pending work; destructors must not submit or present. Immediate
-    /// APIs can already have executed work, so failure/abandonment does not promise GPU rollback.
+    /// Consume this frame and report command, submission or presentation failure.
     fn finish(self) -> Result<(), FrameError>;
-
-    /// Appends one atlas-backed quad.
-    fn push_quad(&mut self, vertices: [Vertex; 4]);
-    /// Appends one atlas-backed triangle.
-    fn push_triangle(&mut self, vertices: [Vertex; 3]);
-    /// Appends a contiguous sequence of complete atlas-backed triangles.
-    ///
-    /// Buffered backends should override this method so an already prepared range can be copied
-    /// once. The default preserves simpler indexed or diagnostic backends without forcing them to
-    /// duplicate batching policy.
-    fn push_triangles(&mut self, vertices: &[Vertex]) {
-        // This native-only contract never accepts an incomplete primitive: silently ignoring a
-        // remainder would hide corruption at the final renderer boundary.
-        assert!(vertices.len().is_multiple_of(3), "atlas vertex range must contain complete triangles");
-        for triangle in vertices.as_chunks::<3>().0 {
-            self.push_triangle(*triangle);
-        }
-    }
-    /// Closes the current atlas batch at an ordering boundary.
-    fn flush(&mut self);
-    /// Draws one pre-clipped external-texture quad.
-    fn draw_texture(&mut self, id: TextureId, vertices: [Vertex; 4]);
 }
 
-/// Device-local rendering interface implemented inside the selected renderer plugin.
-///
-/// Backends and their frames execute on the device-owning thread. This trait deliberately has no
-/// `Send` or `Sync` bound.
-///
-/// The renderer plugin consumes final GFX stream geometry and calls this interface:
-///
-/// ```
-/// use neocogi_render_core::{
-///     ImageSource, Color, TextureId,
-///     FrameError, FrameInfo, RendererBackend, RendererFrame, TextureError, Vertex,
-/// };
-///
-/// struct Backend {
-/// }
-///
-/// #[must_use]
-/// struct BackendFrame<'a>(&'a mut Backend);
-///
-/// impl RendererFrame for BackendFrame<'_> {
-///     /// Completes this backend fixture; it owns no fallible native submission.
-///     fn finish(self) -> Result<(), neocogi_render_core::FrameError> { Ok(()) }
-///
-///     fn push_quad(&mut self, _vertices: [Vertex; 4]) {}
-///     fn push_triangle(&mut self, _vertices: [Vertex; 3]) {}
-///     fn flush(&mut self) {}
-///     fn draw_texture(&mut self, _id: TextureId, _vertices: [Vertex; 4]) {}
-/// }
-///
-/// impl RendererBackend for Backend {
-///     type Frame<'a> = BackendFrame<'a>;
-///
-///     fn replace_atlas(&mut self, atlas: ImageSource<'_>) -> Result<(), neocogi_render_core::AtlasUploadError> {
-///         atlas.validate().map_err(|error| neocogi_render_core::AtlasUploadError::new(error.to_string()))?;
-///         Ok(())
-///     }
-///
-///     fn frame(&mut self, _info: FrameInfo) -> Result<Self::Frame<'_>, FrameError> {
-///         Ok(BackendFrame(self))
-///     }
-///
-///     fn create_texture(
-///         &mut self,
-///         _id: TextureId,
-///         _pixels: &[u8],
-///     ) -> Result<(), TextureError> {
-///         Ok(())
-///     }
-///
-///     fn destroy_texture(&mut self, _id: TextureId) {}
-/// }
-/// ```
-///
-/// An active frame owns the backend's exclusive mutable borrow, so safe Rust cannot acquire a
-/// second frame until the first is dropped. The diagnostic-matched
-/// `tests/ui/backend_frame_acquire_twice.rs` contract test verifies that rejection beside a passing
-/// single-acquisition fixture.
+/// Concrete current-thread backend. Generic command realization is an inherent native operation;
+/// it cannot be exposed as a client callback or recovered through a public resource interface.
 pub trait RendererBackend: 'static {
-    /// Exclusively borrowed active frame produced by this backend.
+    /// Exclusive target borrow prevents concurrent frame acquisition in safe Rust.
     type Frame<'a>: RendererFrame
     where
         Self: 'a;
-
-    /// Uploads and publishes one replacement UI atlas transactionally.
-    ///
-    /// Implementations must create and populate every replacement GPU resource before discarding
-    /// the currently active texture. An error leaves later frames using the previous GPU image.
-    /// The borrowed pixels are not retained; this operation is called only between frames.
-    fn replace_atlas(&mut self, atlas: ImageSource<'_>) -> Result<(), AtlasUploadError>;
-    /// Acquires and initializes one backend frame.
+    /// Acquire and initialize the native presentation target.
     fn frame(&mut self, info: FrameInfo) -> Result<Self::Frame<'_>, FrameError>;
-    /// Allocates an unpublished offscreen color image without uploading CPU pixels.
-    /// The same texture destruction path owns it after a successful allocation.
+    /// Allocate a fresh unpublished offscreen output without CPU zero-fill.
     fn create_render_texture(&mut self, _id: TextureId) -> Result<(), TextureError> {
         Err(TextureError::backend("offscreen rendering is unavailable on this backend"))
     }
-    /// Renders UI into an unpublished image using a separate, already resident atlas.
-    /// Neither the window target nor its atlas binding may change. Output row zero
-    /// corresponds to texture v=0; callers publish the image only after finish succeeds.
-    fn texture_frame(&mut self, _info: FrameInfo, _output: TextureId, _atlas: TextureId) -> Result<Self::Frame<'_>, FrameError> {
+    /// Acquire an offscreen output without presentation. The host admits private UI blocks only.
+    fn texture_frame(&mut self, _info: FrameInfo, _output: TextureId) -> Result<Self::Frame<'_>, FrameError> {
         Err(FrameError::new("offscreen rendering is unavailable on this backend"))
     }
-    /// Creates a texture owned by the backend.
-    ///
-    /// The caller validates [`TextureId::size`] and RGBA byte length before calling this method.
-    /// Backends should return [`TextureError::backend`] without retaining `id` when GPU creation
-    /// or upload fails. Image validation and identifier allocation are owned by the renderer plugin, so a
-    /// backend does not manufacture those higher-level error classifications.
-    /// Dimensions are carried only by `id`, preventing a backend from observing contradictory
-    /// handle and argument sizes.
+    /// Upload exact validated immutable RGBA bytes for the supplied native image key.
     fn create_texture(&mut self, id: TextureId, pixels: &[u8]) -> Result<(), TextureError>;
-    /// Destroys a previously created texture.
+    /// Retire an image key after native frames have released their references.
     fn destroy_texture(&mut self, id: TextureId);
 }

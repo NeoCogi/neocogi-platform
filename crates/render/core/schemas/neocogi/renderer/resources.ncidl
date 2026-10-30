@@ -26,7 +26,7 @@ interface ITextureFactory {
 
 #[version(1)]
 /// Independent two-dimensional rendering session on its creating renderer's device.
-/// Query IRenderer to prepare its private atlas and submit frames at the selected size.
+/// Query IRenderer to submit private UI blocks at the selected size.
 interface IRenderSurface {
     /// Returns the requested physical size; a zero component suspends rendering.
     fn size(&self) -> Result<Size>;
@@ -38,14 +38,14 @@ interface IRenderSurface {
     fn completed_image(&self) -> Result<ComPtr<ITexture>>;
 }
 
-#[version(1)]
+#[version(2)]
 /// Creates independent opaque preview surfaces without exposing native GPU handles.
 interface IRenderSurfaceFactory {
-    /// Creates a private atlas binding and a surface on the same device as the factory.
+    /// Creates a surface on the same device as the factory; GFX owns its private UI resources.
     /// Rendering never presents or clears the window. Output uses top-left texture coordinates
     /// and an opaque clear color; client graphics blocks are unsupported.
     /// Backends without this capability report an explicit failure.
-    fn create_surface(&self, size: Size, atlas: &IRgbaImage) -> Result<ComPtr<IRenderSurface>>;
+    fn create_surface(&self, size: Size) -> Result<ComPtr<IRenderSurface>>;
 }
 
 #[version(1)]

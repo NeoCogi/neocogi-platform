@@ -12,22 +12,6 @@ impl IRenderStream for ViewStream {
     fn view(&self, _: u64, index: u32) -> Result<neocogi_com::WeakComBox<IRenderViewBlockAbi>, NcStatus> {
         self.blocks.get(index as usize).map(ComBox::downgrade).ok_or(NC_E_INVALID_ARG)
     }
-
-    /// The graphics-only operation has no ordinary UI geometry.
-    fn vertices(&self, _: u64, _: NcOutputWriter<'_, RenderVertex>) -> Result<u32, NcStatus> {
-        Ok(0)
-    }
-    /// Preserve the wide content rectangle and its independently contained visible clip.
-    fn batches(&self, _: u64, mut output: NcOutputWriter<'_, RenderBatch>) -> Result<u32, NcStatus> {
-        for _ in &self.blocks {
-            output.push(RenderBatch::View)?;
-        }
-        Ok(self.blocks.len() as u32)
-    }
-    /// There are no texture batches in this stream.
-    fn texture(&self, _: u64, _: u32) -> Result<ComPtr<ITextureAbi>, NcStatus> {
-        Err(NC_E_INVALID_ARG)
-    }
 }
 
 /// Accepted wide x/y edges draw pixels and leave the following ordinary frame usable.
@@ -37,23 +21,26 @@ impl IRenderStream for ViewStream {
 fn wide_view_edges_draw_and_recover_through_generated_com() {
     let _session = native_session();
     let size = Size { width: 32, height: 32 };
-    let assets = neocogi_demo_assets::load_bundle(crate::host_runtime()).unwrap();
-    let atlas = assets.image().unwrap();
-    let native = PlatformObject::default().window("wide graphics arithmetic", size, atlas.as_com_ref()).unwrap();
+    let native = PlatformObject::default().window("wide graphics arithmetic", size).unwrap();
     let device = Rc::downgrade(&native.device);
     let window = WindowObject::from_value(native);
     let renderer: ComPtr<IRendererAbi> = window.query().unwrap();
     let clients: ComPtr<IRenderClientFactoryAbi> = window.query().unwrap();
     let controller = clients.create_client(RenderClientLimits::default()).unwrap();
     let resources = controller.resources().unwrap();
-    let broker = window.query::<IPlatformWindowAbi>().unwrap().graphics_host().unwrap().recording_broker().unwrap();
+    let broker = window
+        .query::<IPlatformWindowAbi>()
+        .unwrap()
+        .graphics_host()
+        .unwrap()
+        .recording_broker()
+        .unwrap();
     let bounds = Rect { x: 0, y: 0, width: 32, height: 32 };
     let info = RenderInfo {
         size,
         clear: 0xff000000,
         invocation: 1,
-        vertex_count: 0,
-        batch_count: 1,
+        block_count: 1,
     };
     // Capture only after COM render returns and has released its exclusive device access.
     let draw = |rect: Rect, clip: Rect| {
@@ -65,7 +52,7 @@ fn wide_view_edges_draw_and_recover_through_generated_com() {
         };
         let block = graphics(&resources, &broker, RenderViewRoot { client, target: clip });
         let stream: ComPtr<IRenderStreamAbi> = ViewStream::from_value(ViewStream { blocks: vec![block] }).query().unwrap();
-        renderer.render(info, atlas.as_com_ref(), stream.as_com_ref()).unwrap();
+        renderer.render(info, stream.as_com_ref()).unwrap();
         let owner = device.upgrade().unwrap();
         let mut access = owner.access().unwrap();
         let pixels = access.state().gpu.last_pixels().to_vec();

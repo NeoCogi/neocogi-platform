@@ -149,52 +149,14 @@ impl Target {
         );
         let pixels = Allocation::new(&core, &vec![0; (width * height * 4) as usize], vk::BufferUsageFlags::TRANSFER_DST).unwrap();
         let depths = Allocation::new(&core, &vec![0; (width * height * 4) as usize], vk::BufferUsageFlags::TRANSFER_DST).unwrap();
-        let attachments = [
-            vk::AttachmentDescription::default()
-                .format(signature.color)
-                .samples(vk::SampleCountFlags::TYPE_1)
-                .load_op(vk::AttachmentLoadOp::CLEAR)
-                .store_op(vk::AttachmentStoreOp::STORE)
-                .initial_layout(vk::ImageLayout::UNDEFINED)
-                .final_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL),
-            vk::AttachmentDescription::default()
-                .format(signature.depth.unwrap())
-                .samples(vk::SampleCountFlags::TYPE_1)
-                .load_op(vk::AttachmentLoadOp::CLEAR)
-                .store_op(vk::AttachmentStoreOp::STORE)
-                .initial_layout(vk::ImageLayout::UNDEFINED)
-                .final_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL),
-        ];
-        let colors = [vk::AttachmentReference::default()
-            .attachment(0)
-            .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)];
-        let depth_ref = vk::AttachmentReference::default()
-            .attachment(1)
-            .layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
-        let subpass = [vk::SubpassDescription::default()
-            .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
-            .color_attachments(&colors)
-            .depth_stencil_attachment(&depth_ref)];
-        let dependencies = [vk::SubpassDependency::default()
-            .src_subpass(0)
-            .dst_subpass(vk::SUBPASS_EXTERNAL)
-            .src_stage_mask(
-                vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT | vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS | vk::PipelineStageFlags::LATE_FRAGMENT_TESTS,
-            )
-            .dst_stage_mask(vk::PipelineStageFlags::TRANSFER)
-            .src_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE)
-            .dst_access_mask(vk::AccessFlags::TRANSFER_READ)];
         unsafe {
-            let pass = core
-                .device
-                .create_render_pass(
-                    &vk::RenderPassCreateInfo::default()
-                        .attachments(&attachments)
-                        .subpasses(&subpass)
-                        .dependencies(&dependencies),
-                    None,
-                )
-                .unwrap();
+            let pass = crate::pass::create(
+                &core.device,
+                signature,
+                vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+                Some(vk::ImageLayout::TRANSFER_SRC_OPTIMAL),
+            )
+            .unwrap();
             let views = [color.view, depth.view];
             let framebuffer = core
                 .device
@@ -974,14 +936,160 @@ fn import_native_image(
                 extent: vk::Extent2D { width: 2, height: 2 },
                 layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
             },
-            descriptor: crate::TextureDescriptor {
-                set: vk::DescriptorSet::null(),
-                pool: vk::DescriptorPool::null(),
-                generation: 0,
-            },
             framebuffer: None,
         },
     );
     let lease: ComPtr<ITextureAbi> = ImportedImage::from_value(ImportedImage).query().unwrap();
     gpu.import_ui_texture(resources.as_com_ref(), id, lease).unwrap()
+}
+
+#[path = "../../gpu/tests/support/sampled.rs"]
+mod sampled;
+
+/// Production private-output pass and fence submission render initialized generic UI pixels.
+#[test]
+#[ignore = "requires a native Vulkan device"]
+fn private_output_uses_production_pass_upload_and_completion_paths() {
+    let core = core();
+    let mut executor = Executor::new(core.clone()).unwrap();
+    let mut output_session = crate::offscreen::Offscreen::new(&core).unwrap();
+    let size = Size { width: 2, height: 2 };
+    let native = super::Image::allocate(
+        &core,
+        size,
+        vk::Format::R8G8B8A8_UNORM,
+        vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_SRC,
+        vk::ImageAspectFlags::COLOR,
+    )
+    .unwrap();
+    let views = [native.view];
+    let framebuffer = unsafe {
+        core.device.create_framebuffer(
+            &vk::FramebufferCreateInfo::default()
+                .render_pass(output_session.render_pass)
+                .attachments(&views)
+                .width(2)
+                .height(2)
+                .layers(1),
+            None,
+        )
+    }
+    .unwrap();
+    let output = crate::VulkanTexture {
+        image: crate::ImageResource {
+            native: Some(native.clone()),
+            extent: vk::Extent2D { width: 2, height: 2 },
+            layout: vk::ImageLayout::UNDEFINED,
+        },
+        framebuffer: Some(framebuffer),
+    };
+    let gpu = GpuDevice::new();
+    let domain = gpu.create_ui_client(Default::default(), None).unwrap();
+    let resources = domain.resources().unwrap();
+    let colors = [255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 0, 255];
+    let owner = sampled::block(&gpu, &resources, Rect { x: 0, y: 0, width: 2, height: 2 }, size, &colors);
+    let prepared = executor
+        .prepare(
+            &gpu.block_snapshot(owner.as_com_ref()).unwrap(),
+            output_session.render_pass,
+            Signature {
+                color: vk::Format::R8G8B8A8_UNORM,
+                depth: None,
+            },
+            &HashMap::new(),
+        )
+        .unwrap();
+    drop(owner);
+    output_session
+        .render(
+            &executor,
+            &output,
+            vk::ClearValue {
+                color: vk::ClearColorValue { float32: [0., 0., 0., 1.] },
+            },
+            2,
+            2,
+            &[prepared],
+        )
+        .unwrap();
+    assert!(!output_session.unusable());
+    assert_eq!(readback(&core, &native, size), colors);
+    core.wait_idle();
+    unsafe {
+        core.device.destroy_framebuffer(framebuffer, None);
+    }
+}
+
+/// Native fixture readback preserves a completed image's shader-readable layout for later sampling.
+pub(crate) fn readback(core: &Rc<Core>, native: &super::Image, size: Size) -> Vec<u8> {
+    // Target supplies only independent command/readback ownership; this image was rendered by
+    // the production Offscreen session above, rather than a second test-only output executor.
+    let target = Target::new(core.clone(), size.width as u32, size.height as u32);
+    unsafe {
+        core.device
+            .begin_command_buffer(target.command, &vk::CommandBufferBeginInfo::default())
+            .unwrap();
+        let barrier = vk::ImageMemoryBarrier::default()
+            .image(native.raw)
+            .old_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+            .new_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
+            .src_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE | vk::AccessFlags::SHADER_READ)
+            .dst_access_mask(vk::AccessFlags::TRANSFER_READ)
+            .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+            .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+            .subresource_range(
+                vk::ImageSubresourceRange::default()
+                    .aspect_mask(vk::ImageAspectFlags::COLOR)
+                    .level_count(1)
+                    .layer_count(1),
+            );
+        core.device.cmd_pipeline_barrier(
+            target.command,
+            vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT | vk::PipelineStageFlags::FRAGMENT_SHADER,
+            vk::PipelineStageFlags::TRANSFER,
+            vk::DependencyFlags::empty(),
+            &[],
+            &[],
+            &[barrier],
+        );
+        let copy = vk::BufferImageCopy::default()
+            .image_subresource(vk::ImageSubresourceLayers::default().aspect_mask(vk::ImageAspectFlags::COLOR).layer_count(1))
+            .image_extent(vk::Extent3D {
+                width: size.width as u32,
+                height: size.height as u32,
+                depth: 1,
+            });
+        core.device
+            .cmd_copy_image_to_buffer(target.command, native.raw, vk::ImageLayout::TRANSFER_SRC_OPTIMAL, target.pixels.raw, &[copy]);
+        let restore = vk::ImageMemoryBarrier::default()
+            .image(native.raw)
+            .old_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
+            .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+            .src_access_mask(vk::AccessFlags::TRANSFER_READ)
+            .dst_access_mask(vk::AccessFlags::SHADER_READ)
+            .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+            .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+            .subresource_range(
+                vk::ImageSubresourceRange::default()
+                    .aspect_mask(vk::ImageAspectFlags::COLOR)
+                    .level_count(1)
+                    .layer_count(1),
+            );
+        core.device.cmd_pipeline_barrier(
+            target.command,
+            vk::PipelineStageFlags::TRANSFER,
+            vk::PipelineStageFlags::VERTEX_SHADER | vk::PipelineStageFlags::FRAGMENT_SHADER,
+            vk::DependencyFlags::empty(),
+            &[],
+            &[],
+            &[restore],
+        );
+        core.device.end_command_buffer(target.command).unwrap();
+        core.device.reset_fences(&[target.fence]).unwrap();
+        core.device
+            .queue_submit(core.queue, &[vk::SubmitInfo::default().command_buffers(&[target.command])], target.fence)
+            .unwrap();
+    }
+    let pixels = target.read(&target.pixels);
+    pixels
 }

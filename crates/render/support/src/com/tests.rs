@@ -1,285 +1,156 @@
-//! Boundary tests use real generated COM calls and concrete resource values, without requiring a GPU.
+//! Real COM streams exercise generic provenance, bounded intake, closure and cleanup.
 use super::*;
-use neocogi_com::{com_object, NcOutputWriter};
-use std::{
-    cell::{Cell, RefCell},
-    rc::Rc,
-};
+use neocogi_com::{com_object, ComBox, ComPtr, NC_E_DROPPED};
+use neocogi_render_gpu::GpuDevice;
+use std::cell::{Cell, RefCell};
 
-/// Independent observations survive source/resource destruction.
-#[derive(Default)]
-struct Probe {
-    /// Counts complete bulk copies, proving the boundary does not call once per primitive.
-    copies: Cell<u32>,
-    /// Tracks owner resolution in source painter order.
-    resolved: RefCell<Vec<&'static str>>,
-    /// Injects a later failure after one resource has already been retained.
-    reject_view: Cell<bool>,
-    /// Independent canonical provenance for the fixture's actual generic block.
-    device: neocogi_render_gpu::GpuDevice,
-    /// Makes a stream report a truncated copy while returning otherwise valid values.
-    short: Cell<bool>,
-    /// Final resource releases prove complete cleanup after finish/error/abandonment.
-    releases: Rc<Cell<u32>>,
-}
-#[com_object(interfaces(ITexture))]
-/// One fake resource exposes both capabilities solely to count its actual COM lifetime.
-struct Resource {
-    /// Shared final-release observation.
-    releases: Rc<Cell<u32>>,
-}
-impl ITexture for Resource {
-    /// The validator authenticates through its resolver; no size query is required per frame.
-    fn size(&self) -> Result<Size, NcStatus> {
-        Ok(Size { width: 2, height: 2 })
-    }
-}
-impl Drop for Resource {
-    /// Destruction is counted once for the canonical allocation, independent of interface count.
-    fn drop(&mut self) {
-        self.releases.set(self.releases.get() + 1);
+/// Assembly resolves only canonical blocks registered on this exact logical device.
+struct Resolver(GpuDevice);
+impl Resources for Resolver {
+    fn view(&self, block: WeakComBox<IRenderViewBlockAbi>) -> Result<Rc<Block>, NcStatus> {
+        self.0.block_snapshot(block.as_com_ref())
     }
 }
 #[com_object(interfaces(IRenderStream))]
-/// Foreign-style source owns its complete buffers and capabilities.
-struct Source {
-    /// Geometry copied in one bulk operation.
-    vertices: Vec<RenderVertex>,
-    /// Native records can carry invalid geometry but never an invalid enum tag.
-    records: Vec<RenderBatch>,
-    /// Owned image returned only at a matching batch index.
-    texture: ComPtr<ITextureAbi>,
-    /// Sealed contribution and its trusted domain owner outlive both stream reads.
-    block: neocogi_com::ComBox<IRenderViewBlockAbi>,
-    /// Closing authority belongs to the fixture, never the block observer.
-    _domain: neocogi_com::ComBox<IRenderClientDomainAbi>,
-    /// Independent observations and failure injection.
-    probe: Rc<Probe>,
+/// A foreign source may fail or close an earlier domain from a later accessor.
+struct Stream {
+    /// Exclusive owners stay alive only until this source is released.
+    blocks: Vec<ComBox<IRenderViewBlockAbi>>,
+    /// Independent invocation trace detects callbacks before count validation.
+    calls: Rc<Cell<u32>>,
+    /// Optional controller is closed while retrieving the second block.
+    close: RefCell<Option<ComBox<IRenderClientDomainAbi>>>,
 }
-impl IRenderStream for Source {
-    /// Supplies only the declared sealed position through a weak exclusive observer.
-    fn view(&self, _: u64, index: u32) -> Result<neocogi_com::WeakComBox<IRenderViewBlockAbi>, NcStatus> {
-        assert!(matches!(self.records[index as usize], RenderBatch::View));
-        Ok(self.block.downgrade())
-    }
-
-    /// Copies at offset zero and optionally simulates a short producer read.
-    fn vertices(&self, invocation: u64, mut output: NcOutputWriter<'_, RenderVertex>) -> Result<u32, NcStatus> {
+impl IRenderStream for Stream {
+    fn view(&self, invocation: u64, index: u32) -> Result<WeakComBox<IRenderViewBlockAbi>, NcStatus> {
         assert_eq!(invocation, 1);
-        assert_eq!(output.offset(), 0);
-        self.probe.copies.set(self.probe.copies.get() + 1);
-        output.extend_from_slice(&self.vertices)?;
-        Ok((self.vertices.len() as u32).saturating_sub(u32::from(self.probe.short.get())))
-    }
-    /// Copies the complete ordered ABI records with no per-operation foreign call.
-    fn batches(&self, invocation: u64, mut output: NcOutputWriter<'_, RenderBatch>) -> Result<u32, NcStatus> {
-        assert_eq!(invocation, 1);
-        assert_eq!(output.offset(), 0);
-        self.probe.copies.set(self.probe.copies.get() + 1);
-        output.extend_from_slice(&self.records)?;
-        Ok(self.records.len() as u32)
-    }
-    /// A mismatch would expose a batch-index bug in the reader.
-    fn texture(&self, _: u64, index: u32) -> Result<ComPtr<ITextureAbi>, NcStatus> {
-        assert!(matches!(self.records[index as usize], RenderBatch::Texture { .. }));
-        Ok(self.texture.clone())
-    }
-}
-impl Resources for Probe {
-    type Texture = ComPtr<ITextureAbi>;
-    /// Authenticates the actual construction proof, with an independently injected late failure.
-    fn view(&self, block: neocogi_com::WeakComBox<IRenderViewBlockAbi>) -> Result<Rc<neocogi_render_gpu::record::Block>, NcStatus> {
-        self.resolved.borrow_mut().push("view");
-        if self.reject_view.get() {
-            return Err(neocogi_com::NC_E_NOT_FOUND);
+        self.calls.set(self.calls.get() + 1);
+        if index == 1 {
+            drop(self.close.borrow_mut().take());
         }
-        self.device.block_snapshot(block.as_com_ref())
-    }
-    /// Keeps an owned capability as the fake native resource, allowing precise cleanup assertions.
-    fn texture(&self, texture: Self::Texture) -> Result<Self::Texture, NcStatus> {
-        self.resolved.borrow_mut().push("texture");
-        Ok(texture)
+        self.blocks.get(index as usize).map(ComBox::downgrade).ok_or(NC_E_INVALID_ARG)
     }
 }
-/// Fixed viewport leaves room to exercise clipped custom content beyond its origin.
-const SIZE: Size = Size { width: 100, height: 80 };
-/// Final clip intersects the negative-origin content with the viewport.
-const CLIP: Rect = Rect { x: 0, y: 0, width: 100, height: 80 };
-/// Creates one owned source and exact announced counts, optionally containing malformed records.
-fn source(records: Vec<RenderBatch>, vertices: Vec<RenderVertex>) -> (ComPtr<IRenderStreamAbi>, RenderInfo, Rc<Probe>) {
-    let probe = Rc::new(Probe::default());
-    let domain = probe.device.create_client(RenderClientLimits::default()).unwrap();
-    let resources = domain.resources().unwrap();
-    let mut recording = probe.device.broker().begin_frame().unwrap();
-    let mut session = recording
-        .begin_view(RenderViewRoot { client: CLIP, target: CLIP }, resources.as_com_ref())
-        .unwrap();
+#[com_object(interfaces(IRenderViewBlock), ownership=exclusive)]
+/// Matching public interface metadata cannot manufacture canonical renderer provenance.
+struct Forged;
+impl IRenderViewBlock for Forged {}
+
+/// Capture a real bounded contribution through generated recording calls.
+fn block(device: &GpuDevice, resources: &ComPtr<IRenderResourcesAbi>, target: Rect) -> ComBox<IRenderViewBlockAbi> {
+    let mut frame = device.broker().begin_frame().unwrap();
+    let client = Rect {
+        x: 0,
+        y: 0,
+        width: target.width,
+        height: target.height,
+    };
+    let mut session = frame.begin_view(RenderViewRoot { client, target }, resources.as_com_ref()).unwrap();
     session.view().unwrap().finish().unwrap();
     let block = session.take_block().unwrap();
-    recording.finish().unwrap();
-    let resource = Resource::from_value(Resource { releases: probe.releases.clone() });
-    let info = RenderInfo {
-        size: SIZE,
-        clear: 0,
-        invocation: 1,
-        vertex_count: vertices.len() as u32,
-        batch_count: records.len() as u32,
-    };
-    let stream = Source::from_value(Source {
-        vertices,
-        records,
-        texture: resource.query().unwrap(),
-        block,
-        _domain: domain,
-        probe: probe.clone(),
+    frame.finish().unwrap();
+    block
+}
+/// Publish owned blocks with independently observed foreign callback counts.
+fn source(blocks: Vec<ComBox<IRenderViewBlockAbi>>, close: Option<ComBox<IRenderClientDomainAbi>>) -> (ComPtr<IRenderStreamAbi>, Rc<Cell<u32>>) {
+    let calls = Rc::new(Cell::new(0));
+    let stream = Stream::from_value(Stream {
+        blocks,
+        calls: calls.clone(),
+        close: RefCell::new(close),
     })
     .query()
     .unwrap();
-    (stream, info, probe)
+    (stream, calls)
 }
-/// Atlas/image/custom/atlas must remain ordered, use exactly two bulk copies and retain resources until clear.
+/// A ten-pixel output admits an empty clear frame as well as contained contributions.
+fn info(block_count: u32) -> RenderInfo {
+    RenderInfo {
+        size: Size { width: 10, height: 10 },
+        clear: 0xff000000,
+        invocation: 1,
+        block_count,
+    }
+}
+const ROOT: Rect = Rect { x: 0, y: 0, width: 10, height: 10 };
+
+/// Preparation owns real snapshots after public block expiry, until receiver cleanup.
 #[test]
-fn ordered_bulk_frame_owns_resources_and_reuses_allocations() {
-    let records = vec![
-        RenderBatch::Atlas { first: 0, count: 3 },
-        RenderBatch::Texture { first: 3 },
-        RenderBatch::View,
-        RenderBatch::Atlas { first: 7, count: 3 },
-    ];
-    let (stream, info, probe) = source(records, vec![RenderVertex::default(); 10]);
+fn prepared_blocks_preserve_order_and_release_resources_on_clear() {
+    let device = GpuDevice::new();
+    let domain = device.create_client(Default::default()).unwrap();
+    let resources = domain.resources().unwrap();
+    let first = block(&device, &resources, ROOT);
+    let observer = first.downgrade();
+    let second_root = Rect { x: 2, y: 3, width: 4, height: 5 };
+    let second = block(&device, &resources, second_root);
+    let (stream, calls) = source(vec![first, second], None);
     let mut frame = PreparedFrame::default();
-    frame.read(info, stream.as_com_ref(), &*probe).unwrap();
-    assert!(matches!(&frame.batches()[0], Batch::Atlas(range) if *range == (0..3)));
-    assert!(matches!(&frame.batches()[1], Batch::Texture { .. }));
-    assert!(matches!(&frame.batches()[2], Batch::View(block) if block.root.target == CLIP));
-    assert!(matches!(&frame.batches()[3], Batch::Atlas(range) if *range == (7..10)));
-    assert_eq!(probe.copies.get(), 2);
-    assert_eq!(&*probe.resolved.borrow(), &["texture", "view"]);
-    let capacities = (frame.vertices.capacity(), frame.records.capacity(), frame.batches.capacity());
-    frame.read(info, stream.as_com_ref(), &*probe).unwrap();
-    assert_eq!(capacities, (frame.vertices.capacity(), frame.records.capacity(), frame.batches.capacity()));
+    frame.read(info(2), stream.as_com_ref(), &Resolver(device.clone())).unwrap();
+    assert_eq!(calls.get(), 2);
+    assert_eq!(frame.blocks().iter().map(|block| block.root.target).collect::<Vec<_>>(), [ROOT, second_root]);
     drop(stream);
-    assert_eq!(probe.releases.get(), 0);
+    assert!(device.block_snapshot(observer.as_com_ref()).is_err());
+    assert!(device.recording_usage(resources.as_com_ref()).unwrap().0 > 0);
     frame.clear();
-    assert_eq!(probe.releases.get(), 1);
+    assert_eq!(device.recording_usage(resources.as_com_ref()).unwrap(), (0, 0));
 }
-/// Invalid later records must prevent even earlier resources from being resolved or queued.
+
+/// Invalid envelopes reject before the first callback or allocation driven by an unbounded count.
 #[test]
-fn malformed_ranges_tags_and_clips_reject_before_resource_resolution() {
-    let invalid = [
-        RenderBatch::Atlas { first: 4, count: 0 },
-        RenderBatch::Atlas { first: 3, count: 3 },
-        RenderBatch::Atlas { first: 5, count: 3 },
-        RenderBatch::Atlas { first: 4, count: 4 },
-        RenderBatch::Atlas { first: 4, count: u32::MAX },
-    ];
-    for bad in invalid {
-        let (stream, info, probe) = source(vec![RenderBatch::Texture { first: 0 }, bad], vec![RenderVertex::default(); 7]);
-        let mut frame = PreparedFrame::default();
-        assert_eq!(frame.read(info, stream.as_com_ref(), &*probe), Err(NC_E_INVALID_ARG));
-        assert!(frame.batches().is_empty());
-        assert!(probe.resolved.borrow().is_empty());
-    }
-}
-/// Checked COM output decoding rejects unknown enum tags before renderer-level
-/// geometry validation. This remains distinct from an invalid range or clip.
-#[test]
-fn invalid_record_tag_rejects_in_the_generated_buffer_codec() {
-    /// Simulates an independently compiled provider returning an unknown raw tag.
-    unsafe extern "C" fn malformed_batches(
-        _object: *mut core::ffi::c_void,
-        _invocation: u64,
-        _offset: u64,
-        count: u64,
-        output: *mut <RenderBatch as neocogi_com::ComValue>::Wire,
-        prefix: *mut u64,
-        written: *mut u32,
-    ) -> NcStatus {
-        if count != 2 {
-            return NC_E_INVALID_ARG;
-        }
-        let good = neocogi_com::encode_inline(&RenderBatch::Texture { first: 0 }).unwrap();
-        let mut bad = good;
-        bad.tag = 255;
-        // SAFETY: the generated caller provides two writable wire records and
-        // a writable result. No invalid native Rust enum is ever constructed.
-        unsafe {
-            output.write(good);
-            output.add(1).write(bad);
-            prefix.write(2);
-            written.write(2);
-        }
-        neocogi_com::NC_OK
-    }
-    let (stream, info, probe) = source(vec![RenderBatch::Texture { first: 0 }; 2], vec![RenderVertex::default(); 7]);
-    let raw = stream.as_raw();
-    // SAFETY: vtables contain only immutable metadata and function pointers.
-    // The object and our stack-local replacement table outlive the borrowed call.
-    let mut table = unsafe { core::ptr::read(raw.vtable) };
-    table.batches = malformed_batches;
-    let borrowed = unsafe { neocogi_com::ComRef::from_raw_borrowed(neocogi_com::ComRaw { object: raw.object, vtable: &table }) }.unwrap();
+fn envelope_limits_precede_stream_callbacks() {
+    let device = GpuDevice::new();
+    let (stream, calls) = source(vec![], None);
     let mut frame = PreparedFrame::default();
-    assert_eq!(frame.read(info, borrowed, &*probe), Err(neocogi_com::NC_E_INVALID_TAG));
-    assert!(frame.batches().is_empty());
-    assert!(probe.resolved.borrow().is_empty());
-}
-/// Short reads and non-finite components fail before passing owned data to a native backend.
-#[test]
-fn short_copies_nonfinite_vertices_and_unreferenced_geometry_reject() {
-    for component in 0..6 {
-        let mut vertex = RenderVertex::default();
-        match component {
-            0 => vertex.x = f32::NAN,
-            1 => vertex.y = f32::INFINITY,
-            2 => vertex.u = f32::NEG_INFINITY,
-            3 => vertex.v = f32::NAN,
-            _ => {}
-        }
-        let records = if component == 5 {
-            Vec::new()
-        } else {
-            vec![RenderBatch::Atlas { first: 0, count: 3 }]
-        };
-        let (stream, info, probe) = source(records, vec![vertex; 3]);
-        probe.short.set(component == 4);
-        let mut frame = PreparedFrame::default();
-        assert_eq!(frame.read(info, stream.as_com_ref(), &*probe), Err(NC_E_INVALID_ARG));
-        assert!(frame.vertices().is_empty());
-    }
-}
-/// Invalid announced counts and scope reject before allocation or even the first stream read.
-#[test]
-fn invalid_frame_header_never_calls_the_producer() {
-    let (stream, info, probe) = source(Vec::new(), Vec::new());
     for bad in [
-        RenderInfo { invocation: 0, ..info },
+        RenderInfo { invocation: 0, ..info(0) },
         RenderInfo {
-            vertex_count: MAX_RENDER_VERTICES + 1,
-            ..info
+            size: Size { width: 0, height: 10 },
+            ..info(0)
         },
-        RenderInfo {
-            batch_count: MAX_RENDER_BATCHES + 1,
-            ..info
-        },
-        RenderInfo { size: Size { width: 0, ..SIZE }, ..info },
+        info(MAX_RENDER_BLOCKS + 1),
     ] {
-        assert_eq!(PreparedFrame::default().read(bad, stream.as_com_ref(), &*probe), Err(NC_E_INVALID_ARG));
+        assert_eq!(frame.read(bad, stream.as_com_ref(), &Resolver(device.clone())), Err(NC_E_INVALID_ARG));
+        assert!(frame.blocks().is_empty());
     }
-    assert_eq!(probe.copies.get(), 0);
-    PreparedFrame::default().read(info, stream.as_com_ref(), &*probe).unwrap();
+    assert_eq!(calls.get(), 0);
+    frame.read(info(0), stream.as_com_ref(), &Resolver(device)).unwrap();
 }
-/// A later resource failure releases earlier snapshots and permits a clean retry with the same buffers.
+
+/// Later failure cannot leave an earlier valid prefix ready for native execution.
 #[test]
-fn failed_resource_resolution_cleans_partial_work_and_allows_retry() {
-    let (stream, info, probe) = source(vec![RenderBatch::Texture { first: 0 }, RenderBatch::View], vec![RenderVertex::default(); 4]);
+fn short_foreign_and_outside_blocks_clear_the_entire_preparation() {
+    let device = GpuDevice::new();
+    let other = GpuDevice::new();
+    let domain = device.create_client(Default::default()).unwrap();
+    let alien = other.create_client(Default::default()).unwrap();
+    let resources = domain.resources().unwrap();
     let mut frame = PreparedFrame::default();
-    probe.reject_view.set(true);
-    assert_eq!(frame.read(info, stream.as_com_ref(), &*probe), Err(neocogi_com::NC_E_NOT_FOUND));
-    assert!(frame.batches().is_empty());
-    probe.reject_view.set(false);
-    frame.read(info, stream.as_com_ref(), &*probe).unwrap();
-    drop(stream);
-    assert_eq!(probe.releases.get(), 0);
-    drop(frame);
-    assert_eq!(probe.releases.get(), 1);
+    let (short, _) = source(vec![block(&device, &resources, ROOT)], None);
+    assert_eq!(frame.read(info(2), short.as_com_ref(), &Resolver(device.clone())), Err(NC_E_INVALID_ARG));
+    assert!(frame.blocks().is_empty());
+    for bad in [
+        block(&other, &alien.resources().unwrap(), ROOT),
+        Forged::into_box(Forged).query().unwrap(),
+        block(&device, &resources, Rect { x: 9, ..ROOT }),
+    ] {
+        let (stream, _) = source(vec![block(&device, &resources, ROOT), bad], None);
+        assert!(frame.read(info(2), stream.as_com_ref(), &Resolver(device.clone())).is_err());
+        assert!(frame.blocks().is_empty());
+    }
+}
+
+/// Closing the first controller in a later accessor must fail the final admission gate.
+#[test]
+fn all_domains_are_rechecked_after_the_last_foreign_call() {
+    let device = GpuDevice::new();
+    let first = device.create_client(Default::default()).unwrap();
+    let second = device.create_client(Default::default()).unwrap();
+    let a = block(&device, &first.resources().unwrap(), ROOT);
+    let b = block(&device, &second.resources().unwrap(), ROOT);
+    let (stream, calls) = source(vec![a, b], Some(first));
+    let mut frame = PreparedFrame::default();
+    assert_eq!(frame.read(info(2), stream.as_com_ref(), &Resolver(device)), Err(NC_E_DROPPED));
+    assert_eq!(calls.get(), 2);
+    assert!(frame.blocks().is_empty());
 }

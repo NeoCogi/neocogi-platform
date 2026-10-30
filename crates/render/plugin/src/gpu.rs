@@ -1,7 +1,6 @@
 //! Native GPU execution remains local to this plugin; only construction differs between selected backends.
 use super::*;
-use neocogi_render_core::{Color, FrameInfo, ImageSource, RendererBackend, RendererFrame, TextureId, prelude::Dimensioni};
-use neocogi_render_support::com::Batch;
+use neocogi_render_core::{Color, FrameInfo, RendererBackend, RendererFrame, TextureId, prelude::Dimensioni};
 
 #[cfg(feature = "glow")]
 use neocogi_render_glow::GLRenderer as Renderer;
@@ -41,7 +40,7 @@ pub(super) struct Gpu {
 impl Gpu {
     /// Creates the chosen native window and backend in one fallible transaction.
     #[cfg(not(target_arch = "wasm32"))]
-    pub(super) fn new(video: &sdl2::VideoSubsystem, title: &str, size: Size, atlas: ImageSource<'_>) -> Result<Self, String> {
+    pub(super) fn new(video: &sdl2::VideoSubsystem, title: &str, size: Size) -> Result<Self, String> {
         #[cfg(feature = "glow")]
         {
             let attributes = video.gl_attr();
@@ -65,7 +64,7 @@ impl Gpu {
             window.gl_make_current(&context)?;
             // SAFETY: SDL selected this live context, and the loader resolves functions for it.
             let gl = std::rc::Rc::new(unsafe { glow::Context::from_loader_function(|name| video.gl_get_proc_address(name) as *const _) });
-            let renderer = Renderer::new(gl.clone(), atlas, actual.width as u32, actual.height as u32)?;
+            let renderer = Renderer::new(gl.clone(), actual.width as u32, actual.height as u32)?;
             Ok(Self {
                 renderer,
                 gl,
@@ -77,13 +76,13 @@ impl Gpu {
         }
         #[cfg(not(feature = "glow"))]
         {
-            let renderer = Renderer::new(&window, atlas, actual.width as u32, actual.height as u32).map_err(|e| e.to_string())?;
+            let renderer = Renderer::new(&window, actual.width as u32, actual.height as u32).map_err(|e| e.to_string())?;
             Ok(Self { renderer, window })
         }
     }
     /// Creates the browser renderer using the same common graphics execution path.
     #[cfg(target_arch = "wasm32")]
-    pub(super) fn from_canvas(window: Window, atlas: ImageSource<'_>) -> Result<Self, String> {
+    pub(super) fn from_canvas(window: Window) -> Result<Self, String> {
         use wasm_bindgen::JsCast;
         let webgl = window
             .get_context("webgl2")
@@ -92,7 +91,7 @@ impl Gpu {
             .dyn_into::<web_sys::WebGl2RenderingContext>()
             .map_err(|_| "canvas context is not WebGL 2")?;
         let gl = std::rc::Rc::new(glow::Context::from_webgl2_context(webgl.clone()));
-        let renderer = Renderer::new(gl.clone(), atlas, window.width(), window.height())?;
+        let renderer = Renderer::new(gl.clone(), window.width(), window.height())?;
         Ok(Self { renderer, gl, context: webgl, window })
     }
     /// SDL's cheap owned clone keeps polling available while render state is temporarily detached.
@@ -115,11 +114,6 @@ impl Gpu {
         self.current()?;
         self.renderer.prepare_texture(texture)
     }
-    /// Uploads into this device's current context using the backend's existing atomic replacement.
-    pub(super) fn replace_atlas(&mut self, atlas: ImageSource<'_>) -> Result<(), String> {
-        self.current()?;
-        self.renderer.replace_atlas(atlas).map_err(|error| error.to_string())
-    }
     /// Executes only validated owned commands; no foreign method is invoked while a frame is acquired.
     pub(super) fn render(&mut self, info: RenderInfo, prepared: &Prepared) -> Result<(), String> {
         self.render_target(info, prepared, None)
@@ -137,49 +131,29 @@ impl Gpu {
     }
 
     /// Executes UI into an unpublished texture without any native presentation.
-    pub(super) fn render_surface(&mut self, info: RenderInfo, prepared: &Prepared, output: TextureId, atlas: TextureId) -> Result<(), String> {
-        self.render_target(info, prepared, Some((output, atlas)))
+    pub(super) fn render_surface(&mut self, info: RenderInfo, prepared: &Prepared, output: TextureId) -> Result<(), String> {
+        self.render_target(info, prepared, Some(output))
     }
 
     /// Shares validated command execution while keeping target acquisition and presentation explicit.
-    fn render_target(&mut self, info: RenderInfo, prepared: &Prepared, target: Option<(TextureId, TextureId)>) -> Result<(), String> {
+    fn render_target(&mut self, info: RenderInfo, prepared: &Prepared, target: Option<TextureId>) -> Result<(), String> {
         self.current()?;
         let [r, g, b, a] = info.clear.to_le_bytes();
         let dimensions = Dimensioni::new(info.size.width, info.size.height);
         let frame_info = FrameInfo::try_new(dimensions, Color { r, g, b, a }).map_err(|e| e.to_string())?;
         // Resource compilation/upload finishes before any target acquire or attachment clear.
         let blocks = prepared
-            .batches()
+            .blocks()
             .iter()
-            .map(|batch| match batch {
-                Batch::View(block) => self.renderer.prepare_block(block, target.is_some()).map(Some),
-                _ => Ok(None),
-            })
+            .map(|block| self.renderer.prepare_block(block, target.is_some()))
             .collect::<Result<Vec<_>, String>>()?;
         let mut frame = match target {
             None => self.renderer.frame(frame_info),
-            Some((output, atlas)) => self.renderer.texture_frame(frame_info, output, atlas),
+            Some(output) => self.renderer.texture_frame(frame_info, output),
         }
         .map_err(|error| error.to_string())?;
-        for (index, batch) in prepared.batches().iter().enumerate() {
-            match batch {
-                Batch::View(_block) => {
-                    frame.execute_block(blocks[index].as_ref().expect("prepared GPU block"), info.size);
-                }
-
-                Batch::Atlas(range) => {
-                    // Preparation already validated this as a complete contiguous triangle range;
-                    // preserve that coarse unit through the native backend instead of replaying it
-                    // through one method invocation and one vector extension per triangle.
-                    frame.push_triangles(&prepared.vertices()[range.clone()]);
-                }
-                Batch::Texture { vertices, texture } => {
-                    // Close preceding atlas geometry before recording the image. Explicit backends
-                    // otherwise submit that geometry later, painting backgrounds over the texture.
-                    frame.flush();
-                    frame.draw_texture(texture.id, *vertices);
-                }
-            }
+        for block in &blocks {
+            frame.execute_block(block);
         }
         // Drop abandons; consuming finish alone submits. Vulkan/WGPU also present inside their finish.
         frame.finish().map_err(|e| e.to_string())?;

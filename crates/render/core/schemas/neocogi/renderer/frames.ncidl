@@ -1,75 +1,30 @@
-#[version(4)]
-/// Ordered draw record whose declaration-order tag and plain payload cross the plugin ABI.
-enum RenderBatch: u8 {
-    /// Sealed generic graphics block; stream.view(index) supplies its weak exclusive observer.
-    View,
-    /// Primary-image triangles already clipped and tessellated by the frame producer.
-    Atlas {
-        /// First vertex, equal to the end of the preceding vertex-bearing batch.
-        first: u32,
-        /// Positive vertex count divisible by three.
-        count: u32,
-    },
-    /// Four clipped vertices in top-left, top-right, bottom-right, bottom-left order.
-    Texture {
-        /// First of exactly four vertices; stream.texture(batch_index) supplies the owned resource.
-        first: u32,
-    },
-
-}
-
-#[version(1)]
-/// Final textured vertex whose tessellation and clipping are complete before submission.
-struct RenderVertex {
-    /// Horizontal position in drawable pixels.
-    x: f32,
-    /// Vertical position in drawable pixels.
-    y: f32,
-    /// Normalized horizontal texture coordinate.
-    u: f32,
-    /// Normalized vertical texture coordinate.
-    v: f32,
-    /// Color packed as red in the least significant byte, then green, blue, and alpha.
-    rgba: u32,
-}
-
-#[version(1)]
-/// Metadata for one synchronous renderer submission.
+#[version(2)]
+/// Metadata for one synchronous submission of sealed generic graphics blocks.
 struct RenderInfo {
-    /// Positive drawable dimensions.
+    /// Positive logical drawable dimensions; native backends map them to physical pixels.
     size: Size,
-    /// Clear color in the same byte order as RenderVertex::rgba.
+    /// Packed RGBA attachment clear color, red in the least significant byte.
     clear: u32,
-    /// Unique authority to read this frame's stream; expires when render returns.
+    /// Unique stream-read authority, expired immediately after render returns.
     invocation: u64,
-    /// Exact vertex count: primary batches contain triples and texture batches contain four vertices.
-    vertex_count: u32,
-    /// Exact number of ordered batch records.
-    batch_count: u32,
+    /// Exact bounded number of contributions in painter order.
+    block_count: u32,
 }
 
-#[version(3)]
-/// Owned reusable frame storage readable only during its active submission.
+#[version(4)]
+/// Owned sealed contributions readable only during one active synchronous submission.
 interface IRenderStream {
-    /// Observes a sealed block without manufacturing a second public resource owner.
-    fn view(&self, invocation: u64, batch: u32) -> Result<WeakComBox<IRenderViewBlock>>;
-    /// Copies a bounded range into caller-owned storage; offsets count vertices.
-    fn vertices(&self, invocation: u64, output: &mut [RenderVertex]) -> Result<u32>;
-    /// Copies ordered tagged records; offsets count batches and records contain no pointers.
-    fn batches(&self, invocation: u64, output: &mut [RenderBatch]) -> Result<u32>;
-    /// Retains the texture used by this batch; another batch kind or invalid index is rejected.
-    fn texture(&self, invocation: u64, batch: u32) -> Result<ComPtr<ITexture>>;
-
+    /// Observes a block without manufacturing another public resource owner.
+    /// Invalid indices and expired invocations reject; the renderer authenticates private provenance.
+    fn view(&self, invocation: u64, block: u32) -> Result<WeakComBox<IRenderViewBlock>>;
 }
 
-#[version(1)]
-/// Renderer device accepting one primary image and one complete ordered frame stream.
+#[version(2)]
+/// Device accepts only complete generic graphics blocks, with no UI layout or atlas state.
 interface IRenderer {
-    /// Imports and transactionally uploads a complete primary image. Repeated preparation of
-    /// the identical image is a cheap no-op; failure leaves the previous native image usable.
-    fn prepare_atlas(&self, atlas: &IRgbaImage) -> Result<()>;
-    /// Executes one complete frame synchronously; failure must not present it.
-    fn render(&self, info: RenderInfo, atlas: &IRgbaImage, stream: &IRenderStream) -> Result<()>;
+    /// Prepares all resources before target acquisition, executes in order and explicitly submits.
+    /// A failed frame must not present; already executed immediate operations cannot be rolled back.
+    fn render(&self, info: RenderInfo, stream: &IRenderStream) -> Result<()>;
 }
 
 #[version(1)]

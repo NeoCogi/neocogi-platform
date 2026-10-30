@@ -11,7 +11,7 @@ mod color;
 mod image;
 mod texture;
 
-pub use backend::{AtlasUploadError, FrameError, FrameInfo, FrameInfoError, RenderItemArgs, RendererBackend, RendererFrame, Vertex};
+pub use backend::{FrameError, FrameInfo, FrameInfoError, RendererBackend, RendererFrame};
 pub use color::{Color, color};
 pub use image::{ImageSource, ImageValidationError, MAX_IMAGE_BYTES};
 pub use texture::{RendererId, TextureError, TextureId};
@@ -19,8 +19,7 @@ pub use texture::{RendererId, TextureError, TextureId};
 /// Convenient imports for concrete backend implementations.
 pub mod prelude {
     pub use crate::{
-        AtlasUploadError, Color, FrameError, FrameInfo, FrameInfoError, ImageSource, ImageValidationError, RenderItemArgs, RendererBackend, RendererFrame,
-        TextureError, TextureId, Vertex, color,
+        Color, FrameError, FrameInfo, FrameInfoError, ImageSource, ImageValidationError, RendererBackend, RendererFrame, TextureError, TextureId, color,
     };
     pub use rs_math3d::{
         Box3f, Color4b, CrossProduct, Dimension, Dimensioni, FloatVector, Mat4f, Quat, Quatf, Rect, Recti, Vec2f, Vec2i, Vec3f, Vec4f, Vector, Vector3,
