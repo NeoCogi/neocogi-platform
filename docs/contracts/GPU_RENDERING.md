@@ -59,6 +59,13 @@ before a compositor publishes a candidate asset revision.
 
 ## Portable shader profile, version 1
 
+Canonical fragment/texture coordinates have their origin at the top left; signed
+Y derivatives increase downwards on both window and offscreen targets. GL/WebGL
+window adaptation normalizes `dFdy` independently of fragment-position use, including
+varying-only shaders. X derivatives and unsigned `fwidth` retain their native
+values. The CPU compiler has no target-selection option; the existing native
+program variant owns coordinate, winding, depth and differential-axis adaptation.
+
 WGSL is the canonical source. The required `neocogi.shader.compiler` COM provider
 validates and returns owned WGSL, GLSL ES 300, guarded SPIR-V and typed reflection.
 The renderer imports those results; WGPU consumes returned validated WGSL. See
@@ -203,6 +210,13 @@ preparation failure or abandoned target acquisition. WGPU flushes initialization
 on the existing queue and retains typed buffer/image/uniform owners and command
 receipts until upload completion is observed. Explicit scoped buffer creation and
 aligned queue writes return native allocation errors without mapped-helper panics.
+Every WGPU error scope is popped, including failures after capturing imported
+ordinary-image initialization. Invalid native caches are cleared and a later valid
+preparation may retry; a scoped validation error alone does not indicate device loss.
+Vulkan installs its transfer owner before submission. An uncertain submit or wait
+result makes that executor terminal and retains commands, staging, destination and
+accounting until proven idle or device loss at teardown. A failure status alone
+never permits releasing potentially queued storage or reusing that executor.
 GL/WebGL likewise fences preparatory uploads even when no frame is acquired.
 Frame abandonment never requires a later successful frame to retain that storage.
 

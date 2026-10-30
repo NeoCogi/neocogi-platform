@@ -85,7 +85,7 @@ fn pixels(renderer: &WgpuRenderer, id: TextureId) -> Vec<u8> {
 fn independent_texture_frames_preserve_pixels_and_native_surface_configuration() {
     let sdl = sdl2::init().unwrap();
     let video = sdl.video().unwrap();
-    let window = video.window("WGPU surface regression", 64, 64).hidden().build().unwrap();
+    let mut window = video.window("WGPU surface regression", 64, 64).hidden().build().unwrap();
     let mut renderer = WgpuRenderer::new(&window, 64, 64).unwrap();
     let upload = TextureId::for_upload(1, 1, &[255; 4]).unwrap();
     // Admission must use this call's bytes, not the earlier slice that minted the key.
@@ -134,6 +134,27 @@ fn independent_texture_frames_preserve_pixels_and_native_surface_configuration()
         .finish()
         .unwrap();
     assert_eq!(pixels(&renderer, first), source);
+    // The same original WGSL/COM blocks provide an independent native derivative reference.
+    let derivative_output = TextureId::for_render_target(8, 8).unwrap();
+    renderer.create_render_texture(derivative_output).unwrap();
+    for case in derivatives::cases() {
+        let owner = derivatives::block(&gpu, &resources, &case.source);
+        let prepared = renderer.prepare_block(&gpu.block_snapshot(owner.as_com_ref()).unwrap(), true).unwrap();
+        let info = FrameInfo::try_new(Dimensioni::new(8, 8), color(0, 0, 0, 255)).unwrap();
+        let mut frame = renderer.texture_frame(info, derivative_output).unwrap();
+        frame.execute_block(&prepared);
+        frame.finish().unwrap();
+        let output = pixels(&renderer, derivative_output);
+        assert!((i32::from(output[(4 * 8 + 4) * 4]) - i32::from(case.red)).abs() <= 1, "{}", case.name);
+    }
+    renderer.destroy_texture(derivative_output);
+    // Real native window presentation must survive resize/recreation after private outputs.
+    for (width, height) in [(96, 80), (64, 64)] {
+        window.set_size(width, height).unwrap();
+        renderer.frame(FrameInfo::try_new(Dimensioni::new(width as i32, height as i32), color(9, 11, 13, 255)).unwrap()).unwrap().finish().unwrap();
+        assert_eq!(pixels(&renderer, first), source, "presentation/resize mutated a retained output");
+        assert_eq!((renderer.config.width, renderer.config.height), (width, height));
+    }
     renderer.destroy_texture(next);
     renderer.destroy_texture(first);
 }
@@ -143,3 +164,6 @@ mod generic;
 
 #[path = "../../gpu/tests/support/sampled.rs"]
 mod sampled;
+
+#[path = "../../gpu/tests/support/derivatives.rs"]
+mod derivatives;

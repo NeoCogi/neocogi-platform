@@ -126,26 +126,76 @@ fn declarations_start(source: &str) -> usize {
     }
 }
 
-/// Direct presentation normalizes raw GL fragment position. The private uniform
-/// precedes precision declarations but follows version/extension directives.
+/// Tests whether an identifier is followed by a call, allowing intervening whitespace/comments.
+fn is_call(source: &str, mut end: usize) -> bool {
+    let bytes = source.as_bytes();
+    loop {
+        while end < bytes.len() && bytes[end].is_ascii_whitespace() { end += 1; }
+        if bytes[end..].starts_with(b"//") {
+            while end < bytes.len() && bytes[end] != b'\n' { end += 1; }
+        } else if bytes[end..].starts_with(b"/*") {
+            end += 2;
+            while end < bytes.len() && !bytes[end..].starts_with(b"*/") { end += 1; }
+            end = (end + 2).min(bytes.len());
+        } else {
+            return bytes.get(end) == Some(&b'(');
+        }
+    }
+}
+
+/// Normalizes window Y position and signed differential axes independently.
+/// Canonical fragment Y increases downwards. Raw window GL derivatives have the opposite
+/// axis, even when a shader uses only interpolated values and never reads gl_FragCoord.
+/// Helpers use explicit precision and are injected after rewriting client calls, so their
+/// native derivative calls cannot recursively rewrite themselves. Offscreen stays unchanged.
 pub(super) fn fragment(source: &str, offscreen: bool) -> Result<(String, Option<String>), String> {
-    if offscreen {
-        return Ok((source.into(), None));
+    if offscreen { return Ok((source.into(), None)); }
+    let mut result = source.to_owned();
+    let mut declarations = String::new();
+    for builtin in ["dFdy", "dFdyFine", "dFdyCoarse"] {
+        let spans: Vec<_> = identifiers(&result).into_iter()
+            .filter(|&(a, b)| &result[a..b] == builtin && is_call(&result, b)).collect();
+        if spans.is_empty() { continue; }
+        let helper = fresh(&result, &format!("nc_window_{builtin}"))?;
+        result = replace(&result, &spans, builtin, &helper);
+        // Only wrap spellings emitted by the provider. ES300 normally lowers fine/coarse to dFdy.
+        for ty in ["float", "vec2", "vec3", "vec4"] {
+            declarations.push_str(&format!("highp {ty} {helper}(highp {ty} value) {{ return -{builtin}(value); }}\n"));
+        }
     }
-    let spans = identifiers(source);
-    if !spans.iter().any(|&(a, b)| &source[a..b] == "gl_FragCoord") {
-        return Ok((source.into(), None));
-    }
-    let name = fresh(source, "nc_target_height")?;
-    let expression = format!("vec4(gl_FragCoord.x, {name} - gl_FragCoord.y, gl_FragCoord.zw)");
-    let mut result = replace(source, &spans, "gl_FragCoord", &expression);
+    let spans = identifiers(&result);
+    let height = if spans.iter().any(|&(a, b)| &result[a..b] == "gl_FragCoord") {
+        let name = fresh(&result, "nc_target_height")?;
+        let expression = format!("vec4(gl_FragCoord.x, {name} - gl_FragCoord.y, gl_FragCoord.zw)");
+        result = replace(&result, &spans, "gl_FragCoord", &expression);
+        declarations.push_str(&format!("uniform highp float {name};\n"));
+        Some(name)
+    } else { None };
     let position = declarations_start(&result);
-    result.insert_str(position, &format!("uniform highp float {name};\n"));
-    Ok((result, Some(name)))
+    result.insert_str(position, &declarations);
+    Ok((result, height))
 }
 #[cfg(test)]
 mod tests {
     use super::*;
+    /// Signed derivatives require normalization without fragment position; comments and names stay intact.
+    #[test]
+    fn varying_only_derivatives_use_fresh_nonrecursive_overloads() {
+        let source = "#version 300 es\n// dFdy(x)\nprecision highp float;\nfloat nc_window_dFdy_0(float x){return x;}\nin vec2 p;out vec4 color;void main(){float my_dFdy=1.;color=vec4(dFdy /* gap */ (p),my_dFdy,1.);}";
+        let (adapted, height) = fragment(source, false).unwrap();
+        assert_eq!(height, None);
+        assert!(adapted.contains("nc_window_dFdy_1 /* gap */ (p)"));
+        assert_eq!(adapted.matches("return -dFdy(value)").count(), 4);
+        assert!(adapted.contains("// dFdy(x)"));
+        assert!(adapted.contains("float my_dFdy=1."));
+        assert_eq!(fragment(source, true).unwrap(), (source.into(), None));
+        for builtin in ["dFdyFine", "dFdyCoarse"] {
+            let source = format!("#version 310 es\nvoid main(){{{builtin}(vec2(1.));}}");
+            let (adapted, _) = fragment(&source, false).unwrap();
+            assert_eq!(adapted.matches(&format!("return -{builtin}(value)")).count(), 4);
+        }
+    }
+
     /// Explicit precision and a standard-main prototype are valid compiler outputs.
     #[test]
     fn accepts_explicit_precision_and_entry_prototype() {

@@ -8,9 +8,62 @@ use super::*;
 use neocogi_render_core::abi::IRendererAbi;
 use wasm_bindgen::prelude::*;
 
+#[path = "../../gpu/tests/support/derivatives.rs"]
+mod derivatives;
+
+/// Exercises actual browser WebGL target adaptation and the delegated safe upload boundary.
+fn canonical_browser_derivatives() {
+    use glow::HasContext;
+    use neocogi_render_core::{FrameInfo, RendererBackend, RendererFrame, TextureId};
+    use neocogi_render_core::prelude::{Dimensioni, color};
+    let document = web_sys::window().unwrap().document().unwrap();
+    let canvas = document.create_element("canvas").unwrap().dyn_into::<HtmlCanvasElement>().unwrap();
+    canvas.set_width(8);
+    canvas.set_height(8);
+    let native = canvas.get_context("webgl2").unwrap().unwrap().dyn_into::<web_sys::WebGl2RenderingContext>().unwrap();
+    let gl = std::rc::Rc::new(glow::Context::from_webgl2_context(native));
+    let mut renderer = neocogi_render_webgl::WebGlCanvasRenderer::new(gl.clone(), 8, 8).unwrap();
+    let upload = TextureId::for_upload(1, 1, &[0; 4]).unwrap();
+    for len in [0, 1, 3, 5] {
+        assert!(matches!(renderer.create_texture(upload, &vec![0; len]), Err(neocogi_render_core::TextureError::Image { .. })));
+    }
+    renderer.create_texture(upload, &[0; 4]).unwrap();
+    renderer.destroy_texture(upload);
+    let gpu = neocogi_render_gpu::GpuDevice::new(nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject).query().unwrap());
+    let domain = gpu.create_ui_client(Default::default(), None).unwrap();
+    let resources = domain.resources().unwrap();
+    let output = TextureId::for_render_target(8, 8).unwrap();
+    renderer.create_render_texture(output).unwrap();
+    for case in derivatives::cases() {
+        let owner = derivatives::block(&gpu, &resources, &case.source);
+        let snapshot = gpu.block_snapshot(owner.as_com_ref()).unwrap();
+        for offscreen in [false, true] {
+            let prepared = renderer.prepare_block(&snapshot, offscreen).unwrap();
+            let info = FrameInfo::try_new(Dimensioni::new(8, 8), color(0, 0, 0, 255)).unwrap();
+            let mut frame = if offscreen { renderer.texture_frame(info, output).unwrap() } else { renderer.frame(info).unwrap() };
+            frame.execute_block(&prepared);
+            let mut pixel = [0; 4];
+            // SAFETY: current WebGL context/target remain live; pixel is initialized writable RGBA.
+            unsafe {
+                // Glow WebGL cannot map a null getParameter result to a tracked resource.
+                let target = if offscreen { gl.get_parameter_framebuffer(glow::DRAW_FRAMEBUFFER_BINDING) } else { None };
+                gl.bind_framebuffer(glow::READ_FRAMEBUFFER, target);
+                gl.read_pixels(4, 4, 1, 1, glow::RGBA, glow::UNSIGNED_BYTE, glow::PixelPackData::Slice(Some(&mut pixel)));
+                assert_eq!(gl.get_error(), glow::NO_ERROR);
+            }
+            frame.finish().unwrap();
+            assert!((i32::from(pixel[0]) - i32::from(case.red)).abs() <= 1, "{} offscreen={offscreen}: {pixel:?}", case.name);
+        }
+    }
+    renderer.destroy_texture(output);
+}
+
 // Synthetic DOM events exercise translation deterministically. Pointer capture itself requires
 // trusted browser input, so this fixture stubs only that platform primitive, not the Rust routing.
 #[wasm_bindgen(inline_js = r#"
+export function record_panic(text) {
+    document.getElementById('result').dataset.panic = text;
+}
 export function exercise(target, name) {
     if (name === 'compose-start') {
         target.dispatchEvent(new CompositionEvent('compositionstart'));
@@ -45,6 +98,8 @@ export function exercise(target, name) {
 }
 "#)]
 extern "C" {
+    /// Keeps the Rust panic diagnostic in the dumped DOM even when wasm traps without unwinding.
+    fn record_panic(text: &str);
     /// Dispatches one deterministic DOM sequence against the actual installed Rust listeners.
     fn exercise(target: &EventTarget, name: &str);
 }
@@ -52,6 +107,8 @@ extern "C" {
 /// Runs DOM composition, paste, keyboard, wheel, pointer, and teardown assertions in a browser.
 #[wasm_bindgen]
 pub fn run_browser_input_tests() {
+    std::panic::set_hook(Box::new(|info| record_panic(&info.to_string())));
+    canonical_browser_derivatives();
     let document = web_sys::window().unwrap().document().unwrap();
     let canvas = document.create_element("canvas").unwrap().dyn_into::<HtmlCanvasElement>().unwrap();
     canvas.set_width(200);

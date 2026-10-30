@@ -80,6 +80,51 @@ impl Drop for ForeignState {
 #[path = "../../gpu/tests/support/sampled.rs"]
 mod sampled;
 
+#[path = "../../gpu/tests/support/derivatives.rs"]
+mod derivatives;
+
+/// Window and FBO draws must use the same canonical signed Y differential axis.
+#[test]
+#[ignore = "requires native GL ES3; run with SDL_VIDEODRIVER=offscreen"]
+fn canonical_signed_derivatives_match_window_and_texture_pixels() {
+    let _session = NATIVE_SESSION.lock().unwrap_or_else(|error| error.into_inner());
+    let sdl = sdl2::init().unwrap();
+    let video = sdl.video().unwrap();
+    video.gl_attr().set_context_profile(sdl2::video::GLProfile::GLES);
+    video.gl_attr().set_context_version(3, 0);
+    let window = video.window("canonical derivatives", 8, 8).opengl().hidden().build().unwrap();
+    let _context = window.gl_create_context().unwrap();
+    // SAFETY: SDL's current live context owns every GL operation and resource below.
+    let gl = Rc::new(unsafe { glow::Context::from_loader_function(|name| video.gl_get_proc_address(name).cast()) });
+    let mut renderer = GLRenderer::new(gl.clone(), 8, 8).unwrap();
+    let gpu = neocogi_render_gpu::GpuDevice::new(nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject).query().unwrap());
+    let domain = gpu.create_ui_client(Default::default(), None).unwrap();
+    let resources = domain.resources().unwrap();
+    let output = TextureId::for_render_target(8, 8).unwrap();
+    renderer.create_render_texture(output).unwrap();
+    for case in derivatives::cases() {
+        let owner = derivatives::block(&gpu, &resources, &case.source);
+        let snapshot = gpu.block_snapshot(owner.as_com_ref()).unwrap();
+        for offscreen in [false, true] {
+            let prepared = renderer.prepare_block(&snapshot, offscreen).unwrap();
+            let info = FrameInfo::try_new(Dimensioni::new(8, 8), color(0, 0, 0, 255)).unwrap();
+            let mut frame = if offscreen { renderer.texture_frame(info, output).unwrap() } else { renderer.frame(info).unwrap() };
+            frame.execute_block(&prepared);
+            let mut pixel = [0; 4];
+            // SAFETY: current target is 8x8 and pixel is writable RGBA storage.
+            unsafe {
+                let target = gl.get_parameter_framebuffer(glow::DRAW_FRAMEBUFFER_BINDING);
+                gl.bind_framebuffer(glow::READ_FRAMEBUFFER, target);
+                gl.read_pixels(4, 4, 1, 1, glow::RGBA, glow::UNSIGNED_BYTE, PixelPackData::Slice(Some(&mut pixel)));
+                assert_eq!(gl.get_error(), glow::NO_ERROR);
+            }
+            frame.finish().unwrap();
+            assert!((i32::from(pixel[0]) - i32::from(case.red)).abs() <= 1, "{} offscreen={offscreen}: {pixel:?}", case.name);
+        }
+    }
+    renderer.destroy_texture(output);
+}
+
 /// Reads the default framebuffer regardless of the application-side read-target binding.
 fn pixel(gl: &glow::Context, x: i32, y: i32) -> [u8; 4] {
     let mut bytes = [0; 4];
