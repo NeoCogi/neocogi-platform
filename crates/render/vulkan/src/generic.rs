@@ -460,6 +460,16 @@ enum Health {
     /// Submission/completion failed; pending owners remain until proven idle or device loss.
     Failed,
 }
+/// One deterministic observation failure at the real upload submission boundary.
+/// Native work is valid and submitted normally; only its reported status is replaced.
+#[cfg(test)]
+#[derive(Clone, Copy)]
+enum UploadFailure {
+    /// Submission may have reached the queue even though its caller receives failure.
+    Submit,
+    /// Submission succeeded but completion could not be established by the caller.
+    Wait,
+}
 /// A failed upload wait retains every referenced object until final native synchronization.
 struct Transfer {
     /// Native destruction owner has no renderer/cache/client back-reference.
@@ -509,6 +519,9 @@ pub(crate) struct Executor {
     transfers: Vec<Transfer>,
     /// A native submit/wait failure is not a panel-local recoverable recording error.
     health: Health,
+    /// Test-only status substitution, consumed once after installing all completion owners.
+    #[cfg(test)]
+    upload_failure: Option<UploadFailure>,
 }
 
 impl Executor {
@@ -534,6 +547,8 @@ impl Executor {
             submitted: Vec::new(),
             transfers: Vec::new(),
             health: Health::Active,
+            #[cfg(test)]
+            upload_failure: None,
         })
     }
 
@@ -947,11 +962,24 @@ impl Executor {
         });
         // The aggregate is installed before submission: neither an error nor a failed wait can
         // release queued source/destination objects while native completion remains uncertain.
-        let completion = unsafe {
-            device
-                .queue_submit(core.queue, &[vk::SubmitInfo::default().command_buffers(&[command])], fence)
-                .and_then(|()| device.wait_for_fences(&[fence], true, u64::MAX))
-        };
+        // SAFETY: Transfer owns the recorded command, fence, staging and destination
+        // before the queue can observe them, including an uncertain failure result.
+        let submission = unsafe { device.queue_submit(core.queue, &[vk::SubmitInfo::default().command_buffers(&[command])], fence) };
+        #[cfg(test)]
+        let failure = self.upload_failure.take();
+        #[cfg(test)]
+        let submission = submission.and_then(|()| match failure {
+            Some(UploadFailure::Submit) => Err(vk::Result::ERROR_UNKNOWN),
+            _ => Ok(()),
+        });
+        let completion = submission.and_then(|()| {
+            #[cfg(test)]
+            if matches!(failure, Some(UploadFailure::Wait)) {
+                return Err(vk::Result::TIMEOUT);
+            }
+            // SAFETY: The installed transfer retains its fence until synchronization.
+            unsafe { device.wait_for_fences(&[fence], true, u64::MAX) }
+        });
         if let Err(error) = completion {
             self.health = Health::Failed;
             return Err(format!("complete graphics image upload: {error:?}"));

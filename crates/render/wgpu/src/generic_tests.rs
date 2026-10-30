@@ -555,21 +555,25 @@ fn native_buffer_creation_failure_returns_error_without_panicking_or_leaking_sco
 #[test]
 #[ignore = "requires a native WGPU adapter, including a software adapter"]
 fn partial_preparation_failure_keeps_resource_versions_charged_through_upload_completion() {
-    let (native, queue) = device_with_limits(wgpu::Limits {
-        max_buffer_size: 32,
-        ..Default::default()
-    });
-    let outer = native.push_error_scope(wgpu::ErrorFilter::Validation);
-    let mut executor = crate::generic::Executor::new(&native, &queue);
-    let gpu = GpuDevice::new(
-        nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
-            .query()
-            .unwrap(),
-    );
-    let controller = gpu.create_client(RenderClientLimits::default()).unwrap();
-    let resources = controller.resources().unwrap();
-    let source = Bytes::source(
-        br#"
+    // Both paths reach the same scoped error after capturing their native image.
+    // The imported path has pending ordinary queue initialization and a facade
+    // which is removed before completion, rather than a generic pixel upload.
+    for imported in [false, true] {
+        let (native, queue) = device_with_limits(wgpu::Limits {
+            max_buffer_size: 32,
+            ..Default::default()
+        });
+        let outer = native.push_error_scope(wgpu::ErrorFilter::Validation);
+        let mut executor = crate::generic::Executor::new(&native, &queue);
+        let gpu = GpuDevice::new(
+            nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
+                .query()
+                .unwrap(),
+        );
+        let controller = gpu.create_ui_client(RenderClientLimits::default(), None).unwrap();
+        let resources = controller.resources().unwrap();
+        let source = Bytes::source(
+            br#"
         @vertex fn vs(@location(0) p:vec3<f32>) -> @builtin(position) vec4<f32> { return vec4(p,1.); }
         @group(2) @binding(0) var image:texture_2d<f32>;
         @group(2) @binding(1) var image_sampler:sampler;
@@ -577,97 +581,124 @@ fn partial_preparation_failure_keeps_resource_versions_charged_through_upload_co
         @group(3) @binding(0) var<uniform> values:Values;
         @fragment fn fs() -> @location(0) vec4<f32> { return textureSample(image,image_sampler,vec2(0.5))*values.tint; }
     "#
-        .to_vec(),
-    );
-    let vs = resources
-        .create_shader(GpuShaderStage::Vertex, source.as_com_ref(), NcCopyFromBufferOffset::new(0, b"vs"))
-        .unwrap();
-    let fs = resources
-        .create_shader(GpuShaderStage::Fragment, source.as_com_ref(), NcCopyFromBufferOffset::new(0, b"fs"))
-        .unwrap();
-    let desc = PipelineDesc {
-        state: Default::default(),
-        vertex_buffers: vec![GpuVertexBufferLayout {
-            slot: 0,
-            stride: 12,
-            step: GpuStepMode::Vertex,
-        }],
-        attributes: vec![GpuVertexAttribute {
-            location: 0,
-            slot: 0,
-            offset: 0,
-            format: GpuVertexFormat::Float32x3,
-        }],
-        bindings: vec![
-            GpuShaderBinding {
-                stage: GpuShaderStage::Fragment,
+            .to_vec(),
+        );
+        let vs = resources
+            .create_shader(GpuShaderStage::Vertex, source.as_com_ref(), NcCopyFromBufferOffset::new(0, b"vs"))
+            .unwrap();
+        let fs = resources
+            .create_shader(GpuShaderStage::Fragment, source.as_com_ref(), NcCopyFromBufferOffset::new(0, b"fs"))
+            .unwrap();
+        let desc = PipelineDesc {
+            state: Default::default(),
+            vertex_buffers: vec![GpuVertexBufferLayout {
                 slot: 0,
-                kind: GpuBindingKind::SampledTexture,
-                byte_len: 0,
-            },
-            GpuShaderBinding {
-                stage: GpuShaderStage::Fragment,
+                stride: 12,
+                step: GpuStepMode::Vertex,
+            }],
+            attributes: vec![GpuVertexAttribute {
+                location: 0,
                 slot: 0,
-                kind: GpuBindingKind::Uniform,
-                byte_len: 16,
-            },
-        ],
+                offset: 0,
+                format: GpuVertexFormat::Float32x3,
+            }],
+            bindings: vec![
+                GpuShaderBinding {
+                    stage: GpuShaderStage::Fragment,
+                    slot: 0,
+                    kind: GpuBindingKind::SampledTexture,
+                    byte_len: 0,
+                },
+                GpuShaderBinding {
+                    stage: GpuShaderStage::Fragment,
+                    slot: 0,
+                    kind: GpuBindingKind::Uniform,
+                    byte_len: 16,
+                },
+            ],
+        }
+        .source()
+        .unwrap();
+        let pipeline = resources.create_pipeline(desc.as_com_ref(), vs.as_com_ref(), fs.as_com_ref()).unwrap();
+        let vertices = resources
+            .create_buffer(
+                GpuBufferDesc {
+                    role: GpuBufferRole::Vertex,
+                    byte_len: 36,
+                },
+                Bytes::source(vec![0; 36]).as_com_ref(),
+            )
+            .unwrap();
+        let image = resources
+            .create_texture(
+                GpuTextureDesc {
+                    size: Size { width: 2, height: 2 },
+                    format: GpuTextureFormat::Rgba8Unorm,
+                    mip_count: 1,
+                },
+                Bytes::source(vec![255; 16]).as_com_ref(),
+            )
+            .unwrap();
+        let mut images = HashMap::new();
+        let image = if imported {
+            import_native_image(&gpu, &resources, &native, &queue, &mut images, image)
+        } else {
+            image
+        };
+        let sampler = resources.create_sampler(GpuSamplerDesc::default()).unwrap();
+        let mut recording = gpu.broker().begin_frame().unwrap();
+        let root = Rect { x: 0, y: 0, width: 8, height: 8 };
+        let mut session = recording
+            .begin_view(RenderViewRoot { client: root, target: root }, resources.as_com_ref())
+            .unwrap();
+        let mut view = session.view().unwrap();
+        view.bind_pipeline(pipeline.as_com_ref()).unwrap();
+        view.bind_vertex_buffer(0, vertices.as_com_ref(), 0).unwrap();
+        view.bind_texture(GpuShaderStage::Fragment, 0, image.as_com_ref(), sampler.as_com_ref())
+            .unwrap();
+        view.push_uniforms(GpuShaderStage::Fragment, 0, NcCopyFromBufferOffset::new(0, &[0; 16]))
+            .unwrap();
+        view.draw(3, 1, 0).unwrap();
+        view.finish().unwrap();
+        let owner = session.take_block().unwrap();
+        recording.finish().unwrap();
+        let snapshot = gpu.block_snapshot(owner.as_com_ref()).unwrap();
+        let error = match executor.prepare(&snapshot, wgpu::TextureFormat::Rgba8Unorm, true, &images) {
+            Ok(_) => panic!("native vertex allocation must fail"),
+            Err(error) => error,
+        };
+        assert!(error.contains("maximum buffer size"), "unexpected error: {error}");
+        drop((snapshot, owner, view, session, recording, pipeline, vertices, image, sampler, vs, fs));
+        drop(images);
+        // The CPU versions include 36 vertex bytes and 16 image bytes. Both still have private
+        // upload owners even though the frame failed and its native caches have been invalidated.
+        assert!(gpu.live_bytes(resources.as_com_ref()).unwrap() >= 52);
+        assert!(gpu.recording_usage(resources.as_com_ref()).unwrap().0 > 0);
+        native.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+        executor.collect().unwrap();
+        assert_eq!(gpu.live_bytes(resources.as_com_ref()).unwrap(), 0);
+        assert_eq!(gpu.recording_usage(resources.as_com_ref()).unwrap(), (0, 0));
+        // Scoped validation errors leave this executor usable. A fresh valid image
+        // must not observe a leaked scope or a poisoned native cache from the failure.
+        let retry = resources
+            .create_texture(
+                GpuTextureDesc {
+                    size: Size { width: 1, height: 1 },
+                    format: GpuTextureFormat::Rgba8Unorm,
+                    mip_count: 1,
+                },
+                Bytes::source(vec![255; 4]).as_com_ref(),
+            )
+            .unwrap();
+        executor
+            .prepare_texture(gpu.texture_snapshot(resources.as_com_ref(), retry.as_com_ref()).unwrap(), &HashMap::new())
+            .unwrap();
+        drop(retry);
+        native.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+        executor.collect().unwrap();
+        assert_eq!(gpu.live_bytes(resources.as_com_ref()).unwrap(), 0);
+        assert!(pollster::block_on(outer.pop()).is_none());
     }
-    .source()
-    .unwrap();
-    let pipeline = resources.create_pipeline(desc.as_com_ref(), vs.as_com_ref(), fs.as_com_ref()).unwrap();
-    let vertices = resources
-        .create_buffer(
-            GpuBufferDesc {
-                role: GpuBufferRole::Vertex,
-                byte_len: 36,
-            },
-            Bytes::source(vec![0; 36]).as_com_ref(),
-        )
-        .unwrap();
-    let image = resources
-        .create_texture(
-            GpuTextureDesc {
-                size: Size { width: 2, height: 2 },
-                format: GpuTextureFormat::Rgba8Unorm,
-                mip_count: 1,
-            },
-            Bytes::source(vec![255; 16]).as_com_ref(),
-        )
-        .unwrap();
-    let sampler = resources.create_sampler(GpuSamplerDesc::default()).unwrap();
-    let mut recording = gpu.broker().begin_frame().unwrap();
-    let root = Rect { x: 0, y: 0, width: 8, height: 8 };
-    let mut session = recording
-        .begin_view(RenderViewRoot { client: root, target: root }, resources.as_com_ref())
-        .unwrap();
-    let mut view = session.view().unwrap();
-    view.bind_pipeline(pipeline.as_com_ref()).unwrap();
-    view.bind_vertex_buffer(0, vertices.as_com_ref(), 0).unwrap();
-    view.bind_texture(GpuShaderStage::Fragment, 0, image.as_com_ref(), sampler.as_com_ref())
-        .unwrap();
-    view.push_uniforms(GpuShaderStage::Fragment, 0, NcCopyFromBufferOffset::new(0, &[0; 16]))
-        .unwrap();
-    view.draw(3, 1, 0).unwrap();
-    view.finish().unwrap();
-    let owner = session.take_block().unwrap();
-    recording.finish().unwrap();
-    let snapshot = gpu.block_snapshot(owner.as_com_ref()).unwrap();
-    let error = match executor.prepare(&snapshot, wgpu::TextureFormat::Rgba8Unorm, true, &HashMap::new()) {
-        Ok(_) => panic!("native vertex allocation must fail"),
-        Err(error) => error,
-    };
-    assert!(error.contains("maximum buffer size"), "unexpected error: {error}");
-    drop((snapshot, owner, view, session, recording, pipeline, vertices, image, sampler, vs, fs));
-    // The CPU versions include 36 vertex bytes and 16 image bytes. Both still have private
-    // upload owners even though the frame failed and its native caches have been invalidated.
-    assert!(gpu.live_bytes(resources.as_com_ref()).unwrap() >= 52);
-    assert!(gpu.recording_usage(resources.as_com_ref()).unwrap().0 > 0);
-    native.poll(wgpu::PollType::wait_indefinitely()).unwrap();
-    executor.collect().unwrap();
-    assert_eq!(gpu.live_bytes(resources.as_com_ref()).unwrap(), 0);
-    assert_eq!(gpu.recording_usage(resources.as_com_ref()).unwrap(), (0, 0));
-    assert!(pollster::block_on(outer.pop()).is_none());
 }
 
 /// Trusted fixture capability represents the host-authenticated immutable image.

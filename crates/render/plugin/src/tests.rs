@@ -7,6 +7,8 @@ use neocogi_gfx_support::abi::RenderVertex;
 use neocogi_render_gpu::source::{Bytes, PipelineDesc};
 
 #[cfg(feature = "glow")]
+pub(super) mod costs;
+#[cfg(feature = "glow")]
 mod view_geometry;
 mod window_lifetime;
 

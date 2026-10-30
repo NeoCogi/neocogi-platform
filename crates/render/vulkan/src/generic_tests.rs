@@ -26,6 +26,69 @@ fn core() -> Rc<Core> {
     Core::new(entry, instance, physical, device, family)
 }
 
+/// Uncertain submit/wait observations keep the real transfer and accounting alive,
+/// reject reuse, and leave an already produced immutable output untouched.
+#[test]
+#[ignore = "requires a native Vulkan graphics adapter"]
+fn uncertain_upload_status_retains_owners_until_idle_and_rejects_reuse() {
+    for failure in [UploadFailure::Submit, UploadFailure::Wait] {
+        let core = core();
+        let mut executor = Executor::new(core.clone()).unwrap();
+        let mut target = Target::new(core.clone(), 8, 8);
+        target.render_color(&mut executor, Vec::new(), Size { width: 8, height: 8 }, [0.25, 0.5, 0.75, 1.]);
+        let previous = target.read(&target.pixels);
+        let baseline = core.memory_count.get();
+        let gpu = GpuDevice::new(
+            nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
+                .query()
+                .unwrap(),
+        );
+        let controller = gpu.create_client(RenderClientLimits::default()).unwrap();
+        let resources = controller.resources().unwrap();
+        let image = resources
+            .create_texture(
+                GpuTextureDesc {
+                    size: Size { width: 1, height: 1 },
+                    format: GpuTextureFormat::Rgba8Unorm,
+                    mip_count: 1,
+                },
+                Bytes::source(vec![255; 4]).as_com_ref(),
+            )
+            .unwrap();
+        let source = gpu.texture_snapshot(resources.as_com_ref(), image.as_com_ref()).unwrap();
+        executor.upload_failure = Some(failure);
+        let error = match executor.upload_image(
+            source.desc.size,
+            vk::Format::R8G8B8A8_UNORM,
+            source.pixels().unwrap(),
+            Some(Rc::new(source.receipt())),
+        ) {
+            Ok(_) => panic!("injected observation failure must reject the upload"),
+            Err(error) => error,
+        };
+        assert!(error.contains("complete graphics image upload"));
+        assert!(executor.unusable());
+        assert_eq!(executor.transfers.len(), 1);
+        drop((image, source));
+        assert_eq!(gpu.live_bytes(resources.as_com_ref()).unwrap(), 4);
+        assert_eq!(core.memory_count.get(), baseline + 2);
+        assert!(
+            executor
+                .upload_image(Size { width: 1, height: 1 }, vk::Format::R8G8B8A8_UNORM, &[0; 4], None)
+                .is_err()
+        );
+        executor.collect().unwrap();
+        assert_eq!(executor.transfers.len(), 1);
+        assert_eq!(target.read(&target.pixels), previous);
+        // The real queue is healthy: bounded native wait proves completion, then
+        // normal executor teardown performs its production idle-before-release path.
+        unsafe { core.device.wait_for_fences(&[executor.transfers[0].fence], true, 5_000_000_000) }.unwrap();
+        drop(executor);
+        assert_eq!(gpu.live_bytes(resources.as_com_ref()).unwrap(), 0);
+        assert_eq!(core.memory_count.get(), baseline);
+    }
+}
+
 /// A target destroys framebuffer references before its independently owned attachment images.
 struct Image {
     /// Cache-free native device ownership.

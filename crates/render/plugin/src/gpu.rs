@@ -38,6 +38,69 @@ pub(super) struct Gpu {
 }
 
 impl Gpu {
+    /// Test-only cost sample separates native preparation from completed execution;
+    /// it bypasses acceptance readback and presentation and adds no deployed telemetry.
+    #[cfg(all(test, feature = "glow", not(target_arch = "wasm32")))]
+    pub(super) fn measure(&mut self, blocks: &[std::rc::Rc<neocogi_render_gpu::record::Block>], sample: super::tests::costs::Sample) {
+        use glow::HasContext;
+        use std::time::Instant;
+        let super::tests::costs::Sample {
+            setup_ns,
+            record_ns,
+            mixed,
+            commands,
+            draws,
+            buffers,
+            textures,
+            pipelines,
+        } = sample;
+        self.current().unwrap();
+        // SAFETY: The live owning GL context is selected throughout this measurement.
+        let adapter = unsafe { self.gl.get_parameter_string(glow::RENDERER) };
+        let setup_calls = super::tests::costs::calls::take();
+        let mut cold = (0, 0);
+        let mut cold_calls = super::tests::costs::calls::Calls::default();
+        let mut warm = (0, 0);
+        for frame in 0..=100 {
+            let start = Instant::now();
+            let prepared = blocks
+                .iter()
+                .map(|block| self.renderer.prepare_block(block, false).unwrap())
+                .collect::<Vec<_>>();
+            let preparation = start.elapsed().as_nanos();
+            let start = Instant::now();
+            let mut target = self
+                .renderer
+                .frame(FrameInfo::try_new(Dimensioni::new(64, 64), Color { r: 0, g: 0, b: 0, a: 255 }).unwrap())
+                .unwrap();
+            for block in &prepared {
+                target.execute_block(block);
+            }
+            target.finish().unwrap();
+            // SAFETY: Finish completes commands from this test's current context.
+            unsafe {
+                self.gl.finish();
+            }
+            let execution = start.elapsed().as_nanos();
+            if frame == 0 {
+                cold = (preparation, execution);
+                cold_calls = super::tests::costs::calls::take();
+            } else {
+                warm.0 += preparation;
+                warm.1 += execution;
+            }
+        }
+        let warm_calls = super::tests::costs::calls::take();
+        println!("native_calls setup={setup_calls:?} cold={cold_calls:?} warm_total={warm_calls:?}");
+        println!(
+            "native_cost workload={} adapter={adapter:?} size=64x64 setup_ns={setup_ns} ui_record_ns={record_ns} commands={commands} draws={draws} buffer_versions={buffers} texture_versions={textures} pipeline_versions={pipelines} cold_prepare_ns={} cold_completed_execute_ns={} warm_frames=100 warm_prepare_ns={} warm_completed_execute_ns={} reused_immutable_versions=true",
+            if mixed { "ui+client" } else { "ui" },
+            cold.0,
+            cold.1,
+            warm.0 / 100,
+            warm.1 / 100
+        );
+    }
     /// Creates the chosen native window and backend in one fallible transaction.
     #[cfg(not(target_arch = "wasm32"))]
     pub(super) fn new(video: &sdl2::VideoSubsystem, title: &str, size: Size) -> Result<Self, String> {
@@ -63,7 +126,14 @@ impl Gpu {
             let context = window.gl_create_context()?;
             window.gl_make_current(&context)?;
             // SAFETY: SDL selected this live context, and the loader resolves functions for it.
-            let gl = std::rc::Rc::new(unsafe { glow::Context::from_loader_function(|name| video.gl_get_proc_address(name) as *const _) });
+            let gl = std::rc::Rc::new(unsafe {
+                glow::Context::from_loader_function(|name| {
+                    let pointer = video.gl_get_proc_address(name) as *const _;
+                    #[cfg(test)]
+                    let pointer = super::tests::costs::calls::load(name, pointer);
+                    pointer
+                })
+            });
             let renderer = Renderer::new(gl.clone(), actual.width as u32, actual.height as u32)?;
             Ok(Self {
                 renderer,
