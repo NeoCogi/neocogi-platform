@@ -17,6 +17,7 @@ use std::{
     cell::{Cell, RefCell},
     collections::HashMap,
     rc::{Rc, Weak},
+    sync::atomic::{AtomicU64, Ordering},
 };
 
 /// Maximum storage for a single logical vertex/index byte buffer.
@@ -52,8 +53,6 @@ pub(crate) struct Device {
     pub(crate) factories: RefCell<HashMap<usize, FactoryEntry>>,
     /// Sealed GPU blocks use construction-proven weak provenance too.
     pub(crate) blocks: RefCell<Registry<crate::record::BlockObject>>,
-    /// Checked monotonic backing identity; never exposed as provenance proof.
-    next: Cell<u64>,
     /// A non-borrowing gate spanning foreign reads or native preparation.
     pub(crate) busy: Cell<bool>,
 }
@@ -146,7 +145,6 @@ impl GpuDevice {
                 pipelines: RefCell::new(HashMap::new()),
                 factories: RefCell::new(HashMap::new()),
                 blocks: RefCell::new(HashMap::new()),
-                next: Cell::new(0),
                 busy: Cell::new(false),
             }),
         }
@@ -233,13 +231,6 @@ impl GpuDevice {
         Ok(Operation { inner: self.inner.clone() })
     }
 
-    /// Allocates an internal immutable-version ID, rejecting exhaustion instead of reusing it.
-    pub(crate) fn next(&self) -> Result<u64, NcStatus> {
-        let next = self.inner.next.get().checked_add(1).ok_or(NC_E_OUT_OF_RANGE)?;
-        self.inner.next.set(next);
-        Ok(next)
-    }
-
     /// Authenticates the factory's registered identity and checks its current domain gate.
     pub(crate) fn domain(&self, factory: ComRef<'_, IRenderResourcesAbi>) -> Result<Rc<Domain>, NcStatus> {
         let (observer, domain) = {
@@ -279,7 +270,7 @@ impl GpuDevice {
         let len = texture_desc(desc)?;
         let owner = domain.account.resource()?;
         let current = Rc::new(TextureVersion {
-            id: self.next()?,
+            id: next_version_id()?,
             desc,
             contents: TextureContents::Imported { id, _image: image },
             charge: Rc::new(domain.account.bytes(len)?),
@@ -325,20 +316,20 @@ snapshot_method!(pipeline_snapshot, IGpuPipelineAbi, pipelines, PipelineVersion)
 /// Immutable logical vertex/index version; native caches may retain this device-free value.
 pub struct BufferVersion {
     /// Renderer-private cache identity.
-    pub id: u64,
+    pub(crate) id: u64,
     /// Immutable role/extent.
-    pub desc: GpuBufferDesc,
+    pub(crate) desc: GpuBufferDesc,
     /// Explicit GPU bytes; no Rust semantic vertex layout is involved.
-    pub bytes: Vec<u8>,
+    pub(crate) bytes: Vec<u8>,
     /// Persists through actual last backing ownership.
     _charge: ByteCharge,
 }
 /// Immutable sampled texture version with tightly packed top-left RGBA pixels.
 pub struct TextureVersion {
     /// Renderer-private cache identity.
-    pub id: u64,
+    pub(crate) id: u64,
     /// Immutable sampled texture shape.
-    pub desc: GpuTextureDesc,
+    pub(crate) desc: GpuTextureDesc,
     /// Pixel storage or a trusted immutable-image lease; never an editable native handle.
     contents: TextureContents,
     /// Native lowering retains this device-free receipt instead of an imported COM/device lease.
@@ -378,7 +369,6 @@ impl TextureVersion {
     /// Strip COM/native-facade ownership before native caching or submission retention.
     pub fn receipt(self: &Rc<Self>) -> TextureReceipt {
         TextureReceipt {
-            id: self.id,
             alive: Rc::downgrade(self),
             _charge: self.charge.clone(),
         }
@@ -387,8 +377,6 @@ impl TextureVersion {
 
 /// Device-free native image accounting plus passive private-version retirement metadata.
 pub struct TextureReceipt {
-    /// Monotonic immutable-version key, independent of public addresses and native handles.
-    pub id: u64,
     /// Retaining metadata cannot retain the imported image or its native device facade.
     alive: Weak<TextureVersion>,
     /// Refunded only when all CPU/native/completion owners release the actual backing charge.
@@ -403,37 +391,37 @@ impl TextureReceipt {
 /// Immutable sampler state, independent of its exclusive public owner.
 pub struct SamplerVersion {
     /// Renderer-private cache identity.
-    pub id: u64,
+    pub(crate) id: u64,
     /// Complete portable filtering/address state.
-    pub desc: GpuSamplerDesc,
+    pub(crate) desc: GpuSamplerDesc,
     /// Device-free logical-state charge.
     _charge: ByteCharge,
 }
 /// Validated shader CPU artifacts can outlive their public owner in a pipeline.
 pub struct ShaderVersion {
     /// Renderer-private cache identity.
-    pub id: u64,
+    pub(crate) id: u64,
     /// Canonical source, native artifacts and reflection.
-    pub artifact: Shader,
+    pub(crate) artifact: Shader,
     /// Owned artifact bytes remain charged through pipeline/cache lifetime.
     _charge: ByteCharge,
 }
 /// Immutable complete graphics pipeline and captured shader dependencies.
 pub struct PipelineVersion {
     /// Renderer-private cache identity.
-    pub id: u64,
+    pub(crate) id: u64,
     /// Fixed triangle pipeline state.
-    pub info: GpuPipelineInfo,
+    pub(crate) info: GpuPipelineInfo,
     /// Explicit byte stepping for each declared stream.
-    pub vertex_buffers: Vec<GpuVertexBufferLayout>,
+    pub(crate) vertex_buffers: Vec<GpuVertexBufferLayout>,
     /// Explicit attribute footprints and locations.
-    pub attributes: Vec<GpuVertexAttribute>,
+    pub(crate) attributes: Vec<GpuVertexAttribute>,
     /// Exact active stage/slot resource declarations.
-    pub bindings: Vec<GpuShaderBinding>,
+    pub(crate) bindings: Vec<GpuShaderBinding>,
     /// Captured vertex shader, independent of public shader owner lifetime.
-    pub vertex: Rc<ShaderVersion>,
+    pub(crate) vertex: Rc<ShaderVersion>,
     /// Captured fragment shader, independent of public shader owner lifetime.
-    pub fragment: Rc<ShaderVersion>,
+    pub(crate) fragment: Rc<ShaderVersion>,
     /// Copied descriptor charge, without any device/domain reference.
     pub(crate) _charge: ByteCharge,
 }
@@ -603,7 +591,7 @@ impl IRenderResources for Factory {
         read_bytes(source, len, |offset, chunk| bytes[offset..offset + chunk.len()].copy_from_slice(chunk))?;
         self.domain.open()?;
         let current = Rc::new(BufferVersion {
-            id: self.domain.device.next()?,
+            id: next_version_id()?,
             desc,
             bytes,
             _charge: charge,
@@ -632,7 +620,7 @@ impl IRenderResources for Factory {
         read_bytes(source, len, |offset, chunk| bytes[offset..offset + chunk.len()].copy_from_slice(chunk))?;
         self.domain.open()?;
         let current = Rc::new(TextureVersion {
-            id: self.domain.device.next()?,
+            id: next_version_id()?,
             desc,
             contents: TextureContents::Pixels(bytes),
             charge: Rc::new(charge),
@@ -654,7 +642,7 @@ impl IRenderResources for Factory {
         sampler_desc(desc)?;
         let owner = self.domain.account.resource()?;
         let current = Rc::new(SamplerVersion {
-            id: self.domain.device.next()?,
+            id: next_version_id()?,
             desc,
             _charge: self.domain.account.bytes(std::mem::size_of::<GpuSamplerDesc>())?,
         });
@@ -737,7 +725,7 @@ impl IRenderResources for Factory {
             }
         })?;
         let current = Rc::new(ShaderVersion {
-            id: self.domain.device.next()?,
+            id: next_version_id()?,
             artifact,
             _charge: charge,
         });
@@ -781,7 +769,7 @@ impl IRenderResources for Factory {
         })?;
         debug_assert!(end <= bytes.len());
         let current = Rc::new(BufferVersion {
-            id: self.domain.device.next()?,
+            id: next_version_id()?,
             desc: previous.desc,
             bytes,
             _charge: charge,
@@ -837,7 +825,7 @@ impl IRenderResources for Factory {
             }
         })?;
         let current = Rc::new(TextureVersion {
-            id: self.domain.device.next()?,
+            id: next_version_id()?,
             desc: previous.desc,
             contents: TextureContents::Pixels(bytes),
             charge: Rc::new(charge),
@@ -873,3 +861,98 @@ mod tests;
 
 #[cfg(test)]
 mod compiler_tests;
+
+impl BufferVersion {
+    /// Reads the admitted id without granting mutation authority.
+    pub fn id(&self) -> u64 {
+        self.id
+    }
+    /// Reads the admitted desc without granting mutation authority.
+    pub fn desc(&self) -> GpuBufferDesc {
+        self.desc
+    }
+    /// Reads the admitted bytes without granting mutation authority.
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+}
+
+impl TextureVersion {
+    /// Reads the admitted id without granting mutation authority.
+    pub fn id(&self) -> u64 {
+        self.id
+    }
+    /// Reads the admitted desc without granting mutation authority.
+    pub fn desc(&self) -> GpuTextureDesc {
+        self.desc
+    }
+}
+
+impl SamplerVersion {
+    /// Reads the admitted id without granting mutation authority.
+    pub fn id(&self) -> u64 {
+        self.id
+    }
+    /// Reads the admitted desc without granting mutation authority.
+    pub fn desc(&self) -> GpuSamplerDesc {
+        self.desc
+    }
+}
+
+impl ShaderVersion {
+    /// Reads the admitted id without granting mutation authority.
+    pub fn id(&self) -> u64 {
+        self.id
+    }
+    /// Reads the admitted artifact without granting mutation authority.
+    pub fn artifact(&self) -> &Shader {
+        &self.artifact
+    }
+}
+
+impl PipelineVersion {
+    /// Reads the admitted id without granting mutation authority.
+    pub fn id(&self) -> u64 {
+        self.id
+    }
+    /// Reads the admitted info without granting mutation authority.
+    pub fn info(&self) -> GpuPipelineInfo {
+        self.info
+    }
+    /// Reads the admitted vertex buffers without granting mutation authority.
+    pub fn vertex_buffers(&self) -> &[GpuVertexBufferLayout] {
+        &self.vertex_buffers
+    }
+    /// Reads the admitted attributes without granting mutation authority.
+    pub fn attributes(&self) -> &[GpuVertexAttribute] {
+        &self.attributes
+    }
+    /// Reads the admitted bindings without granting mutation authority.
+    pub fn bindings(&self) -> &[GpuShaderBinding] {
+        &self.bindings
+    }
+    /// Reads the admitted vertex without granting mutation authority.
+    pub fn vertex(&self) -> &Rc<ShaderVersion> {
+        &self.vertex
+    }
+    /// Reads the admitted fragment without granting mutation authority.
+    pub fn fragment(&self) -> &Rc<ShaderVersion> {
+        &self.fragment
+    }
+}
+
+/// Cache identity spans logical devices that can feed the same native adapter.
+/// It never authenticates COM provenance and owns no device or resource lifetime.
+static NEXT_VERSION_ID: AtomicU64 = AtomicU64::new(1);
+
+/// Allocates identity only; relaxed ordering does not publish resource contents.
+fn allocate_version_id(sequence: &AtomicU64) -> Result<u64, NcStatus> {
+    sequence
+        .try_update(Ordering::Relaxed, Ordering::Relaxed, |value| value.checked_add(1))
+        .map_err(|_| NC_E_OUT_OF_RANGE)
+}
+
+/// All creation/import/update paths use the same checked, non-reusing sequence.
+pub(crate) fn next_version_id() -> Result<u64, NcStatus> {
+    allocate_version_id(&NEXT_VERSION_ID)
+}

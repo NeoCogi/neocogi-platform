@@ -589,8 +589,8 @@ impl Executor {
         self.submitted.try_reserve(1).map_err(|error| error.to_string())?;
         let pool = self.pool(block)?;
         let mut commands = Vec::new();
-        commands.try_reserve_exact(block.commands.len()).map_err(|error| error.to_string())?;
-        for command in &block.commands {
+        commands.try_reserve_exact(block.commands().len()).map_err(|error| error.to_string())?;
+        for command in block.commands() {
             commands.push(match command {
                 Command::Draw(draw) => {
                     PreparedCommand::Draw(self.draw(draw, pass, signature, pool.as_ref().ok_or("missing graphics descriptor pool")?, images)?)
@@ -618,7 +618,7 @@ impl Executor {
         let mut draws = 0u32;
         let mut uniforms = 0u32;
         let mut images = 0u32;
-        for command in &block.commands {
+        for command in block.commands() {
             if let Command::Draw(draw) = command {
                 draws = draws.checked_add(1).ok_or("descriptor draw count overflow")?;
                 uniforms = uniforms.checked_add(draw.uniforms.len() as u32).ok_or("uniform descriptor count overflow")?;
@@ -754,16 +754,16 @@ impl Executor {
 
     /// Host-visible immutable data avoids a hidden pending transfer lifetime for vertex/index bytes.
     fn buffer(&mut self, source: Rc<BufferVersion>) -> Result<Rc<Buffer>, String> {
-        if let Some(value) = self.buffers.get(&source.id) {
+        if let Some(value) = self.buffers.get(&source.id()) {
             return Ok(value.clone());
         }
-        let usage = if source.desc.role == GpuBufferRole::Index {
+        let usage = if source.desc().role == GpuBufferRole::Index {
             vk::BufferUsageFlags::INDEX_BUFFER
         } else {
             vk::BufferUsageFlags::VERTEX_BUFFER
         };
-        let allocation = Allocation::new(&self.core, &source.bytes, usage)?;
-        let id = source.id;
+        let allocation = Allocation::new(&self.core, source.bytes(), usage)?;
+        let id = source.id();
         let value = Rc::new(Buffer { source, allocation });
         self.buffers.insert(id, value.clone());
         Ok(value)
@@ -775,7 +775,7 @@ impl Executor {
         if let Some(value) = self.uniforms.get(&key) {
             return Ok(value.clone());
         }
-        let allocation = Allocation::new(&self.core, &source.bytes, vk::BufferUsageFlags::UNIFORM_BUFFER)?;
+        let allocation = Allocation::new(&self.core, source.bytes(), vk::BufferUsageFlags::UNIFORM_BUFFER)?;
         let value = Rc::new(Uniform { source, allocation });
         self.uniforms.insert(key, value.clone());
         Ok(value)
@@ -783,10 +783,10 @@ impl Executor {
 
     /// Sampling state is immutable, one-level and separate from image ownership.
     fn sampler(&mut self, source: Rc<SamplerVersion>) -> Result<Rc<Sampler>, String> {
-        if let Some(value) = self.samplers.get(&source.id) {
+        if let Some(value) = self.samplers.get(&source.id()) {
             return Ok(value.clone());
         }
-        let desc = source.desc;
+        let desc = source.desc();
         let native = self.core.sampler(
             &vk::SamplerCreateInfo::default()
                 .mag_filter(filter(desc.mag_filter))
@@ -798,7 +798,7 @@ impl Executor {
                 .min_lod(0.)
                 .max_lod(0.),
         )?;
-        let id = source.id;
+        let id = source.id();
         let value = Rc::new(Sampler { source, native });
         self.samplers.insert(id, value.clone());
         Ok(value)
@@ -820,7 +820,7 @@ impl Executor {
     /// Image initialization completes on the shared queue before target acquisition; no hidden
     /// pending-write storage depends on a later successful frame to retire.
     fn texture(&mut self, source: Rc<TextureVersion>, images: &HashMap<neocogi_render_core::TextureId, super::VulkanTexture>) -> Result<Rc<Texture>, String> {
-        if let Some(value) = self.textures.get(&source.id) {
+        if let Some(value) = self.textures.get(&source.id()) {
             return Ok(value.clone());
         }
         if let Some(import) = source.imported_id() {
@@ -833,23 +833,23 @@ impl Executor {
                 native,
                 source: Rc::new(source.receipt()),
             });
-            self.textures.insert(source.id, value.clone());
+            self.textures.insert(source.id(), value.clone());
             return Ok(value);
         }
         let receipt = Rc::new(source.receipt());
-        let format = if source.desc.format == GpuTextureFormat::Rgba8Srgb {
+        let format = if source.desc().format == GpuTextureFormat::Rgba8Srgb {
             vk::Format::R8G8B8A8_SRGB
         } else {
             vk::Format::R8G8B8A8_UNORM
         };
         let native = self.upload_image(
-            source.desc.size,
+            source.desc().size,
             format,
             source.pixels().ok_or("missing texture pixel storage")?,
             Some(receipt.clone()),
         )?;
         let value = Rc::new(Texture { native, source: receipt });
-        self.textures.insert(source.id, value.clone());
+        self.textures.insert(source.id(), value.clone());
         Ok(value)
     }
 
@@ -997,11 +997,11 @@ impl Executor {
 impl Executor {
     /// Creates one exact layout/fixed-state executable for the compatible attachment signature.
     fn pipeline(&mut self, source: Rc<PipelineVersion>, pass: vk::RenderPass, signature: Signature) -> Result<Rc<Pipeline>, String> {
-        let key = (source.id, signature);
+        let key = (source.id(), signature);
         if let Some(value) = self.pipelines.get(&key) {
             return Ok(value.clone());
         }
-        if signature.depth.is_none() && (source.info.depth_write || source.info.depth_compare != GpuCompare::Always) {
+        if signature.depth.is_none() && (source.info().depth_write || source.info().depth_compare != GpuCompare::Always) {
             return Err("graphics pipeline requires a host depth attachment".into());
         }
         let core = self.core.clone();
@@ -1009,7 +1009,7 @@ impl Executor {
         let mut groups = Vec::new();
         for group in 0..4 {
             let mut bindings = Vec::new();
-            for binding in &source.bindings {
+            for binding in source.bindings() {
                 let stage = if binding.stage == GpuShaderStage::Vertex {
                     vk::ShaderStageFlags::VERTEX
                 } else {
@@ -1051,17 +1051,17 @@ impl Executor {
             |value| unsafe { device.destroy_pipeline_layout(value, None) },
         );
         let vertex = ResourceGuard::new(
-            unsafe { device.create_shader_module(&vk::ShaderModuleCreateInfo::default().code(&source.vertex.artifact.spirv), None) }
+            unsafe { device.create_shader_module(&vk::ShaderModuleCreateInfo::default().code(&source.vertex().artifact().spirv), None) }
                 .map_err(|error| format!("create vertex shader: {error:?}"))?,
             |value| unsafe { device.destroy_shader_module(value, None) },
         );
         let fragment = ResourceGuard::new(
-            unsafe { device.create_shader_module(&vk::ShaderModuleCreateInfo::default().code(&source.fragment.artifact.spirv), None) }
+            unsafe { device.create_shader_module(&vk::ShaderModuleCreateInfo::default().code(&source.fragment().artifact().spirv), None) }
                 .map_err(|error| format!("create fragment shader: {error:?}"))?,
             |value| unsafe { device.destroy_shader_module(value, None) },
         );
-        let vertex_entry = CString::new(source.vertex.artifact.entry.as_bytes()).map_err(|_| "invalid vertex entry name")?;
-        let fragment_entry = CString::new(source.fragment.artifact.entry.as_bytes()).map_err(|_| "invalid fragment entry name")?;
+        let vertex_entry = CString::new(source.vertex().artifact().entry.as_bytes()).map_err(|_| "invalid vertex entry name")?;
+        let fragment_entry = CString::new(source.fragment().artifact().entry.as_bytes()).map_err(|_| "invalid fragment entry name")?;
         let stages = [
             vk::PipelineShaderStageCreateInfo::default()
                 .stage(vk::ShaderStageFlags::VERTEX)
@@ -1073,7 +1073,7 @@ impl Executor {
                 .name(&fragment_entry),
         ];
         let streams: Vec<_> = source
-            .vertex_buffers
+            .vertex_buffers()
             .iter()
             .map(|value| vk::VertexInputBindingDescription {
                 binding: value.slot,
@@ -1086,7 +1086,7 @@ impl Executor {
             })
             .collect();
         let attributes: Vec<_> = source
-            .attributes
+            .attributes()
             .iter()
             .map(|value| vk::VertexInputAttributeDescription {
                 location: value.location,
@@ -1102,7 +1102,7 @@ impl Executor {
             .topology(vk::PrimitiveTopology::TRIANGLE_LIST)
             .primitive_restart_enable(false);
         let viewport = vk::PipelineViewportStateCreateInfo::default().viewport_count(1).scissor_count(1);
-        let state = source.info;
+        let state = source.info();
         let raster = vk::PipelineRasterizationStateCreateInfo::default()
             .polygon_mode(vk::PolygonMode::FILL)
             .line_width(1.)

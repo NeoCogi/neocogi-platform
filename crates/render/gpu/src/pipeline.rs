@@ -128,7 +128,7 @@ pub(crate) fn create(
         }
     }
     let version = resource::PipelineVersion {
-        id: domain.device.next()?,
+        id: crate::resource::next_version_id()?,
         info,
         vertex_buffers: layouts,
         attributes,

@@ -719,3 +719,55 @@ struct V {{ @builtin(position) p:vec4<f32>, @location(0) {vertex_interpolation} 
         );
     }
 }
+
+/// Independently valid logical devices can feed one native cache without aliasing.
+#[test]
+fn version_identity_spans_devices_and_survives_owner_release_and_update() {
+    let mut identities = std::collections::HashSet::new();
+    let mut retained = Vec::new();
+    for pixel in [17, 233] {
+        let device = GpuDevice::new(
+            nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
+                .query()
+                .unwrap(),
+        );
+        let (_owner, factory) = client(&device, Default::default());
+        let (bytes, _, _) = source(vec![pixel; 4], ReadMode::Exact);
+        let texture = factory
+            .create_texture(
+                GpuTextureDesc {
+                    size: Size { width: 1, height: 1 },
+                    format: GpuTextureFormat::Rgba8Unorm,
+                    mip_count: 1,
+                },
+                bytes.as_com_ref(),
+            )
+            .unwrap();
+        let before = device.texture_snapshot(factory.as_com_ref(), texture.as_com_ref()).unwrap();
+        assert!(identities.insert(before.id()));
+        let (replacement, _, _) = source(vec![pixel + 1; 4], ReadMode::Exact);
+        factory
+            .update_texture(texture.as_com_ref(), Rect { x: 0, y: 0, width: 1, height: 1 }, replacement.as_com_ref())
+            .unwrap();
+        let after = device.texture_snapshot(factory.as_com_ref(), texture.as_com_ref()).unwrap();
+        assert!(identities.insert(after.id()));
+        let sampler = factory.create_sampler(Default::default()).unwrap();
+        assert!(identities.insert(device.sampler_snapshot(factory.as_com_ref(), sampler.as_com_ref()).unwrap().id()));
+        drop(texture);
+        assert_eq!(before.pixels().unwrap(), [pixel; 4]);
+        assert_eq!(after.pixels().unwrap(), [pixel + 1; 4]);
+        retained.extend([before, after]);
+    }
+    assert_eq!(identities.len(), 6);
+    assert_eq!(retained.len(), 4);
+}
+
+/// A failed terminal allocation never wraps, publishes zero or reuses an ID.
+#[test]
+fn version_identity_exhaustion_is_sticky_without_global_reset() {
+    let sequence = AtomicU64::new(u64::MAX - 1);
+    assert_eq!(allocate_version_id(&sequence), Ok(u64::MAX - 1));
+    assert_eq!(allocate_version_id(&sequence), Err(NC_E_OUT_OF_RANGE));
+    assert_eq!(allocate_version_id(&sequence), Err(NC_E_OUT_OF_RANGE));
+    assert_eq!(sequence.load(Ordering::Relaxed), u64::MAX);
+}

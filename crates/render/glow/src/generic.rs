@@ -241,8 +241,8 @@ impl Executor {
         images: &HashMap<neocogi_render_core::TextureId, Rc<super::Image>>,
     ) -> Result<PreparedBlock, String> {
         let mut commands = Vec::new();
-        commands.try_reserve_exact(block.commands.len()).map_err(|error| error.to_string())?;
-        for command in &block.commands {
+        commands.try_reserve_exact(block.commands().len()).map_err(|error| error.to_string())?;
+        for command in block.commands() {
             commands.push(match command {
                 Command::ClearColor { rgba, clip, .. } => PreparedCommand::Color(*rgba, *clip),
                 Command::ClearDepth { depth, clip, .. } => PreparedCommand::Depth(*depth, *clip),
@@ -301,7 +301,7 @@ impl Executor {
 
     /// Uploads a complete immutable buffer using its permanent portable role on first binding.
     fn buffer(&mut self, source: Rc<BufferVersion>) -> Result<Rc<Buffer>, String> {
-        if let Some(buffer) = self.buffers.get(&source.id) {
+        if let Some(buffer) = self.buffers.get(&source.id()) {
             return Ok(buffer.clone());
         }
         self.uploads.try_reserve(1).map_err(|error| error.to_string())?;
@@ -311,18 +311,18 @@ impl Executor {
             let raw = self.gl.create_buffer()?;
             let buffer = Rc::new(Buffer { gl: self.gl.clone(), source, raw });
             self.gl.bind_vertex_array(Some(self.array));
-            let target = if buffer.source.desc.role == GpuBufferRole::Index {
+            let target = if buffer.source.desc().role == GpuBufferRole::Index {
                 glow::ELEMENT_ARRAY_BUFFER
             } else {
                 glow::ARRAY_BUFFER
             };
             self.gl.bind_buffer(target, Some(raw));
-            self.gl.buffer_data_u8_slice(target, &buffer.source.bytes, glow::STATIC_DRAW);
+            self.gl.buffer_data_u8_slice(target, buffer.source.bytes(), glow::STATIC_DRAW);
             self.gl.bind_vertex_array(None);
             self.check()?;
             buffer
         };
-        self.buffers.insert(buffer.source.id, buffer.clone());
+        self.buffers.insert(buffer.source.id(), buffer.clone());
         Ok(buffer)
     }
 
@@ -338,10 +338,10 @@ impl Executor {
 
     /// Upload pixels or capture an authenticated immutable host image without retaining its COM lease.
     fn texture(&mut self, source: Rc<TextureVersion>, images: &HashMap<neocogi_render_core::TextureId, Rc<super::Image>>) -> Result<Rc<Texture>, String> {
-        if let Some(texture) = self.textures.get(&source.id) {
+        if let Some(texture) = self.textures.get(&source.id()) {
             return Ok(texture.clone());
         }
-        let id = source.id;
+        let id = source.id();
         if let Some(import) = source.imported_id() {
             let image = images.get(&import).ok_or("imported UI image is unavailable on this device")?.clone();
             let texture = Rc::new(Texture { image, source: source.receipt() });
@@ -349,6 +349,16 @@ impl Executor {
             return Ok(texture);
         }
         let pixels = source.pixels().ok_or("missing texture pixel storage")?;
+        // Validate the actual slice at the native pointer boundary, before any upload owner
+        // or GL allocation is installed. Descriptor privacy is not a substitute for this check.
+        let size = source.desc().size;
+        neocogi_render_core::ImageSource {
+            width: size.width,
+            height: size.height,
+            pixels,
+        }
+        .validate()
+        .map_err(|error| error.to_string())?;
         self.uploads.try_reserve(1).map_err(|error| error.to_string())?;
         self.uploads.push(Upload::Texture { _source: source.clone() });
         // SAFETY: Source dimensions and complete tightly packed RGBA bytes were admitted before capture.
@@ -360,7 +370,7 @@ impl Executor {
             let texture = Rc::new(Texture { image, source: source.receipt() });
             super::GLRenderer::prepare_upload(&self.gl);
             self.gl.bind_texture(glow::TEXTURE_2D, Some(texture.image.raw));
-            let desc = source.desc;
+            let desc = source.desc();
             let format = if desc.format == GpuTextureFormat::Rgba8Srgb {
                 glow::SRGB8_ALPHA8
             } else {
@@ -388,14 +398,14 @@ impl Executor {
 
     /// Creates immutable filter/wrap state independent of image storage.
     fn sampler(&mut self, source: Rc<SamplerVersion>) -> Result<Rc<Sampler>, String> {
-        if let Some(sampler) = self.samplers.get(&source.id) {
+        if let Some(sampler) = self.samplers.get(&source.id()) {
             return Ok(sampler.clone());
         }
         // SAFETY: All descriptor tags were checked before publication.
         let sampler = unsafe {
             let raw = self.gl.create_sampler()?;
             let sampler = Rc::new(Sampler { gl: self.gl.clone(), source, raw });
-            let desc = sampler.source.desc;
+            let desc = sampler.source.desc();
             self.gl.sampler_parameter_i32(raw, glow::TEXTURE_MIN_FILTER, filter(desc.min_filter) as i32);
             self.gl.sampler_parameter_i32(raw, glow::TEXTURE_MAG_FILTER, filter(desc.mag_filter) as i32);
             self.gl.sampler_parameter_i32(raw, glow::TEXTURE_WRAP_S, address(desc.address_u) as i32);
@@ -403,7 +413,7 @@ impl Executor {
             self.check()?;
             sampler
         };
-        self.samplers.insert(sampler.source.id, sampler.clone());
+        self.samplers.insert(sampler.source.id(), sampler.clone());
         Ok(sampler)
     }
 
@@ -419,7 +429,7 @@ impl Executor {
         let uniform = unsafe {
             let raw = self.gl.create_buffer()?;
             let uniform = Rc::new(Uniform { gl: self.gl.clone(), source, raw });
-            let mut bytes = uniform.source.bytes.clone();
+            let mut bytes = uniform.source.bytes().to_vec();
             bytes.resize(bytes.len().next_multiple_of(16), 0);
             self.gl.bind_buffer(glow::UNIFORM_BUFFER, Some(raw));
             self.gl.buffer_data_u8_slice(glow::UNIFORM_BUFFER, &bytes, glow::STATIC_DRAW);
@@ -432,14 +442,14 @@ impl Executor {
 
     /// Links validated translated stages and assigns reflected private binding names.
     fn pipeline(&mut self, source: Rc<PipelineVersion>, offscreen: bool) -> Result<Rc<Pipeline>, String> {
-        let key = (source.id, offscreen);
+        let key = (source.id(), offscreen);
         if let Some(pipeline) = self.pipelines.get(&key) {
             return Ok(pipeline.clone());
         }
         // The compiler promises one fixed clip transform. The renderer owns the
         // presentation correction and fragment-origin convention for this target.
-        let vertex = super::shader_adapter::vertex(&source.vertex.artifact.glsl, offscreen)?;
-        let (fragment, height_name) = super::shader_adapter::fragment(&source.fragment.artifact.glsl, offscreen)?;
+        let vertex = super::shader_adapter::vertex(&source.vertex().artifact().glsl, offscreen)?;
+        let (fragment, height_name) = super::shader_adapter::fragment(&source.fragment().artifact().glsl, offscreen)?;
         let raw = super::create_program(&self.gl, &vertex, &fragment).map_err(|error| error.to_string())?;
         // SAFETY: The new program is linked in this current context; the generated name is unique.
         let target_height = height_name.and_then(|name| unsafe { self.gl.get_uniform_location(raw, &name) });
@@ -452,7 +462,7 @@ impl Executor {
         // SAFETY: Reflection comes from the same validated stages linked into this owned program.
         unsafe {
             self.gl.use_program(Some(raw));
-            for shader in [&pipeline.source.vertex.artifact, &pipeline.source.fragment.artifact] {
+            for shader in [pipeline.source.vertex().artifact(), pipeline.source.fragment().artifact()] {
                 for uniform in &shader.uniforms {
                     if let Some(index) = self.gl.get_uniform_block_index(raw, &uniform.gl_block) {
                         self.gl.uniform_block_binding(raw, index, unit(shader.stage, uniform.slot));
@@ -536,7 +546,7 @@ impl Executor {
             return Ok(());
         };
         let gl = &self.gl;
-        let info = draw.pipeline.source.info;
+        let info = draw.pipeline.source.info();
         let y = if offscreen { view.y } else { physical.height as u32 - view.y - view.height };
         // SAFETY: Prepared resources belong to this context; every byte range and layout is checked
         // by immutable draw admission. CPU snapshots cannot be changed during this replay.
@@ -583,7 +593,7 @@ impl Executor {
                 gl.disable_vertex_attrib_array(location);
                 gl.vertex_attrib_divisor(location, 0);
             }
-            for attribute in &draw.pipeline.source.attributes {
+            for attribute in draw.pipeline.source.attributes() {
                 let (slot, buffer, offset) = draw
                     .vertices
                     .iter()
@@ -592,7 +602,7 @@ impl Executor {
                 let layout = draw
                     .pipeline
                     .source
-                    .vertex_buffers
+                    .vertex_buffers()
                     .iter()
                     .find(|layout| layout.slot == *slot)
                     .ok_or("prepared vertex layout missing")?;

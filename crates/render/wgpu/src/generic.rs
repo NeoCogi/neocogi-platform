@@ -273,8 +273,8 @@ impl Executor {
         images: &HashMap<neocogi_render_core::TextureId, super::GpuTexture>,
     ) -> Result<PreparedBlock, String> {
         let mut commands = Vec::new();
-        commands.try_reserve_exact(block.commands.len()).map_err(|error| error.to_string())?;
-        for command in &block.commands {
+        commands.try_reserve_exact(block.commands().len()).map_err(|error| error.to_string())?;
+        for command in block.commands() {
             commands.push(match command {
                 Command::Draw(draw) => PreparedCommand::Draw(self.draw(draw, format, depth, images)?),
                 Command::ClearColor { rgba, clip, .. } => self.clear(format, depth, false, rgba.to_le_bytes().map(|byte| f32::from(byte) / 255.), 0., *clip)?,
@@ -294,16 +294,16 @@ impl Executor {
 
     /// Uploads one immutable buffer; native WGPU copy alignment does not change logical bounds.
     fn buffer(&mut self, source: Rc<BufferVersion>) -> Rc<Buffer> {
-        if let Some(value) = self.buffers.get(&source.id) {
+        if let Some(value) = self.buffers.get(&source.id()) {
             return value.clone();
         }
-        let usage = if source.desc.role == GpuBufferRole::Index {
+        let usage = if source.desc().role == GpuBufferRole::Index {
             wgpu::BufferUsages::INDEX
         } else {
             wgpu::BufferUsages::VERTEX
         };
-        let raw = self.upload_buffer(&source.bytes, usage, "neocogi.gpu.bytes");
-        let id = source.id;
+        let raw = self.upload_buffer(source.bytes(), usage, "neocogi.gpu.bytes");
+        let id = source.id();
         let value = Rc::new(Buffer { raw, source });
         self.uploads.push(Upload::Buffer { _resource: value.clone() });
         self.buffers.insert(id, value.clone());
@@ -312,10 +312,10 @@ impl Executor {
 
     /// Resolve only trusted immutable imports, otherwise upload top-left pixels with scoped native errors.
     fn texture(&mut self, source: Rc<TextureVersion>, images: &HashMap<neocogi_render_core::TextureId, super::GpuTexture>) -> Result<Rc<Texture>, String> {
-        if let Some(value) = self.textures.get(&source.id) {
+        if let Some(value) = self.textures.get(&source.id()) {
             return Ok(value.clone());
         }
-        let id = source.id;
+        let id = source.id();
         if let Some(import) = source.imported_id() {
             let image = images.get(&import).ok_or("imported UI image is unavailable on this device")?;
             let value = Rc::new(Texture {
@@ -331,8 +331,8 @@ impl Executor {
             return Ok(value);
         }
         let size = wgpu::Extent3d {
-            width: source.desc.size.width as u32,
-            height: source.desc.size.height as u32,
+            width: source.desc().size.width as u32,
+            height: source.desc().size.height as u32,
             depth_or_array_layers: 1,
         };
         let raw = self.device.create_texture(&wgpu::TextureDescriptor {
@@ -341,7 +341,7 @@ impl Executor {
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: if source.desc.format == GpuTextureFormat::Rgba8Srgb {
+            format: if source.desc().format == GpuTextureFormat::Rgba8Srgb {
                 wgpu::TextureFormat::Rgba8UnormSrgb
             } else {
                 wgpu::TextureFormat::Rgba8Unorm
@@ -378,15 +378,15 @@ impl Executor {
     /// Creates immutable one-level sampling state independently of the image resource.
     fn sampler(&mut self, source: Rc<SamplerVersion>) -> Rc<Sampler> {
         self.samplers
-            .entry(source.id)
+            .entry(source.id())
             .or_insert_with(|| {
                 Rc::new(Sampler {
                     raw: self.device.create_sampler(&wgpu::SamplerDescriptor {
                         label: Some("neocogi.gpu.sampler"),
-                        address_mode_u: address(source.desc.address_u),
-                        address_mode_v: address(source.desc.address_v),
-                        mag_filter: filter(source.desc.mag_filter),
-                        min_filter: filter(source.desc.min_filter),
+                        address_mode_u: address(source.desc().address_u),
+                        address_mode_v: address(source.desc().address_v),
+                        mag_filter: filter(source.desc().mag_filter),
+                        min_filter: filter(source.desc().min_filter),
                         ..Default::default()
                     }),
                     source,
@@ -401,7 +401,7 @@ impl Executor {
         if let Some(value) = self.uniforms.get(&key) {
             return value.clone();
         }
-        let mut bytes = source.bytes.clone();
+        let mut bytes = source.bytes().to_vec();
         bytes.resize(bytes.len().div_ceil(16) * 16, 0);
         let raw = self.upload_buffer(&bytes, wgpu::BufferUsages::UNIFORM, "neocogi.gpu.uniform");
         let value = Rc::new(Uniform { raw, source });
@@ -497,16 +497,16 @@ impl Executor {
 
     /// Creates an exact reflected layout and complete fixed-state variant for the host target.
     fn pipeline(&mut self, source: Rc<PipelineVersion>, format: wgpu::TextureFormat, depth: bool) -> Result<Rc<Pipeline>, String> {
-        let key = (source.id, format, depth);
+        let key = (source.id(), format, depth);
         if let Some(value) = self.pipelines.get(&key) {
             return Ok(value.clone());
         }
-        if !depth && (source.info.depth_write || source.info.depth_compare != GpuCompare::Always) {
+        if !depth && (source.info().depth_write || source.info().depth_compare != GpuCompare::Always) {
             return Err("graphics pipeline requires a host depth attachment".into());
         }
         let groups = std::array::from_fn(|group| {
             let mut entries = Vec::new();
-            for binding in &source.bindings {
+            for binding in source.bindings() {
                 let visibility = if binding.stage == GpuShaderStage::Vertex {
                     wgpu::ShaderStages::VERTEX
                 } else {
@@ -554,25 +554,25 @@ impl Executor {
         });
         let vertex = self.device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("neocogi.gpu.vertex"),
-            source: wgpu::ShaderSource::Wgsl(source.vertex.artifact.wgsl.clone().into()),
+            source: wgpu::ShaderSource::Wgsl(source.vertex().artifact().wgsl.clone().into()),
         });
         let fragment = self.device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("neocogi.gpu.fragment"),
-            source: wgpu::ShaderSource::Wgsl(source.fragment.artifact.wgsl.clone().into()),
+            source: wgpu::ShaderSource::Wgsl(source.fragment().artifact().wgsl.clone().into()),
         });
         let mut attributes: [Vec<wgpu::VertexAttribute>; 8] = std::array::from_fn(|_| Vec::new());
-        for attribute in &source.attributes {
+        for attribute in source.attributes() {
             attributes[attribute.slot as usize].push(wgpu::VertexAttribute {
                 format: vertex_format(attribute.format),
                 offset: u64::from(attribute.offset),
                 shader_location: attribute.location,
             });
         }
-        let count = source.vertex_buffers.iter().map(|layout| layout.slot + 1).max().unwrap_or(0);
+        let count = source.vertex_buffers().iter().map(|layout| layout.slot + 1).max().unwrap_or(0);
         let buffers: Vec<_> = (0..count)
             .map(|slot| {
                 source
-                    .vertex_buffers
+                    .vertex_buffers()
                     .iter()
                     .find(|layout| layout.slot == slot)
                     .map(|layout| wgpu::VertexBufferLayout {
@@ -586,7 +586,7 @@ impl Executor {
                     })
             })
             .collect();
-        let state = source.info;
+        let state = source.info();
         let blend = state.blend.enabled.then(|| wgpu::BlendState {
             color: component(state.blend.src_color, state.blend.dst_color, state.blend.color_op),
             alpha: component(state.blend.src_alpha, state.blend.dst_alpha, state.blend.alpha_op),
@@ -596,7 +596,7 @@ impl Executor {
             layout: Some(&layout),
             vertex: wgpu::VertexState {
                 module: &vertex,
-                entry_point: Some(&source.vertex.artifact.entry),
+                entry_point: Some(&source.vertex().artifact().entry),
                 compilation_options: Default::default(),
                 buffers: &buffers,
             },
@@ -624,7 +624,7 @@ impl Executor {
             multisample: Default::default(),
             fragment: Some(wgpu::FragmentState {
                 module: &fragment,
-                entry_point: Some(&source.fragment.artifact.entry),
+                entry_point: Some(&source.fragment().artifact().entry),
                 compilation_options: Default::default(),
                 targets: &[Some(wgpu::ColorTargetState {
                     format,

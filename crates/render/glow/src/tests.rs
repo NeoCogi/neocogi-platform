@@ -97,7 +97,11 @@ fn canonical_signed_derivatives_match_window_and_texture_pixels() {
     // SAFETY: SDL's current live context owns every GL operation and resource below.
     let gl = Rc::new(unsafe { glow::Context::from_loader_function(|name| video.gl_get_proc_address(name).cast()) });
     let mut renderer = GLRenderer::new(gl.clone(), 8, 8).unwrap();
-    let gpu = neocogi_render_gpu::GpuDevice::new(nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject).query().unwrap());
+    let gpu = neocogi_render_gpu::GpuDevice::new(
+        nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
+            .query()
+            .unwrap(),
+    );
     let domain = gpu.create_ui_client(Default::default(), None).unwrap();
     let resources = domain.resources().unwrap();
     let output = TextureId::for_render_target(8, 8).unwrap();
@@ -108,7 +112,11 @@ fn canonical_signed_derivatives_match_window_and_texture_pixels() {
         for offscreen in [false, true] {
             let prepared = renderer.prepare_block(&snapshot, offscreen).unwrap();
             let info = FrameInfo::try_new(Dimensioni::new(8, 8), color(0, 0, 0, 255)).unwrap();
-            let mut frame = if offscreen { renderer.texture_frame(info, output).unwrap() } else { renderer.frame(info).unwrap() };
+            let mut frame = if offscreen {
+                renderer.texture_frame(info, output).unwrap()
+            } else {
+                renderer.frame(info).unwrap()
+            };
             frame.execute_block(&prepared);
             let mut pixel = [0; 4];
             // SAFETY: current target is 8x8 and pixel is writable RGBA storage.
@@ -119,7 +127,11 @@ fn canonical_signed_derivatives_match_window_and_texture_pixels() {
                 assert_eq!(gl.get_error(), glow::NO_ERROR);
             }
             frame.finish().unwrap();
-            assert!((i32::from(pixel[0]) - i32::from(case.red)).abs() <= 1, "{} offscreen={offscreen}: {pixel:?}", case.name);
+            assert!(
+                (i32::from(pixel[0]) - i32::from(case.red)).abs() <= 1,
+                "{} offscreen={offscreen}: {pixel:?}",
+                case.name
+            );
         }
     }
     renderer.destroy_texture(output);
@@ -485,5 +497,44 @@ fn shader_handoff_adapts_varied_glsl_and_culling() {
             gl.delete_vertex_array(vao);
             gl.delete_program(program);
         }
+    }
+}
+
+/// One adapter realizes independently valid logical producers without numeric cache aliasing.
+#[test]
+#[ignore = "requires native GL ES3; run with SDL_VIDEODRIVER=offscreen"]
+fn independent_logical_devices_keep_distinct_native_resources() {
+    let _session = NATIVE_SESSION.lock().unwrap_or_else(|error| error.into_inner());
+    let sdl = sdl2::init().unwrap();
+    let video = sdl.video().unwrap();
+    video.gl_attr().set_context_profile(sdl2::video::GLProfile::GLES);
+    video.gl_attr().set_context_version(3, 0);
+    let window = video.window("independent logical producers", 8, 8).opengl().hidden().build().unwrap();
+    let _context = window.gl_create_context().unwrap();
+    // SAFETY: all native resources are released before the owning current SDL context.
+    let gl = Rc::new(unsafe { glow::Context::from_loader_function(|name| video.gl_get_proc_address(name).cast()) });
+    let mut renderer = GLRenderer::new(gl.clone(), 8, 8).unwrap();
+    let mut owners = Vec::new();
+    let mut snapshots = Vec::new();
+    let root = neocogi_render_gpu::abi::Rect { x: 0, y: 0, width: 8, height: 8 };
+    for rgba in [[255, 0, 0, 255], [0, 0, 255, 255]] {
+        let gpu = neocogi_render_gpu::GpuDevice::new(
+            nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
+                .query()
+                .unwrap(),
+        );
+        let domain = gpu.create_client(Default::default()).unwrap();
+        let resources = domain.resources().unwrap();
+        let owner = sampled::block(&gpu, &resources, root, neocogi_render_gpu::abi::Size { width: 1, height: 1 }, &rgba);
+        snapshots.push(gpu.block_snapshot(owner.as_com_ref()).unwrap());
+        owners.push((gpu, domain, resources, owner));
+    }
+    for (snapshot, expected) in snapshots.iter().zip([[255, 0, 0, 255], [0, 0, 255, 255]]) {
+        let prepared = renderer.prepare_block(snapshot, false).unwrap();
+        let info = FrameInfo::try_new(Dimensioni::new(8, 8), color(0, 0, 0, 255)).unwrap();
+        let mut frame = renderer.frame(info).unwrap();
+        frame.execute_block(&prepared);
+        assert_eq!(pixel(&gl, 4, 4), expected);
+        frame.finish().unwrap();
     }
 }

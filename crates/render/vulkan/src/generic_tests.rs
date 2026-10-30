@@ -58,7 +58,7 @@ fn uncertain_upload_status_retains_owners_until_idle_and_rejects_reuse() {
         let source = gpu.texture_snapshot(resources.as_com_ref(), image.as_com_ref()).unwrap();
         executor.upload_failure = Some(failure);
         let error = match executor.upload_image(
-            source.desc.size,
+            source.desc().size,
             vk::Format::R8G8B8A8_UNORM,
             source.pixels().unwrap(),
             Some(Rc::new(source.receipt())),

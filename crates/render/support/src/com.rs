@@ -53,7 +53,7 @@ impl PreparedFrame {
         };
         for index in 0..info.block_count {
             let block = resources.view(stream.view(info.invocation, index)?)?;
-            if !neocogi_render_gpu::scope::contains(bounds, block.root.target) {
+            if !neocogi_render_gpu::scope::contains(bounds, block.root().target) {
                 return Err(NC_E_INVALID_ARG);
             }
             self.blocks.push(block);

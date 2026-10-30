@@ -20,9 +20,9 @@ use std::{
 /// Immutable host-owned block; domain provenance also exists for clear-only/empty work.
 pub struct Block {
     /// Captured final visible root, independent of later caller envelopes.
-    pub root: RenderViewRoot,
+    pub(crate) root: RenderViewRoot,
     /// Ordered generic commands, never callbacks or mutable public resources.
-    pub commands: Vec<Command>,
+    pub(crate) commands: Vec<Command>,
     /// Keeps admission/native lifetime authority outside device-owned caches.
     domain: Rc<Domain>,
     /// Capacity of the original bounded recorder, retained with its transferred data.
@@ -937,3 +937,14 @@ fn stage_slot(stage: GpuShaderStage, slot: u32) -> Result<(), NcStatus> {
 
 #[cfg(test)]
 mod tests;
+
+impl Block {
+    /// Copies the admitted root; later caller envelopes cannot change its bounds.
+    pub fn root(&self) -> RenderViewRoot {
+        self.root
+    }
+    /// Borrows recorded operations without exposing replacement or mutable access.
+    pub fn commands(&self) -> &[Command] {
+        &self.commands
+    }
+}

@@ -41,7 +41,7 @@ pub struct SampledBinding {
 /// Copied uniform bytes can be shared by successive draws until another push changes them.
 pub struct UniformData {
     /// Exact portable reflected byte layout; native final padding is separate.
-    pub bytes: Vec<u8>,
+    pub(crate) bytes: Vec<u8>,
     /// Follows actual copied payload ownership, including native in-flight storage.
     pub(crate) _charge: PendingCharge,
 }
@@ -139,5 +139,12 @@ impl Command {
             Self::Draw(draw) => CommandCharge { _charge: draw._charge.clone() },
             Self::ClearColor { charge, .. } | Self::ClearDepth { charge, .. } => charge.clone(),
         }
+    }
+}
+
+impl UniformData {
+    /// Borrows the charged, immutable uniform payload captured during admission.
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
     }
 }

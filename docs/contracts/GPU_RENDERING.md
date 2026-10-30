@@ -225,3 +225,22 @@ execution starts, immediate APIs cannot promise rollback. Errors propagate;
 native hosts suppress explicit failed-frame swaps. This in-process contract does
 not sandbox native code, bound arbitrary shader execution time or isolate device
 faults. Logical byte limits are not a complete driver VRAM/RSS guarantee.
+
+
+## Immutable native preparation data and identity
+
+Captured versions, admitted block roots/commands and shared uniform storage expose
+only read access. Dropping public COM ownership or obtaining a unique Rc never
+allows descriptors, shader artifacts, byte storage or command authority to change.
+Factory updates publish new versions; earlier captures retain their exact data and
+charges. Editable input descriptors and owned compiler-import DTOs remain ordinary
+authoring data before admission. Native pixel uploads also check the actual slice
+against its extent before allocating or passing pointers to GL.
+
+Version IDs are checked, non-reusing cache identities across logical GpuDevice
+instances in the linked implementation. Independent logical producers can feed a
+standalone Rust native adapter without cache aliasing. IDs do not authenticate
+COM provenance: device/domain registry checks remain authoritative. Exhaustion
+rejects publication instead of wrapping. Native cache keys and passive receipts
+retain no additional device owner; weak retirement and actual GPU completion
+remain separate lifetimes.

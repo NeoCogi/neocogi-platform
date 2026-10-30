@@ -92,7 +92,7 @@ fn prepared_blocks_preserve_order_and_release_resources_on_clear() {
     let mut frame = PreparedFrame::default();
     frame.read(info(2), stream.as_com_ref(), &Resolver(device.clone())).unwrap();
     assert_eq!(calls.get(), 2);
-    assert_eq!(frame.blocks().iter().map(|block| block.root.target).collect::<Vec<_>>(), [ROOT, second_root]);
+    assert_eq!(frame.blocks().iter().map(|block| block.root().target).collect::<Vec<_>>(), [ROOT, second_root]);
     drop(stream);
     assert!(device.block_snapshot(observer.as_com_ref()).is_err());
     assert!(device.recording_usage(resources.as_com_ref()).unwrap().0 > 0);
