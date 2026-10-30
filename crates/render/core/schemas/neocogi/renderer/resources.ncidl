@@ -18,11 +18,6 @@ interface ITexture {
 }
 
 #[version(1)]
-/// Opaque owned application GPU work authenticated by the renderer that created it.
-/// Application-specific derived interfaces edit concrete scene data; this interface exposes no native handles.
-interface IRenderItem {}
-
-#[version(1)]
 /// Optional renderer capability for uploading immutable external images.
 interface ITextureFactory {
     /// Uploads exactly width * height * 4 RGBA bytes at offset zero.
@@ -48,7 +43,7 @@ interface IRenderSurface {
 interface IRenderSurfaceFactory {
     /// Creates a private atlas binding and a surface on the same device as the factory.
     /// Rendering never presents or clears the window. Output uses top-left texture coordinates
-    /// and an opaque clear color; application-specific RenderBatch::Item work is unsupported.
+    /// and an opaque clear color; client graphics blocks are unsupported.
     /// Backends without this capability report an explicit failure.
     fn create_surface(&self, size: Size, atlas: &IRgbaImage) -> Result<ComPtr<IRenderSurface>>;
 }

@@ -2,10 +2,11 @@
 //! Run explicitly with a usable SDL video driver; ordinary unit runs do not open OS windows.
 use super::*;
 use neocogi_com::{NcOutputWriter, INcStringComPtrExt};
-use rs_math3d::{Mat4f, Vec2f, Vec3f};
+use neocogi_com::ComBox;
+use neocogi_render_gpu::source::{Bytes, PipelineDesc};
 
 #[cfg(feature = "glow")]
-mod mesh_geometry;
+mod view_geometry;
 
 /// SDL permits one process-wide video owner and event pump. Each fixture keeps
 /// this permit until all of its native windows, contexts and resources drop.
@@ -30,14 +31,14 @@ struct Input {
     overlay: ComPtr<ITextureAbi>,
     /// An optional foreign texture tests image ownership independently of scene ownership.
     foreign_texture: RefCell<Option<ComPtr<ITextureAbi>>>,
-    /// Scene can be replaced by a foreign owner's capability to inject a late preparation failure.
-    scene: RefCell<ComPtr<IRenderItemAbi>>,
+    /// A foreign block injects a late canonical-provenance failure after an image was resolved.
+    block: RefCell<ComBox<IRenderViewBlockAbi>>,
     /// A harmless empty stream supplies nested calls without creating a self-owning COM cycle.
     empty: ComPtr<IRenderStreamAbi>,
     /// Renderer capability reentered during vertices(), before any native frame may be acquired.
     renderer: ComPtr<IRendererAbi>,
-    /// Editable scene must reject mutations while its owner is preparing a complete frame.
-    editing: ComPtr<IMeshSceneAbi>,
+    /// Resource creation must reject reentry during native frame preparation.
+    editing: ComPtr<IRenderResourcesAbi>,
     /// Final release occurs while native state is detached, exercising deferred texture deletion.
     retire: RefCell<Option<ComPtr<ITextureAbi>>>,
     /// Observes retirement without retaining the device through fixture bookkeeping.
@@ -66,10 +67,6 @@ impl IRenderStream for Empty {
     fn texture(&self, _: u64, _: u32) -> Result<ComPtr<ITextureAbi>, NcStatus> {
         Err(NC_E_INVALID_ARG)
     }
-    /// The empty source has no scene capability.
-    fn item(&self, _: u64, _: u32) -> Result<ComPtr<IRenderItemAbi>, NcStatus> {
-        Err(NC_E_INVALID_ARG)
-    }
 }
 #[com_object(interfaces(IRenderStream))]
 /// Foreign-style input uses real generated vtable calls into the native implementation.
@@ -78,9 +75,12 @@ struct Stream {
     input: Rc<Input>,
 }
 impl IRenderStream for Stream {
-    /// This fixture carries no generic GPU block.
-    fn view(&self, _: u64, _: u32) -> Result<neocogi_com::WeakComBox<neocogi_render_core::abi::IRenderViewBlockAbi>, NcStatus> {
-        Err(neocogi_com::NC_E_INVALID_ARG)
+    /// The overall batch index selects a sealed weak observer without a semantic item adapter.
+    fn view(&self, _: u64, index: u32) -> Result<neocogi_com::WeakComBox<IRenderViewBlockAbi>, NcStatus> {
+        if index != 2 {
+            return Err(NC_E_INVALID_ARG);
+        }
+        Ok(self.input.block.borrow().downgrade())
     }
 
     /// Reentry and resource destruction happen while the renderer owns detached preparation storage.
@@ -97,11 +97,14 @@ impl IRenderStream for Stream {
             RENDER_E_BUSY
         );
         assert_eq!(
-            self.input.editing.set_transforms(SceneTransforms {
-                pvm: Mat4f::identity().into(),
-                view_model: Mat4f::identity().into()
-            }),
-            Err(RENDER_E_BUSY)
+            self.input
+                .editing
+                .create_buffer(
+                    GpuBufferDesc { role: GpuBufferRole::Vertex, byte_len: 4 },
+                    Bytes::source(vec![0; 4]).as_com_ref()
+                )
+                .err(),
+            Some(RENDER_E_BUSY)
         );
         let retire = self.input.retire.borrow_mut().take();
         let retired = retire.is_some();
@@ -126,13 +129,6 @@ impl IRenderStream for Stream {
             _ => Err(NC_E_INVALID_ARG),
         }
     }
-    /// Cloning the known local scene has no application callback; replacement occurs only between renders.
-    fn item(&self, _: u64, index: u32) -> Result<ComPtr<IRenderItemAbi>, NcStatus> {
-        if index != 2 {
-            return Err(NC_E_INVALID_ARG);
-        }
-        Ok(self.input.scene.borrow().clone())
-    }
 }
 /// Small physical viewport keeps this GPU lifetime/order gate fast on software drivers too.
 const SIZE: Size = Size { width: 64, height: 64 };
@@ -147,28 +143,35 @@ fn info() -> RenderInfo {
     }
 }
 
-/// Uploads a triangle using the same application contract as the independently loaded demo host.
-fn mesh(scene: &ComPtr<IMeshSceneAbi>) {
-    let vertices = [
-        MeshVertex {
-            position: Vec3f::new(-0.9, -0.9, 0.).into(),
-            normal: Vec3f::new(0., 0., 1.).into(),
-            uv: Vec2f::new(0., 0.).into(),
-        },
-        MeshVertex {
-            position: Vec3f::new(0.9, -0.9, 0.).into(),
-            normal: Vec3f::new(0., 0., 1.).into(),
-            uv: Vec2f::new(1., 0.).into(),
-        },
-        MeshVertex {
-            position: Vec3f::new(0., 0.9, 0.).into(),
-            normal: Vec3f::new(0., 0., 1.).into(),
-            uv: Vec2f::new(0.5, 1.).into(),
-        },
-    ];
-    scene
-        .set_mesh(NcCopyFromBufferOffset::new(0, &vertices), NcCopyFromBufferOffset::new(0, &[0, 1, 2]))
+/// Captures a generic procedural triangle; all client shader semantics live in this fixture.
+fn graphics(resources: &ComPtr<IRenderResourcesAbi>, broker: &ComPtr<IRenderViewBrokerAbi>, root: RenderViewRoot) -> ComBox<IRenderViewBlockAbi> {
+    let code = Bytes::source(
+        br#"
+        @vertex fn vs(@builtin(vertex_index) i:u32) -> @builtin(position) vec4<f32> {
+            let p = array<vec2<f32>,3>(vec2(-0.9,-0.9),vec2(0.9,-0.9),vec2(0.0,0.9));
+            return vec4(p[i],0.5,1.0);
+        }
+        @fragment fn fs() -> @location(0) vec4<f32> { return vec4(0.0,0.0,1.0,1.0); }
+    "#
+        .to_vec(),
+    );
+    let vs = resources
+        .create_shader(GpuShaderStage::Vertex, code.as_com_ref(), NcCopyFromBufferOffset::new(0, b"vs"))
         .unwrap();
+    let fs = resources
+        .create_shader(GpuShaderStage::Fragment, code.as_com_ref(), NcCopyFromBufferOffset::new(0, b"fs"))
+        .unwrap();
+    let descriptor = PipelineDesc::default().source().unwrap();
+    let pipeline = resources.create_pipeline(descriptor.as_com_ref(), vs.as_com_ref(), fs.as_com_ref()).unwrap();
+    let mut frame = broker.begin_frame().unwrap();
+    let mut session = frame.begin_view(root, resources.as_com_ref()).unwrap();
+    let mut view = session.view().unwrap();
+    view.bind_pipeline(pipeline.as_com_ref()).unwrap();
+    view.draw(3, 1, 0).unwrap();
+    view.finish().unwrap();
+    let block = session.take_block().unwrap();
+    frame.finish().unwrap();
+    block
 }
 /// Real native resources survive reentry, owner rejection, retries and public-window release with exact cleanup.
 #[test]
@@ -189,16 +192,18 @@ fn native_order_ownership_reentry_and_final_release() {
         assert!(clipboard.query::<IPlatformWindowAbi>().is_err());
         assert!(clipboard.query::<ITextureFactoryAbi>().is_err());
         assert!(clipboard.query::<IRenderSurfaceFactoryAbi>().is_err());
-        assert!(clipboard.query::<IMeshScenesAbi>().is_err());
+        assert!(clipboard.query::<IRenderClientFactoryAbi>().is_err());
+        assert!(clipboard.query::<IRenderHostAbi>().is_err());
     }
     input_delivery(&unknown, &device);
     let renderer: ComPtr<IRendererAbi> = unknown.query().unwrap();
     let factory: ComPtr<ITextureFactoryAbi> = unknown.query().unwrap();
-    let scenes: ComPtr<IMeshScenesAbi> = unknown.query().unwrap();
-    let scene = scenes.create_scene().unwrap();
-    mesh(&scene);
-    let base: ComPtr<IRenderItemAbi> = scene.query().unwrap();
-    assert_eq!(identity(&scene).unwrap(), identity(&base).unwrap());
+    let clients: ComPtr<IRenderClientFactoryAbi> = unknown.query().unwrap();
+    let controller = clients.create_client(RenderClientLimits::default()).unwrap();
+    let resources = controller.resources().unwrap();
+    let broker = unknown.query::<IRenderHostAbi>().unwrap().recording_broker().unwrap();
+    let root = Rect { x: 0, y: 0, width: 64, height: 64 };
+    let block = graphics(&resources, &broker, RenderViewRoot { client: root, target: root });
     let background = factory
         .create_texture(Size { width: 1, height: 1 }, NcCopyFromBufferOffset::new(0, &[0, 255, 0, 255]))
         .unwrap();
@@ -223,16 +228,16 @@ fn native_order_ownership_reentry_and_final_release() {
         batches: vec![
             RenderBatch::Atlas { first: 0, count: 6 },
             RenderBatch::Texture { first: 6 },
-            RenderBatch::Item { rect: bounds, clip: bounds },
+            RenderBatch::View,
             RenderBatch::Texture { first: 10 },
         ],
         background: background.clone(),
         foreign_texture: RefCell::new(None),
         overlay,
-        scene: RefCell::new(base),
+        block: RefCell::new(block),
         empty: Empty::from_value(Empty).query().unwrap(),
         renderer: renderer.clone(),
-        editing: scene.clone(),
+        editing: resources.clone(),
         retire: RefCell::new(Some(spare)),
         device: device.clone(),
         reentries: Cell::new(0),
@@ -279,13 +284,21 @@ fn native_order_ownership_reentry_and_final_release() {
     // The foreign scene has a valid ABI but belongs to a different native window/context.
     let foreign = platform.window("COM foreign resource owner", SIZE, atlas.as_com_ref()).unwrap();
     let foreign_device = Rc::downgrade(&foreign.device);
-    let foreign_scene = IMeshScenes::create_scene(&foreign).unwrap();
-    let foreign_texture = ITextureFactory::create_texture(&foreign, Size { width: 1, height: 1 }, NcCopyFromBufferOffset::new(0, &[0; 4])).unwrap();
+    let foreign = WindowObject::from_value(foreign);
+    let foreign_clients: ComPtr<IRenderClientFactoryAbi> = foreign.query().unwrap();
+    let foreign_controller = foreign_clients.create_client(RenderClientLimits::default()).unwrap();
+    let foreign_resources = foreign_controller.resources().unwrap();
+    let foreign_broker = foreign.query::<IRenderHostAbi>().unwrap().recording_broker().unwrap();
+    let foreign_block = graphics(&foreign_resources, &foreign_broker, RenderViewRoot { client: root, target: root });
+    let foreign_factory: ComPtr<ITextureFactoryAbi> = foreign.query().unwrap();
+    let foreign_texture = foreign_factory
+        .create_texture(Size { width: 1, height: 1 }, NcCopyFromBufferOffset::new(0, &[0; 4]))
+        .unwrap();
     *input.foreign_texture.borrow_mut() = Some(foreign_texture);
     assert_eq!(renderer.render(info(), atlas.as_com_ref(), stream.as_com_ref()), Err(RENDER_E_OWNER));
     let foreign_texture = input.foreign_texture.borrow_mut().take();
     drop(foreign_texture);
-    *input.scene.borrow_mut() = foreign_scene.query().unwrap();
+    let original = input.block.replace(foreign_block);
     assert_eq!(renderer.render(info(), atlas.as_com_ref(), stream.as_com_ref()), Err(RENDER_E_OWNER));
     assert!(
         renderer
@@ -297,35 +310,22 @@ fn native_order_ownership_reentry_and_final_release() {
             .unwrap()
             .contains("frame preparation")
     );
-    *input.scene.borrow_mut() = scene.query().unwrap();
+    drop(input.block.replace(original));
     // A failed frame must not poison the next explicit native submission.
     renderer.render(info(), atlas.as_com_ref(), stream.as_com_ref()).unwrap();
-    // Reuse immutable GPU geometry across both native frame slots while only camera state changes.
-    // Then replace and clear it while previous submissions may still be reading the old upload.
+    // Replaying sealed data and replacing it with another immutable block must keep ordering
+    // and native lifetime valid without retaining any public shader/pipeline owner.
     for _ in 0..4 {
-        scene
-            .set_transforms(SceneTransforms {
-                pvm: Mat4f::identity().into(),
-                view_model: Mat4f::identity().into(),
-            })
-            .unwrap();
         renderer.render(info(), atlas.as_com_ref(), stream.as_com_ref()).unwrap();
     }
-    mesh(&scene);
+    let replacement = graphics(&resources, &broker, RenderViewRoot { client: root, target: root });
+    drop(input.block.replace(replacement));
     for _ in 0..3 {
         renderer.render(info(), atlas.as_com_ref(), stream.as_com_ref()).unwrap();
     }
-    scene
-        .set_mesh(NcCopyFromBufferOffset::new(0, &[]), NcCopyFromBufferOffset::new(0, &[]))
-        .unwrap();
-    for _ in 0..3 {
-        renderer.render(info(), atlas.as_com_ref(), stream.as_com_ref()).unwrap();
-    }
-    mesh(&scene);
-    renderer.render(info(), atlas.as_com_ref(), stream.as_com_ref()).unwrap();
-    drop((foreign_scene, foreign));
+    drop((foreign_resources, foreign_controller, foreign_clients, foreign_broker, foreign_factory, foreign));
     assert!(foreign_device.upgrade().is_none());
-    drop((stream, input, scene, factory, scenes, renderer, unknown, platform));
+    drop((stream, input, resources, controller, clients, broker, factory, renderer, unknown, platform));
     assert!(device.upgrade().is_some(), "image must retain window and context after public window release");
     drop(background);
     assert!(device.upgrade().is_none(), "no registry or idle prepared-frame cycle may retain the device");

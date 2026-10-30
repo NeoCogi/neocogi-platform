@@ -19,7 +19,7 @@ pub const MAX_RENDER_BATCHES: u32 = 1024 * 1024;
 /// Renderer state is already borrowed by another upload, submission, or resource operation.
 pub const RENDER_E_BUSY: NcStatus = NcStatus::from_code(-1001);
 
-/// A texture or render item belongs to a different renderer device.
+/// A texture or graphics capability belongs to a different renderer device.
 pub const RENDER_E_OWNER: NcStatus = NcStatus::from_code(-1002);
 
 /// An invocation-bound graphics view or recording frame is no longer active.

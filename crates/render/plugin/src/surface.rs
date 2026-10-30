@@ -162,12 +162,7 @@ impl IRenderer for Surface {
         }
         let state = device.state();
         state.prepared.read(info, stream, self.device.as_ref())?;
-        if state
-            .prepared
-            .batches()
-            .iter()
-            .any(|batch| matches!(batch, Batch::Item { .. } | Batch::View(_)))
-        {
+        if state.prepared.batches().iter().any(|batch| matches!(batch, Batch::View(_))) {
             return Err(NC_E_INVALID_ARG);
         }
         session.atlas.prepare(&self.device, &mut state.gpu, atlas)?;

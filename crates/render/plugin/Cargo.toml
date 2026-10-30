@@ -15,10 +15,10 @@ crate-type = ["rlib", "cdylib"]
 [features]
 # Cargo adds feature flags to defaults; alternate backends require --no-default-features.
 default = ["glow"]
-webgl = ["dep:glow", "dep:neocogi-render-webgl", "neocogi-render-mesh/webgl"]
-glow = ["dep:glow", "dep:neocogi-render-glow", "neocogi-render-mesh/glow"]
-vulkan = ["dep:neocogi-render-vulkan", "neocogi-render-mesh/vulkan"]
-wgpu = ["dep:neocogi-render-wgpu", "neocogi-render-mesh/wgpu"]
+webgl = ["dep:glow", "dep:neocogi-render-webgl"]
+glow = ["dep:glow", "dep:neocogi-render-glow"]
+vulkan = ["dep:neocogi-render-vulkan"]
+wgpu = ["dep:neocogi-render-wgpu"]
 dynamic-plugin = []
 
 [dependencies]
@@ -29,7 +29,6 @@ neocogi-render-glow = { workspace = true, optional = true }
 neocogi-render-vulkan = { workspace = true, optional = true }
 neocogi-render-wgpu = { workspace = true, optional = true }
 neocogi-render-support.workspace = true
-neocogi-render-mesh.workspace = true
 rs-math3d.workspace = true
 neocogi-com = { workspace = true, default-features = false, features = ["macros", "std"] }
 glow = { workspace = true, optional = true }

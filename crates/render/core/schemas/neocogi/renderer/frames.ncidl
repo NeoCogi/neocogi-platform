@@ -1,4 +1,4 @@
-#[version(3)]
+#[version(4)]
 /// Ordered draw record whose declaration-order tag and plain payload cross the plugin ABI.
 enum RenderBatch: u8 {
     /// Sealed generic graphics block; stream.view(index) supplies its weak exclusive observer.
@@ -15,13 +15,7 @@ enum RenderBatch: u8 {
         /// First of exactly four vertices; stream.texture(batch_index) supplies the owned resource.
         first: u32,
     },
-    /// Backend-specific work; stream.item(batch_index) supplies a capability from that renderer.
-    Item {
-        /// Positive, unclipped content rectangle in drawable pixels.
-        rect: Rect,
-        /// Positive intersection of content, producer clip, and drawable viewport.
-        clip: Rect,
-    },
+
 }
 
 #[version(1)]
@@ -54,7 +48,7 @@ struct RenderInfo {
     batch_count: u32,
 }
 
-#[version(2)]
+#[version(3)]
 /// Owned reusable frame storage readable only during its active submission.
 interface IRenderStream {
     /// Observes a sealed block without manufacturing a second public resource owner.
@@ -65,8 +59,7 @@ interface IRenderStream {
     fn batches(&self, invocation: u64, output: &mut [RenderBatch]) -> Result<u32>;
     /// Retains the texture used by this batch; another batch kind or invalid index is rejected.
     fn texture(&self, invocation: u64, batch: u32) -> Result<ComPtr<ITexture>>;
-    /// Retains custom work used by this batch; another batch kind or invalid index is rejected.
-    fn item(&self, invocation: u64, batch: u32) -> Result<ComPtr<IRenderItem>>;
+
 }
 
 #[version(1)]

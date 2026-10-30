@@ -2,7 +2,6 @@
 resolver = "3"
 exclude = ["target", "tmp"]
 members = [
-    "crates/render/mesh",
     "crates/render/gpu",
     "crates/render/plugin",
     "crates/render/core",
@@ -30,7 +29,6 @@ neocogi-idl = { version = "=0.1.0-alpha.1" }
 proc-macro2 = { version = "1", features = ["span-locations"] }
 quote = "1"
 syn = { version = "2", features = ["full", "extra-traits"] }
-neocogi-render-mesh = { path = "crates/render/mesh", default-features = false }
 neocogi-render-gpu = { path = "crates/render/gpu" }
 neocogi-render-core = { path = "crates/render/core" }
 neocogi-render-support = { path = "crates/render/support" }

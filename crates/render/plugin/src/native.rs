@@ -76,7 +76,6 @@ impl PlatformObject {
                 prepared: Prepared::default(),
             })),
             textures: RefCell::default(),
-            scenes: RefCell::default(),
             retired: RefCell::default(),
             diagnostic: RefCell::default(),
             window,

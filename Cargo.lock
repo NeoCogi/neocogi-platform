@@ -704,24 +704,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "neocogi-render-mesh"
-version = "0.0.0"
-dependencies = [
- "ash",
- "glow 0.18.0",
- "neocogi-com",
- "neocogi-idl",
- "neocogi-render-core",
- "neocogi-render-glow",
- "neocogi-render-vulkan",
- "neocogi-render-wgpu",
- "pollster",
- "rs-math3d",
- "sdl2",
- "wgpu",
-]
-
-[[package]]
 name = "neocogi-render-plugin"
 version = "0.0.0"
 dependencies = [
@@ -732,7 +714,6 @@ dependencies = [
  "neocogi-render-core",
  "neocogi-render-glow",
  "neocogi-render-gpu",
- "neocogi-render-mesh",
  "neocogi-render-support",
  "neocogi-render-vulkan",
  "neocogi-render-webgl",

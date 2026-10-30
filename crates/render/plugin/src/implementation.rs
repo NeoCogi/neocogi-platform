@@ -2,8 +2,6 @@
 // Its public surface and native owners are identical for each legal backend selection.
 use neocogi_render_core::platform::*;
 use neocogi_render_core::abi::*;
-use neocogi_render_mesh::abi::*;
-use neocogi_render_mesh::{MeshBuffers, MeshSubmission};
 use neocogi_render_support::com::{PreparedFrame, Resources};
 use neocogi_render_core::TextureId;
 use neocogi_com::{ComInterface, ComPtr, ComRef, IUnknown, INcStringAbi, NcCopyFromBufferOffset, NcStatus, NcString, NC_E_INVALID_ARG, com_object};
@@ -29,10 +27,10 @@ mod browser;
 mod input;
 mod resources;
 mod surface;
-use resources::{SceneRecord, TextureRecord};
+use resources::TextureRecord;
 
 /// Prepared resources are concrete native records, never erased objects or callbacks.
-type Prepared = PreparedFrame<Rc<TextureRecord>, MeshSubmission>;
+type Prepared = PreparedFrame<Rc<TextureRecord>>;
 
 #[derive(Default)]
 #[com_object(neocogi_render_core::platform::Platform)]
@@ -102,8 +100,6 @@ struct Device {
     logical: neocogi_render_gpu::GpuDevice,
     /// Canonical COM identity maps contain weak native records and never own their COM objects.
     textures: RefCell<HashMap<usize, Weak<TextureRecord>>>,
-    /// Application scenes use the same authentication rule as images.
-    scenes: RefCell<HashMap<usize, Weak<SceneRecord>>>,
     /// Final texture releases during a detached frame wait until native execution has ended.
     retired: RefCell<Vec<TextureId>>,
     /// Owned detail survives failed preparation, upload, submission or presentation.
@@ -165,7 +161,6 @@ impl Drop for RenderAccess<'_> {
     IRenderHost,
     ITextureFactory,
     IRenderSurfaceFactory,
-    IMeshScenes,
     IRenderDiagnostics
 ))]
 /// One COM identity exposes OS polling, rendering and concrete resource factories.

@@ -14,13 +14,15 @@ struct Probe {
     /// Tracks owner resolution in source painter order.
     resolved: RefCell<Vec<&'static str>>,
     /// Injects a later failure after one resource has already been retained.
-    reject_item: Cell<bool>,
+    reject_view: Cell<bool>,
+    /// Independent canonical provenance for the fixture's actual generic block.
+    device: neocogi_render_gpu::GpuDevice,
     /// Makes a stream report a truncated copy while returning otherwise valid values.
     short: Cell<bool>,
     /// Final resource releases prove complete cleanup after finish/error/abandonment.
     releases: Rc<Cell<u32>>,
 }
-#[com_object(interfaces(ITexture, IRenderItem))]
+#[com_object(interfaces(ITexture))]
 /// One fake resource exposes both capabilities solely to count its actual COM lifetime.
 struct Resource {
     /// Shared final-release observation.
@@ -32,7 +34,6 @@ impl ITexture for Resource {
         Ok(Size { width: 2, height: 2 })
     }
 }
-impl IRenderItem for Resource {}
 impl Drop for Resource {
     /// Destruction is counted once for the canonical allocation, independent of interface count.
     fn drop(&mut self) {
@@ -48,15 +49,18 @@ struct Source {
     records: Vec<RenderBatch>,
     /// Owned image returned only at a matching batch index.
     texture: ComPtr<ITextureAbi>,
-    /// Same canonical resource through its custom-item projection.
-    item: ComPtr<IRenderItemAbi>,
+    /// Sealed contribution and its trusted domain owner outlive both stream reads.
+    block: neocogi_com::ComBox<IRenderViewBlockAbi>,
+    /// Closing authority belongs to the fixture, never the block observer.
+    _domain: neocogi_com::ComBox<IRenderClientDomainAbi>,
     /// Independent observations and failure injection.
     probe: Rc<Probe>,
 }
 impl IRenderStream for Source {
-    /// This fixture carries no generic GPU block.
-    fn view(&self, _: u64, _: u32) -> Result<neocogi_com::WeakComBox<neocogi_render_core::abi::IRenderViewBlockAbi>, NcStatus> {
-        Err(neocogi_com::NC_E_INVALID_ARG)
+    /// Supplies only the declared sealed position through a weak exclusive observer.
+    fn view(&self, _: u64, index: u32) -> Result<neocogi_com::WeakComBox<IRenderViewBlockAbi>, NcStatus> {
+        assert!(matches!(self.records[index as usize], RenderBatch::View));
+        Ok(self.block.downgrade())
     }
 
     /// Copies at offset zero and optionally simulates a short producer read.
@@ -80,35 +84,39 @@ impl IRenderStream for Source {
         assert!(matches!(self.records[index as usize], RenderBatch::Texture { .. }));
         Ok(self.texture.clone())
     }
-    /// The index is the overall batch position, not a separate custom-resource index.
-    fn item(&self, _: u64, index: u32) -> Result<ComPtr<IRenderItemAbi>, NcStatus> {
-        assert!(matches!(self.records[index as usize], RenderBatch::Item { .. }));
-        Ok(self.item.clone())
-    }
 }
 impl Resources for Probe {
     type Texture = ComPtr<ITextureAbi>;
-    type Item = ComPtr<IRenderItemAbi>;
+    /// Authenticates the actual construction proof, with an independently injected late failure.
+    fn view(&self, block: neocogi_com::WeakComBox<IRenderViewBlockAbi>) -> Result<Rc<neocogi_render_gpu::record::Block>, NcStatus> {
+        self.resolved.borrow_mut().push("view");
+        if self.reject_view.get() {
+            return Err(neocogi_com::NC_E_NOT_FOUND);
+        }
+        self.device.block_snapshot(block.as_com_ref())
+    }
     /// Keeps an owned capability as the fake native resource, allowing precise cleanup assertions.
     fn texture(&self, texture: Self::Texture) -> Result<Self::Texture, NcStatus> {
         self.resolved.borrow_mut().push("texture");
         Ok(texture)
     }
-    /// Simulates a foreign-owner failure after any preceding texture was resolved.
-    fn item(&self, item: Self::Item) -> Result<Self::Item, NcStatus> {
-        self.resolved.borrow_mut().push("item");
-        if self.reject_item.get() { Err(neocogi_com::NC_E_NOT_FOUND) } else { Ok(item) }
-    }
 }
 /// Fixed viewport leaves room to exercise clipped custom content beyond its origin.
 const SIZE: Size = Size { width: 100, height: 80 };
-/// Positive content used by the valid custom batch.
-const RECT: Rect = Rect { x: -10, y: 0, width: 110, height: 80 };
 /// Final clip intersects the negative-origin content with the viewport.
 const CLIP: Rect = Rect { x: 0, y: 0, width: 100, height: 80 };
 /// Creates one owned source and exact announced counts, optionally containing malformed records.
 fn source(records: Vec<RenderBatch>, vertices: Vec<RenderVertex>) -> (ComPtr<IRenderStreamAbi>, RenderInfo, Rc<Probe>) {
     let probe = Rc::new(Probe::default());
+    let domain = probe.device.create_client(RenderClientLimits::default()).unwrap();
+    let resources = domain.resources().unwrap();
+    let mut recording = probe.device.broker().begin_frame().unwrap();
+    let mut session = recording
+        .begin_view(RenderViewRoot { client: CLIP, target: CLIP }, resources.as_com_ref())
+        .unwrap();
+    session.view().unwrap().finish().unwrap();
+    let block = session.take_block().unwrap();
+    recording.finish().unwrap();
     let resource = Resource::from_value(Resource { releases: probe.releases.clone() });
     let info = RenderInfo {
         size: SIZE,
@@ -121,7 +129,8 @@ fn source(records: Vec<RenderBatch>, vertices: Vec<RenderVertex>) -> (ComPtr<IRe
         vertices,
         records,
         texture: resource.query().unwrap(),
-        item: resource.query().unwrap(),
+        block,
+        _domain: domain,
         probe: probe.clone(),
     })
     .query()
@@ -134,7 +143,7 @@ fn ordered_bulk_frame_owns_resources_and_reuses_allocations() {
     let records = vec![
         RenderBatch::Atlas { first: 0, count: 3 },
         RenderBatch::Texture { first: 3 },
-        RenderBatch::Item { rect: RECT, clip: CLIP },
+        RenderBatch::View,
         RenderBatch::Atlas { first: 7, count: 3 },
     ];
     let (stream, info, probe) = source(records, vec![RenderVertex::default(); 10]);
@@ -142,10 +151,10 @@ fn ordered_bulk_frame_owns_resources_and_reuses_allocations() {
     frame.read(info, stream.as_com_ref(), &*probe).unwrap();
     assert!(matches!(&frame.batches()[0], Batch::Atlas(range) if *range == (0..3)));
     assert!(matches!(&frame.batches()[1], Batch::Texture { .. }));
-    assert!(matches!(&frame.batches()[2], Batch::Item { rect, clip, .. } if *rect == RECT && *clip == CLIP));
+    assert!(matches!(&frame.batches()[2], Batch::View(block) if block.root.target == CLIP));
     assert!(matches!(&frame.batches()[3], Batch::Atlas(range) if *range == (7..10)));
     assert_eq!(probe.copies.get(), 2);
-    assert_eq!(&*probe.resolved.borrow(), &["texture", "item"]);
+    assert_eq!(&*probe.resolved.borrow(), &["texture", "view"]);
     let capacities = (frame.vertices.capacity(), frame.records.capacity(), frame.batches.capacity());
     frame.read(info, stream.as_com_ref(), &*probe).unwrap();
     assert_eq!(capacities, (frame.vertices.capacity(), frame.records.capacity(), frame.batches.capacity()));
@@ -163,18 +172,6 @@ fn malformed_ranges_tags_and_clips_reject_before_resource_resolution() {
         RenderBatch::Atlas { first: 5, count: 3 },
         RenderBatch::Atlas { first: 4, count: 4 },
         RenderBatch::Atlas { first: 4, count: u32::MAX },
-        RenderBatch::Item {
-            rect: RECT,
-            clip: Rect { width: 101, ..CLIP },
-        },
-        RenderBatch::Item {
-            rect: Rect { width: 1, ..RECT },
-            clip: CLIP,
-        },
-        RenderBatch::Item {
-            rect: RECT,
-            clip: Rect { width: 0, ..CLIP },
-        },
     ];
     for bad in invalid {
         let (stream, info, probe) = source(vec![RenderBatch::Texture { first: 0 }, bad], vec![RenderVertex::default(); 7]);
@@ -274,15 +271,12 @@ fn invalid_frame_header_never_calls_the_producer() {
 /// A later resource failure releases earlier snapshots and permits a clean retry with the same buffers.
 #[test]
 fn failed_resource_resolution_cleans_partial_work_and_allows_retry() {
-    let (stream, info, probe) = source(
-        vec![RenderBatch::Texture { first: 0 }, RenderBatch::Item { rect: RECT, clip: CLIP }],
-        vec![RenderVertex::default(); 4],
-    );
+    let (stream, info, probe) = source(vec![RenderBatch::Texture { first: 0 }, RenderBatch::View], vec![RenderVertex::default(); 4]);
     let mut frame = PreparedFrame::default();
-    probe.reject_item.set(true);
+    probe.reject_view.set(true);
     assert_eq!(frame.read(info, stream.as_com_ref(), &*probe), Err(neocogi_com::NC_E_NOT_FOUND));
     assert!(frame.batches().is_empty());
-    probe.reject_item.set(false);
+    probe.reject_view.set(false);
     frame.read(info, stream.as_com_ref(), &*probe).unwrap();
     drop(stream);
     assert_eq!(probe.releases.get(), 0);

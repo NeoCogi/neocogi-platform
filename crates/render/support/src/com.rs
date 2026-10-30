@@ -13,16 +13,12 @@ pub trait Resources {
 
     /// Owned image record retaining its native device and allocation.
     type Texture;
-    /// Owned application command snapshot retaining everything needed for this submission.
-    type Item;
     /// Rejects resources not created by this renderer, without trusting a resource-reported owner number.
     fn texture(&self, texture: ComPtr<ITextureAbi>) -> Result<Self::Texture, NcStatus>;
-    /// Authenticates a concrete application capability and snapshots its scene data before GPU execution.
-    fn item(&self, item: ComPtr<IRenderItemAbi>) -> Result<Self::Item, NcStatus>;
 }
 
 /// Validated operations contain native-owned resources and no foreign callable stream.
-pub enum Batch<Texture, Item> {
+pub enum Batch<Texture> {
     /// Authenticated immutable command block carrying its domain admission gate.
     View(std::rc::Rc<neocogi_render_gpu::record::Block>),
     /// Contiguous triangle range in PreparedFrame::vertices, already checked for finite components.
@@ -34,28 +30,19 @@ pub enum Batch<Texture, Item> {
         /// Concrete allocation owned by this renderer.
         texture: Texture,
     },
-    /// Application work preserves its exact position between ordinary batches.
-    Item {
-        /// Unclipped content rectangle in drawable pixels.
-        rect: Rect,
-        /// Positive clip inside both the content rectangle and the viewport.
-        clip: Rect,
-        /// Concrete, owned command prepared by the co-packaged application renderer.
-        item: Item,
-    },
 }
 
 /// Reusable bulk-copy storage. All foreign reads and ownership checks finish before native submission.
-pub struct PreparedFrame<Texture, Item> {
+pub struct PreparedFrame<Texture> {
     /// Final validated geometry, reused across submissions.
     vertices: neocogi_com::NcOutputBuffer<RenderVertex>,
     /// Pointer-free incoming records, reused rather than allocated once per frame.
     records: neocogi_com::NcOutputBuffer<RenderBatch>,
     /// Ordered resolved operations, empty after failed preparation.
-    batches: Vec<Batch<Texture, Item>>,
+    batches: Vec<Batch<Texture>>,
 }
 
-impl<Texture, Item> Default for PreparedFrame<Texture, Item> {
+impl<Texture> Default for PreparedFrame<Texture> {
     /// Construction needs no device, resource default values, or GPU allocation.
     fn default() -> Self {
         Self {
@@ -66,13 +53,13 @@ impl<Texture, Item> Default for PreparedFrame<Texture, Item> {
     }
 }
 
-impl<Texture, Item> PreparedFrame<Texture, Item> {
+impl<Texture> PreparedFrame<Texture> {
     /// Gives native execution immutable access to the complete prepared vertex buffer.
     pub fn vertices(&self) -> &[RenderVertex] {
         self.vertices.as_slice()
     }
     /// Gives native execution immutable access to the validated painter-order operations.
-    pub fn batches(&self) -> &[Batch<Texture, Item>] {
+    pub fn batches(&self) -> &[Batch<Texture>] {
         &self.batches
     }
     /// Releases submitted resources after the native frame is gone, preserving bulk allocations.
@@ -83,12 +70,7 @@ impl<Texture, Item> PreparedFrame<Texture, Item> {
     }
     /// Validates counts and all records, then resolves resources; failure leaves no retained operations.
     /// The caller must own this storage across the call, never hold a RefCell guard while invoking it.
-    pub fn read<R: Resources<Texture = Texture, Item = Item>>(
-        &mut self,
-        info: RenderInfo,
-        stream: ComRef<'_, IRenderStreamAbi>,
-        resources: &R,
-    ) -> Result<(), NcStatus> {
+    pub fn read<R: Resources<Texture = Texture>>(&mut self, info: RenderInfo, stream: ComRef<'_, IRenderStreamAbi>, resources: &R) -> Result<(), NcStatus> {
         self.clear();
         let result = self.read_once(info, stream, resources);
         if result.is_err() {
@@ -97,12 +79,7 @@ impl<Texture, Item> PreparedFrame<Texture, Item> {
         result
     }
     /// Copies and checks the complete input before resolving even the first foreign resource.
-    fn read_once<R: Resources<Texture = Texture, Item = Item>>(
-        &mut self,
-        info: RenderInfo,
-        stream: ComRef<'_, IRenderStreamAbi>,
-        resources: &R,
-    ) -> Result<(), NcStatus> {
+    fn read_once<R: Resources<Texture = Texture>>(&mut self, info: RenderInfo, stream: ComRef<'_, IRenderStreamAbi>, resources: &R) -> Result<(), NcStatus> {
         if info.invocation == 0
             || info.size.width <= 0
             || info.size.height <= 0
@@ -136,7 +113,6 @@ impl<Texture, Item> PreparedFrame<Texture, Item> {
             let (first, count) = match *record {
                 RenderBatch::Atlas { first, count } if count > 0 && count.is_multiple_of(3) => (first, count),
                 RenderBatch::Texture { first } => (first, 4),
-                RenderBatch::Item { rect, clip } if contains(rect, clip) && contains(viewport, clip) => continue,
                 RenderBatch::View => continue,
                 _ => return Err(NC_E_INVALID_ARG),
             };
@@ -165,27 +141,10 @@ impl<Texture, Item> PreparedFrame<Texture, Item> {
                         .expect("validated four-vertex range"),
                     texture: resources.texture(stream.texture(info.invocation, index as u32)?)?,
                 },
-                RenderBatch::Item { rect, clip } => Batch::Item {
-                    rect,
-                    clip,
-                    item: resources.item(stream.item(info.invocation, index as u32)?)?,
-                },
             });
         }
         Ok(())
     }
-}
-
-/// Wide arithmetic checks positive rectangles without overflowing an i32 origin-plus-extent.
-fn contains(outer: Rect, inner: Rect) -> bool {
-    outer.width > 0
-        && outer.height > 0
-        && inner.width > 0
-        && inner.height > 0
-        && inner.x >= outer.x
-        && inner.y >= outer.y
-        && i64::from(inner.x) + i64::from(inner.width) <= i64::from(outer.x) + i64::from(outer.width)
-        && i64::from(inner.y) + i64::from(inner.height) <= i64::from(outer.y) + i64::from(outer.height)
 }
 
 #[cfg(test)]

@@ -1,39 +1,32 @@
-//! Wide rectangles cross the real importer and native mesh renderer without overflow or skipping.
+//! Wide rectangles cross the real importer and generic renderer without overflow or skipping.
 use super::*;
 
 #[com_object(interfaces(IRenderStream))]
-/// One authenticated scene, with no texture or atlas vertices to obscure the mesh result.
-struct MeshStream {
-    /// Exact item geometry retained through the generated bulk-copy interface.
-    batch: RenderBatch,
-    /// Device-owned scene keeps its immutable geometry alive through submission.
-    scene: ComPtr<IRenderItemAbi>,
+/// One authenticated view, with no texture or atlas vertices to obscure the graphics result.
+pub(super) struct ViewStream {
+    /// Canonical immutable root and generic commands survive the generated stream calls.
+    pub(super) blocks: Vec<ComBox<IRenderViewBlockAbi>>,
 }
-impl IRenderStream for MeshStream {
-    /// This fixture carries no generic GPU block.
-    fn view(&self, _: u64, _: u32) -> Result<neocogi_com::WeakComBox<neocogi_render_core::abi::IRenderViewBlockAbi>, NcStatus> {
-        Err(neocogi_com::NC_E_INVALID_ARG)
+impl IRenderStream for ViewStream {
+    /// Borrows the only sealed contribution through the exclusive weak protocol.
+    fn view(&self, _: u64, index: u32) -> Result<neocogi_com::WeakComBox<IRenderViewBlockAbi>, NcStatus> {
+        self.blocks.get(index as usize).map(ComBox::downgrade).ok_or(NC_E_INVALID_ARG)
     }
 
-    /// The mesh-only operation has no ordinary UI geometry.
+    /// The graphics-only operation has no ordinary UI geometry.
     fn vertices(&self, _: u64, _: NcOutputWriter<'_, RenderVertex>) -> Result<u32, NcStatus> {
         Ok(0)
     }
     /// Preserve the wide content rectangle and its independently contained visible clip.
     fn batches(&self, _: u64, mut output: NcOutputWriter<'_, RenderBatch>) -> Result<u32, NcStatus> {
-        output.push(self.batch)?;
-        Ok(1)
+        for _ in &self.blocks {
+            output.push(RenderBatch::View)?;
+        }
+        Ok(self.blocks.len() as u32)
     }
     /// There are no texture batches in this stream.
     fn texture(&self, _: u64, _: u32) -> Result<ComPtr<ITextureAbi>, NcStatus> {
         Err(NC_E_INVALID_ARG)
-    }
-    /// Only the sole item batch may resolve the renderer-owned scene.
-    fn item(&self, _: u64, index: u32) -> Result<ComPtr<IRenderItemAbi>, NcStatus> {
-        if index != 0 {
-            return Err(NC_E_INVALID_ARG);
-        }
-        Ok(self.scene.clone())
     }
 }
 
@@ -41,19 +34,19 @@ impl IRenderStream for MeshStream {
 /// The bounded reference checks both widened arithmetic and fitting to the visible client area.
 #[test]
 #[ignore = "requires SDL GL; run with SDL_VIDEODRIVER=offscreen"]
-fn wide_mesh_edges_draw_and_recover_through_generated_com() {
+fn wide_view_edges_draw_and_recover_through_generated_com() {
     let _session = native_session();
     let size = Size { width: 32, height: 32 };
     let assets = neocogi_demo_assets::load_bundle(crate::host_runtime()).unwrap();
     let atlas = assets.image().unwrap();
-    let native = PlatformObject::default().window("wide mesh arithmetic", size, atlas.as_com_ref()).unwrap();
+    let native = PlatformObject::default().window("wide graphics arithmetic", size, atlas.as_com_ref()).unwrap();
     let device = Rc::downgrade(&native.device);
     let window = WindowObject::from_value(native);
     let renderer: ComPtr<IRendererAbi> = window.query().unwrap();
-    let scenes: ComPtr<IMeshScenesAbi> = window.query().unwrap();
-    let scene = scenes.create_scene().unwrap();
-    mesh(&scene);
-    let item: ComPtr<IRenderItemAbi> = scene.query().unwrap();
+    let clients: ComPtr<IRenderClientFactoryAbi> = window.query().unwrap();
+    let controller = clients.create_client(RenderClientLimits::default()).unwrap();
+    let resources = controller.resources().unwrap();
+    let broker = window.query::<IRenderHostAbi>().unwrap().recording_broker().unwrap();
     let bounds = Rect { x: 0, y: 0, width: 32, height: 32 };
     let info = RenderInfo {
         size,
@@ -63,13 +56,15 @@ fn wide_mesh_edges_draw_and_recover_through_generated_com() {
         batch_count: 1,
     };
     // Capture only after COM render returns and has released its exclusive device access.
-    let draw = |rect, clip| {
-        let stream: ComPtr<IRenderStreamAbi> = MeshStream::from_value(MeshStream {
-            batch: RenderBatch::Item { rect, clip },
-            scene: item.clone(),
-        })
-        .query()
-        .unwrap();
+    let draw = |rect: Rect, clip: Rect| {
+        let client = Rect {
+            x: (i64::from(clip.x) - i64::from(rect.x)) as i32,
+            y: (i64::from(clip.y) - i64::from(rect.y)) as i32,
+            width: clip.width,
+            height: clip.height,
+        };
+        let block = graphics(&resources, &broker, RenderViewRoot { client, target: clip });
+        let stream: ComPtr<IRenderStreamAbi> = ViewStream::from_value(ViewStream { blocks: vec![block] }).query().unwrap();
         renderer.render(info, atlas.as_com_ref(), stream.as_com_ref()).unwrap();
         let owner = device.upgrade().unwrap();
         let mut access = owner.access().unwrap();
@@ -77,7 +72,7 @@ fn wide_mesh_edges_draw_and_recover_through_generated_com() {
         assert_eq!(pixels.len(), 32 * 32 * 4);
         assert!(
             pixels.as_chunks::<4>().0.iter().any(|pixel| *pixel != [0, 0, 0, 255]),
-            "the mesh must emit visible pixels"
+            "the graphics must emit visible pixels"
         );
         pixels
     };

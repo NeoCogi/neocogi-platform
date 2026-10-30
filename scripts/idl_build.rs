@@ -7,7 +7,6 @@ pub fn sources(repository: &str, local: &[&str]) -> neocogi_idl::cargo::SharedSo
         ("neocogi.ui.runtime.internal", "nc_ui::choice_menu::bindings"),
         ("neocogi.renderer", "neocogi_render_core::abi"),
         ("neocogi.platform", "neocogi_render_core::platform"),
-        ("neocogi.render.mesh", "neocogi_render_mesh::abi"),
         ("neocogi.gfx", "neocogi_gfx_support::abi"),
         ("neocogi.skin", "neocogi_appearance::skin"),
         ("neocogi.ui.core", "neocogi_ui::abi::core"),
