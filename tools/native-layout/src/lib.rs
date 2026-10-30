@@ -72,7 +72,7 @@ pub fn stage_library(input: TokenStream) -> TokenStream {
             .file_name()
             .and_then(|name| name.to_str())
             .ok_or_else(|| io::Error::other("Cargo library filename must be UTF-8"))?;
-        let root = output_root(&source)?;
+        let root = output_root(Path::new(&environment("OUT_DIR")?))?;
         copy_file(&source, &root.join("lib").join(filename))?;
         Ok(filename.to_owned())
     })();

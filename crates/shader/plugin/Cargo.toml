@@ -10,11 +10,10 @@ description = "CPU-only portable shader compiler COM provider"
 
 [lib]
 name = "nc_shader_compiler"
-crate-type = ["rlib", "cdylib"]
+crate-type = ["rlib"]
 
 [features]
 default = []
-dynamic-plugin = []
 
 [dependencies]
 neocogi-com = { workspace = true, features = ["std", "macros"] }

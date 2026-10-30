@@ -4,8 +4,10 @@ exclude = ["target", "tmp"]
 members = [
     "crates/shader/core",
     "crates/shader/plugin",
+    "crates/shader/plugin/dylib",
     "crates/render/gpu",
     "crates/render/plugin",
+    "crates/render/plugin/dylib",
     "crates/render/core",
     "crates/render/support",
     "crates/render/glow",

@@ -1,0 +1,23 @@
+[package]
+name = "neocogi-render-plugin-dylib"
+version = "0.0.0"
+publish = false
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Final dynamic entrypoint for neocogi-render-plugin"
+
+[lib]
+name = "nc_render"
+crate-type = ["cdylib"]
+
+[features]
+default = ["glow"]
+webgl = ["provider/webgl"]
+glow = ["provider/glow"]
+vulkan = ["provider/vulkan"]
+wgpu = ["provider/wgpu"]
+
+[dependencies]
+provider = { package = "neocogi-render-plugin", path = "..", default-features = false }
+neocogi-com = { workspace = true, default-features = false, features = ["std"] }

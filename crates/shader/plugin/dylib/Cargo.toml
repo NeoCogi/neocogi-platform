@@ -1,0 +1,19 @@
+[package]
+name = "neocogi-shader-compiler-dylib"
+version = "0.0.0"
+publish = false
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Final dynamic entrypoint for neocogi-shader-compiler"
+
+[lib]
+name = "nc_shader_compiler"
+crate-type = ["cdylib"]
+
+[features]
+default = []
+
+[dependencies]
+provider = { package = "neocogi-shader-compiler", path = "..", default-features = false }
+neocogi-com = { workspace = true, default-features = false, features = ["std"] }

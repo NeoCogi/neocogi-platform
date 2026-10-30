@@ -754,6 +754,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "neocogi-render-plugin-dylib"
+version = "0.0.0"
+dependencies = [
+ "neocogi-com",
+ "neocogi-render-plugin",
+]
+
+[[package]]
 name = "neocogi-render-support"
 version = "0.0.0"
 dependencies = [
@@ -811,6 +819,14 @@ dependencies = [
  "neocogi-idl",
  "neocogi-render-core",
  "neocogi-shader-core",
+]
+
+[[package]]
+name = "neocogi-shader-compiler-dylib"
+version = "0.0.0"
+dependencies = [
+ "neocogi-com",
+ "neocogi-shader-compiler",
 ]
 
 [[package]]

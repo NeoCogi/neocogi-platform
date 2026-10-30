@@ -8,9 +8,9 @@ repository.workspace = true
 publish = false
 
 [lib]
-# The Rust target also defines the deployed shared-library name on each platform.
+# Reusable implementation; the dylib subpackage alone owns the native loader export.
 name = "nc_render"
-crate-type = ["rlib", "cdylib"]
+crate-type = ["rlib"]
 
 [features]
 # Cargo adds feature flags to defaults; alternate backends require --no-default-features.
@@ -19,7 +19,6 @@ webgl = ["dep:glow", "dep:neocogi-render-webgl"]
 glow = ["dep:glow", "dep:neocogi-render-glow"]
 vulkan = ["dep:neocogi-render-vulkan"]
 wgpu = ["dep:neocogi-render-wgpu"]
-dynamic-plugin = []
 
 [dependencies]
 neocogi-render-gpu.workspace = true
