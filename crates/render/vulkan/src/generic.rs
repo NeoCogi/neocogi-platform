@@ -29,6 +29,12 @@ pub(crate) struct Core {
     pub(super) family: u32,
 }
 impl Core {
+    /// Observe production allocation accounting without exposing mutable counters to tests.
+    #[cfg(test)]
+    pub(super) fn live_allocations(&self) -> u32 {
+        self.memory_count.get()
+    }
+
     /// Teardown cannot free children while completion is uncertain. Device loss permits native
     /// destruction; other wait failures retry rather than pretending that queue use has ended.
     pub(crate) fn wait_idle(&self) {

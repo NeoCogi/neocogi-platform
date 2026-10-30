@@ -76,30 +76,31 @@ enum FrameTarget {
     },
 }
 
-/// Lifecycle of the single swapchain image currently owned by the high-level frame boundary.
+/// Readiness of complete presentation storage and the active acquired-image lifecycle.
 ///
+/// Complete presentation storage is required before preparation or acquisition.
 /// A successful acquire signals a binary semaphore and removes one image from the presentation
 /// engine. If any later record, submit, or present step fails, neither that semaphore nor that image
 /// can be blindly reused. The fatal state deliberately disables later frames instead of attempting
 /// a partial synchronization repair whose correctness would depend on how far the driver progressed.
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
-enum AcquiredFrameState {
+enum PresentationState {
     /// No acquired image or signaled acquire semaphore is outstanding.
     #[default]
     Ready,
     /// One [`AcquiredVulkanFrame`] must complete through graphics submission and presentation.
     Acquired,
-    /// A post-acquire failure abandoned synchronization state; this context cannot render again.
-    Fatal,
+    /// Failed destructive reconstruction or abandoned synchronization forbids native reuse.
+    Unavailable,
 }
 
-impl AcquiredFrameState {
+impl PresentationState {
     /// Rejects acquisition unless every earlier image and semaphore completed normally.
     fn ensure_ready(self) -> Result<()> {
         match self {
             Self::Ready => Ok(()),
             Self::Acquired => Err(String::from("cannot acquire a second Vulkan frame while one is outstanding")),
-            Self::Fatal => Err(String::from("cannot acquire a Vulkan frame after an earlier acquired frame failed")),
+            Self::Unavailable => Err(String::from("cannot acquire a Vulkan frame after an earlier native lifecycle failed")),
         }
     }
 
@@ -112,22 +113,27 @@ impl AcquiredFrameState {
                 Ok(())
             }
             Self::Acquired => Err(String::from("cannot acquire a second Vulkan frame while one is outstanding")),
-            Self::Fatal => Err(String::from("cannot acquire a Vulkan frame after an earlier acquired frame failed")),
+            Self::Unavailable => Err(String::from("cannot acquire a Vulkan frame after an earlier native lifecycle failed")),
         }
     }
 
     /// Commits a successful acquired frame or permanently latches any post-acquire failure.
     fn finish<T>(&mut self, result: Result<T>) -> Result<T> {
-        debug_assert_eq!(*self, Self::Acquired, "only an acquired frame may be finalized");
-        if result.is_ok() {
-            // Submission and presentation consumed both the image and its acquire semaphore.
-            *self = Self::Ready;
-        } else {
-            // The exact driver progress is intentionally irrelevant after failure: no later frame
-            // may wait on, reset, or reuse synchronization objects from this abandoned transaction.
-            *self = Self::Fatal;
+        match (*self, result) {
+            (Self::Acquired, Ok(value)) => {
+                *self = Self::Ready;
+                Ok(value)
+            }
+            (Self::Acquired | Self::Unavailable, Err(error)) => {
+                // Reconstruction may already have latched failure inside an acquired finalizer.
+                *self = Self::Unavailable;
+                Err(error)
+            }
+            (Self::Ready, _) | (Self::Unavailable, Ok(_)) => {
+                *self = Self::Unavailable;
+                Err("invalid Vulkan presentation finalization state".into())
+            }
         }
-        result
     }
 
     /// Latches a panic or other non-Result escape from acquired-frame finalization.
@@ -135,14 +141,38 @@ impl AcquiredFrameState {
         // A panic can occur after native commands have been recorded. Treat it exactly like an
         // explicit error so unwinding cannot make the same slot available again.
         if *self == Self::Acquired {
-            *self = Self::Fatal;
+            *self = Self::Unavailable;
         }
     }
 
     /// Returns whether later rendering must remain disabled.
-    fn is_fatal(self) -> bool {
-        self == Self::Fatal
+    fn is_unavailable(self) -> bool {
+        self == Self::Unavailable
     }
+}
+
+/// Actual reconstruction boundaries exercised by native tests, absent from production.
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RebuildPoint {
+    /// Before waiting on the old generation.
+    WaitIdle,
+    /// After the old generation has been destroyed.
+    Teardown,
+    /// New swapchain and extent are installed, dependent storage is still missing.
+    Swapchain,
+    /// Guarded presentation semaphore prefix.
+    PresentSemaphore(usize),
+    /// Guarded image-view prefix.
+    View(usize),
+    /// Guarded depth-image prefix.
+    Depth(usize),
+    /// A new render pass exists, but framebuffers are not published.
+    RenderPass,
+    /// Guarded framebuffer prefix.
+    Framebuffer(usize),
+    /// Complete command storage exists, immediately before readiness publication.
+    Commands,
 }
 
 /// Vulkan presentation and texture ownership with one validated generic graphics executor.
@@ -164,8 +194,6 @@ pub struct VulkanRenderer {
     width: u32,
     /// Logical microui frame height used when scaling application rectangles.
     height: u32,
-    /// Permanent high-level latch set after device loss or an abandoned acquired frame.
-    disabled: bool,
 }
 
 impl VulkanRenderer {
@@ -183,8 +211,17 @@ impl VulkanRenderer {
             clear_color: color(0, 0, 0, 255),
             width,
             height,
-            disabled: false,
         })
+    }
+
+    /// Every public native-work entry checks the genuine retained lifecycle owners.
+    /// Collection, diagnostics and destruction remain available after terminal failure.
+    fn ensure_usable(&self) -> Result<()> {
+        if self.context.is_unusable() || self.generic.unusable() || self.offscreen.as_ref().is_some_and(offscreen::Offscreen::unusable) {
+            Err("Vulkan renderer is unavailable after a native lifecycle failure".into())
+        } else {
+            Ok(())
+        }
     }
 
     /// Recreates the swapchain when the SDL window size diverges from the cached Vulkan extent.
@@ -205,9 +242,7 @@ impl VulkanRenderer {
 
     /// Compiles immutable resources before acquiring or clearing a presentation target.
     pub fn prepare_block(&mut self, block: &neocogi_render_gpu::record::Block, offscreen: bool) -> Result<PreparedBlock> {
-        if self.disabled || self.context.is_unusable() || self.generic.unusable() {
-            return Err("Vulkan renderer is unavailable after a native frame failure".into());
-        }
+        self.ensure_usable()?;
         if offscreen {
             if !block.is_ui() {
                 return Err("offscreen Vulkan surfaces accept private UI commands only".into());
@@ -230,9 +265,7 @@ impl VulkanRenderer {
 
     /// Trusted UI resource preparation never acquires or clears a rendering target.
     pub fn prepare_texture(&mut self, texture: Rc<neocogi_render_gpu::resource::TextureVersion>) -> Result<()> {
-        if self.disabled || self.context.is_unusable() {
-            return Err("Vulkan renderer is unavailable after a native frame failure".into());
-        }
+        self.ensure_usable()?;
         self.generic.prepare_texture(texture, &self.textures)
     }
 
@@ -255,9 +288,6 @@ impl VulkanRenderer {
         self.height = height as u32;
         self.clear_color = clr;
         self.commands.clear();
-        if self.disabled || self.generic.unusable() {
-            return Err(String::from("Vulkan renderer is disabled after an unrecoverable frame failure"));
-        }
         self.generic.collect()?;
 
         Ok(())
@@ -276,7 +306,6 @@ impl VulkanRenderer {
                     self.height,
                     &self.commands,
                 );
-                self.disabled |= self.offscreen.as_ref().is_some_and(offscreen::Offscreen::unusable);
                 if result.is_ok() {
                     self.textures.get_mut(&output).expect("output remains owned").image.layout = vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL;
                 }
@@ -288,9 +317,9 @@ impl VulkanRenderer {
 
     /// Native finalization preserves the existing acquire, transfer, submit, and present protocol.
     fn finish_window(&mut self, acquired: AcquiredVulkanFrame) -> Result<()> {
-        if self.disabled {
+        if let Err(error) = self.ensure_usable() {
             self.commands.clear();
-            return Err(String::from("Vulkan renderer is disabled after an unrecoverable frame failure"));
+            return Err(error);
         }
         let mut commands = std::mem::take(&mut self.commands);
         // `draw_frame` consumes the queued UI/custom jobs and may drain `commands`; taking the vec
@@ -304,7 +333,6 @@ impl VulkanRenderer {
             &mut self.generic,
         );
         // draw_frame latches post-acquire failure; preserve that state before returning the error.
-        self.disabled |= self.context.is_unusable();
         commands.clear();
         self.commands = commands;
         result
@@ -325,9 +353,7 @@ impl VulkanRenderer {
         // Texture creation is the public backend boundary, so convert Vulkan's string-based
         // operational failures into the renderer's typed texture error without changing the
         // file-wide `Result<T>` used by unrelated swapchain and resource internals.
-        if self.disabled {
-            return Err(TextureError::backend("Vulkan renderer is disabled after an unrecoverable frame failure"));
-        }
+        self.ensure_usable().map_err(TextureError::backend)?;
         self.textures
             .try_reserve(1)
             .map_err(|err| TextureError::backend(format!("failed to reserve texture ownership entry: {err}")))?;
@@ -408,7 +434,6 @@ impl Drop for VulkanFrame<'_> {
         // Success has already restored Ready. Any other escape, including a panic after taking
         // the token in finish, must forbid reuse of the potentially signaled acquire semaphore.
         self.backend.context.abandon_acquired_frame();
-        self.backend.disabled |= self.backend.context.is_unusable() || self.backend.offscreen.as_ref().is_some_and(offscreen::Offscreen::unusable);
         self.backend.commands.clear();
     }
 }
@@ -417,6 +442,7 @@ impl RendererBackend for VulkanRenderer {
     type Frame<'a> = VulkanFrame<'a>;
 
     fn frame(&mut self, info: FrameInfo) -> std::result::Result<Self::Frame<'_>, FrameError> {
+        self.ensure_usable().map_err(FrameError::new)?;
         let dimensions = info.dimensions();
         self.ensure_swapchain_extent(dimensions.width as u32, dimensions.height as u32)
             .map_err(FrameError::new)?;
@@ -433,7 +459,8 @@ impl RendererBackend for VulkanRenderer {
 
     /// Creates an image/framebuffer/descriptor transaction without acquiring a presentation image.
     fn create_render_texture(&mut self, id: TextureId) -> std::result::Result<(), TextureError> {
-        if self.disabled || self.textures.contains_key(&id) {
+        self.ensure_usable().map_err(TextureError::backend)?;
+        if self.textures.contains_key(&id) {
             return Err(TextureError::backend("Vulkan render target is unavailable or already exists"));
         }
         self.textures.try_reserve(1).map_err(|error| TextureError::backend(error.to_string()))?;
@@ -474,6 +501,7 @@ impl RendererBackend for VulkanRenderer {
 
     /// Opens a fresh immutable-output target; the plugin admits private UI blocks only.
     fn texture_frame(&mut self, info: FrameInfo, output: TextureId) -> std::result::Result<Self::Frame<'_>, FrameError> {
+        self.ensure_usable().map_err(FrameError::new)?;
         let size = info.dimensions();
         if (output.width(), output.height()) != (size.width, size.height)
             || info.clear().a != 255
@@ -656,8 +684,11 @@ pub(crate) struct VulkanContext {
     in_flight_fences: Vec<vk::Fence>,
     current_frame: usize,
     max_frames_in_flight: usize,
-    /// Ownership state for the acquire semaphore and swapchain image handed to the active frame.
-    acquired_frame_state: AcquiredFrameState,
+    /// Presentation readiness covers complete generations and acquired synchronization.
+    presentation: PresentationState,
+    /// Bounded test seam rejects actual reconstruction stages without forcing driver OOM.
+    #[cfg(test)]
+    rebuild_failure: Option<RebuildPoint>,
     depth_images: Vec<ImageResource>,
     device_lost: bool,
     /// Shared SDL native-window/video owner, retained until after Vulkan surface destruction.
@@ -678,6 +709,9 @@ impl VulkanContext {
 
     /// Creates the Vulkan instance/device state and the first set of swapchain-dependent resources.
     fn new(window: &Window, width: u32, height: u32) -> Result<Self> {
+        if width == 0 || height == 0 {
+            return Err("initial Vulkan extent must be positive".into());
+        }
         // Retain before creating GPU locals: constructor failures unwind those before this owner,
         // and success transfers it into the context until after explicit surface destruction.
         let window = window.clone();
@@ -758,7 +792,9 @@ impl VulkanContext {
             in_flight_fences: Vec::new(),
             current_frame: 0,
             max_frames_in_flight: 2,
-            acquired_frame_state: AcquiredFrameState::Ready,
+            presentation: PresentationState::Ready,
+            #[cfg(test)]
+            rebuild_failure: None,
             depth_images: Vec::new(),
             device_lost: false,
             _window: window,
@@ -850,31 +886,57 @@ impl VulkanContext {
         unsafe { instance.create_device(physical_device, &device_info, None) }.map_err(|err| format!("create_device failed: {err:?}"))
     }
 
-    /// Rebuilds all swapchain-dependent resources for a new window extent.
+    /// Synchronously replaces presentation storage. No partial generation is reusable.
+    /// Success restores the caller's phase, including an outer acquired-frame finalizer;
+    /// any wait/build error leaves Unavailable, even when the new extent was published.
     fn recreate_swapchain(&mut self, width: u32, height: u32) -> Result<()> {
-        if self.device_lost {
-            return Err("cannot recreate swapchain: device is lost".into());
+        if self.is_unusable() {
+            return Err("cannot recreate an unavailable Vulkan presentation context".into());
         }
         if width == 0 || height == 0 {
             return Ok(());
         }
-
-        unsafe {
-            self.device.device_wait_idle().map_err(|err| self.handle_vk_error("device_wait_idle", err))?;
+        let previous = self.presentation;
+        self.presentation = PresentationState::Unavailable;
+        let result = (|| {
+            #[cfg(test)]
+            self.rebuild_checkpoint(RebuildPoint::WaitIdle)?;
+            // SAFETY: the context owns this device; idle precedes old-generation destruction.
+            unsafe {
+                self.device.device_wait_idle().map_err(|err| self.handle_vk_error("device_wait_idle", err))?;
+            }
+            self.cleanup_swapchain();
+            #[cfg(test)]
+            self.rebuild_checkpoint(RebuildPoint::Teardown)?;
+            self.create_swapchain(width, height)?;
+            #[cfg(test)]
+            self.rebuild_checkpoint(RebuildPoint::Swapchain)?;
+            self.create_present_semaphores()?;
+            self.create_image_views()?;
+            self.create_depth_images()?;
+            self.render_pass = self.create_render_pass()?;
+            #[cfg(test)]
+            self.rebuild_checkpoint(RebuildPoint::RenderPass)?;
+            self.framebuffers = self.create_framebuffers()?;
+            self.allocate_command_buffers()?;
+            #[cfg(test)]
+            self.rebuild_checkpoint(RebuildPoint::Commands)?;
+            Ok(())
+        })();
+        if result.is_ok() {
+            self.presentation = previous;
         }
+        result
+    }
 
-        // Rebuild all resources tied to the window surface size or swapchain format. Permanent
-        // objects like the device, queues, and command pool stay alive across this boundary.
-        self.cleanup_swapchain();
-        self.create_swapchain(width, height)?;
-        self.create_present_semaphores()?;
-        self.create_image_views()?;
-        self.create_depth_images()?;
-        self.render_pass = self.create_render_pass()?;
-        self.framebuffers = self.create_framebuffers()?;
-        self.allocate_command_buffers()?;
-
-        Ok(())
+    /// Inject a normal Result error after real guarded construction, leaving cleanup unchanged.
+    #[cfg(test)]
+    fn rebuild_checkpoint(&self, point: RebuildPoint) -> Result<()> {
+        if self.rebuild_failure == Some(point) {
+            Err(format!("injected swapchain reconstruction: {point:?}"))
+        } else {
+            Ok(())
+        }
     }
 
     /// Creates the Vulkan swapchain that backs presentation to the SDL window.
@@ -974,6 +1036,8 @@ impl VulkanContext {
                 .subresource_range(subresource_range);
             let view = unsafe { self.device.create_image_view(&view_info, None) }.map_err(|err| format!("create_image_view failed: {err:?}"))?;
             pending.push(ResourceGuard::new(view, |view| unsafe { self.device.destroy_image_view(view, None) }));
+            #[cfg(test)]
+            self.rebuild_checkpoint(RebuildPoint::View(pending.len() - 1))?;
         }
         let views = pending.into_iter().map(|view| view.into_inner()).collect();
         for previous in std::mem::replace(&mut self.swapchain_image_views, views) {
@@ -1009,6 +1073,8 @@ impl VulkanContext {
             pending.push(ResourceGuard::new(framebuffer, |framebuffer| unsafe {
                 self.device.destroy_framebuffer(framebuffer, None)
             }));
+            #[cfg(test)]
+            self.rebuild_checkpoint(RebuildPoint::Framebuffer(pending.len() - 1))?;
         }
         Ok(pending.into_iter().map(|framebuffer| framebuffer.into_inner()).collect())
     }
@@ -1044,6 +1110,8 @@ impl VulkanContext {
             let raw = unsafe { self.device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None) }
                 .map_err(|error| format!("create presentation semaphore: {error:?}"))?;
             candidates.push(ResourceGuard::new(raw, |raw| unsafe { self.device.destroy_semaphore(raw, None) }));
+            #[cfg(test)]
+            self.rebuild_checkpoint(RebuildPoint::PresentSemaphore(candidates.len() - 1))?;
         }
         self.render_finished_semaphores = candidates.into_iter().map(ResourceGuard::into_inner).collect();
         Ok(())
@@ -1135,7 +1203,7 @@ impl VulkanContext {
         // Never reuse a binary acquire semaphore or swapchain image left outstanding by an earlier
         // post-acquire failure. The fatal policy makes this check finite instead of waiting on an
         // unsignaled fence that was reset but never submitted.
-        self.acquired_frame_state.ensure_ready()?;
+        self.presentation.ensure_ready()?;
         let frame = self.current_frame;
         let fence = self.in_flight_fences[frame];
         unsafe {
@@ -1151,15 +1219,20 @@ impl VulkanContext {
             Ok((image_index, suboptimal)) => {
                 // Publish the ownership transition only after Vulkan has returned a real image and
                 // signaled this frame slot's acquire semaphore.
-                self.acquired_frame_state.acquire_succeeded()?;
+                self.presentation.acquire_succeeded()?;
                 Ok(AcquiredVulkanFrame { frame, image_index, suboptimal })
             }
-            Err(vk::Result::ERROR_OUT_OF_DATE_KHR) | Err(vk::Result::SUBOPTIMAL_KHR) => {
-                self.recreate_swapchain(width, height)?;
-                Err(String::from("Vulkan swapchain changed during frame acquisition"))
-            }
+            Err(vk::Result::ERROR_OUT_OF_DATE_KHR) | Err(vk::Result::SUBOPTIMAL_KHR) => self.recover_acquisition(width, height),
             Err(err) => Err(self.handle_vk_error("acquire_next_image", err)),
         }
+    }
+
+    /// An acquisition error owns no token. A successful rebuild keeps Ready and returns
+    /// the established transient frame error; only reconstruction failure is terminal.
+    fn recover_acquisition(&mut self, width: u32, height: u32) -> Result<AcquiredVulkanFrame> {
+        self.presentation.ensure_ready()?;
+        self.recreate_swapchain(width, height)?;
+        Err("Vulkan swapchain changed during frame acquisition".into())
     }
 
     /// Executes one complete Vulkan frame from an acquired image through submit and present.
@@ -1179,9 +1252,9 @@ impl VulkanContext {
         let result = self.draw_acquired_frame(acquired, clear_value, width, height, commands, generic);
 
         // Success proves graphics submission and presentation consumed the acquired resources.
-        // Every error latches Fatal, including record, transfer, fence-reset, submit, present, and
+        // Every error latches Unavailable, including record, transfer, fence-reset, submit, present, and
         // swapchain-rebuild failures.
-        self.acquired_frame_state.finish(result)
+        self.presentation.finish(result)
     }
 
     /// Performs the fallible native work for one already-acquired swapchain image.
@@ -1399,14 +1472,14 @@ impl VulkanContext {
     /// Latches an acquired frame that escaped normal Result-based finalization.
     fn abandon_acquired_frame(&mut self) {
         // VulkanFrame's panic guard calls this before allowing another backend operation.
-        self.acquired_frame_state.abandon();
+        self.presentation.abandon();
     }
 
     /// Returns whether native rendering must remain disabled for the rest of this context's life.
     fn is_unusable(&self) -> bool {
         // Actual device loss and an abandoned acquired-frame transaction are both permanent here;
         // this example deliberately chooses a simple fatal policy instead of partial sync repair.
-        self.device_lost || self.acquired_frame_state.is_fatal()
+        self.device_lost || self.presentation.is_unavailable()
     }
 
     /// Returns the current swapchain extent.
@@ -1433,6 +1506,8 @@ impl VulkanContext {
         let mut attachments = Vec::with_capacity(self.swapchain_images.len());
         for _ in &self.swapchain_images {
             attachments.push(self.create_depth_attachment(self.extent)?.guarded(&self.device));
+            #[cfg(test)]
+            self.rebuild_checkpoint(RebuildPoint::Depth(attachments.len() - 1))?;
         }
         let attachments = attachments.into_iter().map(ResourceGuard::into_inner).collect();
         for mut previous in std::mem::replace(&mut self.depth_images, attachments) {
@@ -1503,26 +1578,47 @@ mod tests {
 
     use super::*;
 
+    /// Every phase/result pair has an explicit terminal or successful outcome.
+    #[test]
+    fn finalization_never_revives_incomplete_or_unacquired_presentation() {
+        for initial in [PresentationState::Ready, PresentationState::Acquired, PresentationState::Unavailable] {
+            for succeeded in [false, true] {
+                let mut state = initial;
+                let result = state.finish(if succeeded { Ok(7) } else { Err("original native error".into()) });
+                if initial == PresentationState::Acquired && succeeded {
+                    assert_eq!(result, Ok(7));
+                    assert_eq!(state, PresentationState::Ready);
+                } else {
+                    assert!(result.is_err());
+                    assert_eq!(state, PresentationState::Unavailable);
+                    if !succeeded && initial != PresentationState::Ready {
+                        assert_eq!(result, Err("original native error".into()));
+                    }
+                }
+            }
+        }
+    }
+
     /// Verifies every post-acquire failure and panic permanently closes the frame lifecycle.
     #[test]
     fn acquired_frame_failure_is_fatal_while_success_returns_to_ready() {
-        let mut state = AcquiredFrameState::Ready;
+        let mut state = PresentationState::Ready;
         state.ensure_ready().unwrap();
         state.acquire_succeeded().unwrap();
-        assert_eq!(state, AcquiredFrameState::Acquired);
+        assert_eq!(state, PresentationState::Acquired);
 
         let error = state.finish::<()>(Err(String::from("injected record failure"))).unwrap_err();
         assert_eq!(error, "injected record failure");
-        assert!(state.is_fatal());
+        assert!(state.is_unavailable());
         assert!(state.ensure_ready().is_err(), "a failed acquired frame must reject all later acquisition");
 
-        let mut successful = AcquiredFrameState::Ready;
+        let mut successful = PresentationState::Ready;
         successful.acquire_succeeded().unwrap();
         successful.finish(Ok(())).unwrap();
-        assert_eq!(successful, AcquiredFrameState::Ready);
+        assert_eq!(successful, PresentationState::Ready);
 
         successful.acquire_succeeded().unwrap();
         successful.abandon();
-        assert!(successful.is_fatal(), "panic-style abandonment must use the same fatal latch");
+        assert!(successful.is_unavailable(), "panic-style abandonment must use the same fatal latch");
     }
 }

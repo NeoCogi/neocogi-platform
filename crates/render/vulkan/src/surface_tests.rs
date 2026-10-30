@@ -1,6 +1,9 @@
 //! Real Vulkan image, submission, and window-lifetime regression tests.
 use super::*;
 
+/// SDL video lifetime is process-global even though each renderer is thread-local.
+static NATIVE_SESSION: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// Read actual native pixels through a completed transfer, preserving the source layout.
 fn pixels(renderer: &VulkanRenderer, id: TextureId) -> Vec<u8> {
     crate::generic::tests::readback(
@@ -17,6 +20,7 @@ mod sampled;
 #[test]
 #[ignore = "requires an SDL native display and Vulkan adapter"]
 fn independent_texture_frames_preserve_pixels_and_native_surface_configuration() {
+    let _session = NATIVE_SESSION.lock().unwrap_or_else(|error| error.into_inner());
     let sdl = sdl2::init().unwrap();
     let video = sdl.video().unwrap();
     let mut window = video.window("Vulkan surface regression", 64, 64).vulkan().hidden().build().unwrap();
@@ -77,7 +81,7 @@ fn independent_texture_frames_preserve_pixels_and_native_surface_configuration()
             .texture_frame(FrameInfo::try_new(Dimensioni::new(3, 1), color(0, 0, 0, 255)).unwrap(), next)
             .unwrap(),
     );
-    assert!(!renderer.disabled);
+    assert!(renderer.ensure_usable().is_ok());
     assert_eq!(pixels(&renderer, first), source);
     // A normal window frame still uses its own extent, depth attachment, and atlas binding.
     renderer
@@ -117,3 +121,129 @@ fn independent_texture_frames_preserve_pixels_and_native_surface_configuration()
 
 #[path = "../../gpu/tests/support/derivatives.rs"]
 mod derivatives;
+
+/// Real partial generations remain destructible, and no native entry reuses them.
+/// Injection returns ordinary errors at production stages rather than provoking driver OOM.
+#[test]
+#[ignore = "requires an SDL native display and Vulkan adapter"]
+fn reconstruction_failure_rejects_every_native_entry_and_preserves_finalizer_phase() {
+    use neocogi_render_gpu::{abi::*, source::Bytes};
+    let _session = NATIVE_SESSION.lock().unwrap_or_else(|error| error.into_inner());
+    let sdl = sdl2::init().unwrap();
+    let video = sdl.video().unwrap();
+    let window = video.window("Vulkan reconstruction lifecycle", 64, 64).vulkan().hidden().build().unwrap();
+    assert!(VulkanRenderer::new(&window, 0, 64).is_err());
+    assert!(VulkanRenderer::new(&window, 64, 0).is_err());
+    let info = FrameInfo::try_new(Dimensioni::new(64, 64), color(0, 0, 0, 255)).unwrap();
+    let mut points = vec![
+        RebuildPoint::WaitIdle,
+        RebuildPoint::Teardown,
+        RebuildPoint::Swapchain,
+        RebuildPoint::RenderPass,
+        RebuildPoint::Commands,
+    ];
+    for index in 0..2 {
+        points.extend([
+            RebuildPoint::PresentSemaphore(index),
+            RebuildPoint::View(index),
+            RebuildPoint::Depth(index),
+            RebuildPoint::Framebuffer(index),
+        ]);
+    }
+    let gpu = neocogi_render_gpu::GpuDevice::new(
+        nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
+            .query()
+            .unwrap(),
+    );
+    let domain = gpu.create_ui_client(Default::default(), None).unwrap();
+    let resources = domain.resources().unwrap();
+    let root = Rect { x: 0, y: 0, width: 64, height: 64 };
+    let owner = sampled::block(&gpu, &resources, root, Size { width: 1, height: 1 }, &[255; 4]);
+    let block = gpu.block_snapshot(owner.as_com_ref()).unwrap();
+    let image = resources
+        .create_texture(
+            GpuTextureDesc {
+                size: Size { width: 1, height: 1 },
+                format: GpuTextureFormat::Rgba8Unorm,
+                mip_count: 1,
+            },
+            Bytes::source(vec![255; 4]).as_com_ref(),
+        )
+        .unwrap();
+    let snapshot = gpu.texture_snapshot(resources.as_com_ref(), image.as_com_ref()).unwrap();
+    // Rebuild after an acquire error has no token: successful recovery returns the
+    // established transient error, then allows a real acquisition/submission retry.
+    {
+        let mut renderer = VulkanRenderer::new(&window, 64, 64).unwrap();
+        assert!(
+            renderer
+                .context
+                .recover_acquisition(64, 64)
+                .err()
+                .unwrap()
+                .contains("changed during frame acquisition")
+        );
+        assert_eq!(renderer.context.presentation, PresentationState::Ready);
+        renderer.frame(info).unwrap().finish().unwrap();
+        // Runtime minimization does not destroy an already complete generation.
+        renderer.context.recreate_swapchain(0, 0).unwrap();
+        renderer.frame(info).unwrap().finish().unwrap();
+        // A real successful post-present reconstruction restores Acquired until finish.
+        let mut frame = renderer.frame(info).unwrap();
+        let FrameTarget::Window(acquired) = frame.target.as_mut().unwrap() else {
+            panic!("window token")
+        };
+        acquired.suboptimal = true;
+        frame.finish().unwrap();
+        assert_eq!(renderer.context.presentation, PresentationState::Ready);
+    }
+    for point in points {
+        // The display's ordinary swapchain has at least two images; the prefix
+        // cases exercise the successful first owner as well as a later failure.
+        for entry in 0..3 {
+            let mut renderer = VulkanRenderer::new(&window, 64, 64).unwrap();
+            assert!(renderer.context.swapchain_images.len() >= 2);
+            let output = TextureId::for_render_target(2, 2).unwrap();
+            renderer.create_render_texture(output).unwrap();
+            renderer.context.rebuild_failure = Some(point);
+            let error = match entry {
+                0 => renderer
+                    .frame(FrameInfo::try_new(Dimensioni::new(80, 80), color(0, 0, 0, 255)).unwrap())
+                    .err()
+                    .unwrap()
+                    .to_string(),
+                1 => renderer.context.recover_acquisition(64, 64).err().unwrap(),
+                _ => {
+                    let mut frame = renderer.frame(info).unwrap();
+                    let FrameTarget::Window(acquired) = frame.target.as_mut().unwrap() else {
+                        panic!("window token")
+                    };
+                    acquired.suboptimal = true;
+                    frame.finish().unwrap_err().to_string()
+                }
+            };
+            assert!(error.contains("injected swapchain reconstruction"), "entry={entry} point={point:?}: {error}");
+            assert_eq!(renderer.context.presentation, PresentationState::Unavailable);
+            assert!(renderer.prepare_block(&block, false).is_err());
+            assert!(renderer.prepare_block(&block, true).is_err());
+            assert!(renderer.prepare_texture(snapshot.clone()).is_err());
+            let before = renderer.context.core.live_allocations();
+            // Same-size empty and client retries must reject before acquisition,
+            // pipeline work, output creation or indexing incomplete command arrays.
+            assert!(renderer.frame(info).is_err());
+            assert!(renderer.create_texture(TextureId::for_upload(1, 1, &[255; 4]).unwrap(), &[255; 4]).is_err());
+            assert!(renderer.create_render_texture(TextureId::for_render_target(2, 2).unwrap()).is_err());
+            assert!(
+                renderer
+                    .texture_frame(FrameInfo::try_new(Dimensioni::new(2, 2), color(0, 0, 0, 255)).unwrap(), output)
+                    .is_err()
+            );
+            assert_eq!(renderer.context.core.live_allocations(), before);
+            renderer.destroy_texture(output);
+            let core = renderer.context.core.clone();
+            // Normal Drop waits idle and releases the real partial generation.
+            drop(renderer);
+            assert_eq!(core.live_allocations(), 0, "partial generation leaked at {point:?}, entry={entry}");
+        }
+    }
+}

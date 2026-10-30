@@ -244,3 +244,22 @@ COM provenance: device/domain registry checks remain authoritative. Exhaustion
 rejects publication instead of wrapping. Native cache keys and passive receipts
 retain no additional device owner; weak retirement and actual GPU completion
 remain separate lifetimes.
+
+
+## Vulkan presentation failure boundary
+
+Presentation readiness covers the complete swapchain generation as well as acquired
+image/semaphore ownership. Destructive reconstruction marks presentation unavailable
+before waiting or replacing parts. It restores its previous Ready or Acquired phase
+only after complete success; any reconstruction error is terminal for later native
+preparation, upload, output creation and acquisition. An outer acquired finalizer
+preserves a prelatched failure and its original error. No extent equality can make
+an incomplete generation reusable. Initial zero dimensions reject before bootstrap;
+runtime minimization of a complete context remains a no-op.
+
+Acquisition out-of-date recovery owns no frame token. A successful rebuild returns
+the existing transient frame error while leaving Ready for retry; a generic frame
+error is not itself proof of terminal presentation failure. Device loss, generic
+upload completion and offscreen submission keep their separate owners/states.
+Renderer usability derives from them instead of caching another disabled flag.
+Retirement and teardown still observe native completion before releasing resources.
