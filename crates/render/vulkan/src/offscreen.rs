@@ -25,6 +25,14 @@ struct Draw {
     clip: Recti,
 }
 
+/// Private UI and generic blocks preserve one painter order during the transition to GFX lowering.
+enum Operation<'a> {
+    /// Legacy packed geometry is retained only until its producers are removed.
+    Ui(Draw),
+    /// Native resources were prepared before selecting this render target.
+    Block(&'a PreparedBlock, neocogi_render_gpu::abi::Size),
+}
+
 /// Device-local execution resources independent of swapchain recreation and presentation.
 pub(super) struct Offscreen {
     /// Cloned dispatch table; the enclosing renderer destroys this owner before its logical device.
@@ -47,6 +55,8 @@ pub(super) struct Offscreen {
     vertices: Option<MappedBuffer>,
     /// Explicit lifecycle for fallible submission and waiting.
     submission: Submission,
+    /// A failed wait cannot release descriptor pools or backings still referenced by submitted work.
+    pending: Vec<PreparedBlock>,
 }
 impl Offscreen {
     /// Allocates every native handle transactionally before publishing the execution owner.
@@ -129,6 +139,7 @@ impl Offscreen {
             fence: fence.into_inner(),
             vertices: None,
             submission: Submission::Ready,
+            pending: Vec::new(),
         })
     }
 
@@ -141,6 +152,7 @@ impl Offscreen {
     pub(super) fn render(
         &mut self,
         ctx: &VulkanContext,
+        generic: &generic::Executor,
         output: &VulkanTexture,
         atlas: vk::DescriptorSet,
         clear: vk::ClearValue,
@@ -157,6 +169,10 @@ impl Offscreen {
         let mut packed = Vec::new();
         let mut draws = Vec::new();
         let mut cursor = 0;
+        let signature = generic::Signature {
+            color: vk::Format::R8G8B8A8_UNORM,
+            depth: None,
+        };
         for command in commands {
             let (slice, descriptor, clip) = match command {
                 FrameCommand::DrawTo(end) => {
@@ -170,7 +186,11 @@ impl Offscreen {
                 }
                 FrameCommand::Texture { clip, command } => (command.vertices.as_slice(), command.descriptor_set, *clip),
                 FrameCommand::Colored { clip, command } => (command.vertices.as_slice(), atlas, *clip),
-                FrameCommand::Block { .. } => return Err("offscreen Vulkan surfaces accept UI commands only".into()),
+                FrameCommand::Block { block, logical } => {
+                    generic.admit(block, signature)?;
+                    draws.push(Operation::Block(block, *logical));
+                    continue;
+                }
             };
             if descriptor == output.descriptor.set {
                 return Err("a Vulkan render target cannot sample itself".into());
@@ -178,12 +198,12 @@ impl Offscreen {
             if slice.is_empty() {
                 continue;
             }
-            draws.push(Draw {
+            draws.push(Operation::Ui(Draw {
                 offset: (packed.len() * mem::size_of::<Vertex>()) as u64,
                 count: slice.len() as u32,
                 descriptor,
                 clip,
-            });
+            }));
             packed.extend_from_slice(slice);
         }
         let bytes = unsafe { std::slice::from_raw_parts(packed.as_ptr().cast::<u8>(), mem::size_of_val(packed.as_slice())) };
@@ -202,6 +222,13 @@ impl Offscreen {
                 }
             }
             self.vertices.as_ref().expect("upload allocated above").write(0, bytes)?;
+        }
+        let mut pending = Vec::new();
+        pending.try_reserve_exact(commands.len()).map_err(|error| error.to_string())?;
+        for command in commands {
+            if let FrameCommand::Block { block, .. } = command {
+                pending.push(block.clone());
+            }
         }
         // This command pool and upload buffer have no in-flight users while Ready.
         unsafe { self.device.reset_command_buffer(self.command_buffer, vk::CommandBufferResetFlags::empty()) }
@@ -228,17 +255,35 @@ impl Offscreen {
         // recording/submission transaction. Output pixels transition to shader-read at pass end.
         unsafe {
             self.device.cmd_begin_render_pass(self.command_buffer, &begin, vk::SubpassContents::INLINE);
-            self.device
-                .cmd_bind_pipeline(self.command_buffer, vk::PipelineBindPoint::GRAPHICS, self.pipeline);
-            self.device.cmd_set_viewport(self.command_buffer, 0, &[ui_full_viewport(extent)]);
-            self.device.cmd_push_constants(
-                self.command_buffer,
-                self.pipeline_layout,
-                vk::ShaderStageFlags::VERTEX,
-                0,
-                UiResources::matrix_bytes(&projection),
-            );
-            for draw in draws {
+            for operation in draws {
+                let draw = match operation {
+                    Operation::Block(block, logical) => {
+                        generic.record(
+                            self.command_buffer,
+                            block,
+                            logical,
+                            neocogi_render_gpu::abi::Size {
+                                width: extent.width as i32,
+                                height: extent.height as i32,
+                            },
+                            signature,
+                        )?;
+                        continue;
+                    }
+                    Operation::Ui(draw) => draw,
+                };
+                // Generic draws establish complete state; legacy geometry must likewise restore
+                // its own layout and projection when it appears after a generic contribution.
+                self.device
+                    .cmd_bind_pipeline(self.command_buffer, vk::PipelineBindPoint::GRAPHICS, self.pipeline);
+                self.device.cmd_set_viewport(self.command_buffer, 0, &[ui_full_viewport(extent)]);
+                self.device.cmd_push_constants(
+                    self.command_buffer,
+                    self.pipeline_layout,
+                    vk::ShaderStageFlags::VERTEX,
+                    0,
+                    UiResources::matrix_bytes(&projection),
+                );
                 let clip = clamp_rect_to_surface(draw.clip, extent.width, extent.height);
                 if clip.width <= 0 || clip.height <= 0 {
                     continue;
@@ -269,6 +314,7 @@ impl Offscreen {
         }
         let buffers = [self.command_buffer];
         let submit = vk::SubmitInfo::default().command_buffers(&buffers);
+        self.pending = pending;
         match unsafe { self.device.queue_submit(ctx.graphics_queue, &[submit], self.fence) } {
             Ok(()) => self.submission = Submission::Submitted,
             Err(error) => {
@@ -279,6 +325,7 @@ impl Offscreen {
         match unsafe { self.device.wait_for_fences(&[self.fence], true, u64::MAX) } {
             Ok(()) => {
                 self.submission = Submission::Ready;
+                self.pending.clear();
                 Ok(())
             }
             Err(error) => {
@@ -291,6 +338,7 @@ impl Offscreen {
 impl Drop for Offscreen {
     /// The enclosing renderer waits for device idle before this owner and its images retire.
     fn drop(&mut self) {
+        self.pending.clear();
         if let Some(mut vertices) = self.vertices.take() {
             vertices.destroy(&self.device);
         }

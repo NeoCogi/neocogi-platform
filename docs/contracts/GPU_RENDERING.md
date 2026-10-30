@@ -125,9 +125,10 @@ depth between UI overlays and neighboring client draws.
 Hosts obtain a separate `IRenderHost` allocation through
 `IPlatformWindow::graphics_host()`. Retaining it keeps the graphics device alive
 without retaining the window COM object or its input registrations. QueryInterface
-cannot recover the window, renderer or factories from it. Hosts install its
-`IRenderHost::recording_broker()` result through
-`UiRuntime::set_render_broker`. The runtime owns one recording frame around the
+cannot recover the window, renderer or factories from it. Hosts install it through
+`UiRuntime::set_render_host`. GFX prepares its private UI domain, pipeline and atlas
+before the runtime publishes the matching client recording broker. A failed binding
+preserves the previous complete assembly. The runtime owns one recording frame around the
 entire paint traversal. Widgets receive only `IPainter::begin_render_view` and
 their restricted resource factory. Begin reserves the contribution's display-list
 position immediately. Finish seals it; the runtime transfers the block at that
@@ -140,6 +141,15 @@ coordinates. Its initial viewport is `(0,0,width,height)` relative to that root.
 The runtime derives both from committed content geometry and clipping; caller
 tokens or supplied painter rectangles cannot redefine them. Sealed blocks have
 exclusive owners through synchronous GFX submission and weak stream observers.
+
+GFX owns the UI shader, packed vertex layout and geometry expansion. It records
+UI triangles and ordinary immutable images through the same generic command
+vocabulary as clients. Shared triangle-aligned vertex buffers span UI operations;
+client contributions seal the preceding UI block and retain their original painter
+positions. The private UI domain permits neither depth writes nor depth clears, so
+the following UI overlay cannot disturb a client's depth state. Offscreen surfaces
+accept only blocks authenticated as private UI work, and recheck domain admission
+after every foreign preparation call before allocating or clearing an output.
 The renderer authenticates them before native frame acquisition and rechecks all
 domain gates after the final foreign stream/image callback.
 

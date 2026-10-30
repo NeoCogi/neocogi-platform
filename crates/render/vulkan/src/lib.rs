@@ -313,7 +313,21 @@ impl VulkanRenderer {
             return Err("Vulkan renderer is unavailable after a native frame failure".into());
         }
         if offscreen {
-            return Err("offscreen Vulkan surfaces accept UI commands only".into());
+            if !block.is_ui() {
+                return Err("offscreen Vulkan surfaces accept private UI commands only".into());
+            }
+            if self.offscreen.is_none() {
+                self.offscreen = Some(offscreen::Offscreen::new(&self.context)?);
+            }
+            return self.generic.prepare(
+                block,
+                self.offscreen.as_ref().expect("initialized above").render_pass,
+                generic::Signature {
+                    color: vk::Format::R8G8B8A8_UNORM,
+                    depth: None,
+                },
+                &self.textures,
+            );
         }
         self.generic.prepare(block, self.context.render_pass, self.context.signature(), &self.textures)
     }
@@ -386,6 +400,7 @@ impl VulkanRenderer {
                 self.flush_ui_batch();
                 let result = self.offscreen.as_mut().ok_or("offscreen execution was not initialized")?.render(
                     &self.context,
+                    &self.generic,
                     &self.textures[&output],
                     self.textures[&atlas].descriptor.set,
                     Self::color_to_vk_clear(self.clear_color),

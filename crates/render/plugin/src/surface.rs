@@ -161,11 +161,24 @@ impl IRenderer for Surface {
             return Err(NC_E_INVALID_ARG);
         }
         let state = device.state();
+        let _operation = self.device.logical.operation()?;
         state.prepared.read(info, stream, self.device.as_ref())?;
-        if state.prepared.batches().iter().any(|batch| matches!(batch, Batch::View(_))) {
+        if state
+            .prepared
+            .batches()
+            .iter()
+            .any(|batch| matches!(batch, Batch::View(block) if !block.is_ui()))
+        {
             return Err(NC_E_INVALID_ARG);
         }
         session.atlas.prepare(&self.device, &mut state.gpu, atlas)?;
+        // Foreign stream/image callbacks may close a domain after its first snapshot.
+        // Recheck every immutable block after those calls and before touching the target.
+        for batch in state.prepared.batches() {
+            if let Batch::View(block) = batch {
+                block.admit()?;
+            }
+        }
         let id = TextureId::for_render_target(info.size.width, info.size.height).map_err(|_| NC_E_INVALID_ARG)?;
         state.gpu.create_render_texture(id).map_err(|error| self.device.failure(error))?;
         // This guard retires failed output as well as successful images. Previously
