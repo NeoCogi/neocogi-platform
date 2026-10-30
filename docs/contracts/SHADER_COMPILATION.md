@@ -25,6 +25,14 @@ selected-stage/entry agreement, guarded SPIR-V emission and ES300 emission withi
 quota. Forbidden unused declarations and other entries cannot bypass admission.
 WGPU's native checked translation and native linking/allocation stay fallible.
 
+Portable admission uses the complete Naga-validated module: every entry's IO,
+stage-local resource use and image/sampler combinations must satisfy the profile.
+Every declared uniform has a named structure root with portable layout and at most
+16 KiB, including unused blocks. A used image must participate in its entry's valid
+sampled pair; load/query-only use does not invent that pair. Loads and queries on
+an image also sampled with its matching sampler remain legal. Only the requested
+entry is emitted and reflected; inactive entries cannot alter selected collections.
+
 The returned WGSL is the exact source validated by Naga. A native emission failure
 rejects the whole result; it cannot return WGSL-only success. Outer COM transport
 or result-construction errors remain outer failures. Invalid source, output

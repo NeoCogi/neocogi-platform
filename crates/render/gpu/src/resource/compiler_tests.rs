@@ -5,6 +5,33 @@ use neocogi_shader_core::abi::*;
 use neocogi_com::{INcStringAbi, INcBytesAbi, NcBytes};
 /// Valid source with a small deterministic artifact.
 const SOURCE: &str = "@vertex fn vs()->@builtin(position) vec4<f32>{return vec4<f32>(0.,0.,0.,1.);}";
+
+#[path = "../../../../shader/plugin/tests/support/admission.rs"]
+mod admission;
+
+/// A rejected module publishes no GPU resource and leaves quota and operation admission usable.
+#[test]
+fn inactive_profile_violations_reject_through_the_resource_factory() {
+    let compiler = nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject).query().unwrap();
+    let gpu = crate::GpuDevice::new(compiler);
+    let controller = gpu.create_client(RenderClientLimits::default()).unwrap();
+    let factory = controller.resources().unwrap();
+    for case in admission::cases() {
+        let source = crate::source::Bytes::source(case.source.into_bytes());
+        for (stage, entry) in [(GpuShaderStage::Vertex, "selected"), (case.stage, "outside")] {
+            assert_eq!(factory.create_shader(stage, source.as_com_ref(), NcCopyFromBufferOffset::new(0, entry.as_bytes())).unwrap_err(),
+                NC_E_INVALID_ARG, "{} / {entry}", case.name);
+            assert_eq!(gpu.live_bytes(factory.as_com_ref()).unwrap(), 0);
+        }
+    }
+    let source = crate::source::Bytes::source(admission::valid_mixed_module().into_bytes());
+    for (stage, entry) in [(GpuShaderStage::Vertex, "selected"), (GpuShaderStage::Fragment, "outside")] {
+        let shader = factory.create_shader(stage, source.as_com_ref(), NcCopyFromBufferOffset::new(0, entry.as_bytes())).unwrap();
+        assert!(gpu.live_bytes(factory.as_com_ref()).unwrap() > 0);
+        drop(shader);
+        assert_eq!(gpu.live_bytes(factory.as_com_ref()).unwrap(), 0);
+    }
+}
 /// One observable intervention at a legitimate foreign-call boundary.
 #[derive(Clone, Copy)]
 enum Fault {

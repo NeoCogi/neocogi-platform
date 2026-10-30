@@ -32,6 +32,16 @@ const PROCEDURAL: &str = r#"
 }
 "#;
 
+/// Image loads do not erase a real pair. Emission may separately reject unsupported ES300 queries.
+#[test]
+fn paired_image_loads_remain_admitted_by_the_module_profile() {
+    let source = TEXTURED.replace("textureSample(image, image_sampler, input.uv) * tint.value",
+        "textureSample(image, image_sampler, input.uv) + textureLoad(image, vec2<i32>(0), 0)");
+    let module = naga::front::wgsl::parse_str(&source).unwrap();
+    let info = naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::empty()).validate(&module).unwrap();
+    validate_module(&module, &info).unwrap();
+}
+
 /// Float syntax and stage-distinct native block names are executable data in every Cargo profile.
 #[test]
 fn code_generation_keeps_literals_and_distinct_stage_symbols() {

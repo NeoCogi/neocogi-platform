@@ -103,10 +103,10 @@ impl Compiler {
         let fixed = source.len().checked_add(entry.len()).ok_or(CompileError::Limit)?;
         let available = budget.min(MAX_SHADER_ARTIFACT_BYTES).checked_sub(fixed).ok_or(CompileError::Limit)?;
         let module = naga::front::wgsl::parse_str(source).map_err(|error| error.emit_to_string(source))?;
-        validate_module(&module)?;
         let info = naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::empty())
             .validate(&module)
             .map_err(|error| error.emit_to_string(source))?;
+        validate_module(&module, &info)?;
         let (entry_index, selected) = module
             .entry_points
             .iter()
@@ -120,17 +120,6 @@ impl Compiler {
         let mut outputs = Vec::new();
         if let Some(result) = &selected.function.result {
             collect_io(&module, result.ty, result.binding.as_ref(), &mut outputs)?;
-        }
-        if matches!(stage, GpuShaderStage::Fragment)
-            && (outputs.len() != 1
-                || outputs[0].location != 0
-                || outputs[0].shape
-                    != (IoShape {
-                        kind: ShaderScalar::Float32,
-                        components: 4,
-                    }))
-        {
-            return Err("fragment profile requires exactly one vec4<f32> color output at location 0".into());
         }
         let spv_options = naga::back::spv::Options {
             flags: naga::back::spv::WriterFlags::ADJUST_COORDINATE_SPACE
@@ -194,57 +183,25 @@ impl Compiler {
         let mut uniforms = Vec::new();
         let mut textures = Vec::new();
         let usage = info.get_entry_point(entry_index);
-        let (texture_group, uniform_group) = groups(stage)?;
+        // Admission covered every entry. This pass extracts selected output names/values only.
         for (handle, variable) in module.global_variables.iter() {
-            if usage[handle].is_empty() {
+            if usage[handle].is_empty() || variable.space != AddressSpace::Uniform {
                 continue;
             }
-            let Some(binding) = variable.binding else {
-                continue;
-            };
-            match variable.space {
-                AddressSpace::Uniform if binding.group == uniform_group && binding.binding < 4 => {
-                    let (_, byte_len) = uniform_layout(&module, variable.ty)?;
-                    let actual_len = match module.types[variable.ty].inner {
-                        TypeInner::Struct { span, .. } => span,
-                        _ => return Err("uniform inputs must be named structures".into()),
-                    };
-                    // Native UBO allocation can pad the final struct, but member
-                    // offsets/strides must already agree with std140.
-                    if actual_len > byte_len || actual_len > 16 * 1024 {
-                        return Err("uniform block exceeds the portable layout/size".into());
-                    }
-                    uniforms.push(Uniform {
-                        slot: binding.binding,
-                        byte_len: actual_len,
-                        gl_block: gl_module
-                            .global_variables
-                            .iter()
-                            .find(|(_, global)| global.binding == Some(binding) && global.space == AddressSpace::Uniform)
-                            .and_then(|(handle, _)| reflection.uniforms.get(&handle))
-                            .cloned()
-                            .ok_or("missing emitted uniform reflection")?,
-                    });
-                }
-                AddressSpace::Handle if binding.group == texture_group => {}
-                _ => return Err("entry point uses a resource from another stage or an unsupported binding group".into()),
-            }
+            let binding = variable.binding.ok_or("admitted uniform lost its binding")?;
+            uniforms.push(Uniform {
+                slot: binding.binding,
+                byte_len: uniform_block_len(&module, variable.ty)?,
+                gl_block: gl_module.global_variables.iter()
+                    .find(|(_, global)| global.binding == Some(binding) && global.space == AddressSpace::Uniform)
+                    .and_then(|(handle, _)| reflection.uniforms.get(&handle)).cloned()
+                    .ok_or("missing emitted uniform reflection")?,
+            });
         }
         for (gl_name, mapping) in &reflection.texture_mapping {
             let image = gl_module.global_variables[mapping.texture].binding.ok_or("sampled texture lacks a binding")?;
-            let sampler_handle = mapping.sampler.ok_or("graphics profile requires a paired sampler")?;
-            let sampler = gl_module.global_variables[sampler_handle].binding.ok_or("sampler lacks a binding")?;
-            if image.group != texture_group
-                || sampler.group != texture_group
-                || image.binding >= 8
-                || image.binding % 2 != 0
-                || sampler.binding != image.binding + 1
-            {
-                return Err("sampled textures require stage-local consecutive texture/sampler pairs".into());
-            }
-            if textures.iter().any(|existing: &SampledTexture| existing.slot == image.binding / 2) {
-                return Err("one texture slot cannot use multiple sampler combinations".into());
-            }
+            // The emitter must preserve the admitted sampled pair; its name is selected-output data.
+            mapping.sampler.ok_or("emitted texture reflection lost its paired sampler")?;
             textures.push(SampledTexture {
                 slot: image.binding / 2,
                 gl_name: gl_name.clone(),
@@ -298,35 +255,7 @@ pub fn groups(stage: GpuShaderStage) -> Result<(u32, u32), String> {
 }
 
 /// Rejects forbidden effects even in unused globals/entry points; native artifacts cannot bypass it.
-fn validate_module(module: &naga::Module) -> Result<(), String> {
-    if module
-        .entry_points
-        .iter()
-        .any(|entry| !matches!(entry.stage, ShaderStage::Vertex | ShaderStage::Fragment))
-    {
-        return Err("graphics profile rejects compute and other non-graphics entry points".into());
-    }
-    // WGPU receives the canonical module, not just the selected emitted entry.
-    // Reject extra attachments in every fragment entry rather than letting an
-    // unused entry hide a different resource/effect contract in that module.
-    for entry in &module.entry_points {
-        if entry.stage == ShaderStage::Fragment {
-            let mut outputs = Vec::new();
-            if let Some(result) = &entry.function.result {
-                collect_io(module, result.ty, result.binding.as_ref(), &mut outputs)?;
-            }
-            if outputs.len() != 1
-                || outputs[0].location != 0
-                || outputs[0].shape
-                    != (IoShape {
-                        kind: ShaderScalar::Float32,
-                        components: 4,
-                    })
-            {
-                return Err("fragment profile requires exactly one vec4<f32> color output at location 0".into());
-            }
-        }
-    }
+fn validate_module(module: &naga::Module, info: &naga::valid::ModuleInfo) -> Result<(), String> {
     for (_, ty) in module.types.iter() {
         if matches!(ty.inner, TypeInner::Atomic(_) | TypeInner::BindingArray { .. }) {
             return Err("graphics profile rejects atomic and bindless types".into());
@@ -344,7 +273,7 @@ fn validate_module(module: &naga::Module) -> Result<(), String> {
                 if !matches!(binding.group, 1 | 3) || binding.binding >= 4 {
                     return Err("uniform group/slot exceeds graphics profile".into());
                 }
-                uniform_layout(module, variable.ty)?;
+                uniform_block_len(module, variable.ty)?;
             }
             AddressSpace::Handle => {
                 let binding = variable.binding.ok_or("sampled input lacks explicit binding")?;
@@ -362,6 +291,59 @@ fn validate_module(module: &naga::Module) -> Result<(), String> {
                 }
             }
             _ => return Err("graphics profile rejects storage, workgroup, immediate and other side-effect resource spaces".into()),
+        }
+    }
+    // WGPU receives the complete WGSL. Every entry must have the same portable contract,
+    // even if a different entry is selected for native emission and exported reflection.
+    for (index, entry) in module.entry_points.iter().enumerate() {
+        let stage = match entry.stage {
+            ShaderStage::Vertex => GpuShaderStage::Vertex,
+            ShaderStage::Fragment => GpuShaderStage::Fragment,
+            _ => return Err("graphics profile rejects compute and other non-graphics entry points".into()),
+        };
+        let (texture_group, uniform_group) = groups(stage)?;
+        let mut inputs = Vec::new();
+        for argument in &entry.function.arguments {
+            collect_io(module, argument.ty, argument.binding.as_ref(), &mut inputs)?;
+        }
+        let mut outputs = Vec::new();
+        if let Some(result) = &entry.function.result {
+            collect_io(module, result.ty, result.binding.as_ref(), &mut outputs)?;
+        }
+        if entry.stage == ShaderStage::Fragment && (outputs.len() != 1 || outputs[0].location != 0
+            || outputs[0].shape != (IoShape { kind: ShaderScalar::Float32, components: 4 })) {
+            return Err("fragment profile requires exactly one vec4<f32> color output at location 0".into());
+        }
+        let usage = info.get_entry_point(index);
+        for (handle, variable) in module.global_variables.iter() {
+            if usage[handle].is_empty() { continue; }
+            match variable.space {
+                AddressSpace::Private => {},
+                AddressSpace::Uniform if variable.binding.is_some_and(|binding| binding.group == uniform_group) => {},
+                AddressSpace::Handle if variable.binding.is_some_and(|binding| binding.group == texture_group) => {},
+                _ => return Err("entry point uses a resource from another stage or an unsupported binding group".into()),
+            }
+        }
+        let mut images = std::collections::BTreeSet::new();
+        let mut slots = std::collections::BTreeSet::new();
+        for pair in &usage.sampling_set {
+            let image = module.global_variables[pair.image].binding.ok_or("sampled texture lacks a binding")?;
+            let sampler = module.global_variables[pair.sampler].binding.ok_or("sampler lacks a binding")?;
+            if image.group != texture_group || sampler.group != texture_group || image.binding >= 8
+                || image.binding % 2 != 0 || sampler.binding != image.binding + 1 {
+                return Err("sampled textures require stage-local consecutive texture/sampler pairs".into());
+            }
+            if !images.insert(pair.image) || !slots.insert(image.binding / 2) {
+                return Err("one texture slot cannot use multiple sampler combinations".into());
+            }
+        }
+        // Load/query use is absent from sampling_set. Preserve the paired-image profile
+        // rather than letting an inactive load-only entry escape the former reflection check.
+        for (handle, variable) in module.global_variables.iter() {
+            if !usage[handle].is_empty() && matches!(module.types[variable.ty].inner, TypeInner::Image { .. })
+                && !images.contains(&handle) {
+                return Err("graphics profile requires a paired sampler".into());
+            }
         }
     }
     Ok(())
@@ -421,6 +403,19 @@ fn collect_io(module: &naga::Module, ty: Handle<Type>, binding: Option<&Binding>
     }
     output.sort_by_key(|entry| entry.location);
     Ok(())
+}
+
+/// Admits an entire named uniform block, including unused declarations, with the portable cap.
+fn uniform_block_len(module: &naga::Module, ty: Handle<Type>) -> Result<u32, String> {
+    let (_, padded) = uniform_layout(module, ty)?;
+    let span = match module.types[ty].inner {
+        TypeInner::Struct { span, .. } => span,
+        _ => return Err("uniform inputs must be named structures".into()),
+    };
+    if span > padded || span > 16 * 1024 {
+        return Err("uniform block exceeds the portable layout/size".into());
+    }
+    Ok(span)
 }
 
 /// Computes standard uniform alignment/size and verifies WGSL member offsets and strides.

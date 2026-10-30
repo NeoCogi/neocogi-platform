@@ -8,6 +8,36 @@ mod client {
     include!(env!("IDL_NEOCOGI_SHADER"));
 }
 const SOURCE: &str = "struct U { value:vec4<f32> } @group(1) @binding(0) var<uniform> u:U; @vertex fn vs(@location(0) p:vec2<f32>)->@builtin(position) vec4<f32> {return vec4<f32>(p,0.25,1.0)+u.value;}";
+
+#[path = "../tests/support/admission.rs"]
+mod admission;
+
+/// Inactive entries cannot change admission when a caller selects an otherwise valid entry.
+#[test]
+fn complete_module_profile_admission_precedes_selected_exports() {
+    let root: neocogi_com::ComPtr<client::ShaderCompilerAbi> = CompilerObject::from_value(CompilerObject).query().unwrap();
+    for case in admission::cases() {
+        // Establish that these are portable-profile failures, not WGSL/Naga syntax failures.
+        let module = naga::front::wgsl::parse_str(&case.source).unwrap();
+        naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::empty())
+            .validate(&module).unwrap_or_else(|error| panic!("{}: {error:?}", case.name));
+        for (stage, entry) in [(GpuShaderStage::Vertex, "selected"), (case.stage, "outside")] {
+            let report = root.compile(client::ShaderCompileRequest { stage, max_output_bytes: 4194304 },
+                NcCopyFromBufferOffset::new(0, case.source.as_bytes()), NcCopyFromBufferOffset::new(0, entry.as_bytes())).unwrap();
+            assert_eq!(report.status().unwrap(), NC_E_INVALID_ARG.code(), "{} / {entry}", case.name);
+            assert_eq!(report.wgsl().unwrap_err(), NC_E_INVALID_ARG);
+            assert_eq!(report.spirv().unwrap_err(), NC_E_INVALID_ARG);
+        }
+    }
+    let source = admission::valid_mixed_module();
+    for (stage, entry, texture_count) in [(GpuShaderStage::Vertex, "selected", 0), (GpuShaderStage::Fragment, "outside", 1)] {
+        let report = root.compile(client::ShaderCompileRequest { stage, max_output_bytes: 4194304 },
+            NcCopyFromBufferOffset::new(0, source.as_bytes()), NcCopyFromBufferOffset::new(0, entry.as_bytes())).unwrap();
+        assert_eq!(report.status().unwrap(), NC_OK.code(), "{}", report.diagnostic().unwrap().to_string().unwrap());
+        assert_eq!(report.wgsl().unwrap().to_string().unwrap(), source);
+        assert_eq!(report.sampled_textures().unwrap().len().unwrap(), texture_count);
+    }
+}
 /// Real COM getters do not require summary lookup, and item/name/code owners are independent.
 #[test]
 fn independent_owned_exports_and_items() {
