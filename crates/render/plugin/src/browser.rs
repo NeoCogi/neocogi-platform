@@ -76,6 +76,11 @@ impl Drop for WindowObject {
 }
 
 impl IPlatformWindow for WindowObject {
+    /// Retaining graphics assembly does not retain this canvas object's DOM registrations.
+    fn graphics_host(&self) -> Result<ComPtr<IRenderHostAbi>, NcStatus> {
+        GraphicsHost::for_device(self.device.clone())
+    }
+
     /// Returns only the separate delegable clipboard identity.
     fn clipboard(&self) -> Result<ComPtr<ITextClipboardAbi>, NcStatus> {
         clipboard::Clipboard::for_window(&self.device.window)

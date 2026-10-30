@@ -99,7 +99,18 @@ abort retires pending storage even without a GPU submission; successful finish
 preserves transferred immutable blocks. Invocation-bound painter and view objects
 cannot regain authority through a later widget's valid public token.
 
-Hosts install the separate `IRenderHost::recording_broker()` result through
+Trusted host assembly may create a private compositor domain. Its factory stays
+inside GFX and shares the ordinary graphics vocabulary. Construction establishes
+UI provenance; public client creation cannot select or report it. UI blocks do
+not initialize or clear depth, and their pipelines cannot test or write depth.
+This permits UI-only surfaces to authenticate compositor work while preserving
+depth between UI overlays and neighboring client draws.
+
+Hosts obtain a separate `IRenderHost` allocation through
+`IPlatformWindow::graphics_host()`. Retaining it keeps the graphics device alive
+without retaining the window COM object or its input registrations. QueryInterface
+cannot recover the window, renderer or factories from it. Hosts install its
+`IRenderHost::recording_broker()` result through
 `UiRuntime::set_render_broker`. The runtime owns one recording frame around the
 entire paint traversal. Widgets receive only `IPainter::begin_render_view` and
 their restricted resource factory. Begin reserves the contribution's display-list

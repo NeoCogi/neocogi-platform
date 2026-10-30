@@ -1,6 +1,9 @@
-#[version(2)]
+#[version(3)]
 /// Native window and event-pump capability with no exposed toolkit or graphics handles.
 interface IPlatformWindow {
+    /// Returns a separate trusted graphics assembly object. It retains native graphics lifetime
+    /// without exposing this window, input registrations, renderer or resource factories by QI.
+    fn graphics_host(&self) -> Result<ComPtr<IRenderHost>>;
     /// Creates a separate narrow clipboard identity safe to delegate to widget services.
     /// QueryInterface on this result cannot recover this window or its renderer/factories.
     fn clipboard(&self) -> Result<ComPtr<ITextClipboard>>;

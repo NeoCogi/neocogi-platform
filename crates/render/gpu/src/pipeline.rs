@@ -18,6 +18,9 @@ pub(crate) fn create(
     domain.open()?;
     let info = source.info()?;
     validate_state(info)?;
+    if domain.kind == resource::DomainKind::Ui && (info.depth_write || info.depth_compare != GpuCompare::Always) {
+        return Err(NC_E_INVALID_ARG);
+    }
     let owner = domain.account.resource()?;
     let byte_len = std::mem::size_of::<GpuPipelineInfo>()
         + info.vertex_buffer_count as usize * std::mem::size_of::<GpuVertexBufferLayout>()

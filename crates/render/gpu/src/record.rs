@@ -29,6 +29,12 @@ pub struct Block {
     _base: PendingCharge,
 }
 impl Block {
+    /// Host-created compositor provenance permits UI-only surface admission without trusting tags
+    /// or permitting client factories to masquerade as UI work.
+    pub fn is_ui(&self) -> bool {
+        self.domain.kind == DomainKind::Ui
+    }
+
     /// Retains original command capacity in native/in-flight representations without device authority.
     /// The receipts share accounting only; they cannot submit, observe or reopen a domain.
     pub fn retain_capacity(&self) -> Vec<CommandCharge> {
@@ -425,11 +431,13 @@ impl Recorder {
         result.vertices.try_reserve_exact(8).map_err(|_| NC_E_OUT_OF_MEMORY)?;
         result.textures.try_reserve_exact(8).map_err(|_| NC_E_OUT_OF_MEMORY)?;
         result.uniforms.try_reserve_exact(8).map_err(|_| NC_E_OUT_OF_MEMORY)?;
-        let charge = CommandCharge {
-            _charge: domain.account.pending(std::mem::size_of::<Command>())?,
-        };
-        result.commands.try_reserve_exact(1).map_err(|_| NC_E_OUT_OF_MEMORY)?;
-        result.commands.push(Command::ClearDepth { depth: 1.0, clip: root.target, charge });
+        if domain.kind == DomainKind::Client {
+            let charge = CommandCharge {
+                _charge: domain.account.pending(std::mem::size_of::<Command>())?,
+            };
+            result.commands.try_reserve_exact(1).map_err(|_| NC_E_OUT_OF_MEMORY)?;
+            result.commands.push(Command::ClearDepth { depth: 1.0, clip: root.target, charge });
+        }
         Ok(result)
     }
 
@@ -867,7 +875,7 @@ impl IRenderView for View {
     fn clear_depth(&mut self, depth: f32) -> Result<(), NcStatus> {
         self.mutate(|core, recorder| {
             core.check()?.charge(&core.domain.account, 3)?;
-            if !depth.is_finite() || !(0.0..=1.0).contains(&depth) {
+            if core.domain.kind == DomainKind::Ui || !depth.is_finite() || !(0.0..=1.0).contains(&depth) {
                 return Err(NC_E_INVALID_ARG);
             }
             let charge = CommandCharge {

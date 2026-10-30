@@ -96,6 +96,65 @@ const PROCEDURAL: &str = r#"
 @fragment fn fs() -> @location(0) vec4<f32> { return vec4<f32>(1.0); }
 "#;
 
+/// Trusted UI provenance changes depth authority without adding another draw vocabulary.
+#[test]
+fn host_ui_domains_seal_without_depth_initialization_and_cannot_clear_depth() {
+    let device = GpuDevice::new();
+    let ui = device.create_ui_client(RenderClientLimits::default(), None).unwrap();
+    let client = device.create_client(RenderClientLimits::default()).unwrap();
+    for (controller, is_ui) in [(&ui, true), (&client, false)] {
+        let resources = controller.resources().unwrap();
+        assert!(resources.query::<IRenderHostAbi>().is_err());
+        let mut frame = device.broker().begin_frame().unwrap();
+        let mut session = frame.begin_view(root(), resources.as_com_ref()).unwrap();
+        session.view().unwrap().finish().unwrap();
+        let owner = session.take_block().unwrap();
+        let block = device.block_snapshot(owner.as_com_ref()).unwrap();
+        assert_eq!(block.is_ui(), is_ui);
+        if is_ui {
+            assert!(block.commands.is_empty());
+        } else {
+            assert!(matches!(block.commands.as_slice(), [Command::ClearDepth { depth: 1.0, .. }]));
+        }
+        frame.finish().unwrap();
+    }
+    let resources = ui.resources().unwrap();
+    let mut frame = device.broker().begin_frame().unwrap();
+    let mut session = frame.begin_view(root(), resources.as_com_ref()).unwrap();
+    assert_eq!(session.view().unwrap().clear_depth(1.0), Err(NC_E_INVALID_ARG));
+    assert!(session.take_block().is_err());
+}
+
+/// UI pipelines cannot test or write attachment depth even on a window target that has depth.
+#[test]
+fn host_ui_pipeline_admission_excludes_depth_state() {
+    let device = GpuDevice::new();
+    let controller = device.create_ui_client(RenderClientLimits::default(), None).unwrap();
+    let resources = controller.resources().unwrap();
+    let source = crate::source::Bytes::source(PROCEDURAL.as_bytes().to_vec());
+    let vs = resources
+        .create_shader(GpuShaderStage::Vertex, source.as_com_ref(), NcCopyFromBufferOffset::new(0, b"vs"))
+        .unwrap();
+    let fs = resources
+        .create_shader(GpuShaderStage::Fragment, source.as_com_ref(), NcCopyFromBufferOffset::new(0, b"fs"))
+        .unwrap();
+    for state in [
+        GpuPipelineInfo { depth_write: true, ..Default::default() },
+        GpuPipelineInfo {
+            depth_compare: GpuCompare::LessEqual,
+            ..Default::default()
+        },
+    ] {
+        let desc = crate::source::PipelineDesc { state, ..Default::default() }.source().unwrap();
+        assert!(matches!(
+            resources.create_pipeline(desc.as_com_ref(), vs.as_com_ref(), fs.as_com_ref()),
+            Err(NC_E_INVALID_ARG)
+        ));
+    }
+    let desc = crate::source::PipelineDesc::default().source().unwrap();
+    assert!(resources.create_pipeline(desc.as_com_ref(), vs.as_com_ref(), fs.as_com_ref()).is_ok());
+}
+
 /// Pipeline construction captures shader artifacts while the public shader owners are local.
 fn make_pipeline(
     factory: &ComPtr<IRenderResourcesAbi>,

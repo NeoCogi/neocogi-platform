@@ -169,6 +169,11 @@ fn modifiers(value: Mod) -> u8 {
 }
 
 impl IPlatformWindow for WindowObject {
+    /// Trusted assembly receives only the separate graphics identity, without input registrations.
+    fn graphics_host(&self) -> Result<ComPtr<IRenderHostAbi>, NcStatus> {
+        GraphicsHost::for_device(self.device.clone())
+    }
+
     /// Returns only the separate delegable clipboard identity.
     fn clipboard(&self) -> Result<ComPtr<ITextClipboardAbi>, NcStatus> {
         clipboard::Clipboard::for_window(&self.device.window)

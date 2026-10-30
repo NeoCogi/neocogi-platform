@@ -186,6 +186,16 @@ fn native_order_ownership_reentry_and_final_release() {
     let unknown = WindowObject::from_value(native);
     {
         let window: ComPtr<IPlatformWindowAbi> = unknown.query().unwrap();
+        assert!(unknown.query::<IRenderHostAbi>().is_err());
+        let graphics = window.graphics_host().unwrap();
+        assert!(graphics.query::<IPlatformWindowAbi>().is_err());
+        assert!(graphics.query::<IRendererAbi>().is_err());
+        assert!(graphics.query::<ITextureFactoryAbi>().is_err());
+        assert!(graphics.query::<IRenderClientFactoryAbi>().is_err());
+        assert!(graphics.query::<IRenderSurfaceFactoryAbi>().is_err());
+        assert!(graphics.query::<ITextClipboardAbi>().is_err());
+        let private_ui = graphics.create_ui_client(RenderClientLimits::default()).unwrap();
+        assert!(private_ui.resources().unwrap().query::<IRenderHostAbi>().is_err());
         assert!(unknown.query::<ITextClipboardAbi>().is_err());
         let clipboard = window.clipboard().unwrap();
         assert!(clipboard.query::<IRendererAbi>().is_err());
@@ -201,7 +211,7 @@ fn native_order_ownership_reentry_and_final_release() {
     let clients: ComPtr<IRenderClientFactoryAbi> = unknown.query().unwrap();
     let controller = clients.create_client(RenderClientLimits::default()).unwrap();
     let resources = controller.resources().unwrap();
-    let broker = unknown.query::<IRenderHostAbi>().unwrap().recording_broker().unwrap();
+    let broker = unknown.query::<IPlatformWindowAbi>().unwrap().graphics_host().unwrap().recording_broker().unwrap();
     let root = Rect { x: 0, y: 0, width: 64, height: 64 };
     let block = graphics(&resources, &broker, RenderViewRoot { client: root, target: root });
     let background = factory
@@ -288,7 +298,7 @@ fn native_order_ownership_reentry_and_final_release() {
     let foreign_clients: ComPtr<IRenderClientFactoryAbi> = foreign.query().unwrap();
     let foreign_controller = foreign_clients.create_client(RenderClientLimits::default()).unwrap();
     let foreign_resources = foreign_controller.resources().unwrap();
-    let foreign_broker = foreign.query::<IRenderHostAbi>().unwrap().recording_broker().unwrap();
+    let foreign_broker = foreign.query::<IPlatformWindowAbi>().unwrap().graphics_host().unwrap().recording_broker().unwrap();
     let foreign_block = graphics(&foreign_resources, &foreign_broker, RenderViewRoot { client: root, target: root });
     let foreign_factory: ComPtr<ITextureFactoryAbi> = foreign.query().unwrap();
     let foreign_texture = foreign_factory

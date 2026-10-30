@@ -158,7 +158,6 @@ impl Drop for RenderAccess<'_> {
     IPlatformWindow,
     IRenderer,
     IRenderClientFactory,
-    IRenderHost,
     ITextureFactory,
     IRenderSurfaceFactory,
     IRenderDiagnostics
@@ -202,7 +201,24 @@ impl IRenderClientFactory for WindowObject {
         self.device.logical.create_client_with_lease(limits, lease)
     }
 }
-impl IRenderHost for WindowObject {
+#[com_object(interfaces(IRenderHost))]
+/// Trusted graphics assembly retains no window COM object, input registration or UI runtime.
+struct GraphicsHost {
+    /// Native resources survive public window release without retaining UI/event authority.
+    device: Rc<Device>,
+}
+impl GraphicsHost {
+    /// Publish a separate allocation so QI cannot turn retained assembly access into a window.
+    fn for_device(device: Rc<Device>) -> Result<ComPtr<IRenderHostAbi>, NcStatus> {
+        Self::from_value(Self { device }).query()
+    }
+}
+impl IRenderHost for GraphicsHost {
+    /// Private compositor resources retain the same narrow native lifetime lease as client resources.
+    fn create_ui_client(&self, limits: RenderClientLimits) -> Result<neocogi_com::ComBox<IRenderClientDomainAbi>, NcStatus> {
+        let lease = DeviceLease::from_value(DeviceLease { _device: self.device.clone() }).query()?;
+        self.device.logical.create_ui_client(limits, Some(lease))
+    }
     /// Separate broker identity prevents indirect QueryInterface access to the window.
     fn recording_broker(&self) -> Result<ComPtr<IRenderViewBrokerAbi>, NcStatus> {
         Ok(self.device.logical.broker())

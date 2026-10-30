@@ -46,7 +46,7 @@ fn wide_view_edges_draw_and_recover_through_generated_com() {
     let clients: ComPtr<IRenderClientFactoryAbi> = window.query().unwrap();
     let controller = clients.create_client(RenderClientLimits::default()).unwrap();
     let resources = controller.resources().unwrap();
-    let broker = window.query::<IRenderHostAbi>().unwrap().recording_broker().unwrap();
+    let broker = window.query::<IPlatformWindowAbi>().unwrap().graphics_host().unwrap().recording_broker().unwrap();
     let bounds = Rect { x: 0, y: 0, width: 32, height: 32 };
     let info = RenderInfo {
         size,

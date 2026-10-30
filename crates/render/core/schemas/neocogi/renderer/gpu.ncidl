@@ -499,9 +499,12 @@ interface IRenderClientFactory {
     fn create_client(&self, limits: RenderClientLimits) -> Result<ComBox<IRenderClientDomain>>;
 }
 
-#[version(1)]
+#[version(2)]
 /// Trusted host-only assembly capability; never delegated to widgets.
 interface IRenderHost {
+    /// Creates private GFX provenance on this device. Keep the resulting controller/factory
+    /// inside the compositor; public client construction cannot obtain this authority.
+    fn create_ui_client(&self, limits: RenderClientLimits) -> Result<ComBox<IRenderClientDomain>>;
     /// Creates a narrow CPU recording broker for installation into one UI runtime.
     fn recording_broker(&self) -> Result<ComPtr<IRenderViewBroker>>;
 }

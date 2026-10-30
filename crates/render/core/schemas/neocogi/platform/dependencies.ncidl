@@ -1,2 +1,2 @@
 extern neocogi.renderer;
-use neocogi.renderer::{IRenderDiagnostics, IRgbaImage, Rect, Size};
+use neocogi.renderer::{IRenderDiagnostics, IRenderHost, IRgbaImage, Rect, Size};

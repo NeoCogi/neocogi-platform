@@ -62,6 +62,8 @@ pub(crate) struct FactoryEntry {
 
 /// One host-controlled domain; immutable versions retain its account, not this device owner.
 pub(crate) struct Domain {
+    /// Established by trusted host construction, never copied from caller-reported metadata.
+    pub(crate) kind: DomainKind,
     /// Logical device used for provenance and guarded creation.
     pub(crate) device: GpuDevice,
     /// Closing gates new admission without freeing retained snapshots.
@@ -72,6 +74,15 @@ pub(crate) struct Domain {
     pub(crate) sessions: RefCell<Vec<Weak<crate::record::SessionCore>>>,
     /// Optional native host lease; private caches never retain this domain.
     _native: Option<ComPtr<IRenderDeviceLeaseAbi>>,
+}
+
+/// Trusted compositor provenance is separate from every publicly created client domain.
+#[derive(Clone, Copy, Eq, PartialEq)]
+pub(crate) enum DomainKind {
+    /// Scoped programmable client work initializes independent depth at its ordered position.
+    Client,
+    /// Private GFX work shares the vocabulary but may not change attachment depth.
+    Ui,
 }
 
 impl Domain {
@@ -141,7 +152,7 @@ impl GpuDevice {
 
     /// Creates a host controller for a purely logical domain, useful for independent CPU clients.
     pub fn create_client(&self, limits: RenderClientLimits) -> Result<ComBox<IRenderClientDomainAbi>, NcStatus> {
-        self.create_client_inner(limits, None)
+        self.create_client_inner(limits, None, DomainKind::Client)
     }
 
     /// Retains a narrow native lifetime token without exposing it through resource QI/getters.
@@ -150,7 +161,17 @@ impl GpuDevice {
         limits: RenderClientLimits,
         native: ComPtr<IRenderDeviceLeaseAbi>,
     ) -> Result<ComBox<IRenderClientDomainAbi>, NcStatus> {
-        self.create_client_inner(limits, Some(native))
+        self.create_client_inner(limits, Some(native), DomainKind::Client)
+    }
+
+    /// Trusted host assembly creates a private compositor domain. Its factory must stay inside GFX.
+    /// Public client creation never selects this provenance, and resource QI cannot obtain it.
+    pub fn create_ui_client(
+        &self,
+        limits: RenderClientLimits,
+        native: Option<ComPtr<IRenderDeviceLeaseAbi>>,
+    ) -> Result<ComBox<IRenderClientDomainAbi>, NcStatus> {
+        self.create_client_inner(limits, native, DomainKind::Ui)
     }
 
     /// Publishes separate controller and factory identities only after limits validate.
@@ -158,9 +179,11 @@ impl GpuDevice {
         &self,
         limits: RenderClientLimits,
         native: Option<ComPtr<IRenderDeviceLeaseAbi>>,
+        kind: DomainKind,
     ) -> Result<ComBox<IRenderClientDomainAbi>, NcStatus> {
         let _operation = self.operation()?;
         let domain = Rc::new(Domain {
+            kind,
             device: self.clone(),
             closed: Cell::new(false),
             account: Account::new(limits)?,
