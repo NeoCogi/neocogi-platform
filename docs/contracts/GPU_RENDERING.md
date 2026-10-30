@@ -34,6 +34,22 @@ allocation, driver compilation and upload remain fallible preparation work.
 Failure there rejects the frame and leaves the logical version retryable; it
 cannot silently roll version B back to A or rewrite previously captured A draws.
 
+Ordinary immutable `ITexture` images remain separate from exclusive `IGpuTexture`
+resources. The trusted graphics host may import an authenticated ordinary image
+only into its private compositor domain. Client factories reject this bridge,
+and the imported resource exposes no conversion back to `ITexture`, native key,
+or renderer capability. Imported images cannot be updated through the factory.
+
+Private CPU versions retain an imported image's COM lease until native capture.
+Native caches and submitted draws retain the shared native image allocation,
+passive weak version metadata and a device-free byte receipt. They never retain
+that COM lease or the device facade it owns. Thus public image release can retire
+its registry/map ownership while prepared/in-flight draws keep the pixels alive,
+without a device → cache → imported image → device cycle. Texture receipts retain
+logical charges through the final native owner even after private CPU bytes expire.
+`IRenderHost::prepare_ui_texture` completes the fallible native preparation boundary
+before a compositor publishes a candidate asset revision.
+
 ## Portable shader profile, version 1
 
 WGSL is the canonical source. Shared validation/reflection emits GLSL ES 300 and

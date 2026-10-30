@@ -55,6 +55,11 @@ impl WebGlCanvasRenderer {
     pub fn prepare_block(&mut self, block: &neocogi_render_gpu::record::Block, offscreen: bool) -> Result<PreparedBlock, String> {
         self.inner.prepare_block(block, offscreen)
     }
+
+    /// Private UI image preparation uses the same context and immutable image accounting.
+    pub fn prepare_texture(&mut self, texture: Rc<neocogi_render_gpu::resource::TextureVersion>) -> Result<(), String> {
+        self.inner.prepare_texture(texture)
+    }
 }
 
 impl RendererBackend for WebGlCanvasRenderer {

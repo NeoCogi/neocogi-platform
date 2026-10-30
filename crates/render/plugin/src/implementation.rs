@@ -214,6 +214,21 @@ impl GraphicsHost {
     }
 }
 impl IRenderHost for GraphicsHost {
+    /// The private native registry authenticates ordinary image identity before logical import.
+    fn import_ui_texture(&self, resources: ComRef<'_, IRenderResourcesAbi>, image: ComRef<'_, ITextureAbi>) -> Result<neocogi_com::ComBox<IGpuTextureAbi>, NcStatus> {
+        let _access = self.device.access()?;
+        let image = image.try_add_ref()?;
+        let record = self.device.texture(image.clone())?;
+        self.device.logical.import_ui_texture(resources, record.id, image)
+    }
+
+    /// Logical provenance is checked while native state is detached; driver calls consume owned data.
+    fn prepare_ui_texture(&self, resources: ComRef<'_, IRenderResourcesAbi>, texture: ComRef<'_, IGpuTextureAbi>) -> Result<(), NcStatus> {
+        let mut access = self.device.access()?;
+        let version = self.device.logical.ui_texture_snapshot(resources, texture)?;
+        access.state().gpu.prepare_texture(version).map_err(|error| self.device.failure(error))
+    }
+
     /// Private compositor resources retain the same narrow native lifetime lease as client resources.
     fn create_ui_client(&self, limits: RenderClientLimits) -> Result<neocogi_com::ComBox<IRenderClientDomainAbi>, NcStatus> {
         let lease = DeviceLease::from_value(DeviceLease { _device: self.device.clone() }).query()?;

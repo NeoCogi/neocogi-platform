@@ -247,27 +247,39 @@ struct Uniform {
     /// Logical receipts drop after native storage and have no client/domain owner.
     source: Rc<UniformData>,
 }
-/// Immutable image allocation/view and its logical pixel-byte receipt.
-struct Texture {
-    /// Bound storage is released before logical pixel accounting.
+/// Cache-free native image can be shared by ordinary UI images and generic sampled bindings.
+pub(crate) struct Image {
+    /// Bound storage drops after this owner's view and image destruction.
     _memory: Memory,
-    /// Device-free exact admitted pixel version.
-    source: Rc<TextureVersion>,
-    /// Keeps raw image/view destruction valid independently of presentation.
+    /// Parent dispatch has no renderer/cache/domain reverse edge.
     core: Rc<Core>,
-    /// Immutable sampled image, transitioned before any target acquisition.
-    image: vk::Image,
-    /// One color mip/layer sampling view.
-    view: vk::ImageView,
+    /// Single-mip immutable image storage.
+    pub(crate) raw: vk::Image,
+    /// Read-only sampling or host-owned attachment view.
+    pub(crate) view: vk::ImageView,
 }
-impl Drop for Texture {
-    /// Upload completion or draw fences have released all users before this owner is destroyed.
+impl Image {
+    /// Transfers fully initialized same-device handles from an armed creation transaction.
+    pub(crate) fn new(core: Rc<Core>, raw: vk::Image, memory: Memory, view: vk::ImageView) -> Self {
+        Self { _memory: memory, core, raw, view }
+    }
+}
+impl Drop for Image {
+    /// Last native use is protected by upload/draw completion owners before this final release.
     fn drop(&mut self) {
         unsafe {
             self.core.device.destroy_image_view(self.view, None);
-            self.core.device.destroy_image(self.image, None);
+            self.core.device.destroy_image(self.raw, None);
         }
     }
+}
+
+/// Logical pixel receipt and its independently retained native image allocation.
+struct Texture {
+    /// Native storage drops before logical accounting if this is its final owner.
+    native: Rc<Image>,
+    /// Exact immutable version, currently containing no domain or native facade reference.
+    source: TextureReceipt,
 }
 /// Separate immutable sampling state and its logical receipt.
 struct Sampler {
@@ -474,7 +486,7 @@ impl Executor {
             }
         });
         self.buffers.retain(|_, entry| Rc::strong_count(&entry.source) > 1);
-        self.textures.retain(|_, entry| Rc::strong_count(&entry.source) > 1);
+        self.textures.retain(|_, entry| entry.source.is_alive());
         self.samplers.retain(|_, entry| Rc::strong_count(&entry.source) > 1);
         self.pipelines.retain(|_, entry| Rc::strong_count(&entry.source) > 1);
         self.uniforms.retain(|_, entry| Rc::strong_count(&entry.source) > 1);
@@ -485,7 +497,13 @@ impl Executor {
     }
 
     /// Realizes immutable native snapshots against a compatible host-selected render pass.
-    pub(crate) fn prepare(&mut self, block: &Block, pass: vk::RenderPass, signature: Signature) -> Result<PreparedBlock, String> {
+    pub(crate) fn prepare(
+        &mut self,
+        block: &Block,
+        pass: vk::RenderPass,
+        signature: Signature,
+        images: &HashMap<neocogi_render_core::TextureId, super::VulkanTexture>,
+    ) -> Result<PreparedBlock, String> {
         if self.unusable() {
             return Err("Vulkan graphics executor is unavailable after a native submission failure".into());
         }
@@ -496,7 +514,9 @@ impl Executor {
         commands.try_reserve_exact(block.commands.len()).map_err(|error| error.to_string())?;
         for command in &block.commands {
             commands.push(match command {
-                Command::Draw(draw) => PreparedCommand::Draw(self.draw(draw, pass, signature, pool.as_ref().ok_or("missing graphics descriptor pool")?)?),
+                Command::Draw(draw) => {
+                    PreparedCommand::Draw(self.draw(draw, pass, signature, pool.as_ref().ok_or("missing graphics descriptor pool")?, images)?)
+                }
                 Command::ClearColor { rgba, clip, .. } => PreparedCommand::Color(*rgba, *clip),
                 Command::ClearDepth { depth, clip, .. } => {
                     if signature.depth.is_none() {
@@ -553,7 +573,14 @@ impl Executor {
     }
 
     /// Captures concrete native owners before constructing descriptor writes into the private pool.
-    fn draw(&mut self, draw: &Draw, pass: vk::RenderPass, signature: Signature, pool: &Pool) -> Result<PreparedDraw, String> {
+    fn draw(
+        &mut self,
+        draw: &Draw,
+        pass: vk::RenderPass,
+        signature: Signature,
+        pool: &Pool,
+        images: &HashMap<neocogi_render_core::TextureId, super::VulkanTexture>,
+    ) -> Result<PreparedDraw, String> {
         let pipeline = self.pipeline(draw.pipeline.clone(), pass, signature)?;
         let mut vertices = Vec::new();
         for binding in &draw.vertex_buffers {
@@ -581,7 +608,7 @@ impl Executor {
             textures.push((
                 texture_group(binding.stage),
                 binding.slot,
-                self.texture(binding.texture.clone())?,
+                self.texture(binding.texture.clone(), images)?,
                 self.sampler(binding.sampler.clone())?,
             ));
         }
@@ -599,7 +626,7 @@ impl Executor {
         // every referenced resource owner; Vulkan descriptor sets do not retain logical receipts.
         for (group, slot, texture, sampler) in &textures {
             let image = [vk::DescriptorImageInfo::default()
-                .image_view(texture.view)
+                .image_view(texture.native.view)
                 .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)];
             let sampled = [vk::DescriptorImageInfo::default().sampler(sampler.native.raw)];
             let writes = [
@@ -699,11 +726,34 @@ impl Executor {
         Ok(value)
     }
 
+    /// Private UI uploads have the same completion and native failure boundary as block preparation.
+    pub(crate) fn prepare_texture(
+        &mut self,
+        source: Rc<TextureVersion>,
+        images: &HashMap<neocogi_render_core::TextureId, super::VulkanTexture>,
+    ) -> Result<(), String> {
+        if self.unusable() {
+            return Err("Vulkan graphics executor is unavailable".into());
+        }
+        self.collect()?;
+        self.texture(source, images).map(|_| ())
+    }
+
     /// Image initialization completes on the shared queue before target acquisition; no hidden
     /// pending-write storage depends on a later successful frame to retire.
-    fn texture(&mut self, source: Rc<TextureVersion>) -> Result<Rc<Texture>, String> {
+    fn texture(&mut self, source: Rc<TextureVersion>, images: &HashMap<neocogi_render_core::TextureId, super::VulkanTexture>) -> Result<Rc<Texture>, String> {
         if let Some(value) = self.textures.get(&source.id) {
             return Ok(value.clone());
+        }
+        if let Some(import) = source.imported_id() {
+            let native = images
+                .get(&import)
+                .and_then(|image| image.image.native.as_ref())
+                .ok_or("imported UI image is unavailable on this device")?
+                .clone();
+            let value = Rc::new(Texture { native, source: source.receipt() });
+            self.textures.insert(source.id, value.clone());
+            return Ok(value);
         }
         let core = self.core.clone();
         let device = &core.device;
@@ -749,29 +799,31 @@ impl Executor {
             .or_else(|_| core.memory_type(requirements.memory_type_bits, vk::MemoryPropertyFlags::empty()))?;
         let memory = core.allocate(&vk::MemoryAllocateInfo::default().allocation_size(requirements.size).memory_type_index(kind))?;
         unsafe { device.bind_image_memory(*image.get(), memory.raw, 0) }.map_err(|error| format!("bind graphics image: {error:?}"))?;
-        let mut value = Texture {
-            source,
-            core: core.clone(),
-            image: image.into_inner(),
-            _memory: memory,
-            view: vk::ImageView::null(),
-        };
         let range = vk::ImageSubresourceRange::default()
             .aspect_mask(vk::ImageAspectFlags::COLOR)
             .level_count(1)
             .layer_count(1);
-        value.view = unsafe {
-            device.create_image_view(
-                &vk::ImageViewCreateInfo::default()
-                    .image(value.image)
-                    .view_type(vk::ImageViewType::TYPE_2D)
-                    .format(format)
-                    .subresource_range(range),
-                None,
-            )
-        }
-        .map_err(|error| format!("create graphics image view: {error:?}"))?;
-        let staging = Allocation::new(&core, &value.source.bytes, vk::BufferUsageFlags::TRANSFER_SRC)?;
+        let view = ResourceGuard::new(
+            unsafe {
+                device.create_image_view(
+                    &vk::ImageViewCreateInfo::default()
+                        .image(*image.get())
+                        .view_type(vk::ImageViewType::TYPE_2D)
+                        .format(format)
+                        .subresource_range(range),
+                    None,
+                )
+            }
+            .map_err(|error| format!("create graphics image view: {error:?}"))?,
+            |view| unsafe { device.destroy_image_view(view, None) },
+        );
+        let native = Rc::new(Image::new(core.clone(), image.into_inner(), memory, view.into_inner()));
+        let value = Texture { native, source: source.receipt() };
+        let staging = Allocation::new(
+            &core,
+            source.pixels().ok_or("missing texture pixel storage")?,
+            vk::BufferUsageFlags::TRANSFER_SRC,
+        )?;
         let command = unsafe {
             device.allocate_command_buffers(
                 &vk::CommandBufferAllocateInfo::default()
@@ -802,7 +854,7 @@ impl Executor {
                     .dst_access_mask(dst)
                     .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
                     .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
-                    .image(value.image)
+                    .image(value.native.raw)
                     .subresource_range(range)
             };
             device.cmd_pipeline_barrier(
@@ -822,7 +874,7 @@ impl Executor {
             let region = vk::BufferImageCopy::default()
                 .image_subresource(vk::ImageSubresourceLayers::default().aspect_mask(vk::ImageAspectFlags::COLOR).layer_count(1))
                 .image_extent(extent);
-            device.cmd_copy_buffer_to_image(*command.get(), staging.raw, value.image, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &[region]);
+            device.cmd_copy_buffer_to_image(*command.get(), staging.raw, value.native.raw, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &[region]);
             device.cmd_pipeline_barrier(
                 *command.get(),
                 vk::PipelineStageFlags::TRANSFER,

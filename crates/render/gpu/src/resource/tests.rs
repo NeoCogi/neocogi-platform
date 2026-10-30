@@ -88,6 +88,63 @@ fn client(device: &GpuDevice, limits: RenderClientLimits) -> (ComBox<IRenderClie
     (owner, factory)
 }
 
+#[com_object(interfaces(ITexture))]
+/// Imported-image lease reports its release independently of private native accounting.
+struct ImageLease {
+    /// Local drop observation contains no native device or domain edge.
+    dropped: Rc<Cell<u32>>,
+}
+impl ITexture for ImageLease {
+    /// Trusted native assembly already knows the dimensions; the bridge must not consult this getter.
+    fn size(&self) -> Result<Size, NcStatus> {
+        panic!("trusted native keys establish image dimensions")
+    }
+}
+impl Drop for ImageLease {
+    /// A native receipt must not keep this COM capability or its hypothetical device facade alive.
+    fn drop(&mut self) {
+        self.dropped.set(self.dropped.get() + 1);
+    }
+}
+
+/// UI import is host-only, immutable, same-domain authenticated and stripped before native retention.
+#[test]
+fn ui_image_import_separates_com_lifetime_from_native_byte_receipts() {
+    let device = GpuDevice::new();
+    let (_client, ordinary) = client(&device, RenderClientLimits::default());
+    let ui = device.create_ui_client(RenderClientLimits::default(), None).unwrap();
+    let factory = ui.resources().unwrap();
+    let dropped = Rc::new(Cell::new(0));
+    let image: ComPtr<ITextureAbi> = ImageLease::from_value(ImageLease { dropped: dropped.clone() }).query().unwrap();
+    let id = TextureId::for_upload(1, 1, &[255; 4]).unwrap();
+    assert!(matches!(
+        device.import_ui_texture(ordinary.as_com_ref(), id, image.clone()),
+        Err(RENDER_E_OWNER)
+    ));
+    let imported = device.import_ui_texture(factory.as_com_ref(), id, image.clone()).unwrap();
+    assert!(imported.query_ref::<ITextureAbi>().is_err());
+    assert!(imported.query_ref::<IRenderHostAbi>().is_err());
+    assert!(matches!(
+        device.ui_texture_snapshot(ordinary.as_com_ref(), imported.as_com_ref()),
+        Err(RENDER_E_OWNER)
+    ));
+    let snapshot = device.ui_texture_snapshot(factory.as_com_ref(), imported.as_com_ref()).unwrap();
+    assert_eq!(snapshot.imported_id(), Some(id));
+    assert!(snapshot.pixels().is_none());
+    let (update, _, _) = source(vec![0; 4], ReadMode::Exact);
+    assert_eq!(
+        factory.update_texture(imported.as_com_ref(), Rect { x: 0, y: 0, width: 1, height: 1 }, update.as_com_ref()),
+        Err(NC_E_INVALID_ARG)
+    );
+    let receipt = snapshot.receipt();
+    drop((image, imported, snapshot));
+    assert_eq!(dropped.get(), 1, "native accounting must not retain the imported COM/device lease");
+    assert!(!receipt.is_alive());
+    assert_eq!(device.live_bytes(factory.as_com_ref()).unwrap(), 4);
+    drop(receipt);
+    assert_eq!(device.live_bytes(factory.as_com_ref()).unwrap(), 0);
+}
+
 /// Complete buffer descriptor for a supplied byte payload.
 fn buffer(factory: &ComPtr<IRenderResourcesAbi>, bytes: &[u8]) -> ComBox<IGpuBufferAbi> {
     let (source, _, _) = source(bytes.to_vec(), ReadMode::Exact);
@@ -307,8 +364,8 @@ fn texture_update_captures_old_pixels_and_copies_only_the_admitted_patch() {
     for row in 0..201 {
         expected[((row + 7) * 256 + 5) * 4..((row + 7) * 256 + 206) * 4].copy_from_slice(&patch[row * 201 * 4..(row + 1) * 201 * 4]);
     }
-    assert_eq!(b.bytes, expected);
-    assert!(a.bytes.iter().all(|byte| *byte == 7));
+    assert_eq!(b.pixels().unwrap(), expected);
+    assert!(a.pixels().unwrap().iter().all(|byte| *byte == 7));
     assert_eq!(reads.get(), 3);
     assert_eq!(largest.get(), SOURCE_CHUNK);
 }

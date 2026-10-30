@@ -1,8 +1,8 @@
 //! Generic immutable graphics commands consumed by every concrete backend.
 //!
-//! No semantic geometry, native callback, COM resource pointer or mutable scene
-//! is replayed here. Recording resolves live public resources into these exact
-//! backing versions; native preparation then owns the resulting allocations.
+//! Recording resolves public resources into immutable backing versions, without semantic geometry
+//! or native callbacks. Trusted UI imports may retain an immutable image lease during CPU
+//! preparation; native lowering strips that lease and retains device-free accounting instead.
 use crate::{abi::*, budget::PendingCharge, resource::*};
 use std::rc::Rc;
 

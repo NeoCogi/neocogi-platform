@@ -17,3 +17,5 @@ wgpu.workspace = true
 
 [dev-dependencies]
 neocogi-com = { workspace = true, features = ["runtime"] }
+# Native lifetime regressions observe actual unreleased images; deployed builds keep counters off.
+wgpu = { workspace = true, features = ["counters"] }

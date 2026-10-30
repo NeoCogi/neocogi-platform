@@ -713,7 +713,12 @@ impl WgpuRenderer {
     /// Realizes resources before target acquisition using its concrete attachment signature.
     pub fn prepare_block(&mut self, block: &neocogi_render_gpu::record::Block, offscreen: bool) -> Result<PreparedBlock, String> {
         let format = if offscreen { wgpu::TextureFormat::Rgba8Unorm } else { self.config.format };
-        self.generic.prepare(block, format, !offscreen)
+        self.generic.prepare(block, format, !offscreen, &self.textures)
+    }
+
+    /// Trusted private UI uploads complete their native error transaction before asset publication.
+    pub fn prepare_texture(&mut self, texture: std::rc::Rc<neocogi_render_gpu::resource::TextureVersion>) -> Result<(), String> {
+        self.generic.prepare_texture(texture, &self.textures)
     }
 
     /// Queues arbitrary colored triangles that should still respect the UI clip space.

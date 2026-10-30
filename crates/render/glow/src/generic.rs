@@ -50,7 +50,13 @@ macro_rules! native {
     };
 }
 native!(Buffer, BufferVersion, glow::Buffer, delete_buffer);
-native!(Texture, TextureVersion, glow::Texture, delete_texture);
+/// Shared native image and device-free quota receipt; imported COM leases stop at preparation.
+struct Texture {
+    /// Image lifetime is independent of the public ordinary-image allocation and its device facade.
+    image: Rc<super::Image>,
+    /// Passive private-version expiry retires cache ownership without refunding in-flight storage.
+    source: TextureReceipt,
+}
 native!(Sampler, SamplerVersion, glow::Sampler, delete_sampler);
 native!(Uniform, UniformData, glow::Buffer, delete_buffer);
 
@@ -176,7 +182,7 @@ impl Executor {
             }
         });
         self.buffers.retain(|_, entry| Rc::strong_count(&entry.source) > 1);
-        self.textures.retain(|_, entry| Rc::strong_count(&entry.source) > 1);
+        self.textures.retain(|_, entry| entry.source.is_alive());
         self.samplers.retain(|_, entry| Rc::strong_count(&entry.source) > 1);
         self.pipelines.retain(|_, entry| Rc::strong_count(&entry.source) > 1);
         self.uniforms.retain(|_, entry| Rc::strong_count(&entry.source) > 1);
@@ -208,12 +214,17 @@ impl Executor {
     }
 
     /// Creates every driver allocation before the host acquires/clears its native target.
-    pub(crate) fn prepare(&mut self, block: &Block, offscreen: bool) -> Result<PreparedBlock, String> {
+    pub(crate) fn prepare(
+        &mut self,
+        block: &Block,
+        offscreen: bool,
+        images: &HashMap<neocogi_render_core::TextureId, Rc<super::Image>>,
+    ) -> Result<PreparedBlock, String> {
         self.collect()?;
         let capacity = block.retain_capacity();
         self.upload_capacity.try_reserve(capacity.len()).map_err(|error| error.to_string())?;
         let before = self.uploads.len();
-        let result = self.prepare_inner(block, offscreen);
+        let result = self.prepare_inner(block, offscreen, images);
         if self.uploads.len() > before {
             self.upload_capacity.extend(capacity);
         }
@@ -221,14 +232,19 @@ impl Executor {
     }
 
     /// Partial native preparation has the same upload-completion lifetime as successful blocks.
-    fn prepare_inner(&mut self, block: &Block, offscreen: bool) -> Result<PreparedBlock, String> {
+    fn prepare_inner(
+        &mut self,
+        block: &Block,
+        offscreen: bool,
+        images: &HashMap<neocogi_render_core::TextureId, Rc<super::Image>>,
+    ) -> Result<PreparedBlock, String> {
         let mut commands = Vec::new();
         commands.try_reserve_exact(block.commands.len()).map_err(|error| error.to_string())?;
         for command in &block.commands {
             commands.push(match command {
                 Command::ClearColor { rgba, clip, .. } => PreparedCommand::Color(*rgba, *clip),
                 Command::ClearDepth { depth, clip, .. } => PreparedCommand::Depth(*depth, *clip),
-                Command::Draw(draw) => PreparedCommand::Draw(self.prepare_draw(draw, offscreen)?),
+                Command::Draw(draw) => PreparedCommand::Draw(self.prepare_draw(draw, offscreen, images)?),
             });
         }
         self.check()?;
@@ -241,7 +257,12 @@ impl Executor {
     }
 
     /// Realizes exactly the resources consumed by this captured pipeline.
-    fn prepare_draw(&mut self, draw: &Draw, offscreen: bool) -> Result<PreparedDraw, String> {
+    fn prepare_draw(
+        &mut self,
+        draw: &Draw,
+        offscreen: bool,
+        images: &HashMap<neocogi_render_core::TextureId, Rc<super::Image>>,
+    ) -> Result<PreparedDraw, String> {
         let pipeline = self.pipeline(draw.pipeline.clone(), offscreen)?;
         let mut vertices = Vec::new();
         for binding in &draw.vertex_buffers {
@@ -256,7 +277,7 @@ impl Executor {
         for binding in &draw.textures {
             textures.push((
                 unit(binding.stage, binding.slot),
-                self.texture(binding.texture.clone())?,
+                self.texture(binding.texture.clone(), images)?,
                 self.sampler(binding.sampler.clone())?,
             ));
         }
@@ -303,20 +324,41 @@ impl Executor {
         Ok(buffer)
     }
 
-    /// Uploads top-left row-major pixels without retaining an application COM capability.
-    fn texture(&mut self, source: Rc<TextureVersion>) -> Result<Rc<Texture>, String> {
+    /// Private atlas preparation also runs without a target; uploaded backing stays completion-owned.
+    pub(crate) fn prepare_texture(
+        &mut self,
+        source: Rc<TextureVersion>,
+        images: &HashMap<neocogi_render_core::TextureId, Rc<super::Image>>,
+    ) -> Result<(), String> {
+        self.collect()?;
+        self.texture(source, images).map(|_| ())
+    }
+
+    /// Upload pixels or capture an authenticated immutable host image without retaining its COM lease.
+    fn texture(&mut self, source: Rc<TextureVersion>, images: &HashMap<neocogi_render_core::TextureId, Rc<super::Image>>) -> Result<Rc<Texture>, String> {
         if let Some(texture) = self.textures.get(&source.id) {
             return Ok(texture.clone());
         }
+        let id = source.id;
+        if let Some(import) = source.imported_id() {
+            let image = images.get(&import).ok_or("imported UI image is unavailable on this device")?.clone();
+            let texture = Rc::new(Texture { image, source: source.receipt() });
+            self.textures.insert(id, texture.clone());
+            return Ok(texture);
+        }
+        let pixels = source.pixels().ok_or("missing texture pixel storage")?;
         self.uploads.try_reserve(1).map_err(|error| error.to_string())?;
         self.uploads.push(Upload::Texture { _source: source.clone() });
-        // SAFETY: Complete tightly packed RGBA storage and dimensions were validated before capture.
+        // SAFETY: Source dimensions and complete tightly packed RGBA bytes were admitted before capture.
         let texture = unsafe {
-            let raw = self.gl.create_texture()?;
-            let texture = Rc::new(Texture { gl: self.gl.clone(), source, raw });
+            let image = Rc::new(super::Image {
+                gl: self.gl.clone(),
+                raw: self.gl.create_texture()?,
+            });
+            let texture = Rc::new(Texture { image, source: source.receipt() });
             super::GLRenderer::prepare_upload(&self.gl);
-            self.gl.bind_texture(glow::TEXTURE_2D, Some(raw));
-            let desc = texture.source.desc;
+            self.gl.bind_texture(glow::TEXTURE_2D, Some(texture.image.raw));
+            let desc = source.desc;
             let format = if desc.format == GpuTextureFormat::Rgba8Srgb {
                 glow::SRGB8_ALPHA8
             } else {
@@ -331,14 +373,14 @@ impl Executor {
                 0,
                 glow::RGBA,
                 glow::UNSIGNED_BYTE,
-                glow::PixelUnpackData::Slice(Some(&texture.source.bytes)),
+                glow::PixelUnpackData::Slice(Some(pixels)),
             );
             self.gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_BASE_LEVEL, 0);
             self.gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAX_LEVEL, 0);
             self.check()?;
             texture
         };
-        self.textures.insert(texture.source.id, texture.clone());
+        self.textures.insert(id, texture.clone());
         Ok(texture)
     }
 
@@ -572,7 +614,7 @@ impl Executor {
             }
             for (unit, texture, sampler) in &draw.textures {
                 gl.active_texture(glow::TEXTURE0 + unit);
-                gl.bind_texture(glow::TEXTURE_2D, Some(texture.raw));
+                gl.bind_texture(glow::TEXTURE_2D, Some(texture.image.raw));
                 gl.bind_sampler(*unit, Some(sampler.raw));
             }
             for (unit, uniform) in &draw.uniforms {

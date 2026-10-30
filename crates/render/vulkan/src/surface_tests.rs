@@ -20,7 +20,7 @@ fn pixels(renderer: &VulkanRenderer, id: TextureId) -> Vec<u8> {
             .level_count(1)
             .layer_count(1);
         let before = vk::ImageMemoryBarrier::default()
-            .image(image.image)
+            .image(image.raw())
             .subresource_range(range)
             .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
             .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
@@ -36,7 +36,7 @@ fn pixels(renderer: &VulkanRenderer, id: TextureId) -> Vec<u8> {
                 depth: 1,
             });
         let after = vk::ImageMemoryBarrier::default()
-            .image(image.image)
+            .image(image.raw())
             .subresource_range(range)
             .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
             .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
@@ -56,7 +56,7 @@ fn pixels(renderer: &VulkanRenderer, id: TextureId) -> Vec<u8> {
                 &[before],
             );
             ctx.device
-                .cmd_copy_image_to_buffer(command, image.image, vk::ImageLayout::TRANSFER_SRC_OPTIMAL, buffer.get().buffer, &[copy]);
+                .cmd_copy_image_to_buffer(command, image.raw(), vk::ImageLayout::TRANSFER_SRC_OPTIMAL, buffer.get().buffer, &[copy]);
             ctx.device.cmd_pipeline_barrier(
                 command,
                 vk::PipelineStageFlags::TRANSFER,

@@ -12,6 +12,7 @@ use neocogi_com::{
     com_object, ComBox, ComInterface, ComObject, ComPtr, ComRef, IUnknown, LocalBox, NcCopyFromBufferOffset, NcOutputBuffer, NcStatus, ThreadLocal, WeakComBox,
     WeakComPtr, WeakLocalBox, NC_E_DROPPED, NC_E_INVALID_ARG, NC_E_OUT_OF_MEMORY, NC_E_OUT_OF_RANGE,
 };
+use neocogi_render_core::TextureId;
 use std::{
     cell::{Cell, RefCell},
     collections::HashMap,
@@ -239,6 +240,47 @@ impl GpuDevice {
     pub fn live_bytes(&self, factory: ComRef<'_, IRenderResourcesAbi>) -> Result<u64, NcStatus> {
         Ok(self.domain(factory)?.account.live_bytes())
     }
+
+    /// Trusted native assembly authenticates the immutable image and supplies its actual native key.
+    /// This bridge is restricted to private UI domains and has no public client-resource method.
+    pub fn import_ui_texture(
+        &self,
+        factory: ComRef<'_, IRenderResourcesAbi>,
+        id: TextureId,
+        image: ComPtr<ITextureAbi>,
+    ) -> Result<ComBox<IGpuTextureAbi>, NcStatus> {
+        let _operation = self.operation()?;
+        let domain = self.domain(factory)?;
+        if domain.kind != DomainKind::Ui {
+            return Err(RENDER_E_OWNER);
+        }
+        let desc = GpuTextureDesc {
+            size: Size { width: id.width(), height: id.height() },
+            format: GpuTextureFormat::Rgba8Unorm,
+            mip_count: 1,
+        };
+        let len = texture_desc(desc)?;
+        let owner = domain.account.resource()?;
+        let current = Rc::new(TextureVersion {
+            id: self.next()?,
+            desc,
+            contents: TextureContents::Imported { id, _image: image },
+            charge: Rc::new(domain.account.bytes(len)?),
+        });
+        publish(
+            &self.inner.textures,
+            TextureObject::into_local_box(TextureObject { domain, current, _owner: owner }),
+        )
+    }
+
+    /// Native preflight for a private UI upload cannot accept a client factory or foreign resource.
+    pub fn ui_texture_snapshot(&self, factory: ComRef<'_, IRenderResourcesAbi>, texture: ComRef<'_, IGpuTextureAbi>) -> Result<Rc<TextureVersion>, NcStatus> {
+        let _operation = self.operation()?;
+        if self.domain(factory)?.kind != DomainKind::Ui {
+            return Err(RENDER_E_OWNER);
+        }
+        self.texture_snapshot(factory, texture)
+    }
 }
 
 /// Concrete typed capture methods share one provenance/lifetime rule with all callers.
@@ -280,10 +322,66 @@ pub struct TextureVersion {
     pub id: u64,
     /// Immutable sampled texture shape.
     pub desc: GpuTextureDesc,
-    /// Complete initialized pixel snapshot.
-    pub bytes: Vec<u8>,
-    /// Persists while caches/commands retain the version.
-    _charge: ByteCharge,
+    /// Pixel storage or a trusted immutable-image lease; never an editable native handle.
+    contents: TextureContents,
+    /// Native lowering retains this device-free receipt instead of an imported COM/device lease.
+    charge: Rc<ByteCharge>,
+}
+
+/// An ordinary immutable image can be sampled privately without exposing a client conversion API.
+enum TextureContents {
+    /// Complete initialized row-major bytes; updates publish a fresh complete version.
+    Pixels(Vec<u8>),
+    /// Authenticated host key and the immutable public lifetime needed during CPU preparation.
+    Imported {
+        /// Resolved by the same native device's private image map.
+        id: TextureId,
+        /// Never retained in native caches or GPU completion collections.
+        _image: ComPtr<ITextureAbi>,
+    },
+}
+
+impl TextureVersion {
+    /// Imported native images have no CPU pixel buffer and cannot be updated through the factory.
+    pub fn pixels(&self) -> Option<&[u8]> {
+        match &self.contents {
+            TextureContents::Pixels(bytes) => Some(bytes),
+            TextureContents::Imported { .. } => None,
+        }
+    }
+
+    /// A native executor resolves only keys installed by trusted UI import on this exact device.
+    pub fn imported_id(&self) -> Option<TextureId> {
+        match self.contents {
+            TextureContents::Imported { id, .. } => Some(id),
+            TextureContents::Pixels(_) => None,
+        }
+    }
+
+    /// Strip COM/native-facade ownership before native caching or submission retention.
+    pub fn receipt(self: &Rc<Self>) -> TextureReceipt {
+        TextureReceipt {
+            id: self.id,
+            alive: Rc::downgrade(self),
+            _charge: self.charge.clone(),
+        }
+    }
+}
+
+/// Device-free native image accounting plus passive private-version retirement metadata.
+pub struct TextureReceipt {
+    /// Monotonic immutable-version key, independent of public addresses and native handles.
+    pub id: u64,
+    /// Retaining metadata cannot retain the imported image or its native device facade.
+    alive: Weak<TextureVersion>,
+    /// Refunded only when all CPU/native/completion owners release the actual backing charge.
+    _charge: Rc<ByteCharge>,
+}
+impl TextureReceipt {
+    /// Cache-only entries retire after private CPU ownership ends; in-flight owners stay separate.
+    pub fn is_alive(&self) -> bool {
+        self.alive.strong_count() > 0
+    }
 }
 /// Immutable sampler state, independent of its exclusive public owner.
 pub struct SamplerVersion {
@@ -519,8 +617,8 @@ impl IRenderResources for Factory {
         let current = Rc::new(TextureVersion {
             id: self.domain.device.next()?,
             desc,
-            bytes,
-            _charge: charge,
+            contents: TextureContents::Pixels(bytes),
+            charge: Rc::new(charge),
         });
         publish(
             &self.domain.device.inner.textures,
@@ -666,13 +764,14 @@ impl IRenderResources for Factory {
         {
             return Err(NC_E_OUT_OF_RANGE);
         }
+        let previous_bytes = previous.pixels().ok_or(NC_E_INVALID_ARG)?;
         let count = rgba_bytes(Size { width: rect.width, height: rect.height })?;
         if source.byte_count()? != count as u64 {
             return Err(NC_E_INVALID_ARG);
         }
-        let charge = self.domain.account.bytes(previous.bytes.len())?;
-        let mut bytes = zeroed(previous.bytes.len())?;
-        bytes.copy_from_slice(&previous.bytes);
+        let charge = self.domain.account.bytes(previous_bytes.len())?;
+        let mut bytes = zeroed(previous_bytes.len())?;
+        bytes.copy_from_slice(previous_bytes);
         let row = rect.width as usize * 4;
         let stride = previous.desc.size.width as usize * 4;
         read_bytes(source, count, |offset, chunk| {
@@ -689,8 +788,8 @@ impl IRenderResources for Factory {
         let current = Rc::new(TextureVersion {
             id: self.domain.device.next()?,
             desc: previous.desc,
-            bytes,
-            _charge: charge,
+            contents: TextureContents::Pixels(bytes),
+            charge: Rc::new(charge),
         });
         let retired = observer.with_mut(|texture| {
             same_domain(&self.domain, &texture.domain)?;

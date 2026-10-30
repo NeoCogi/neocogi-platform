@@ -53,7 +53,7 @@ allocation!(Uniform, UniformData, wgpu::Buffer);
 /// Immutable native texture plus view and device-free accounting.
 struct Texture {
     /// Captured pixel version, with no device/domain back-reference.
-    source: Rc<TextureVersion>,
+    source: TextureReceipt,
     /// Native image owner kept beside its sampling view.
     _raw: wgpu::Texture,
     /// Read-only view used only by graphics bind groups.
@@ -169,7 +169,7 @@ impl Executor {
         self.device.poll(wgpu::PollType::Poll).map_err(|error| error.to_string())?;
         self.submitted.retain(|entry| !entry.done.load(Ordering::Acquire));
         self.buffers.retain(|_, entry| Rc::strong_count(&entry.source) > 1);
-        self.textures.retain(|_, entry| Rc::strong_count(&entry.source) > 1);
+        self.textures.retain(|_, entry| entry.source.is_alive());
         self.samplers.retain(|_, entry| Rc::strong_count(&entry.source) > 1);
         self.pipelines.retain(|_, entry| Rc::strong_count(&entry.source) > 1);
         self.uniforms.retain(|_, entry| Rc::strong_count(&entry.source) > 1);
@@ -177,15 +177,34 @@ impl Executor {
     }
 
     /// Realizes a complete block under native error scopes before target acquisition or clearing.
-    pub(crate) fn prepare(&mut self, block: &Block, format: wgpu::TextureFormat, depth: bool) -> Result<PreparedBlock, String> {
+    pub(crate) fn prepare(
+        &mut self,
+        block: &Block,
+        format: wgpu::TextureFormat,
+        depth: bool,
+        images: &HashMap<neocogi_render_core::TextureId, super::GpuTexture>,
+    ) -> Result<PreparedBlock, String> {
+        self.preflight(block.retain_capacity(), |executor| executor.prepare_inner(block, format, depth, images))
+    }
+
+    /// Private UI image preparation shares the same fallible upload/completion boundary.
+    pub(crate) fn prepare_texture(
+        &mut self,
+        source: Rc<TextureVersion>,
+        images: &HashMap<neocogi_render_core::TextureId, super::GpuTexture>,
+    ) -> Result<(), String> {
+        self.preflight(Vec::new(), |executor| executor.texture(source, images).map(|_| ()))
+    }
+
+    /// Every scope is popped on success and failure; initialized resources retire independently of frames.
+    fn preflight<T>(&mut self, capacity: Vec<CommandCharge>, operation: impl FnOnce(&mut Self) -> Result<T, String>) -> Result<T, String> {
         self.collect()?;
         // Reserve the completion owner before initiating native writes. A failed preparation
         // still submits those writes and retains their storage without requiring a target frame.
         self.submitted.try_reserve(1).map_err(|error| error.to_string())?;
-        let capacity = block.retain_capacity();
         let scopes =
             [wgpu::ErrorFilter::OutOfMemory, wgpu::ErrorFilter::Internal, wgpu::ErrorFilter::Validation].map(|filter| self.device.push_error_scope(filter));
-        let result = self.prepare_inner(block, format, depth);
+        let result = operation(self);
         self.finish_uploads(capacity);
         let mut failure = None;
         for scope in scopes.into_iter().rev() {
@@ -246,12 +265,18 @@ impl Executor {
     }
 
     /// Converts only authenticated immutable CPU snapshots, without entering a native pass.
-    fn prepare_inner(&mut self, block: &Block, format: wgpu::TextureFormat, depth: bool) -> Result<PreparedBlock, String> {
+    fn prepare_inner(
+        &mut self,
+        block: &Block,
+        format: wgpu::TextureFormat,
+        depth: bool,
+        images: &HashMap<neocogi_render_core::TextureId, super::GpuTexture>,
+    ) -> Result<PreparedBlock, String> {
         let mut commands = Vec::new();
         commands.try_reserve_exact(block.commands.len()).map_err(|error| error.to_string())?;
         for command in &block.commands {
             commands.push(match command {
-                Command::Draw(draw) => PreparedCommand::Draw(self.draw(draw, format, depth)?),
+                Command::Draw(draw) => PreparedCommand::Draw(self.draw(draw, format, depth, images)?),
                 Command::ClearColor { rgba, clip, .. } => self.clear(format, depth, false, rgba.to_le_bytes().map(|byte| f32::from(byte) / 255.), 0., *clip)?,
                 Command::ClearDepth { depth: value, clip, .. } => {
                     if !depth {
@@ -285,51 +310,69 @@ impl Executor {
         value
     }
 
-    /// Uploads tightly packed top-left RGBA pixels without exposing attachment selection.
-    fn texture(&mut self, source: Rc<TextureVersion>) -> Rc<Texture> {
-        self.textures
-            .entry(source.id)
-            .or_insert_with(|| {
-                let size = wgpu::Extent3d {
-                    width: source.desc.size.width as u32,
-                    height: source.desc.size.height as u32,
-                    depth_or_array_layers: 1,
-                };
-                let raw = self.device.create_texture(&wgpu::TextureDescriptor {
-                    label: Some("neocogi.gpu.image"),
-                    size,
-                    mip_level_count: 1,
-                    sample_count: 1,
-                    dimension: wgpu::TextureDimension::D2,
-                    format: if source.desc.format == GpuTextureFormat::Rgba8Srgb {
-                        wgpu::TextureFormat::Rgba8UnormSrgb
-                    } else {
-                        wgpu::TextureFormat::Rgba8Unorm
-                    },
-                    usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-                    view_formats: &[],
-                });
-                self.queue.write_texture(
-                    wgpu::TexelCopyTextureInfo {
-                        texture: &raw,
-                        mip_level: 0,
-                        origin: wgpu::Origin3d::ZERO,
-                        aspect: wgpu::TextureAspect::All,
-                    },
-                    &source.bytes,
-                    wgpu::TexelCopyBufferLayout {
-                        offset: 0,
-                        bytes_per_row: Some(size.width * 4),
-                        rows_per_image: Some(size.height),
-                    },
-                    size,
-                );
-                let view = raw.create_view(&wgpu::TextureViewDescriptor::default());
-                let value = Rc::new(Texture { source, _raw: raw, view });
-                self.uploads.push(Upload::Texture { _resource: value.clone() });
-                value
-            })
-            .clone()
+    /// Resolve only trusted immutable imports, otherwise upload top-left pixels with scoped native errors.
+    fn texture(&mut self, source: Rc<TextureVersion>, images: &HashMap<neocogi_render_core::TextureId, super::GpuTexture>) -> Result<Rc<Texture>, String> {
+        if let Some(value) = self.textures.get(&source.id) {
+            return Ok(value.clone());
+        }
+        let id = source.id;
+        if let Some(import) = source.imported_id() {
+            let image = images.get(&import).ok_or("imported UI image is unavailable on this device")?;
+            let value = Rc::new(Texture {
+                source: source.receipt(),
+                _raw: image._texture.clone(),
+                view: image.view.clone(),
+            });
+            // Ordinary image construction may still have initialization queued on this same
+            // queue. Flush it and retain this device-free receipt through completion, even if
+            // import preparation is the only operation and no target frame is ever acquired.
+            self.uploads.push(Upload::Texture { _resource: value.clone() });
+            self.textures.insert(id, value.clone());
+            return Ok(value);
+        }
+        let size = wgpu::Extent3d {
+            width: source.desc.size.width as u32,
+            height: source.desc.size.height as u32,
+            depth_or_array_layers: 1,
+        };
+        let raw = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("neocogi.gpu.image"),
+            size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: if source.desc.format == GpuTextureFormat::Rgba8Srgb {
+                wgpu::TextureFormat::Rgba8UnormSrgb
+            } else {
+                wgpu::TextureFormat::Rgba8Unorm
+            },
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        self.queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &raw,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            source.pixels().ok_or("missing texture pixel storage")?,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(size.width * 4),
+                rows_per_image: Some(size.height),
+            },
+            size,
+        );
+        let view = raw.create_view(&wgpu::TextureViewDescriptor::default());
+        let value = Rc::new(Texture {
+            source: source.receipt(),
+            _raw: raw,
+            view,
+        });
+        self.uploads.push(Upload::Texture { _resource: value.clone() });
+        self.textures.insert(id, value.clone());
+        Ok(value)
     }
 
     /// Creates immutable one-level sampling state independently of the image resource.
@@ -368,7 +411,13 @@ impl Executor {
     }
 
     /// Captures every binding owner before constructing borrowed bind-group descriptors.
-    fn draw(&mut self, draw: &Draw, format: wgpu::TextureFormat, depth: bool) -> Result<PreparedDraw, String> {
+    fn draw(
+        &mut self,
+        draw: &Draw,
+        format: wgpu::TextureFormat,
+        depth: bool,
+        images: &HashMap<neocogi_render_core::TextureId, super::GpuTexture>,
+    ) -> Result<PreparedDraw, String> {
         let pipeline = self.pipeline(draw.pipeline.clone(), format, depth)?;
         let vertices = draw
             .vertex_buffers
@@ -390,14 +439,14 @@ impl Executor {
             .textures
             .iter()
             .map(|binding| {
-                (
+                Ok((
                     texture_group(binding.stage),
                     binding.slot,
-                    self.texture(binding.texture.clone()),
+                    self.texture(binding.texture.clone(), images)?,
                     self.sampler(binding.sampler.clone()),
-                )
+                ))
             })
-            .collect();
+            .collect::<Result<_, String>>()?;
         let uniforms: Vec<_> = draw
             .uniforms
             .iter()

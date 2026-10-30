@@ -88,6 +88,20 @@ enum DrawTarget {
     },
 }
 
+/// Immutable native image may be shared by public UI capabilities and prepared generic draws.
+struct Image {
+    /// Dispatch owner has no renderer/cache/domain back-reference.
+    gl: Rc<glow::Context>,
+    /// Deleted exactly once, after the last image/command/completion owner releases it.
+    raw: Texture,
+}
+impl Drop for Image {
+    /// The plugin selects the owning context before all image and renderer retirement.
+    fn drop(&mut self) {
+        unsafe { self.gl.delete_texture(self.raw) };
+    }
+}
+
 /// Concrete GL device resources and one exclusively selected frame target.
 pub struct GLRenderer {
     // `GLRenderer` is deliberately simple: it keeps one shader program plus shared VBO/IBO state
@@ -120,7 +134,7 @@ pub struct GLRenderer {
     height: u32,
 
     /// Device-local immutable images, including unpublished render outputs.
-    textures: HashMap<TextureId, Texture>,
+    textures: HashMap<TextureId, Rc<Image>>,
     /// Framebuffers exist only for images allocated as render outputs.
     framebuffers: HashMap<TextureId, Framebuffer>,
     /// Frame-local target selection; reset when the exclusive frame is released.
@@ -132,7 +146,12 @@ pub struct GLRenderer {
 impl GLRenderer {
     /// Realizes a sealed common graphics block before acquiring or clearing its target.
     pub fn prepare_block(&mut self, block: &neocogi_render_gpu::record::Block, offscreen: bool) -> Result<PreparedBlock, String> {
-        self.generic.prepare(block, offscreen)
+        self.generic.prepare(block, offscreen, &self.textures)
+    }
+
+    /// Trusted UI upload preparation has no target acquisition or presentation side effect.
+    pub fn prepare_texture(&mut self, texture: Rc<neocogi_render_gpu::resource::TextureVersion>) -> Result<(), String> {
+        self.generic.prepare_texture(texture, &self.textures)
     }
 
     /// Returns the full default framebuffer in the UI's top-left coordinates.
@@ -558,11 +577,13 @@ impl GLRenderer {
             gl.bind_texture(glow::TEXTURE_2D, None);
             // IDs are normally unique, but replacing defensively keeps the ownership map sound if
             // a caller retries an existing capability.
-            let previous = self.textures.insert(id, *texture.get());
-            let _texture = texture.into_inner();
-            if let Some(previous) = previous {
-                gl.delete_texture(previous);
-            }
+            self.textures.insert(
+                id,
+                Rc::new(Image {
+                    gl: gl.clone(),
+                    raw: texture.into_inner(),
+                }),
+            );
         }
         Ok(())
     }
@@ -575,18 +596,14 @@ impl GLRenderer {
                 self.gl.delete_framebuffer(framebuffer);
             }
         }
-        if let Some(tex) = self.textures.remove(&id) {
-            unsafe {
-                self.gl.delete_texture(tex);
-            }
-        }
+        self.textures.remove(&id);
     }
 
     /// Draws one pre-clipped textured quad using a backend-owned texture outside the atlas batch.
     fn draw_texture(&mut self, id: TextureId, vertices: [Vertex; 4]) {
         // Changing texture is a painter-order boundary even for direct frame callers.
         self.flush();
-        if let Some(&texture) = self.textures.get(&id) {
+        if let Some(texture) = self.textures.get(&id).map(|image| image.raw) {
             self.draw_vertices(texture, &vertices, Some(&[0, 1, 2, 2, 3, 0]), self.full_clip());
         }
     }
@@ -599,9 +616,7 @@ impl Drop for GLRenderer {
             for (_, framebuffer) in self.framebuffers.drain() {
                 self.gl.delete_framebuffer(framebuffer);
             }
-            for (_, texture) in self.textures.drain() {
-                self.gl.delete_texture(texture);
-            }
+            self.textures.clear();
             self.gl.delete_vertex_array(self.vao);
             self.gl.delete_program(self.program);
             self.gl.delete_buffer(self.ibo);
@@ -731,7 +746,7 @@ impl RendererBackend for GLRenderer {
                     glow::DRAW_FRAMEBUFFER,
                     glow::COLOR_ATTACHMENT0,
                     glow::TEXTURE_2D,
-                    self.textures.get(&id).copied(),
+                    self.textures.get(&id).map(|image| image.raw),
                     0,
                 );
                 gl.draw_buffers(&[glow::COLOR_ATTACHMENT0]);
@@ -762,7 +777,7 @@ impl RendererBackend for GLRenderer {
             return Err(FrameError::new("invalid offscreen image, size, or nonopaque clear color"));
         }
         let framebuffer = *self.framebuffers.get(&output).ok_or_else(|| FrameError::new("missing offscreen framebuffer"))?;
-        let atlas = *self.textures.get(&atlas).ok_or_else(|| FrameError::new("missing surface atlas"))?;
+        let atlas = self.textures.get(&atlas).ok_or_else(|| FrameError::new("missing surface atlas"))?.raw;
         self.target = DrawTarget::Texture { framebuffer, atlas };
         let dimensions = info.dimensions();
         self.begin(dimensions.width, dimensions.height, info.clear());

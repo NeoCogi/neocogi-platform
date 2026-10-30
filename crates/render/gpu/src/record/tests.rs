@@ -716,7 +716,7 @@ struct Out { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32> 
     };
     assert_eq!(first.uniforms[0].data.bytes, a);
     assert_eq!(second.uniforms[0].data.bytes, b);
-    assert_eq!(first.textures[0].texture.bytes, [255; 4]);
-    assert_eq!(second.textures[0].texture.bytes, [0; 4]);
+    assert_eq!(first.textures[0].texture.pixels().unwrap(), [255; 4]);
+    assert_eq!(second.textures[0].texture.pixels().unwrap(), [0; 4]);
     frame.finish().unwrap();
 }

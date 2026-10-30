@@ -476,7 +476,7 @@ fn regional_depth_and_copied_uniforms_preserve_surrounding_targets() {
     for owner in [&first, &second, &third] {
         blocks.push(
             executor
-                .prepare(&gpu.block_snapshot(owner.as_com_ref()).unwrap(), target.pass, target.signature)
+                .prepare(&gpu.block_snapshot(owner.as_com_ref()).unwrap(), target.pass, target.signature, &HashMap::new())
                 .unwrap(),
         );
     }
@@ -575,7 +575,7 @@ fn generated_bounds_guards_execute_on_the_native_driver() {
     let owner = session.take_block().unwrap();
     frame.finish().unwrap();
     let prepared = executor
-        .prepare(&gpu.block_snapshot(owner.as_com_ref()).unwrap(), target.pass, target.signature)
+        .prepare(&gpu.block_snapshot(owner.as_com_ref()).unwrap(), target.pass, target.signature, &HashMap::new())
         .unwrap();
     target.render(&mut executor, vec![prepared], Size { width: 8, height: 8 });
     for pixel in target.read(&target.pixels).as_chunks::<4>().0 {
@@ -589,17 +589,25 @@ fn generated_bounds_guards_execute_on_the_native_driver() {
 #[ignore = "requires a native Vulkan graphics device, including a software device"]
 fn indexed_texture_versions_and_unscaled_min_max_blending_reach_native_pixels() {
     for operation in [GpuBlendOp::Min, GpuBlendOp::Max] {
-        indexed_texture_case(operation);
+        for imported in [false, true] {
+            indexed_texture_case(operation, imported);
+        }
     }
 }
 
 /// Both operations ignore factors, while exact image/uniform snapshots retain painter order.
-fn indexed_texture_case(operation: GpuBlendOp) {
+fn indexed_texture_case(operation: GpuBlendOp, imported: bool) {
     let core = core();
     let mut target = Target::new(core.clone(), 8, 8);
     let mut executor = Executor::new(core).unwrap();
     let gpu = GpuDevice::new();
-    let controller = gpu.create_client(RenderClientLimits::default()).unwrap();
+    let controller = if imported {
+        gpu.create_ui_client(RenderClientLimits::default(), None)
+    } else {
+        gpu.create_client(RenderClientLimits::default())
+    }
+    .unwrap();
+    let mut images = HashMap::new();
     let resources = controller.resources().unwrap();
     let source = Bytes::source(
         br#"
@@ -704,6 +712,11 @@ fn indexed_texture_case(operation: GpuBlendOp) {
             source.as_com_ref(),
         )
         .unwrap();
+    let image = if imported {
+        import_native_image(&gpu, &resources, &mut executor, &mut images, image)
+    } else {
+        image
+    };
     let sampler = resources.create_sampler(GpuSamplerDesc::default()).unwrap();
     let mut recording = gpu.broker().begin_frame().unwrap();
     let root = Rect { x: 0, y: 0, width: 8, height: 8 };
@@ -721,24 +734,44 @@ fn indexed_texture_case(operation: GpuBlendOp) {
     view.push_view(Rect { x: 0, y: 0, width: 4, height: 8 }).unwrap();
     view.draw_indexed(6, 1, 0).unwrap();
     view.pop().unwrap();
-    resources
-        .update_texture(
-            image.as_com_ref(),
-            Rect { x: 0, y: 0, width: 2, height: 2 },
-            Bytes::source(vec![255; 16]).as_com_ref(),
-        )
-        .unwrap();
+    let image_b = if imported {
+        let pixel = resources
+            .create_texture(
+                GpuTextureDesc {
+                    size: Size { width: 2, height: 2 },
+                    format: GpuTextureFormat::Rgba8Unorm,
+                    mip_count: 1,
+                },
+                Bytes::source(vec![255; 16]).as_com_ref(),
+            )
+            .unwrap();
+        let image_b = import_native_image(&gpu, &resources, &mut executor, &mut images, pixel);
+        view.bind_texture(GpuShaderStage::Fragment, 0, image_b.as_com_ref(), sampler.as_com_ref())
+            .unwrap();
+        Some(image_b)
+    } else {
+        resources
+            .update_texture(
+                image.as_com_ref(),
+                Rect { x: 0, y: 0, width: 2, height: 2 },
+                Bytes::source(vec![255; 16]).as_com_ref(),
+            )
+            .unwrap();
+        None
+    };
     let magenta: Vec<_> = [1.0f32, 0., 1., 1.].into_iter().flat_map(f32::to_le_bytes).collect();
     view.push_uniforms(GpuShaderStage::Fragment, 0, NcCopyFromBufferOffset::new(0, &magenta))
         .unwrap();
     view.push_view(Rect { x: 4, y: 0, width: 4, height: 8 }).unwrap();
     view.draw_indexed(6, 1, 0).unwrap();
     view.pop().unwrap();
+    drop(image_b);
     view.finish().unwrap();
     let owner = session.take_block().unwrap();
     recording.finish().unwrap();
     let snapshot = gpu.block_snapshot(owner.as_com_ref()).unwrap();
-    let prepared = executor.prepare(&snapshot, target.pass, target.signature).unwrap();
+    let prepared = executor.prepare(&snapshot, target.pass, target.signature, &images).unwrap();
+    drop(images);
     drop((snapshot, owner, view, session, recording, vertices, indices, pipeline, image, sampler, vs, fs));
 
     let clear = if operation == GpuBlendOp::Min { [1.; 4] } else { [0., 0., 0., 1.] };
@@ -784,7 +817,7 @@ fn front_face_and_culling_match_canonical_winding() {
         let block = session.take_block().unwrap();
         frame.finish().unwrap();
         let prepared = executor
-            .prepare(&gpu.block_snapshot(block.as_com_ref()).unwrap(), target.pass, target.signature)
+            .prepare(&gpu.block_snapshot(block.as_com_ref()).unwrap(), target.pass, target.signature, &HashMap::new())
             .unwrap();
         target.render(&mut executor, vec![prepared], Size { width: 8, height: 8 });
         let pixels = target.read(&target.pixels);
@@ -817,7 +850,7 @@ fn escaped_prepared_block_keeps_only_its_cache_free_native_core_alive() {
     let owner = session.take_block().unwrap();
     frame.finish().unwrap();
     let prepared = executor
-        .prepare(&gpu.block_snapshot(owner.as_com_ref()).unwrap(), target.pass, target.signature)
+        .prepare(&gpu.block_snapshot(owner.as_com_ref()).unwrap(), target.pass, target.signature, &HashMap::new())
         .unwrap();
     drop((owner, session, view, frame, pipeline, controller, resources, gpu));
     drop((executor, target, core));
@@ -888,7 +921,7 @@ fn logical_images_exceeding_native_dimensions_reject_before_native_allocation() 
         )
         .unwrap();
     let snapshot = gpu.texture_snapshot(resources.as_com_ref(), image.as_com_ref()).unwrap();
-    let error = executor.texture(snapshot).err().unwrap();
+    let error = executor.texture(snapshot, &HashMap::new()).err().unwrap();
     assert_eq!(error, "Vulkan image dimensions exceed device limits");
     assert_eq!(core.memory_count.get(), 0);
     assert!(!executor.unusable());
@@ -903,10 +936,52 @@ fn logical_images_exceeding_native_dimensions_reject_before_native_allocation() 
         )
         .unwrap();
     let native = executor
-        .texture(gpu.texture_snapshot(resources.as_com_ref(), valid.as_com_ref()).unwrap())
+        .texture(gpu.texture_snapshot(resources.as_com_ref(), valid.as_com_ref()).unwrap(), &HashMap::new())
         .unwrap();
     assert_eq!(core.memory_count.get(), 1);
     drop(native);
     drop(executor);
     assert_eq!(core.memory_count.get(), 0);
+}
+
+/// Trusted test image lease stands in for the host's separately authenticated immutable capability.
+#[neocogi_com::com_object(interfaces(ITexture))]
+struct ImportedImage;
+impl ITexture for ImportedImage {
+    /// The native metadata is fixed; no pixel or device getter is exposed.
+    fn size(&self) -> Result<Size, neocogi_com::NcStatus> {
+        Ok(Size { width: 2, height: 2 })
+    }
+}
+
+/// Initialize real native pixels, then hand only a cache-free shared image to the host map.
+fn import_native_image(
+    gpu: &GpuDevice,
+    resources: &ComPtr<IRenderResourcesAbi>,
+    executor: &mut Executor,
+    images: &mut HashMap<neocogi_render_core::TextureId, crate::VulkanTexture>,
+    pixel: ComBox<IGpuTextureAbi>,
+) -> ComBox<IGpuTextureAbi> {
+    let native = executor
+        .texture(gpu.texture_snapshot(resources.as_com_ref(), pixel.as_com_ref()).unwrap(), &HashMap::new())
+        .unwrap();
+    let id = neocogi_render_core::TextureId::for_upload(2, 2, &[0; 16]).unwrap();
+    images.insert(
+        id,
+        crate::VulkanTexture {
+            image: crate::ImageResource {
+                native: Some(native.native.clone()),
+                extent: vk::Extent2D { width: 2, height: 2 },
+                layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+            },
+            descriptor: crate::TextureDescriptor {
+                set: vk::DescriptorSet::null(),
+                pool: vk::DescriptorPool::null(),
+                generation: 0,
+            },
+            framebuffer: None,
+        },
+    );
+    let lease: ComPtr<ITextureAbi> = ImportedImage::from_value(ImportedImage).query().unwrap();
+    gpu.import_ui_texture(resources.as_com_ref(), id, lease).unwrap()
 }

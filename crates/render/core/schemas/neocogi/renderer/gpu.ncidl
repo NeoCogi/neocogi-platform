@@ -499,9 +499,15 @@ interface IRenderClientFactory {
     fn create_client(&self, limits: RenderClientLimits) -> Result<ComBox<IRenderClientDomain>>;
 }
 
-#[version(2)]
+#[version(3)]
 /// Trusted host-only assembly capability; never delegated to widgets.
 interface IRenderHost {
+    /// Privately sample an authenticated immutable UI image in this device's compositor domain.
+    /// Client factories reject this bridge; the result exposes no ITexture conversion or native key.
+    fn import_ui_texture(&self, resources: &IRenderResources, image: &ITexture) -> Result<ComBox<IGpuTexture>>;
+    /// Complete fallible native image preparation before publishing a new UI asset revision.
+    /// This never acquires a target or invokes a client during native execution.
+    fn prepare_ui_texture(&self, resources: &IRenderResources, texture: &IGpuTexture) -> Result<()>;
     /// Creates private GFX provenance on this device. Keep the resulting controller/factory
     /// inside the compositor; public client construction cannot obtain this authority.
     fn create_ui_client(&self, limits: RenderClientLimits) -> Result<ComBox<IRenderClientDomain>>;

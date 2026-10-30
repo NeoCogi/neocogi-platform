@@ -109,6 +109,12 @@ impl Gpu {
         self.window.gl_make_current(&self.context)?;
         Ok(())
     }
+
+    /// Atlas replacement uses the common immutable image realization before publishing UI metadata.
+    pub(super) fn prepare_texture(&mut self, texture: std::rc::Rc<neocogi_render_gpu::resource::TextureVersion>) -> Result<(), String> {
+        self.current()?;
+        self.renderer.prepare_texture(texture)
+    }
     /// Uploads into this device's current context using the backend's existing atomic replacement.
     pub(super) fn replace_atlas(&mut self, atlas: ImageSource<'_>) -> Result<(), String> {
         self.current()?;

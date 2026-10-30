@@ -315,7 +315,15 @@ impl VulkanRenderer {
         if offscreen {
             return Err("offscreen Vulkan surfaces accept UI commands only".into());
         }
-        self.generic.prepare(block, self.context.render_pass, self.context.signature())
+        self.generic.prepare(block, self.context.render_pass, self.context.signature(), &self.textures)
+    }
+
+    /// Trusted UI resource preparation never acquires or clears a rendering target.
+    pub fn prepare_texture(&mut self, texture: Rc<neocogi_render_gpu::resource::TextureVersion>) -> Result<()> {
+        if self.disabled || self.context.is_unusable() {
+            return Err("Vulkan renderer is unavailable after a native frame failure".into());
+        }
+        self.generic.prepare_texture(texture, &self.textures)
     }
 
     /// Converts a microui clear color into the Vulkan clear value used for the render pass.
@@ -607,7 +615,7 @@ impl RendererBackend for VulkanRenderer {
             )
             .map_err(TextureError::backend)?
             .guarded(&device);
-        let attachments = [image.get().view];
+        let attachments = [image.get().view()];
         let info = vk::FramebufferCreateInfo::default()
             .render_pass(self.offscreen.as_ref().expect("initialized above").render_pass)
             .attachments(&attachments)
@@ -821,17 +829,13 @@ impl MappedBuffer {
     }
 }
 
-/// Owned image allocation and view with the layout tracked by transfer recording.
+/// Host image metadata keeps one shared native owner; prepared graphics can retain that same image.
 struct ImageResource {
-    /// Device image destroyed before its backing allocation is freed.
-    image: vk::Image,
-    /// Allocation bound to `image` for its entire lifetime.
-    memory: Option<generic::Memory>,
-    /// View used by descriptors or framebuffer attachments.
-    view: vk::ImageView,
+    /// Present while live; explicit host retirement takes only this reference.
+    native: Option<Rc<generic::Image>>,
     /// Pixel extent used when recording uploads.
     extent: vk::Extent2D,
-    /// Last layout established by the backend's recorded transitions.
+    /// Last layout established by host transfer/render commands.
     layout: vk::ImageLayout,
 }
 
@@ -960,19 +964,19 @@ impl ImageResource {
         ResourceGuard::new(self, move |mut image| image.destroy(&device))
     }
 
-    /// Destroys the dependent view first, then the image and its backing allocation.
-    fn destroy(&mut self, device: &ash::Device) {
-        unsafe {
-            if self.view != vk::ImageView::null() {
-                device.destroy_image_view(self.view, None);
-            }
-            if self.image != vk::Image::null() {
-                device.destroy_image(self.image, None);
-            }
-        }
-        self.image = vk::Image::null();
-        self.memory.take();
-        self.view = vk::ImageView::null();
+    /// Raw access never grants ownership; all users retain this wrapper or its shared native owner.
+    fn raw(&self) -> vk::Image {
+        self.native.as_ref().expect("live host image").raw
+    }
+
+    /// A view has exactly the same lifetime as its native image owner.
+    fn view(&self) -> vk::ImageView {
+        self.native.as_ref().expect("live host image").view
+    }
+
+    /// Descriptor/framebuffer references have ended; prepared aliases may still retain the allocation.
+    fn destroy(&mut self, _device: &ash::Device) {
+        self.native.take();
     }
 }
 
@@ -1320,7 +1324,7 @@ impl UiResources {
     fn update_descriptor(&self, device: &ash::Device, descriptor_set: vk::DescriptorSet, atlas: &ImageResource) {
         let image_info = vk::DescriptorImageInfo::default()
             .sampler(self.sampler.as_ref().expect("live UI sampler").raw)
-            .image_view(atlas.view)
+            .image_view(atlas.view())
             .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
         let image_infos = [image_info];
         let writes = [vk::WriteDescriptorSet::default()
@@ -2071,7 +2075,7 @@ impl VulkanContext {
     fn create_framebuffers(&self) -> Result<Vec<vk::Framebuffer>> {
         let mut pending = Vec::with_capacity(self.swapchain_image_views.len());
         for (index, &view) in self.swapchain_image_views.iter().enumerate() {
-            let depth_view = self.depth_images.get(index).map(|image| image.view).unwrap_or(vk::ImageView::null());
+            let depth_view = self.depth_images.get(index).map(|image| image.view()).unwrap_or(vk::ImageView::null());
             let attachments = [view, depth_view];
             let framebuffer_info = vk::FramebufferCreateInfo::default()
                 .render_pass(self.render_pass)
@@ -2791,9 +2795,7 @@ impl VulkanContext {
         );
 
         Ok(ImageResource {
-            image: image.into_inner(),
-            memory: Some(memory),
-            view: view.into_inner(),
+            native: Some(Rc::new(generic::Image::new(self.core.clone(), image.into_inner(), memory, view.into_inner()))),
             extent: vk::Extent2D { width, height },
             layout: vk::ImageLayout::UNDEFINED,
         })
@@ -2872,9 +2874,7 @@ impl VulkanContext {
         );
 
         Ok(ImageResource {
-            image: image.into_inner(),
-            memory: Some(memory),
-            view: view.into_inner(),
+            native: Some(Rc::new(generic::Image::new(self.core.clone(), image.into_inner(), memory, view.into_inner()))),
             extent,
             layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
         })
@@ -2890,7 +2890,7 @@ impl VulkanContext {
         self.single_time_commands(|cmd| {
             self.transition_image_layout(
                 cmd,
-                image.image,
+                image.raw(),
                 image.layout,
                 vk::ImageLayout::TRANSFER_DST_OPTIMAL,
                 vk::ImageAspectFlags::COLOR,
@@ -2905,11 +2905,11 @@ impl VulkanContext {
             let regions = [region];
             unsafe {
                 self.device
-                    .cmd_copy_buffer_to_image(cmd, buffer.buffer, image.image, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &regions);
+                    .cmd_copy_buffer_to_image(cmd, buffer.buffer, image.raw(), vk::ImageLayout::TRANSFER_DST_OPTIMAL, &regions);
             }
             self.transition_image_layout(
                 cmd,
-                image.image,
+                image.raw(),
                 vk::ImageLayout::TRANSFER_DST_OPTIMAL,
                 vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
                 vk::ImageAspectFlags::COLOR,

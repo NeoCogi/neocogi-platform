@@ -131,7 +131,7 @@ fn regional_depth_clears_ordered_views_and_completion_keep_their_contracts() {
     let mut blocks = Vec::new();
     for owner in [&first, &second_owner, &third_owner] {
         let snapshot = gpu.block_snapshot(owner.as_com_ref()).unwrap();
-        blocks.push(executor.prepare(&snapshot, wgpu::TextureFormat::Rgba8Unorm, true).unwrap());
+        blocks.push(executor.prepare(&snapshot, wgpu::TextureFormat::Rgba8Unorm, true, &HashMap::new()).unwrap());
     }
     drop((
         first,
@@ -220,17 +220,25 @@ fn regional_depth_clears_ordered_views_and_completion_keep_their_contracts() {
 #[ignore = "requires a native WGPU adapter, including a software adapter"]
 fn indexed_textures_and_uniform_versions_execute_without_public_owners() {
     for operation in [GpuBlendOp::Min, GpuBlendOp::Max] {
-        indexed_texture_case(operation);
+        for imported in [false, true] {
+            indexed_texture_case(operation, imported);
+        }
     }
 }
 
 /// Both unscaled min/max blend operations ignore factors, including factors WebGPU forbids verbatim.
-fn indexed_texture_case(operation: GpuBlendOp) {
+fn indexed_texture_case(operation: GpuBlendOp, imported: bool) {
     let (native, queue) = device();
     let outer = native.push_error_scope(wgpu::ErrorFilter::Validation);
     let mut executor = crate::generic::Executor::new(&native, &queue);
     let gpu = GpuDevice::new();
-    let controller = gpu.create_client(RenderClientLimits::default()).unwrap();
+    let controller = if imported {
+        gpu.create_ui_client(RenderClientLimits::default(), None)
+    } else {
+        gpu.create_client(RenderClientLimits::default())
+    }
+    .unwrap();
+    let mut images = HashMap::new();
     let resources = controller.resources().unwrap();
     let source = Bytes::source(
         br#"
@@ -335,6 +343,11 @@ fn indexed_texture_case(operation: GpuBlendOp) {
             source.as_com_ref(),
         )
         .unwrap();
+    let image = if imported {
+        import_native_image(&gpu, &resources, &native, &queue, &mut images, image)
+    } else {
+        image
+    };
     let sampler = resources.create_sampler(GpuSamplerDesc::default()).unwrap();
     let mut recording = gpu.broker().begin_frame().unwrap();
     let root = Rect { x: 0, y: 0, width: 8, height: 8 };
@@ -352,24 +365,44 @@ fn indexed_texture_case(operation: GpuBlendOp) {
     view.push_view(Rect { x: 0, y: 0, width: 4, height: 8 }).unwrap();
     view.draw_indexed(6, 1, 0).unwrap();
     view.pop().unwrap();
-    resources
-        .update_texture(
-            image.as_com_ref(),
-            Rect { x: 0, y: 0, width: 2, height: 2 },
-            Bytes::source(vec![255; 16]).as_com_ref(),
-        )
-        .unwrap();
+    let image_b = if imported {
+        let pixel = resources
+            .create_texture(
+                GpuTextureDesc {
+                    size: Size { width: 2, height: 2 },
+                    format: GpuTextureFormat::Rgba8Unorm,
+                    mip_count: 1,
+                },
+                Bytes::source(vec![255; 16]).as_com_ref(),
+            )
+            .unwrap();
+        let image_b = import_native_image(&gpu, &resources, &native, &queue, &mut images, pixel);
+        view.bind_texture(GpuShaderStage::Fragment, 0, image_b.as_com_ref(), sampler.as_com_ref())
+            .unwrap();
+        Some(image_b)
+    } else {
+        resources
+            .update_texture(
+                image.as_com_ref(),
+                Rect { x: 0, y: 0, width: 2, height: 2 },
+                Bytes::source(vec![255; 16]).as_com_ref(),
+            )
+            .unwrap();
+        None
+    };
     let magenta: Vec<_> = [1.0f32, 0., 1., 1.].into_iter().flat_map(f32::to_le_bytes).collect();
     view.push_uniforms(GpuShaderStage::Fragment, 0, NcCopyFromBufferOffset::new(0, &magenta))
         .unwrap();
     view.push_view(Rect { x: 4, y: 0, width: 4, height: 8 }).unwrap();
     view.draw_indexed(6, 1, 0).unwrap();
     view.pop().unwrap();
+    drop(image_b);
     view.finish().unwrap();
     let owner = session.take_block().unwrap();
     recording.finish().unwrap();
     let snapshot = gpu.block_snapshot(owner.as_com_ref()).unwrap();
-    let prepared = executor.prepare(&snapshot, wgpu::TextureFormat::Rgba8Unorm, true).unwrap();
+    let prepared = executor.prepare(&snapshot, wgpu::TextureFormat::Rgba8Unorm, true, &images).unwrap();
+    drop(images);
     drop((snapshot, owner, view, session, recording, vertices, indices, pipeline, image, sampler, vs, fs));
     let target = native.create_texture(&wgpu::TextureDescriptor {
         label: Some("indexed acceptance color"),
@@ -460,7 +493,7 @@ fn abandoned_preparation_retains_upload_capacity_until_completion() {
     let resources = controller.resources().unwrap();
     let owner = clear_block(&gpu, &resources);
     let snapshot = gpu.block_snapshot(owner.as_com_ref()).unwrap();
-    let prepared = executor.prepare(&snapshot, wgpu::TextureFormat::Rgba8Unorm, true).unwrap();
+    let prepared = executor.prepare(&snapshot, wgpu::TextureFormat::Rgba8Unorm, true, &HashMap::new()).unwrap();
     let charged = gpu.recording_usage(resources.as_com_ref()).unwrap().0;
     assert!(charged > 0);
     drop((prepared, snapshot, owner));
@@ -490,7 +523,7 @@ fn native_buffer_creation_failure_returns_error_without_panicking_or_leaking_sco
     let snapshot = gpu.block_snapshot(owner.as_com_ref()).unwrap();
     for _ in 0..2 {
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            executor.prepare(&snapshot, wgpu::TextureFormat::Rgba8Unorm, true)
+            executor.prepare(&snapshot, wgpu::TextureFormat::Rgba8Unorm, true, &HashMap::new())
         }));
         let error = match result {
             Ok(Err(error)) => error,
@@ -600,7 +633,7 @@ fn partial_preparation_failure_keeps_resource_versions_charged_through_upload_co
     let owner = session.take_block().unwrap();
     recording.finish().unwrap();
     let snapshot = gpu.block_snapshot(owner.as_com_ref()).unwrap();
-    let error = match executor.prepare(&snapshot, wgpu::TextureFormat::Rgba8Unorm, true) {
+    let error = match executor.prepare(&snapshot, wgpu::TextureFormat::Rgba8Unorm, true, &HashMap::new()) {
         Ok(_) => panic!("native vertex allocation must fail"),
         Err(error) => error,
     };
@@ -615,4 +648,126 @@ fn partial_preparation_failure_keeps_resource_versions_charged_through_upload_co
     assert_eq!(gpu.live_bytes(resources.as_com_ref()).unwrap(), 0);
     assert_eq!(gpu.recording_usage(resources.as_com_ref()).unwrap(), (0, 0));
     assert!(pollster::block_on(outer.pop()).is_none());
+}
+
+/// Trusted fixture capability represents the host-authenticated immutable image.
+#[neocogi_com::com_object(interfaces(ITexture))]
+struct ImportedImage(Size);
+impl ITexture for ImportedImage {
+    /// Initialization and dimensions belong to the native map, without a device getter.
+    fn size(&self) -> Result<Size, neocogi_com::NcStatus> {
+        Ok(self.0)
+    }
+}
+
+/// Real native handles survive removal of their ordinary-image facade before submission.
+fn import_native_image(
+    gpu: &GpuDevice,
+    resources: &ComPtr<IRenderResourcesAbi>,
+    native: &wgpu::Device,
+    queue: &wgpu::Queue,
+    images: &mut HashMap<neocogi_render_core::TextureId, crate::GpuTexture>,
+    pixel: ComBox<IGpuTextureAbi>,
+) -> ComBox<IGpuTextureAbi> {
+    let snapshot = gpu.texture_snapshot(resources.as_com_ref(), pixel.as_com_ref()).unwrap();
+    let size = wgpu::Extent3d {
+        width: 2,
+        height: 2,
+        depth_or_array_layers: 1,
+    };
+    let texture = native.create_texture(&wgpu::TextureDescriptor {
+        label: None,
+        size,
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    queue.write_texture(
+        wgpu::TexelCopyTextureInfo {
+            texture: &texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        snapshot.pixels().unwrap(),
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(8),
+            rows_per_image: Some(2),
+        },
+        size,
+    );
+    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+    let id = neocogi_render_core::TextureId::for_upload(2, 2, &[0; 16]).unwrap();
+    // The unused legacy UI bind group disappears with the UI executor cutover; import uses
+    // only the actual image and view. No mock GPU resource reaches the tested sampling path.
+    let layout = native.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: None, entries: &[] });
+    let bind_group = native.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: None,
+        layout: &layout,
+        entries: &[],
+    });
+    images.insert(
+        id,
+        crate::GpuTexture {
+            _texture: texture,
+            view,
+            render_target: false,
+            bind_group,
+        },
+    );
+    let lease: ComPtr<ITextureAbi> = ImportedImage::from_value(ImportedImage(Size { width: 2, height: 2 })).query().unwrap();
+    gpu.import_ui_texture(resources.as_com_ref(), id, lease).unwrap()
+}
+
+/// An import-only preflight must flush source initialization and retire it without a target frame.
+#[test]
+#[ignore = "requires a native WGPU adapter with native allocation counters"]
+fn imported_preparation_flushes_initialization_before_refunding_native_storage() {
+    let (native, queue) = device();
+    let (_window, _texture, layout, sampler) = WgpuRenderer::create_pipeline(&native, wgpu::TextureFormat::Rgba8Unorm);
+    let uniforms = native.create_buffer(&wgpu::BufferDescriptor {
+        label: None,
+        size: 16,
+        usage: wgpu::BufferUsages::UNIFORM,
+        mapped_at_creation: false,
+    });
+    let mut executor = crate::generic::Executor::new(&native, &queue);
+    let gpu = GpuDevice::new();
+    let controller = gpu.create_ui_client(RenderClientLimits { live_bytes: 8, ..Default::default() }, None).unwrap();
+    let resources = controller.resources().unwrap();
+    let mut images = HashMap::new();
+    let baseline = native.get_internal_counters().hal.texture_memory.read();
+    for value in 0..8 {
+        let pixels = [value, 0, 0, 255];
+        let image = WgpuRenderer::create_gpu_texture(&native, &queue, &layout, &sampler, &uniforms, 1, 1, Some(&pixels)).unwrap();
+        assert!(
+            native.get_internal_counters().hal.texture_memory.read() > baseline,
+            "this native regression requires observable image allocation counters"
+        );
+        let id = TextureId::for_upload(1, 1, &pixels).unwrap();
+        images.insert(id, image);
+        let lease: ComPtr<ITextureAbi> = ImportedImage::from_value(ImportedImage(Size { width: 1, height: 1 })).query().unwrap();
+        let imported = gpu.import_ui_texture(resources.as_com_ref(), id, lease).unwrap();
+        executor
+            .prepare_texture(gpu.ui_texture_snapshot(resources.as_com_ref(), imported.as_com_ref()).unwrap(), &images)
+            .unwrap();
+        drop(imported);
+        images.remove(&id);
+        assert_eq!(gpu.live_bytes(resources.as_com_ref()).unwrap(), 4);
+        // Wait/poll only observe submissions. This deliberately never submits a compensating
+        // empty batch or renders a target: preparation must already have made progress possible.
+        native.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+        executor.collect().unwrap();
+        native.poll(wgpu::PollType::Poll).unwrap();
+        assert_eq!(gpu.live_bytes(resources.as_com_ref()).unwrap(), 0);
+        assert_eq!(
+            native.get_internal_counters().hal.texture_memory.read(),
+            baseline,
+            "pending ordinary initialization outlived its imported receipt"
+        );
+    }
 }
