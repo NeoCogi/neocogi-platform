@@ -374,11 +374,8 @@ impl VulkanRenderer {
             },
             framebuffer: None,
         };
-        // A replacement is committed only after the new image is complete. Destroying the old
-        // image after insertion also keeps the map leak-free if an ID is retried unexpectedly.
-        if let Some(mut previous) = self.textures.insert(id, texture) {
-            previous.destroy(&self.context);
-        }
+        // Duplicate admission above guarantees this is the first publication of this key.
+        self.textures.insert(id, texture);
         Ok(())
     }
 

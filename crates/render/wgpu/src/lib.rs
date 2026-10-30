@@ -446,7 +446,7 @@ impl WgpuRenderer {
         if self.textures.contains_key(&id) {
             return Err(TextureError::backend("native image key is already resident"));
         }
-        // Reserve ownership storage before allocating native resources or replacing a live entry.
+        // Reserve the unpublished key before allocating its native resources.
         self.textures
             .try_reserve(1)
             .map_err(|error| TextureError::backend(format!("failed to reserve texture ownership entry: {error}")))?;
