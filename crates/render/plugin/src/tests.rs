@@ -171,6 +171,16 @@ fn native_order_ownership_reentry_and_final_release() {
     let native = platform.window("COM GPU acceptance", SIZE, atlas.as_com_ref()).unwrap();
     let device = Rc::downgrade(&native.device);
     let unknown = WindowObject::from_value(native);
+    {
+        let window: ComPtr<IPlatformWindowAbi> = unknown.query().unwrap();
+        assert!(unknown.query::<ITextClipboardAbi>().is_err());
+        let clipboard = window.clipboard().unwrap();
+        assert!(clipboard.query::<IRendererAbi>().is_err());
+        assert!(clipboard.query::<IPlatformWindowAbi>().is_err());
+        assert!(clipboard.query::<ITextureFactoryAbi>().is_err());
+        assert!(clipboard.query::<IRenderSurfaceFactoryAbi>().is_err());
+        assert!(clipboard.query::<IMeshScenesAbi>().is_err());
+    }
     input_delivery(&unknown, &device);
     let renderer: ComPtr<IRendererAbi> = unknown.query().unwrap();
     let factory: ComPtr<ITextureFactoryAbi> = unknown.query().unwrap();

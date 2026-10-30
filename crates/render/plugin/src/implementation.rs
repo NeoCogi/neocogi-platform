@@ -158,7 +158,6 @@ impl Drop for RenderAccess<'_> {
 }
 #[com_object(interfaces(
     IPlatformWindow,
-    ITextClipboard,
     IRenderer,
     ITextureFactory,
     IRenderSurfaceFactory,

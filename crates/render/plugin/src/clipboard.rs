@@ -1,6 +1,26 @@
 //! Platform clipboard transfer with copied completion facts and no retained UI borrows.
 use super::*;
 
+#[com_object(interfaces(ITextClipboard))]
+/// Delegable clipboard with no renderer, factory, or window interface on its COM identity.
+pub(super) struct Clipboard {
+    /// SDL clipboard access needs only a live platform window, never the graphics device.
+    #[cfg(not(target_arch = "wasm32"))]
+    window: gpu::Window,
+}
+
+impl Clipboard {
+    /// Constructs the narrow projection before it enters UI-owned widget services.
+    pub(super) fn for_window(window: &gpu::Window) -> Result<ComPtr<ITextClipboardAbi>, NcStatus> {
+        #[cfg(target_arch = "wasm32")]
+        let _ = window;
+        Self::from_value(Self {
+            #[cfg(not(target_arch = "wasm32"))]
+            window: window.clone(),
+        }).query()
+    }
+}
+
 /// Validates copied text before an OS call; SDL requires strings without interior NUL bytes.
 fn text(input: NcCopyFromBufferOffset<'_, u8>) -> Result<&str, NcStatus> {
     if input.offset() != 0 || input.as_slice().len() > MAX_CLIPBOARD_BYTES {
@@ -29,17 +49,16 @@ fn complete(completion: ComRef<'_, IClipboardCompletionAbi>, result: Result<Stri
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-impl ITextClipboard for WindowObject {
+impl ITextClipboard for Clipboard {
     /// SDL completes synchronously, but uses the same copied receipt as asynchronous platforms.
     fn read(&self, completion: ComRef<'_, IClipboardCompletionAbi>) -> Result<(), NcStatus> {
-        let result = self.device.window.subsystem().clipboard().clipboard_text().map_err(|_| PLATFORM_E_BACKEND);
+        let result = self.window.subsystem().clipboard().clipboard_text().map_err(|_| PLATFORM_E_BACKEND);
         complete(completion, result)
     }
     /// Never acknowledge a cut until the OS accepted the entire validated selection.
     fn write(&self, input: NcCopyFromBufferOffset<'_, u8>, completion: ComRef<'_, IClipboardCompletionAbi>) -> Result<(), NcStatus> {
         let text = text(input)?;
         let result = self
-            .device
             .window
             .subsystem()
             .clipboard()
@@ -84,7 +103,7 @@ fn await_result(promise: js_sys::Promise, completion: ComPtr<IClipboardCompletio
 }
 
 #[cfg(target_arch = "wasm32")]
-impl ITextClipboard for WindowObject {
+impl ITextClipboard for Clipboard {
     /// Browser denial is an asynchronous failed receipt, never an empty successful paste.
     fn read(&self, completion: ComRef<'_, IClipboardCompletionAbi>) -> Result<(), NcStatus> {
         let completion = completion.try_add_ref()?;

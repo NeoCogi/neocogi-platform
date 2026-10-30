@@ -1,6 +1,9 @@
-#[version(1)]
+#[version(2)]
 /// Native window and event-pump capability with no exposed toolkit or graphics handles.
 interface IPlatformWindow {
+    /// Creates a separate narrow clipboard identity safe to delegate to widget services.
+    /// QueryInterface on this result cannot recover this window or its renderer/factories.
+    fn clipboard(&self) -> Result<ComPtr<ITextClipboard>>;
     /// Returns current drawable dimensions, including device scaling. Resize is synchronized
     /// by passing this value to the next UI update before rendering.
     fn size(&self) -> Result<Size>;

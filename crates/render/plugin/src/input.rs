@@ -169,6 +169,11 @@ fn modifiers(value: Mod) -> u8 {
 }
 
 impl IPlatformWindow for WindowObject {
+    /// Returns only the separate delegable clipboard identity.
+    fn clipboard(&self) -> Result<ComPtr<ITextClipboardAbi>, NcStatus> {
+        clipboard::Clipboard::for_window(&self.device.window)
+    }
+
     /// Reports drawable pixels, which are also the coordinates used by every delivered pointer.
     fn size(&self) -> Result<Size, NcStatus> {
         Ok(gpu::pixel_size(&self.device.window))
