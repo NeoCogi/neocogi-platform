@@ -1,8 +1,7 @@
 //! Backend-neutral Rust integration shared by the UI runtime and renderer plugins.
 //!
-//! This crate is not a deployable plugin and exports no COM classes. It contains only
-//! concrete frame values and traits needed to compile a renderer implementation without
-//! linking the UI runtime implementation into the renderer's shared library.
+//! This crate has no plugin entry point. It owns the shared contracts, upload producers,
+//! frame values and traits, without linking a UI runtime or GPU compiler implementation.
 #![deny(missing_docs)]
 
 extern crate self as neocogi_render_core;
@@ -33,6 +32,8 @@ pub mod prelude {
 pub mod abi;
 /// Shared IDL bindings and their Rust conveniences.
 pub mod platform;
+/// Owned upload producers shared by clients and GFX without linking renderer implementation.
+pub mod source;
 
 /// Authored NCIDL sources owned by this Cargo contract package.
 pub const SCHEMA_ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/schemas");

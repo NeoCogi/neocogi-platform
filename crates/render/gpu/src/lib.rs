@@ -11,9 +11,10 @@ pub mod record;
 pub mod resource;
 pub mod scope;
 pub mod shader;
-pub mod source;
 
 pub use resource::GpuDevice;
 
 /// Canonical generated graphics contracts, without duplicated ABI definitions.
 pub use neocogi_render_core::abi;
+/// Canonical upload producers live beside the contracts, independently of resource realization.
+pub use neocogi_render_core::source;
