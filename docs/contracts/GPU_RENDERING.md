@@ -52,8 +52,10 @@ before a compositor publishes a candidate asset revision.
 
 ## Portable shader profile, version 1
 
-WGSL is the canonical source. Shared validation/reflection emits GLSL ES 300 and
-SPIR-V, while WGPU consumes the same WGSL. No public native binary bypasses the
+WGSL is the canonical source. The required `neocogi.shader.compiler` COM provider
+validates and returns owned WGSL, GLSL ES 300, guarded SPIR-V and typed reflection.
+The renderer imports those results; WGPU consumes returned validated WGSL. See
+[shader compilation](SHADER_COMPILATION.md) for the complete boundary. No public native binary bypasses the
 profile. Vertex and fragment stages support read-only uniform blocks and paired
 non-comparison sampled 2D float textures/samplers. Storage, atomics, compute,
 workgroup state, binding arrays and additional color attachments are rejected,
@@ -74,7 +76,11 @@ the same text.
 
 WGSL source is limited to one MiB. Combined owned source, entry name, SPIR-V and
 GLSL are limited to four MiB per shader and the domain's remaining live-byte
-quota. Generated GLSL writes check that budget before growing their output
+quota. During COM import the provider and receiving copy each retain a charge
+for their actual live code payload; receiving admission can therefore reject a
+compilation that succeeded before copying. Reflection is excluded from the byte
+charge but independently bounded to 16 input/output locations and four uniform/
+sampled slots per stage. Generated GLSL writes check that budget before growing their output
 allocation. Exhausted output quota returns `NC_E_OUT_OF_RANGE`; failed bounded
 output allocation returns `NC_E_OUT_OF_MEMORY`. These limits cover retained
 artifacts and generated text, rather than all compiler scratch memory or runtime.

@@ -136,10 +136,10 @@ impl IShaderCompilation for ReportProxy {
         if matches!(self.probe.fault, Fault::Wgsl) {
             return Err(NC_E_INVALID_ARG);
         }
-        if matches!(self.probe.fault, Fault::CloseGetter) {
-            if let Some(domain) = self.probe.domain.borrow().upgrade() {
-                domain.close();
-            }
+        if matches!(self.probe.fault, Fault::CloseGetter)
+            && let Some(domain) = self.probe.domain.borrow().upgrade()
+        {
+            domain.close();
         }
         self.inner.wgsl()
     }

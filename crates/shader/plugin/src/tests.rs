@@ -3,7 +3,7 @@ use super::*;
 use neocogi_com::{INcStringComPtrExt, INcBytesComPtrExt, NcCopyFromBufferOffset, NC_OK, NC_E_INVALID_ARG, NC_E_OUT_OF_RANGE};
 use neocogi_render_core::abi::GpuShaderStage;
 /// Separate generated ABI consumer negotiates by interface identity, not a Rust object cast.
-#[allow(dead_code)]
+#[allow(dead_code, clippy::len_without_is_empty, reason = "independent generated caller for the minimal len/get ABI")]
 mod client {
     include!(env!("IDL_NEOCOGI_SHADER"));
 }

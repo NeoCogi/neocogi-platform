@@ -4,6 +4,10 @@ extern crate self as neocogi_shader_core;
 use neocogi_render_core::abi::GpuShaderStage;
 pub use abi::{ShaderScalar, ShaderInterpolation, ShaderSampling};
 /// Generated versioned CPU compiler contracts.
+#[allow(
+    clippy::len_without_is_empty,
+    reason = "IDL collections expose len/get; checking zero needs no additional ABI call"
+)]
 pub mod abi {
     include!(env!("IDL_NEOCOGI_SHADER"));
 }

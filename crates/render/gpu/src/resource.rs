@@ -731,11 +731,10 @@ impl IRenderResources for Factory {
             self.domain.open()?;
             Ok((owner, charge, artifact))
         })();
-        let (owner, charge, artifact) = imported.map_err(|status| {
+        let (owner, charge, artifact) = imported.inspect_err(|status| {
             if self.domain.device.inner.diagnostic.borrow().is_empty() {
                 self.domain.device.set_diagnostic(format!("shader creation failed: {status}"));
             }
-            status
         })?;
         let current = Rc::new(ShaderVersion {
             id: self.domain.device.next()?,

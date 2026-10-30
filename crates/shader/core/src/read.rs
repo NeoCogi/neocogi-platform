@@ -175,8 +175,8 @@ fn spirv_words(value: &ComPtr<INcBytesAbi>, words: usize) -> Result<Vec<u32>, Nc
     for offset in (0..len).step_by(scratch.len()) {
         let count = (len - offset).min(scratch.len());
         value.copy_to(offset as u64, &mut scratch[..count])?;
-        for word in scratch[..count].chunks_exact(4) {
-            output.push(u32::from_le_bytes(word.try_into().map_err(|_| NC_E_INVALID_ARG)?));
+        for word in scratch[..count].as_chunks::<4>().0 {
+            output.push(u32::from_le_bytes(*word));
         }
     }
     if output[0] != 0x07230203 || value.len()? != len as u64 {
