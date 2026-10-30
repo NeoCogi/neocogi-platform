@@ -138,14 +138,14 @@ impl Offscreen {
     }
 
     /// Packs one painter-ordered UI stream, records, submits, and observes its completion fence.
-    pub(super) fn render<Command>(
+    pub(super) fn render(
         &mut self,
         ctx: &VulkanContext,
         output: &VulkanTexture,
         atlas: vk::DescriptorSet,
         clear: vk::ClearValue,
         vertices: &[Vertex],
-        commands: &[FrameCommand<Command>],
+        commands: &[FrameCommand],
     ) -> Result<()> {
         match self.submission {
             Submission::Ready => {}
@@ -170,7 +170,7 @@ impl Offscreen {
                 }
                 FrameCommand::Texture { clip, command } => (command.vertices.as_slice(), command.descriptor_set, *clip),
                 FrameCommand::Colored { clip, command } => (command.vertices.as_slice(), atlas, *clip),
-                FrameCommand::Application { .. } => return Err("offscreen Vulkan surfaces accept UI commands only".into()),
+                FrameCommand::Block { .. } => return Err("offscreen Vulkan surfaces accept UI commands only".into()),
             };
             if descriptor == output.descriptor.set {
                 return Err("a Vulkan render target cannot sample itself".into());

@@ -131,6 +131,23 @@ native allocations and device-free byte/capacity receipts until the queue's
 completion callback is observed. That callback owns only an atomic completion
 flag; UI-thread resource owners stay in the executor's completion collection.
 
+Vulkan prepares explicit buffers, sampled images, descriptor sets and compatible
+pipelines before target acquisition. Native versions retain a cache-free device
+core and device-free accounting. Submitted blocks remain owned through their
+graphics fence, including presentation failure. Memory and sampler counts are
+checked device-wide, including host images and UI allocations, and are refunded
+only after native destruction. Image format/usage, dimensions and attachment
+limits are checked before native creation. Native preparation errors remain
+fallible rather than invalid Vulkan calls.
+
+Vulkan command buffers belong to waited frame-slot fences. Presentation wait
+semaphores belong to swapchain images; reacquisition orders their reuse, because
+a graphics fence alone does not prove presentation consumed its semaphore.
+See the [Khronos synchronization guidance](https://docs.vulkan.org/guide/latest/swapchain_semaphore_reuse.html).
+This backend retains the conventional device-idle swapchain teardown used by
+unextended Vulkan; it does not enable presentation-completion fences from
+`VK_EXT_swapchain_maintenance1`.
+
 Preparation uploads have their own completion lifetime, including after native
 preparation failure or abandoned target acquisition. WGPU flushes initialization
 on the existing queue and retains typed buffer/image/uniform owners and command

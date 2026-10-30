@@ -142,7 +142,6 @@ impl Gpu {
         let dimensions = Dimensioni::new(info.size.width, info.size.height);
         let frame_info = FrameInfo::try_new(dimensions, Color { r, g, b, a }).map_err(|e| e.to_string())?;
         // Resource compilation/upload finishes before any target acquire or attachment clear.
-        #[cfg(any(feature = "glow", feature = "webgl", feature = "wgpu"))]
         let blocks = prepared
             .batches()
             .iter()
@@ -159,10 +158,7 @@ impl Gpu {
         for (index, batch) in prepared.batches().iter().enumerate() {
             match batch {
                 Batch::View(_block) => {
-                    #[cfg(any(feature = "glow", feature = "webgl", feature = "wgpu"))]
                     frame.execute_block(blocks[index].as_ref().expect("prepared GPU block"), info.size);
-                    #[cfg(not(any(feature = "glow", feature = "webgl", feature = "wgpu")))]
-                    return Err("generic command execution is not integrated for this backend".to_owned());
                 }
 
                 Batch::Atlas(range) => {

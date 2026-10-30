@@ -42,14 +42,9 @@
 //! Vulkan renderer backend used by examples.
 //!
 //! This module implements the `RendererBackend` trait, texture uploads, UI batching, swapchain handling,
-//! and typed native application rendering.
+//! and validated generic graphics command execution.
 
-use std::{
-    collections::HashMap,
-    convert::{Infallible, TryFrom},
-    io::Cursor,
-    mem, ptr,
-};
+use std::{collections::HashMap, convert::TryFrom, io::Cursor, mem, ptr, rc::Rc};
 
 use ash::{khr, util::read_spv, vk, Entry};
 use neocogi_render_core::prelude::*;
@@ -58,112 +53,15 @@ use sdl2::video::Window;
 
 use neocogi_render_support::resource_guard::ResourceGuard;
 
+mod generic;
 mod offscreen;
+pub use generic::PreparedBlock;
 #[cfg(test)]
 mod surface_tests;
 
 type Result<T> = std::result::Result<T, String>;
 type Surface = khr::surface::Instance;
 type Swapchain = khr::swapchain::Device;
-
-/// Result returned by application-owned Vulkan preparation and recording operations.
-pub type VulkanApplicationResult<T> = std::result::Result<T, String>;
-
-/// Vulkan capabilities available while an application renderer prepares one frame.
-///
-/// Preparation happens after the current frame-in-flight fence has completed and after the shared
-/// graphics command buffer has begun recording, but before its render pass begins. The application
-/// may create or resize persistent resources, update host-visible allocations, and record native
-/// transfer, compute, barrier, or other legal pre-pass GPU commands without depending on private
-/// backend structures.
-pub struct VulkanApplicationPrepareContext<'a> {
-    /// Logical device that owns application-created pipelines, buffers, images, and descriptors.
-    pub device: &'a ash::Device,
-    /// Active primary graphics command buffer outside any render pass.
-    pub command_buffer: vk::CommandBuffer,
-    /// Render pass used for ordered UI and application graphics commands in this frame.
-    pub render_pass: vk::RenderPass,
-    /// Swapchain color format required by compatible application pipelines and attachments.
-    pub color_format: vk::Format,
-    /// Depth format attached to the shared render pass.
-    pub depth_format: vk::Format,
-    /// Physical dimensions of the current swapchain target.
-    pub extent: vk::Extent2D,
-    /// Reusable frame-in-flight slot whose fence has completed before preparation begins.
-    pub frame_index: usize,
-    /// Number of independently synchronized frame slots owned by the backend.
-    pub frames_in_flight: usize,
-    /// Physical-device memory capabilities used by application buffer and image allocation.
-    pub memory_properties: vk::PhysicalDeviceMemoryProperties,
-    /// Monotonic generation changed after every successful swapchain/render-pass rebuild.
-    pub swapchain_generation: u64,
-}
-
-/// Vulkan recording capabilities lent to one ordered application command.
-///
-/// The command buffer is already inside the shared graphics render pass. Applications may bind
-/// arbitrary compatible pipelines and native resources, use the supplied UI geometry to establish
-/// viewport/scissor state, and issue direct or indirect graphics commands. Acquisition, render-pass
-/// ownership, synchronization, submission, and presentation remain backend responsibilities.
-pub struct VulkanApplicationRenderContext<'a> {
-    /// Logical device used to record native commands.
-    pub device: &'a ash::Device,
-    /// Active primary graphics command buffer inside the backend-owned render pass.
-    pub command_buffer: vk::CommandBuffer,
-    /// Current physical render-target dimensions.
-    pub extent: vk::Extent2D,
-    /// Logical microui frame width used when scaling UI rectangles to the native target.
-    pub logical_width: u32,
-    /// Logical microui frame height used when scaling UI rectangles to the native target.
-    pub logical_height: u32,
-}
-
-/// Strongly typed application-rendering extension hosted by the Vulkan backend.
-///
-/// The associated command remains concrete inside the frame command enum. An application with
-/// several operations uses its own ordinary enum, matching the same typed construction pattern as
-/// the retained event system instead of erasing payloads through `Any` or downcasting.
-pub trait VulkanApplicationRenderer: 'static {
-    /// Concrete application operation retained until the acquired frame is recorded.
-    type Command: 'static;
-
-    /// Creates and updates application GPU resources required by this frame's commands.
-    ///
-    /// Commands are supplied in relative application order. The default implementation supports
-    /// renderers whose persistent resources need no per-frame preparation.
-    /// Failure is returned by `RendererFrame::finish` and makes the acquired renderer unusable.
-    fn prepare(&mut self, _context: VulkanApplicationPrepareContext<'_>, _commands: &[&Self::Command]) -> VulkanApplicationResult<()> {
-        Ok(())
-    }
-
-    /// Records one application command at its exact painter-order position.
-    ///
-    /// Resource mutation belongs in `prepare`; recording uses an immutable receiver so pipelines
-    /// and buffers remain stable throughout command-buffer construction.
-    /// Failure is returned by `RendererFrame::finish`; acquired synchronization cannot be reused.
-    fn render(
-        &self,
-        context: VulkanApplicationRenderContext<'_>,
-        args: RenderItemArgs,
-        command_index: usize,
-        command: &Self::Command,
-    ) -> VulkanApplicationResult<()>;
-}
-
-impl VulkanApplicationRenderer for () {
-    type Command = Infallible;
-
-    /// Proves exhaustively that the UI-only renderer cannot receive an application command.
-    fn render(
-        &self,
-        _context: VulkanApplicationRenderContext<'_>,
-        _args: RenderItemArgs,
-        _command_index: usize,
-        command: &Self::Command,
-    ) -> VulkanApplicationResult<()> {
-        match *command {}
-    }
-}
 
 const UI_VERT_SPV: &[u8] = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/shaders/ui.vert.spv"));
 const UI_FRAG_SPV: &[u8] = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/shaders/ui.frag.spv"));
@@ -292,19 +190,13 @@ impl AcquiredFrameState {
     }
 }
 
-/// Microui Vulkan backend parameterized by one concrete application renderer.
-///
-/// UI commands and application commands share a typed, ordered frame stream. The application
-/// owns its pipelines and native resources while this backend retains swapchain acquisition,
-/// render-pass ownership, synchronization, submission, and presentation.
-pub struct VulkanRenderer<Application = ()>
-where
-    Application: VulkanApplicationRenderer,
-{
+/// Vulkan presentation and texture ownership with one validated generic graphics executor.
+/// Prepared commands never expose the device, render pass or command buffer to clients.
+pub struct VulkanRenderer {
     /// User textures whose descriptors are compatible with the current UI render resources.
     textures: HashMap<TextureId, VulkanTexture>,
-    /// Concrete application renderer dropped before the logical device that owns its resources.
-    application: Application,
+    /// Generic caches and completion owners drop before context-owned fences and presentation.
+    generic: generic::Executor,
     /// Private UI-only submission state is destroyed before its logical device.
     offscreen: Option<offscreen::Offscreen>,
     /// Native Vulkan state owned exclusively by the backend.
@@ -314,7 +206,7 @@ where
     /// CPU-side UI vertices accumulated during the current microui frame.
     vertices: Vec<Vertex>,
     /// Painter-ordered UI and application operations retained until frame recording.
-    commands: Vec<FrameCommand<Application::Command>>,
+    commands: Vec<FrameCommand>,
     /// End of the UI vertex prefix already represented by a `DrawTo` command.
     current_batch_end: usize,
     /// Color cleared at the beginning of the shared graphics render pass.
@@ -329,10 +221,7 @@ where
     disabled: bool,
 }
 
-impl<Application> VulkanRenderer<Application>
-where
-    Application: VulkanApplicationRenderer,
-{
+impl VulkanRenderer {
     /// Closes the current UI vertex batch so later commands preserve draw ordering.
     fn flush_ui_batch(&mut self) {
         // Custom render jobs must preserve ordering relative to the UI that came before them. The
@@ -344,11 +233,12 @@ where
         }
     }
 
-    /// Creates a Vulkan backend around the application's concrete native renderer.
-    pub fn new_with_application(window: &Window, atlas: ImageSource<'_>, width: u32, height: u32, application: Application) -> Result<Self> {
+    /// Creates native presentation and a private generic executor on the same device.
+    pub fn new(window: &Window, atlas: ImageSource<'_>, width: u32, height: u32) -> Result<Self> {
         let mut context = VulkanContext::new(window, width, height)?;
         context.upload_atlas(atlas)?;
         let swapchain_generation = context.swapchain_generation();
+        let generic = generic::Executor::new(context.core.clone())?;
 
         Ok(Self {
             textures: HashMap::new(),
@@ -357,7 +247,7 @@ where
             last_swapchain_generation: swapchain_generation,
             vertices: Vec::new(),
             commands: Vec::new(),
-            application,
+            generic,
             current_batch_end: 0,
             clear_color: color(0, 0, 0, 255),
             width,
@@ -417,10 +307,15 @@ where
         Ok(())
     }
 
-    /// Queues one typed application operation after closing the preceding UI batch.
-    fn enqueue_application(&mut self, args: RenderItemArgs, command: Application::Command) {
-        self.flush_ui_batch();
-        self.commands.push(FrameCommand::Application { args, command });
+    /// Compiles immutable resources before acquiring or clearing a presentation target.
+    pub fn prepare_block(&mut self, block: &neocogi_render_gpu::record::Block, offscreen: bool) -> Result<PreparedBlock> {
+        if self.disabled || self.context.is_unusable() || self.generic.unusable() {
+            return Err("Vulkan renderer is unavailable after a native frame failure".into());
+        }
+        if offscreen {
+            return Err("offscreen Vulkan surfaces accept UI commands only".into());
+        }
+        self.generic.prepare(block, self.context.render_pass, self.context.signature())
     }
 
     /// Converts a microui clear color into the Vulkan clear value used for the render pass.
@@ -434,17 +329,7 @@ where
     }
 }
 
-impl VulkanRenderer<()> {
-    /// Creates a UI-only Vulkan backend with an uninhabited application command type.
-    pub fn new(window: &Window, atlas: ImageSource<'_>, width: u32, height: u32) -> Result<Self> {
-        Self::new_with_application(window, atlas, width, height, ())
-    }
-}
-
-impl<Application> VulkanRenderer<Application>
-where
-    Application: VulkanApplicationRenderer,
-{
+impl VulkanRenderer {
     /// Starts CPU-side batching and synchronizes texture descriptors without acquiring presentation.
     fn begin(&mut self, width: i32, height: i32, clr: Color) -> Result<()> {
         // `begin` only resets CPU-side batching state and keeps the GPU-side context synchronized
@@ -456,9 +341,10 @@ where
         self.vertices.clear();
         self.commands.clear();
         self.current_batch_end = 0;
-        if self.disabled {
+        if self.disabled || self.generic.unusable() {
             return Err(String::from("Vulkan renderer is disabled after an unrecoverable frame failure"));
         }
+        self.generic.collect()?;
 
         self.handle_swapchain_updates()?;
         Ok(())
@@ -529,7 +415,7 @@ where
             self.width,
             self.height,
             &mut commands,
-            &mut self.application,
+            &mut self.generic,
         );
         // draw_frame latches post-acquire failure; preserve that state before returning the error.
         self.disabled |= self.context.is_unusable();
@@ -570,9 +456,7 @@ where
         if let Some(mut texture) = self.textures.remove(&id) {
             // Texture destruction is rare in the examples; a simple idle boundary guarantees no
             // submitted frame still samples the image before its view/memory are released.
-            unsafe {
-                self.context.device.device_wait_idle().ok();
-            }
+            self.context.core.wait_idle();
             texture.destroy(&self.context);
         }
     }
@@ -605,17 +489,12 @@ where
     }
 }
 
-impl<Application> Drop for VulkanRenderer<Application>
-where
-    Application: VulkanApplicationRenderer,
-{
+impl Drop for VulkanRenderer {
     /// Destroys user images while the context/device they depend on are still alive.
     fn drop(&mut self) {
         // `VulkanContext::drop` also waits, but renderer-owned images must be released before the
         // context field itself is dropped. Establish the idle boundary here first.
-        unsafe {
-            self.context.device.device_wait_idle().ok();
-        }
+        self.context.core.wait_idle();
         for (_, mut texture) in self.textures.drain() {
             texture.destroy(&self.context);
         }
@@ -623,36 +502,28 @@ where
 }
 
 #[must_use = "call finish to submit the Vulkan frame and observe errors"]
-/// Acquired Vulkan frame that accepts UI operations and typed application commands.
-pub struct VulkanFrame<'a, Application = ()>
-where
-    Application: VulkanApplicationRenderer,
-{
-    /// Backend borrowed for the complete acquire-to-present transaction.
-    backend: &'a mut VulkanRenderer<Application>,
-    /// Explicit target consumed exactly once; a texture frame owns no native acquisition.
+/// Acquired Vulkan frame accepts only validated resources and bounded commands.
+pub struct VulkanFrame<'a> {
+    /// Backend is borrowed for the complete acquire-to-present transaction.
+    backend: &'a mut VulkanRenderer,
+    /// Explicit target is consumed exactly once; texture frames own no native acquisition.
     target: Option<FrameTarget>,
 }
 
-impl<Application> VulkanFrame<'_, Application>
-where
-    Application: VulkanApplicationRenderer,
-{
-    /// Adds pre-transformed colored UI vertices using microui's authoritative final clip.
+impl VulkanFrame<'_> {
+    /// Adds pre-transformed colored UI vertices using the authoritative final clip.
     pub fn enqueue_colored_vertices(&mut self, args: RenderItemArgs, vertices: Vec<Vertex>) {
         self.backend.enqueue_colored_vertices(args, vertices);
     }
 
-    /// Adds one concrete application operation at the current painter-order position.
-    pub fn enqueue_application(&mut self, args: RenderItemArgs, command: Application::Command) {
-        self.backend.enqueue_application(args, command);
+    /// Preserves the painter position of a block prepared before target acquisition.
+    pub fn execute_block(&mut self, block: &PreparedBlock, logical: neocogi_render_gpu::abi::Size) {
+        self.backend.flush_ui_batch();
+        self.backend.commands.push(FrameCommand::Block { block: block.clone(), logical });
     }
 }
 
-impl<Application> RendererFrame for VulkanFrame<'_, Application>
-where
-    Application: VulkanApplicationRenderer,
-{
+impl RendererFrame for VulkanFrame<'_> {
     /// Completes the acquired transaction; Drop still guards against any unwinding escape.
     fn finish(mut self) -> std::result::Result<(), FrameError> {
         let target = self.target.take().expect("an active Vulkan frame owns its explicit target");
@@ -680,10 +551,7 @@ where
     }
 }
 
-impl<Application> Drop for VulkanFrame<'_, Application>
-where
-    Application: VulkanApplicationRenderer,
-{
+impl Drop for VulkanFrame<'_> {
     fn drop(&mut self) {
         // Success has already restored Ready. Any other escape, including a panic after taking
         // the token in finish, must forbid reuse of the potentially signaled acquire semaphore.
@@ -695,14 +563,8 @@ where
     }
 }
 
-impl<Application> RendererBackend for VulkanRenderer<Application>
-where
-    Application: VulkanApplicationRenderer,
-{
-    type Frame<'a>
-        = VulkanFrame<'a, Application>
-    where
-        Application: 'a;
+impl RendererBackend for VulkanRenderer {
+    type Frame<'a> = VulkanFrame<'a>;
 
     fn replace_atlas(&mut self, atlas: ImageSource<'_>) -> std::result::Result<(), AtlasUploadError> {
         // Keep the old GPU image until the candidate transfer and descriptor update succeed.
@@ -801,10 +663,7 @@ where
     }
 }
 
-impl<Application> VulkanRenderer<Application>
-where
-    Application: VulkanApplicationRenderer,
-{
+impl VulkanRenderer {
     /// Queues pre-transformed colored vertices after closing the preceding UI batch.
     pub fn enqueue_colored_vertices(&mut self, args: RenderItemArgs, vertices: Vec<Vertex>) {
         if self.disabled {
@@ -874,13 +733,22 @@ impl TextureDescriptor {
     }
 }
 
+/// Host-owned buffer uses the same counted allocation owner as generic graphics.
 struct Buffer {
+    /// Destroyed before taking the optional memory owner during explicit aggregate teardown.
     buffer: vk::Buffer,
-    memory: vk::DeviceMemory,
+    /// Present while live; taken exactly once after native buffer destruction.
+    memory: Option<generic::Memory>,
+    /// Bounds all mapped writes and staging ranges independently of allocation padding.
     size: vk::DeviceSize,
 }
 
 impl Buffer {
+    /// A live buffer always owns exactly one counted native allocation.
+    fn memory(&self) -> vk::DeviceMemory {
+        self.memory.as_ref().expect("live buffer owns memory").raw
+    }
+
     /// Arms destruction for a complete buffer/memory pair until a parent owner commits it.
     fn guarded(self, device: &ash::Device) -> ResourceGuard<Self, impl FnOnce(Self) + use<>> {
         let device = device.clone();
@@ -893,12 +761,9 @@ impl Buffer {
             if self.buffer != vk::Buffer::null() {
                 device.destroy_buffer(self.buffer, None);
             }
-            if self.memory != vk::DeviceMemory::null() {
-                device.free_memory(self.memory, None);
-            }
         }
         self.buffer = vk::Buffer::null();
-        self.memory = vk::DeviceMemory::null();
+        self.memory.take();
         self.size = 0;
     }
 }
@@ -915,7 +780,7 @@ impl MappedBuffer {
         let buffer = buffer.guarded(device);
         let ptr = unsafe {
             device
-                .map_memory(buffer.get().memory, 0, buffer.get().size, vk::MemoryMapFlags::empty())
+                .map_memory(buffer.get().memory(), 0, buffer.get().size, vk::MemoryMapFlags::empty())
                 .map_err(|err| format!("map_memory (staging) failed: {err:?}"))?
         } as *mut u8;
         Ok(Self { buffer: buffer.into_inner(), ptr })
@@ -948,7 +813,7 @@ impl MappedBuffer {
     fn destroy(&mut self, device: &ash::Device) {
         unsafe {
             if !self.ptr.is_null() {
-                device.unmap_memory(self.buffer.memory);
+                device.unmap_memory(self.buffer.memory());
             }
         }
         self.ptr = ptr::null_mut();
@@ -961,7 +826,7 @@ struct ImageResource {
     /// Device image destroyed before its backing allocation is freed.
     image: vk::Image,
     /// Allocation bound to `image` for its entire lifetime.
-    memory: vk::DeviceMemory,
+    memory: Option<generic::Memory>,
     /// View used by descriptors or framebuffer attachments.
     view: vk::ImageView,
     /// Pixel extent used when recording uploads.
@@ -983,12 +848,8 @@ macro_rules! vk_trace {
     };
 }
 
-/// One painter-ordered operation retained until the acquired frame is recorded.
-///
-/// Backend-owned variants remain concrete so their upload requirements and recording behavior are
-/// visible to the compiler. `Application` embeds the renderer's associated command directly; no
-/// boxed callbacks, `Any` payloads, or runtime type recovery are involved.
-enum FrameCommand<ApplicationCommand> {
+/// Painter order is explicit; client payloads are sealed prepared graphics blocks.
+enum FrameCommand {
     /// Draws UI vertices from the preceding cursor through this exclusive end index.
     DrawTo(usize),
     /// Draws a backend-owned sampled texture through the UI pipeline.
@@ -1005,12 +866,12 @@ enum FrameCommand<ApplicationCommand> {
         /// Concrete colored-vertex payload and atlas descriptor binding.
         command: ColoredVerticesCommand,
     },
-    /// Delegates one application-owned command to the concrete native renderer.
-    Application {
-        /// Standard custom-render geometry and clip information from neocogi.ui.
-        args: RenderItemArgs,
-        /// Application operation whose type is fixed by the backend generic parameter.
-        command: ApplicationCommand,
+    /// Replays a validated block with an independent committed logical coordinate space.
+    Block {
+        /// Native resources and completion receipts are retained independently of public owners.
+        block: PreparedBlock,
+        /// Logical frame dimensions used for checked physical root/clip conversion.
+        logical: neocogi_render_gpu::abi::Size,
     },
 }
 
@@ -1108,12 +969,9 @@ impl ImageResource {
             if self.image != vk::Image::null() {
                 device.destroy_image(self.image, None);
             }
-            if self.memory != vk::DeviceMemory::null() {
-                device.free_memory(self.memory, None);
-            }
         }
         self.image = vk::Image::null();
-        self.memory = vk::DeviceMemory::null();
+        self.memory.take();
         self.view = vk::ImageView::null();
     }
 }
@@ -1149,7 +1007,8 @@ struct UiResources {
     descriptor_set_layout: vk::DescriptorSetLayout,
     pipeline_layout: vk::PipelineLayout,
     pipeline: vk::Pipeline,
-    sampler: vk::Sampler,
+    /// Counted host sampler is taken exactly once during explicit aggregate teardown.
+    sampler: Option<generic::NativeSampler>,
     descriptor_pool: vk::DescriptorPool,
     descriptor_set: vk::DescriptorSet,
     vertex_buffer: Option<Buffer>,              // GPU-local
@@ -1192,7 +1051,7 @@ impl UiResources {
         let pipeline = ResourceGuard::new(Self::create_pipeline(device, ctx.render_pass, *pipeline_layout.get())?, |pipeline| unsafe {
             device.destroy_pipeline(pipeline, None)
         });
-        let sampler = ResourceGuard::new(Self::create_sampler(device)?, |sampler| unsafe { device.destroy_sampler(sampler, None) });
+        let sampler = Self::create_sampler(&ctx.core)?;
         let descriptor_pool = ResourceGuard::new(Self::create_descriptor_pool(device)?, |pool| unsafe {
             device.destroy_descriptor_pool(pool, None)
         });
@@ -1208,7 +1067,7 @@ impl UiResources {
             descriptor_set_layout: descriptor_set_layout.into_inner(),
             pipeline_layout: pipeline_layout.into_inner(),
             pipeline: pipeline.into_inner(),
-            sampler: sampler.into_inner(),
+            sampler: Some(sampler),
             descriptor_pool: descriptor_pool.into_inner(),
             descriptor_set,
             vertex_buffer: None,
@@ -1243,9 +1102,10 @@ impl UiResources {
         if let Some(mut atlas) = self.atlas.take() {
             atlas.destroy(device);
         }
+        self.sampler.take();
         unsafe {
             device.destroy_descriptor_pool(self.descriptor_pool, None);
-            device.destroy_sampler(self.sampler, None);
+
             device.destroy_pipeline(self.pipeline, None);
             device.destroy_pipeline_layout(self.pipeline_layout, None);
             device.destroy_descriptor_set_layout(self.descriptor_set_layout, None);
@@ -1378,7 +1238,7 @@ impl UiResources {
         Ok(pipeline)
     }
 
-    fn create_sampler(device: &ash::Device) -> Result<vk::Sampler> {
+    fn create_sampler(core: &Rc<generic::Core>) -> Result<generic::NativeSampler> {
         let info = vk::SamplerCreateInfo::default()
             .mag_filter(vk::Filter::NEAREST)
             .min_filter(vk::Filter::NEAREST)
@@ -1386,7 +1246,7 @@ impl UiResources {
             .address_mode_v(vk::SamplerAddressMode::CLAMP_TO_EDGE)
             .address_mode_w(vk::SamplerAddressMode::CLAMP_TO_EDGE)
             .border_color(vk::BorderColor::INT_OPAQUE_WHITE);
-        unsafe { device.create_sampler(&info, None) }.map_err(|err| format!("create_sampler failed: {err:?}"))
+        core.sampler(&info)
     }
 
     fn create_descriptor_pool(device: &ash::Device) -> Result<vk::DescriptorPool> {
@@ -1459,7 +1319,7 @@ impl UiResources {
 
     fn update_descriptor(&self, device: &ash::Device, descriptor_set: vk::DescriptorSet, atlas: &ImageResource) {
         let image_info = vk::DescriptorImageInfo::default()
-            .sampler(self.sampler)
+            .sampler(self.sampler.as_ref().expect("live UI sampler").raw)
             .image_view(atlas.view)
             .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
         let image_infos = [image_info];
@@ -1761,8 +1621,8 @@ impl Drop for VulkanBootstrap {
 pub(crate) struct VulkanContext {
     // `VulkanContext` owns the actual Vulkan objects and implements the frame graph used by the
     // example renderer: acquire -> upload/record -> submit -> present -> recreate on demand.
-    /// Keeps Vulkan entry points available until explicit GPU destruction in `Drop` completes.
-    _entry: Entry,
+    /// Cache-free native owner can outlive presentation through escaped prepared blocks.
+    core: Rc<generic::Core>,
     instance: ash::Instance,
     surface_loader: Surface,
     surface: vk::SurfaceKHR,
@@ -1786,6 +1646,7 @@ pub(crate) struct VulkanContext {
     command_buffers: Vec<vk::CommandBuffer>,
     transfer_command_buffers: Vec<vk::CommandBuffer>,
     image_available_semaphores: Vec<vk::Semaphore>,
+    /// One per swapchain image: a graphics fence cannot prove consumption by presentation.
     render_finished_semaphores: Vec<vk::Semaphore>,
     transfer_complete_semaphores: Vec<vk::Semaphore>,
     in_flight_fences: Vec<vk::Fence>,
@@ -1807,6 +1668,14 @@ pub(crate) struct VulkanContext {
 }
 
 impl VulkanContext {
+    /// Pipeline compatibility is independent of swapchain extent and descriptor generations.
+    fn signature(&self) -> generic::Signature {
+        generic::Signature {
+            color: self.swapchain_format,
+            depth: Some(self.depth_format),
+        }
+    }
+
     /// Creates the Vulkan instance/device state and the first set of swapchain-dependent resources.
     fn new(window: &Window, width: u32, height: u32) -> Result<Self> {
         // Retain before creating GPU locals: constructor failures unwind those before this owner,
@@ -1862,9 +1731,10 @@ impl VulkanContext {
         let depth_format = Self::find_depth_format(bootstrap.instance(), physical_device)?;
         let (instance, surface_loader, surface, device) = bootstrap.commit();
         let swapchain_loader = Swapchain::new(&instance, &device);
+        let core = generic::Core::new(entry, instance.clone(), physical_device, device.clone(), queue_indices.graphics_family);
 
         let mut ctx = Self {
-            _entry: entry,
+            core,
             instance,
             surface_loader,
             surface,
@@ -2007,6 +1877,7 @@ impl VulkanContext {
         // objects like the device, queues, and command pool stay alive across this boundary.
         self.cleanup_swapchain();
         self.create_swapchain(width, height)?;
+        self.create_present_semaphores()?;
         self.create_image_views()?;
         self.create_depth_images()?;
         self.render_pass = self.create_render_pass()?;
@@ -2058,6 +1929,8 @@ impl VulkanContext {
         let surface_format = Self::choose_surface_format(&formats);
         let present_mode = Self::choose_present_mode(&present_modes);
         let extent = Self::choose_extent(&surface_caps, width, height);
+        self.core
+            .image_extent(surface_format.format, extent.width, extent.height, vk::ImageUsageFlags::COLOR_ATTACHMENT)?;
         let mut image_count = (surface_caps.min_image_count + 1).max(2);
         if surface_caps.max_image_count > 0 {
             image_count = image_count.min(surface_caps.max_image_count);
@@ -2223,12 +2096,12 @@ impl VulkanContext {
         unsafe { self.device.create_command_pool(&pool_info, None) }.map_err(|err| format!("create_command_pool failed: {err:?}"))
     }
 
-    /// Allocates one graphics command buffer per swapchain image.
+    /// Each reusable graphics command buffer belongs to its waited frame-slot fence.
     fn allocate_command_buffers(&mut self) -> Result<()> {
         let alloc_info = vk::CommandBufferAllocateInfo::default()
             .command_pool(self.command_pool)
             .level(vk::CommandBufferLevel::PRIMARY)
-            .command_buffer_count(self.framebuffers.len() as u32);
+            .command_buffer_count(self.max_frames_in_flight as u32);
         // Allocate replacement buffers before releasing the currently valid set.
         let buffers = unsafe { self.device.allocate_command_buffers(&alloc_info) }.map_err(|err| format!("allocate_command_buffers failed: {err:?}"))?;
         let previous = std::mem::replace(&mut self.command_buffers, buffers);
@@ -2255,7 +2128,20 @@ impl VulkanContext {
         Ok(())
     }
 
-    /// Creates per-frame semaphores and fences used by acquire, transfer, and present.
+    /// Swapchain image ownership, rather than frame-slot graphics completion, protects present waits.
+    fn create_present_semaphores(&mut self) -> Result<()> {
+        let mut candidates = Vec::new();
+        candidates.try_reserve_exact(self.swapchain_images.len()).map_err(|error| error.to_string())?;
+        for _ in &self.swapchain_images {
+            let raw = unsafe { self.device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None) }
+                .map_err(|error| format!("create presentation semaphore: {error:?}"))?;
+            candidates.push(ResourceGuard::new(raw, |raw| unsafe { self.device.destroy_semaphore(raw, None) }));
+        }
+        self.render_finished_semaphores = candidates.into_iter().map(ResourceGuard::into_inner).collect();
+        Ok(())
+    }
+
+    /// Per-frame fences protect command buffers, acquire waits and transfer completion.
     fn create_sync_objects(&mut self) -> Result<()> {
         let semaphore_info = vk::SemaphoreCreateInfo::default();
         let fence_info = vk::FenceCreateInfo::default().flags(vk::FenceCreateFlags::SIGNALED);
@@ -2263,7 +2149,6 @@ impl VulkanContext {
         // Build a complete replacement set under guards. A failure in any frame slot destroys all
         // semaphores/fences created for earlier slots and preserves the installed set.
         let mut image_available = Vec::with_capacity(self.max_frames_in_flight);
-        let mut render_finished = Vec::with_capacity(self.max_frames_in_flight);
         let mut transfer_complete = Vec::with_capacity(self.max_frames_in_flight);
         let mut fences = Vec::with_capacity(self.max_frames_in_flight);
 
@@ -2274,11 +2159,6 @@ impl VulkanContext {
                     .create_semaphore(&semaphore_info, None)
                     .map_err(|err| format!("create_semaphore failed: {err:?}"))?;
                 let image_available_guard = ResourceGuard::new(image_available_handle, |semaphore| self.device.destroy_semaphore(semaphore, None));
-                let render_finished_handle = self
-                    .device
-                    .create_semaphore(&semaphore_info, None)
-                    .map_err(|err| format!("create_semaphore failed: {err:?}"))?;
-                let render_finished_guard = ResourceGuard::new(render_finished_handle, |semaphore| self.device.destroy_semaphore(semaphore, None));
                 let transfer_complete_handle = self
                     .device
                     .create_semaphore(&semaphore_info, None)
@@ -2291,20 +2171,15 @@ impl VulkanContext {
                 let fence_guard = ResourceGuard::new(fence_handle, |fence| self.device.destroy_fence(fence, None));
 
                 image_available.push(image_available_guard);
-                render_finished.push(render_finished_guard);
                 transfer_complete.push(transfer_complete_guard);
                 fences.push(fence_guard);
             }
         }
 
         let image_available = image_available.into_iter().map(|guard| guard.into_inner()).collect();
-        let render_finished = render_finished.into_iter().map(|guard| guard.into_inner()).collect();
         let transfer_complete = transfer_complete.into_iter().map(|guard| guard.into_inner()).collect();
         let fences = fences.into_iter().map(|guard| guard.into_inner()).collect();
         for semaphore in std::mem::replace(&mut self.image_available_semaphores, image_available) {
-            unsafe { self.device.destroy_semaphore(semaphore, None) };
-        }
-        for semaphore in std::mem::replace(&mut self.render_finished_semaphores, render_finished) {
             unsafe { self.device.destroy_semaphore(semaphore, None) };
         }
         for semaphore in std::mem::replace(&mut self.transfer_complete_semaphores, transfer_complete) {
@@ -2320,6 +2195,9 @@ impl VulkanContext {
     /// Destroys resources that depend on the current swapchain and framebuffer set.
     fn cleanup_swapchain(&mut self) {
         unsafe {
+            for semaphore in self.render_finished_semaphores.drain(..) {
+                self.device.destroy_semaphore(semaphore, None);
+            }
             // Only swapchain-dependent resources are destroyed here. The permanent command pool,
             // device, queues, and synchronization objects live until `Drop`.
             for &framebuffer in &self.framebuffers {
@@ -2391,23 +2269,20 @@ impl VulkanContext {
 
     /// Executes one complete Vulkan frame from an acquired image through submit and present.
     #[allow(clippy::too_many_arguments)] // Frame recording keeps Vulkan state explicit at the call boundary.
-    fn draw_frame<Application>(
+    fn draw_frame(
         &mut self,
         acquired: AcquiredVulkanFrame,
         clear_value: vk::ClearValue,
         vertices: &[Vertex],
         width: u32,
         height: u32,
-        commands: &mut Vec<FrameCommand<Application::Command>>,
-        application: &mut Application,
-    ) -> Result<()>
-    where
-        Application: VulkanApplicationRenderer,
-    {
+        commands: &mut Vec<FrameCommand>,
+        generic: &mut generic::Executor,
+    ) -> Result<()> {
         // Every exit after successful acquisition passes through the lifecycle commit below. Any
         // error permanently latches the context before the caller can attempt another frame with a
         // signaled acquire semaphore, an unpresented image, or an unsignaled unsubmitted fence.
-        let result = self.draw_acquired_frame(acquired, clear_value, vertices, width, height, commands, application);
+        let result = self.draw_acquired_frame(acquired, clear_value, vertices, width, height, commands, generic);
 
         // Success proves graphics submission and presentation consumed the acquired resources.
         // Every error latches Fatal, including record, transfer, fence-reset, submit, present, and
@@ -2417,19 +2292,16 @@ impl VulkanContext {
 
     /// Performs the fallible native work for one already-acquired swapchain image.
     #[allow(clippy::too_many_arguments)] // Frame recording keeps Vulkan state explicit at the call boundary.
-    fn draw_acquired_frame<Application>(
+    fn draw_acquired_frame(
         &mut self,
         acquired: AcquiredVulkanFrame,
         clear_value: vk::ClearValue,
         vertices: &[Vertex],
         width: u32,
         height: u32,
-        commands: &mut Vec<FrameCommand<Application::Command>>,
-        application: &mut Application,
-    ) -> Result<()>
-    where
-        Application: VulkanApplicationRenderer,
-    {
+        commands: &mut Vec<FrameCommand>,
+        generic: &mut generic::Executor,
+    ) -> Result<()> {
         if self.device_lost {
             return Err("device is lost; VulkanContext is disabled".into());
         }
@@ -2438,6 +2310,15 @@ impl VulkanContext {
         let AcquiredVulkanFrame { frame, image_index, suboptimal } = acquired;
         debug_assert_eq!(frame, self.current_frame);
         let fence = self.in_flight_fences[frame];
+
+        generic.collect()?;
+        let mut submitted = Vec::new();
+        submitted.try_reserve_exact(commands.len()).map_err(|error| error.to_string())?;
+        for command in commands.iter() {
+            if let FrameCommand::Block { block, .. } = command {
+                submitted.push(block.clone());
+            }
+        }
 
         // Reset per-frame upload cursors only after the frame fence signaled. Retired GPU buffers
         // are likewise only reclaimed once this frame slot is no longer in flight.
@@ -2448,8 +2329,8 @@ impl VulkanContext {
         let mut swapchain_needs_recreate = suboptimal;
 
         // UI drawing and custom rendering share one graphics command buffer per acquired image.
-        let command_buffer = self.command_buffers[image_index as usize];
-        self.record_command_buffer(command_buffer, image_index, clear_value, vertices, width, height, frame, commands, application)?;
+        let command_buffer = self.command_buffers[frame];
+        self.record_command_buffer(command_buffer, image_index, clear_value, vertices, width, height, commands, generic)?;
         let transfer_semaphore = self.submit_transfer_commands()?;
 
         let mut wait_semaphores = vec![self.image_available_semaphores[frame]];
@@ -2458,7 +2339,7 @@ impl VulkanContext {
             wait_semaphores.push(semaphore);
             wait_stages.push(vk::PipelineStageFlags::VERTEX_INPUT);
         }
-        let signal_semaphores = [self.render_finished_semaphores[frame]];
+        let signal_semaphores = [self.render_finished_semaphores[image_index as usize]];
 
         let submit_info = vk::SubmitInfo::default()
             .wait_semaphores(&wait_semaphores)
@@ -2477,6 +2358,9 @@ impl VulkanContext {
                 .queue_submit(self.graphics_queue, &submit_infos, fence)
                 .map_err(|err| self.handle_vk_error("queue_submit", err))?;
         }
+
+        // Submission owns these snapshots even if presentation or rebuild subsequently fails.
+        generic.submitted(fence, submitted);
 
         let swapchains = [self.swapchain];
         let image_indices = [image_index];
@@ -2515,7 +2399,7 @@ impl VulkanContext {
     }
 
     /// Estimates this frame's upload budget and grows GPU/staging buffers before recording begins.
-    fn preflight_frame_resources<ApplicationCommand>(&mut self, vertices: &[Vertex], commands: &[FrameCommand<ApplicationCommand>]) -> Result<()> {
+    fn preflight_frame_resources(&mut self, vertices: &[Vertex], commands: &[FrameCommand]) -> Result<()> {
         // Pre-compute the worst-case upload budget for this frame before any command buffer
         // recording begins. That keeps the actual record path free of buffer growth decisions.
         let mut ui_vertices = 0usize;
@@ -2535,7 +2419,7 @@ impl VulkanContext {
                 FrameCommand::Colored { command, .. } => {
                     ui_vertices = ui_vertices.saturating_add(command.vertices.len());
                 }
-                FrameCommand::Application { .. } => {}
+                FrameCommand::Block { .. } => {}
             }
         }
         if cursor < vertices.len() {
@@ -2560,7 +2444,7 @@ impl VulkanContext {
 
     /// Records the graphics command buffer by replaying queued UI and custom commands in order.
     #[allow(clippy::too_many_arguments)] // Command recording keeps Vulkan state explicit at the call boundary.
-    fn record_command_buffer<Application>(
+    fn record_command_buffer(
         &mut self,
         command_buffer: vk::CommandBuffer,
         image_index: u32,
@@ -2568,50 +2452,23 @@ impl VulkanContext {
         vertices: &[Vertex],
         width: u32,
         height: u32,
-        frame_slot: usize,
-        commands: &mut Vec<FrameCommand<Application::Command>>,
-        application: &mut Application,
-    ) -> Result<()>
-    where
-        Application: VulkanApplicationRenderer,
-    {
+        commands: &mut Vec<FrameCommand>,
+        generic: &mut generic::Executor,
+    ) -> Result<()> {
         // GPU command recording is intentionally linear: begin render pass, replay the queued UI /
         // custom jobs in order, then end the pass. The `commands` vec is drained here so the
         // higher-level renderer can reuse its allocation next frame.
+        for command in commands.iter() {
+            if let FrameCommand::Block { block, .. } = command {
+                generic.admit(block, self.signature())?;
+            }
+        }
         let begin_info = vk::CommandBufferBeginInfo::default();
         unsafe {
             self.device
                 .begin_command_buffer(command_buffer, &begin_info)
                 .map_err(|err| format!("begin_command_buffer failed: {err:?}"))?;
         }
-
-        // Application resources are prepared after this slot's fence has completed and while the
-        // primary graphics command buffer is active outside a render pass. In addition to ordinary
-        // CPU allocation and host writes, the application may record native transfer, compute, and
-        // barrier commands that must execute before its ordered graphics operations.
-        let application_commands: Vec<&Application::Command> = commands
-            .iter()
-            .filter_map(|command| match command {
-                FrameCommand::Application { command, .. } => Some(command),
-                _ => None,
-            })
-            .collect();
-        let memory_properties = unsafe { self.instance.get_physical_device_memory_properties(self.physical_device) };
-        application.prepare(
-            VulkanApplicationPrepareContext {
-                device: &self.device,
-                command_buffer,
-                render_pass: self.render_pass,
-                color_format: self.swapchain_format,
-                depth_format: self.depth_format,
-                extent: self.extent,
-                frame_index: frame_slot,
-                frames_in_flight: self.max_frames_in_flight,
-                memory_properties,
-                swapchain_generation: self.swapchain_generation,
-            },
-            &application_commands,
-        )?;
 
         let depth_clear = vk::ClearValue {
             depth_stencil: vk::ClearDepthStencilValue { depth: 1.0, stencil: 0 },
@@ -2634,7 +2491,6 @@ impl VulkanContext {
         let frame_width = width.max(1);
         let frame_height = height.max(1);
         let mut cursor = 0;
-        let mut application_index = 0usize;
         // UI resources move out temporarily because their record helpers also borrow the context.
         // Every branch restores that aggregate before calling another backend helper, keeping one
         // linear and statically dispatched replay path.
@@ -2666,20 +2522,17 @@ impl VulkanContext {
                         self.draw_custom_vertices(command_buffer, &command.vertices, clip, command.descriptor_set)?;
                         ui = self.ui.take();
                     }
-                    FrameCommand::Application { args, command } => {
-                        application.render(
-                            VulkanApplicationRenderContext {
-                                device: &self.device,
-                                command_buffer,
-                                extent: self.extent,
-                                logical_width: frame_width,
-                                logical_height: frame_height,
+                    FrameCommand::Block { block, logical } => {
+                        generic.record(
+                            command_buffer,
+                            &block,
+                            logical,
+                            neocogi_render_gpu::abi::Size {
+                                width: self.extent.width as i32,
+                                height: self.extent.height as i32,
                             },
-                            args,
-                            application_index,
-                            &command,
+                            self.signature(),
                         )?;
-                        application_index += 1;
                     }
                 }
             }
@@ -2855,14 +2708,11 @@ impl VulkanContext {
         let alloc_info = vk::MemoryAllocateInfo::default()
             .allocation_size(requirements.size)
             .memory_type_index(memory_type);
-        let memory = ResourceGuard::new(
-            unsafe { self.device.allocate_memory(&alloc_info, None) }.map_err(|err| format!("allocate_memory failed: {err:?}"))?,
-            |memory| unsafe { self.device.free_memory(memory, None) },
-        );
-        unsafe { self.device.bind_buffer_memory(*buffer.get(), *memory.get(), 0) }.map_err(|err| format!("bind_buffer_memory failed: {err:?}"))?;
+        let memory = self.core.allocate(&alloc_info)?;
+        unsafe { self.device.bind_buffer_memory(*buffer.get(), memory.raw, 0) }.map_err(|err| format!("bind_buffer_memory failed: {err:?}"))?;
         Ok(Buffer {
             buffer: buffer.into_inner(),
-            memory: memory.into_inner(),
+            memory: Some(memory),
             size,
         })
     }
@@ -2880,11 +2730,11 @@ impl VulkanContext {
         unsafe {
             let mapped = self
                 .device
-                .map_memory(buffer.memory, offset, data.len() as u64, vk::MemoryMapFlags::empty())
+                .map_memory(buffer.memory(), offset, data.len() as u64, vk::MemoryMapFlags::empty())
                 .map_err(|err| format!("map_memory failed: {err:?}"))?;
             // Treat a successful mapping as a scoped resource as well: future edits can add a
             // fallible validation/copy step without accidentally skipping `unmap_memory`.
-            let mapped = ResourceGuard::new(mapped, |_| self.device.unmap_memory(buffer.memory));
+            let mapped = ResourceGuard::new(mapped, |_| self.device.unmap_memory(buffer.memory()));
             ptr::copy_nonoverlapping(data.as_ptr(), *mapped.get() as *mut u8, data.len());
         }
         Ok(())
@@ -2897,13 +2747,8 @@ impl VulkanContext {
 
     /// Shares guarded RGBA image ownership while keeping render and upload usage explicit.
     fn create_image_with_usage(&self, width: u32, height: u32, usage: vk::ImageUsageFlags) -> Result<ImageResource> {
-        let limit = unsafe { self.instance.get_physical_device_properties(self.physical_device) }
-            .limits
-            .max_image_dimension2_d;
-        if width == 0 || height == 0 || width > limit || height > limit {
-            return Err(format!("Vulkan image {width}x{height} exceeds device dimension limit {limit}"));
-        }
         let format = vk::Format::R8G8B8A8_UNORM;
+        self.core.image_extent(format, width, height, usage)?;
         let extent3d = vk::Extent3D { width, height, depth: 1 };
         let image_info = vk::ImageCreateInfo::default()
             .image_type(vk::ImageType::TYPE_2D)
@@ -2927,11 +2772,8 @@ impl VulkanContext {
         let alloc = vk::MemoryAllocateInfo::default()
             .allocation_size(requirements.size)
             .memory_type_index(memory_type);
-        let memory = ResourceGuard::new(
-            unsafe { self.device.allocate_memory(&alloc, None) }.map_err(|err| format!("allocate_memory failed: {err:?}"))?,
-            |memory| unsafe { self.device.free_memory(memory, None) },
-        );
-        unsafe { self.device.bind_image_memory(*image.get(), *memory.get(), 0) }.map_err(|err| format!("bind_image_memory failed: {err:?}"))?;
+        let memory = self.core.allocate(&alloc)?;
+        unsafe { self.device.bind_image_memory(*image.get(), memory.raw, 0) }.map_err(|err| format!("bind_image_memory failed: {err:?}"))?;
 
         let view_info = vk::ImageViewCreateInfo::default()
             .image(*image.get())
@@ -2950,7 +2792,7 @@ impl VulkanContext {
 
         Ok(ImageResource {
             image: image.into_inner(),
-            memory: memory.into_inner(),
+            memory: Some(memory),
             view: view.into_inner(),
             extent: vk::Extent2D { width, height },
             layout: vk::ImageLayout::UNDEFINED,
@@ -2974,6 +2816,8 @@ impl VulkanContext {
     /// Creates one depth attachment image and transitions it into attachment layout.
     fn create_depth_attachment(&self, extent: vk::Extent2D) -> Result<ImageResource> {
         let format = self.depth_format;
+        self.core
+            .image_extent(format, extent.width, extent.height, vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT)?;
         let image_info = vk::ImageCreateInfo::default()
             .image_type(vk::ImageType::TYPE_2D)
             .format(format)
@@ -2998,11 +2842,8 @@ impl VulkanContext {
         let alloc = vk::MemoryAllocateInfo::default()
             .allocation_size(requirements.size)
             .memory_type_index(memory_type);
-        let memory = ResourceGuard::new(
-            unsafe { self.device.allocate_memory(&alloc, None) }.map_err(|err| format!("allocate_memory failed: {err:?}"))?,
-            |memory| unsafe { self.device.free_memory(memory, None) },
-        );
-        unsafe { self.device.bind_image_memory(*image.get(), *memory.get(), 0) }.map_err(|err| format!("bind_image_memory failed: {err:?}"))?;
+        let memory = self.core.allocate(&alloc)?;
+        unsafe { self.device.bind_image_memory(*image.get(), memory.raw, 0) }.map_err(|err| format!("bind_image_memory failed: {err:?}"))?;
 
         let aspect = if Self::has_stencil_component(format) {
             vk::ImageAspectFlags::DEPTH | vk::ImageAspectFlags::STENCIL
@@ -3032,7 +2873,7 @@ impl VulkanContext {
 
         Ok(ImageResource {
             image: image.into_inner(),
-            memory: memory.into_inner(),
+            memory: Some(memory),
             view: view.into_inner(),
             extent,
             layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
@@ -3362,15 +3203,12 @@ impl Drop for VulkanContext {
             // The drop order mirrors creation order in reverse: wait for the device to go idle,
             // destroy per-frame sync/swapchain resources, then tear down the command pool, surface,
             // device, and finally the instance.
-            self.device.device_wait_idle().ok();
+            self.core.wait_idle();
 
             for &fence in &self.in_flight_fences {
                 self.device.destroy_fence(fence, None);
             }
             for &semaphore in &self.image_available_semaphores {
-                self.device.destroy_semaphore(semaphore, None);
-            }
-            for &semaphore in &self.render_finished_semaphores {
                 self.device.destroy_semaphore(semaphore, None);
             }
             for &semaphore in &self.transfer_complete_semaphores {
@@ -3387,8 +3225,6 @@ impl Drop for VulkanContext {
             }
 
             self.surface_loader.destroy_surface(self.surface, None);
-            self.device.destroy_device(None);
-            self.instance.destroy_instance(None);
         }
     }
 }

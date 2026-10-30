@@ -73,10 +73,10 @@ fn pixels(renderer: &VulkanRenderer, id: TextureId) -> Vec<u8> {
     unsafe {
         let mapped = ctx
             .device
-            .map_memory(buffer.get().memory, 0, length as u64, vk::MemoryMapFlags::empty())
+            .map_memory(buffer.get().memory(), 0, length as u64, vk::MemoryMapFlags::empty())
             .unwrap();
         let bytes = std::slice::from_raw_parts(mapped.cast::<u8>(), length).to_vec();
-        ctx.device.unmap_memory(buffer.get().memory);
+        ctx.device.unmap_memory(buffer.get().memory());
         bytes
     }
 }
