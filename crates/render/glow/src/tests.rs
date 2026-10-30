@@ -538,3 +538,65 @@ fn independent_logical_devices_keep_distinct_native_resources() {
         frame.finish().unwrap();
     }
 }
+
+/// Creation never replaces a live image; attachment retirement is independent of sampling.
+#[test]
+#[ignore = "requires native GL ES3; run with SDL_VIDEODRIVER=offscreen"]
+fn resident_outputs_reject_collisions_and_release_framebuffers_before_shared_images() {
+    let _session = NATIVE_SESSION.lock().unwrap_or_else(|error| error.into_inner());
+    let sdl = sdl2::init().unwrap();
+    let video = sdl.video().unwrap();
+    video.gl_attr().set_context_profile(sdl2::video::GLProfile::GLES);
+    video.gl_attr().set_context_version(3, 0);
+    let window = video.window("resident image ownership", 8, 8).opengl().hidden().build().unwrap();
+    let _context = window.gl_create_context().unwrap();
+    // SAFETY: native objects retire before the owning current SDL context.
+    let gl = Rc::new(unsafe { glow::Context::from_loader_function(|name| video.gl_get_proc_address(name).cast()) });
+    let mut renderer = GLRenderer::new(gl.clone(), 8, 8).unwrap();
+    let output = TextureId::for_render_target(2, 2).unwrap();
+    renderer.create_render_texture(output).unwrap();
+    let framebuffer = renderer.textures[&output].framebuffer.unwrap();
+    let sampled = renderer.textures[&output].image.clone();
+    renderer.incomplete_output = true;
+    assert!(renderer.create_render_texture(output).is_err());
+    assert!(renderer.incomplete_output, "duplicate rejection precedes native attachment work");
+    assert!(renderer.create_texture(output, &[0; 16]).is_err());
+    assert_eq!(renderer.textures[&output].framebuffer, Some(framebuffer));
+    let info = FrameInfo::try_new(Dimensioni::new(2, 2), color(7, 31, 63, 255)).unwrap();
+    renderer.texture_frame(info, output).unwrap().finish().unwrap();
+    let mut actual = [0; 4];
+    // SAFETY: the installed framebuffer has two-by-two initialized RGBA pixels.
+    unsafe {
+        gl.bind_framebuffer(glow::READ_FRAMEBUFFER, Some(framebuffer));
+        gl.read_pixels(0, 0, 1, 1, glow::RGBA, glow::UNSIGNED_BYTE, PixelPackData::Slice(Some(&mut actual)));
+        gl.bind_framebuffer(glow::READ_FRAMEBUFFER, None);
+    }
+    assert_eq!(actual, [7, 31, 63, 255]);
+    renderer.destroy_texture(output);
+    unsafe {
+        assert!(!gl.is_framebuffer(framebuffer));
+        assert!(gl.is_texture(sampled.raw));
+    }
+    let raw = sampled.raw;
+    drop(sampled);
+    unsafe {
+        assert!(!gl.is_texture(raw));
+    }
+    // The real incomplete-framebuffer path leaves no resident parts and permits retry.
+    let retry = TextureId::for_render_target(2, 2).unwrap();
+    assert!(renderer.create_render_texture(retry).is_err());
+    assert!(!renderer.textures.contains_key(&retry));
+    renderer.create_render_texture(retry).unwrap();
+    renderer.destroy_texture(retry);
+    let upload = TextureId::for_upload(1, 1, &[255; 4]).unwrap();
+    renderer.create_texture(upload, &[255; 4]).unwrap();
+    let original = renderer.textures[&upload].image.raw;
+    assert!(renderer.create_texture(upload, &[0; 4]).is_err());
+    assert!(renderer.create_render_texture(upload).is_err());
+    assert_eq!(renderer.textures[&upload].image.raw, original);
+    assert!(renderer.textures[&upload].framebuffer.is_none());
+    renderer.destroy_texture(upload);
+    unsafe {
+        assert_eq!(gl.get_error(), glow::NO_ERROR);
+    }
+}

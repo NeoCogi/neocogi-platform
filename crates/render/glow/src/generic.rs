@@ -220,7 +220,7 @@ impl Executor {
         &mut self,
         block: &Block,
         offscreen: bool,
-        images: &HashMap<neocogi_render_core::TextureId, Rc<super::Image>>,
+        images: &HashMap<neocogi_render_core::TextureId, super::ResidentImage>,
     ) -> Result<PreparedBlock, String> {
         self.collect()?;
         let capacity = block.retain_capacity();
@@ -238,7 +238,7 @@ impl Executor {
         &mut self,
         block: &Block,
         offscreen: bool,
-        images: &HashMap<neocogi_render_core::TextureId, Rc<super::Image>>,
+        images: &HashMap<neocogi_render_core::TextureId, super::ResidentImage>,
     ) -> Result<PreparedBlock, String> {
         let mut commands = Vec::new();
         commands.try_reserve_exact(block.commands().len()).map_err(|error| error.to_string())?;
@@ -263,7 +263,7 @@ impl Executor {
         &mut self,
         draw: &Draw,
         offscreen: bool,
-        images: &HashMap<neocogi_render_core::TextureId, Rc<super::Image>>,
+        images: &HashMap<neocogi_render_core::TextureId, super::ResidentImage>,
     ) -> Result<PreparedDraw, String> {
         let pipeline = self.pipeline(draw.pipeline.clone(), offscreen)?;
         let mut vertices = Vec::new();
@@ -330,20 +330,20 @@ impl Executor {
     pub(crate) fn prepare_texture(
         &mut self,
         source: Rc<TextureVersion>,
-        images: &HashMap<neocogi_render_core::TextureId, Rc<super::Image>>,
+        images: &HashMap<neocogi_render_core::TextureId, super::ResidentImage>,
     ) -> Result<(), String> {
         self.collect()?;
         self.texture(source, images).map(|_| ())
     }
 
     /// Upload pixels or capture an authenticated immutable host image without retaining its COM lease.
-    fn texture(&mut self, source: Rc<TextureVersion>, images: &HashMap<neocogi_render_core::TextureId, Rc<super::Image>>) -> Result<Rc<Texture>, String> {
+    fn texture(&mut self, source: Rc<TextureVersion>, images: &HashMap<neocogi_render_core::TextureId, super::ResidentImage>) -> Result<Rc<Texture>, String> {
         if let Some(texture) = self.textures.get(&source.id()) {
             return Ok(texture.clone());
         }
         let id = source.id();
         if let Some(import) = source.imported_id() {
-            let image = images.get(&import).ok_or("imported UI image is unavailable on this device")?.clone();
+            let image = images.get(&import).ok_or("imported UI image is unavailable on this device")?.image.clone();
             let texture = Rc::new(Texture { image, source: source.receipt() });
             self.textures.insert(id, texture.clone());
             return Ok(texture);

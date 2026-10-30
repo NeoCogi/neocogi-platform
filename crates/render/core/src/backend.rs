@@ -182,6 +182,9 @@ pub trait RendererBackend: 'static {
         Err(FrameError::new("offscreen rendering is unavailable on this backend"))
     }
     /// Upload exact validated immutable RGBA bytes for the supplied native image key.
+    /// Both creation methods reject an already resident key before native allocation,
+    /// including upload/output collisions. Failed unpublished creation permits retry.
+    /// New immutable allocations use freshly issued keys; no tombstone registry is retained.
     /// Checks this call's exact RGBA byte count before reserving ownership or entering native code.
     /// A texture key certifies only its immutable extent, never a separately supplied slice.
     fn create_texture(&mut self, id: TextureId, pixels: &[u8]) -> Result<(), TextureError>;

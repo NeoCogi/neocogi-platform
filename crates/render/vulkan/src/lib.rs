@@ -319,6 +319,9 @@ impl VulkanRenderer {
             pixels,
         }
         .validate()?;
+        if self.textures.contains_key(&id) {
+            return Err(TextureError::backend("native image key is already resident"));
+        }
         // Texture creation is the public backend boundary, so convert Vulkan's string-based
         // operational failures into the renderer's typed texture error without changing the
         // file-wide `Result<T>` used by unrelated swapchain and resource internals.

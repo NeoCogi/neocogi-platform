@@ -29,6 +29,8 @@ fn independent_texture_frames_preserve_pixels_and_native_surface_configuration()
         assert!(!renderer.textures.contains_key(&upload));
     }
     renderer.create_texture(upload, &[255; 4]).unwrap();
+    assert!(renderer.create_texture(upload, &[0; 4]).is_err());
+    assert!(renderer.create_render_texture(upload).is_err());
     renderer.destroy_texture(upload);
     let source = [255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 0, 255];
     let gpu = neocogi_render_gpu::GpuDevice::new(
@@ -49,6 +51,8 @@ fn independent_texture_frames_preserve_pixels_and_native_surface_configuration()
     let prepared = renderer.prepare_block(&gpu.block_snapshot(owner.as_com_ref()).unwrap(), true).unwrap();
     let first = TextureId::for_render_target(2, 2).unwrap();
     renderer.create_render_texture(first).unwrap();
+    assert!(renderer.create_render_texture(first).is_err());
+    assert!(renderer.create_texture(first, &[0; 16]).is_err());
     let info = FrameInfo::try_new(Dimensioni::new(2, 2), color(0, 0, 0, 255)).unwrap();
     let mut frame = renderer.texture_frame(info, first).unwrap();
     frame.execute_block(&prepared);
@@ -99,7 +103,11 @@ fn independent_texture_frames_preserve_pixels_and_native_surface_configuration()
     // Real native window presentation must survive resize/recreation after private outputs.
     for (width, height) in [(96, 80), (64, 64)] {
         window.set_size(width, height).unwrap();
-        renderer.frame(FrameInfo::try_new(Dimensioni::new(width as i32, height as i32), color(9, 11, 13, 255)).unwrap()).unwrap().finish().unwrap();
+        renderer
+            .frame(FrameInfo::try_new(Dimensioni::new(width as i32, height as i32), color(9, 11, 13, 255)).unwrap())
+            .unwrap()
+            .finish()
+            .unwrap();
         assert_eq!(pixels(&renderer, first), source, "presentation/resize mutated a retained output");
         assert_eq!((renderer.context.extent.width, renderer.context.extent.height), (width, height));
     }

@@ -138,3 +138,15 @@ Solid replay stages at most 256 triangles on the UI stack and converts one
 triangle at a time in GFX, replacing full-range retained conversion buffers.
 These intake checks cover the COM drawing boundaries; internal manager chrome
 recording still uses its existing infallible helper API.
+
+
+## Native image residency
+
+Ordinary uploads and output creation share one native-key rule: an already
+resident key rejects before allocation or replacement, including cross-kind
+collisions. Failed creation publishes nothing and permits corrected retry. The
+public COM upload/output paths mint fresh keys for new immutable allocations.
+GL owns each installed image and optional framebuffer in one resident entry;
+retirement deletes its framebuffer before releasing its image reference. Generic
+sampled and completion owners retain only the shared image, so framebuffer
+residency does not prolong or shorten the sampled pixels' independent lifetime.
