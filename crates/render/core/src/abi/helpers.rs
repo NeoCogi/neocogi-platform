@@ -25,6 +25,65 @@ pub const RENDER_E_OWNER: NcStatus = NcStatus::from_code(-1002);
 /// A renderer backend failed; its diagnostics capability retains concrete detail.
 pub const RENDER_E_BACKEND: NcStatus = NcStatus::from_code(-1005);
 
+impl Default for RenderClientLimits {
+    /// Finite domain defaults; related widgets sharing a factory share these quotas.
+    fn default() -> Self {
+        Self {
+            resources: 1024,
+            live_bytes: 256 * 1024 * 1024,
+            pending_bytes: 8 * 1024 * 1024,
+            frame_draws: 16_384,
+            frame_indices: 64 * 1024 * 1024,
+            live_views: 256,
+            stack_depth: 64,
+        }
+    }
+}
+
+impl Default for GpuBlendState {
+    /// Opaque replacement, with fully specified dormant alpha/color factors.
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            src_color: GpuBlendFactor::One,
+            dst_color: GpuBlendFactor::Zero,
+            color_op: GpuBlendOp::Add,
+            src_alpha: GpuBlendFactor::One,
+            dst_alpha: GpuBlendFactor::Zero,
+            alpha_op: GpuBlendOp::Add,
+        }
+    }
+}
+
+impl Default for GpuPipelineInfo {
+    /// A procedural triangle pipeline with no declared inputs and no depth effects.
+    fn default() -> Self {
+        Self {
+            blend: GpuBlendState::default(),
+            color_write: 15,
+            depth_write: false,
+            depth_compare: GpuCompare::Always,
+            cull: GpuCullMode::None,
+            front_face: GpuFrontFace::Ccw,
+            vertex_buffer_count: 0,
+            attribute_count: 0,
+            binding_count: 0,
+        }
+    }
+}
+
+impl Default for GpuSamplerDesc {
+    /// Pixel-preserving nearest sampling, clamped to the texture's edges.
+    fn default() -> Self {
+        Self {
+            min_filter: GpuFilter::Nearest,
+            mag_filter: GpuFilter::Nearest,
+            address_u: GpuAddressMode::Clamp,
+            address_v: GpuAddressMode::Clamp,
+        }
+    }
+}
+
 impl Default for Size {
     /// Returns zero width and height for caller-owned output initialization.
     fn default() -> Self {

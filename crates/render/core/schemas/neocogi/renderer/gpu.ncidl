@@ -489,6 +489,10 @@ interface IRenderClientDomain {
 }
 
 #[version(1)]
+/// Private host lifetime token; exposes no renderer, native object or getters to clients.
+interface IRenderDeviceLease {}
+
+#[version(1)]
 /// Trusted renderer capability for allocating separately controlled client domains.
 interface IRenderClientFactory {
     /// Create independent domain limits and a host controller.
