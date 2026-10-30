@@ -45,6 +45,10 @@ including unused declarations. A fragment entry emits exactly one `vec4<f32>`
 color at location zero. Portable location inputs use f32/u32 scalars or vectors.
 Shader linkage compares locations, shapes, interpolation and sampling qualifiers.
 
+Min/max color and alpha blending compare unscaled source/destination values;
+their factor fields have no effect. Native adapters normalize ignored factors
+where their API requires a canonical value (WebGPU requires both to be One).
+
 Binding groups are 0 for vertex sampled pairs, 1 for vertex uniforms, 2 for
 fragment sampled pairs and 3 for fragment uniforms. There are four slots per
 stage/class. A sampled slot uses texture binding `2*slot` and sampler binding
@@ -101,6 +105,13 @@ storage, including fragment coordinates and front-face winding. It restores
 complete pipeline/binding state per draw. Its native caches retain device-free
 immutable versions; recorded blocks and domain controllers retain native lifetime
 separately, preventing an idle device-cache-domain ownership cycle.
+
+WGPU prepares explicit layouts, pipelines and immutable bindings before acquiring
+the target. Regional replacement uses private scissored clear pipelines, and
+ordered views preserve shared depth through load/store passes. Submission retains
+native allocations and device-free byte/capacity receipts until the queue's
+completion callback is observed. That callback owns only an atomic completion
+flag; UI-thread resource owners stay in the executor's completion collection.
 
 CPU admission/preparation rejection emits no native target commands. After native
 execution starts, immediate APIs cannot promise rollback. Errors propagate;

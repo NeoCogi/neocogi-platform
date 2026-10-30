@@ -762,7 +762,9 @@ dependencies = [
 name = "neocogi-render-wgpu"
 version = "0.0.0"
 dependencies = [
+ "neocogi-com",
  "neocogi-render-core",
+ "neocogi-render-gpu",
  "pollster",
  "raw-window-handle",
  "sdl2",

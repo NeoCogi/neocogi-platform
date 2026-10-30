@@ -8,8 +8,12 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+neocogi-render-gpu.workspace = true
 neocogi-render-core.workspace = true
 pollster.workspace = true
 raw-window-handle.workspace = true
 sdl2.workspace = true
 wgpu.workspace = true
+
+[dev-dependencies]
+neocogi-com = { workspace = true, features = ["runtime"] }
