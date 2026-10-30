@@ -36,6 +36,16 @@ rustflags = [
 [profile.min-size.build-override]
 rustflags = []
 
+# Naga uses Debug as executable shader syntax (float literals) and native symbol identity.
+# Both the emitter call sites and naga-types' derived ShaderStage formatter must remain intact.
+# Package overrides also apply to their build scripts; change only formatting so those host
+# tools keep normal unwind/diagnostic behavior instead of receiving target-only stripping flags.
+[profile.min-size.package.naga]
+rustflags = ["-Zfmt-debug=full"]
+
+[profile.min-size.package.naga-types]
+rustflags = ["-Zfmt-debug=full"]
+
 [alias]
 # Convenience only: the profile itself owns all target compiler settings.
 build-min-size = ["build", "--profile", "min-size"]

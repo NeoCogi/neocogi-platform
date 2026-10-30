@@ -32,6 +32,41 @@ const PROCEDURAL: &str = r#"
 }
 "#;
 
+/// Float syntax and stage-distinct native block names are executable data in every Cargo profile.
+#[test]
+fn code_generation_keeps_literals_and_distinct_stage_symbols() {
+    let vertex = Shader::compile(GpuShaderStage::Vertex, PROCEDURAL, "vertex_main").unwrap();
+    let fragment = Shader::compile(GpuShaderStage::Fragment, PROCEDURAL, "fragment_main").unwrap();
+    assert!(vertex.glsl.contains("0.25"), "GLSL must retain the vertex depth literal");
+    for literal in ["0.1", "0.3", "0.7", "1.0"] {
+        assert!(fragment.glsl.contains(literal), "GLSL lost float literal {literal}");
+    }
+    let vertex = Shader::compile(
+        GpuShaderStage::Vertex,
+        r#"
+struct Values { value:vec4<f32> }
+@group(1) @binding(0) var<uniform> values:Values;
+@vertex fn main() -> @builtin(position) vec4<f32> { return values.value; }
+"#,
+        "main",
+    )
+    .unwrap();
+    let fragment = Shader::compile(
+        GpuShaderStage::Fragment,
+        r#"
+struct Values { value:vec4<f32> }
+@group(3) @binding(0) var<uniform> values:Values;
+@fragment fn main() -> @location(0) vec4<f32> { return values.value; }
+"#,
+        "main",
+    )
+    .unwrap();
+    assert_ne!(
+        vertex.uniforms[0].gl_block, fragment.uniforms[0].gl_block,
+        "independent stage bindings cannot collapse onto one linked GLSL block name"
+    );
+}
+
 /// Reflected stage inputs, generated block/sampler names and SPIR-V are actual compiler outputs.
 #[test]
 fn generic_textured_stages_emit_portable_artifacts_and_exact_layouts() {
