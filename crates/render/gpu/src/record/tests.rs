@@ -183,6 +183,29 @@ fn draws_snapshot_versions_in_order_and_finished_owner_drop_preserves_the_block(
     assert_eq!(a.viewport.width, 100);
 }
 
+/// Native lowering retains capacity without retaining a block, public facade or domain.
+#[test]
+fn lowered_capacity_receipts_survive_blocks_and_refund_only_after_the_last_copy() {
+    let device = GpuDevice::new();
+    let (_controller, factory) = client(&device, RenderClientLimits::default());
+    let mut frame = device.broker().begin_frame().unwrap();
+    let mut session = frame.begin_view(root(), factory.as_com_ref()).unwrap();
+    let mut view = session.view().unwrap();
+    view.clear_color(0xffabcdef).unwrap();
+    view.finish().unwrap();
+    let owner = session.take_block().unwrap();
+    frame.finish().unwrap();
+    let block = device.block_snapshot(owner.as_com_ref()).unwrap();
+    let charges = block.retain_capacity();
+    let before = device.recording_usage(factory.as_com_ref()).unwrap().0;
+    assert!(before > 0);
+    let retained = charges.clone();
+    drop((block, owner, view, session, frame, charges));
+    assert_eq!(device.recording_usage(factory.as_com_ref()).unwrap(), (before, 0));
+    drop(retained);
+    assert_eq!(device.recording_usage(factory.as_com_ref()).unwrap(), (0, 0));
+}
+
 /// Dropping a bound public owner before a consuming draw rejects without pinning it.
 #[test]
 fn weak_bindings_do_not_keep_resource_owners_alive() {

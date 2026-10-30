@@ -29,6 +29,14 @@ pub struct Block {
     _base: PendingCharge,
 }
 impl Block {
+    /// Retains original command capacity in native/in-flight representations without device authority.
+    /// The receipts share accounting only; they cannot submit, observe or reopen a domain.
+    pub fn retain_capacity(&self) -> Vec<CommandCharge> {
+        std::iter::once(CommandCharge { _charge: self._base.clone() })
+            .chain(self.commands.iter().map(Command::retain_capacity))
+            .collect()
+    }
+
     /// Final local admission check after every foreign stream callback has completed.
     pub fn admit(&self) -> Result<(), NcStatus> {
         self.domain.open()

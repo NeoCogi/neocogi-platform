@@ -83,7 +83,9 @@ impl Account {
             .filter(|n| *n <= self.limits.pending_bytes)
             .ok_or(NC_E_OUT_OF_RANGE)?;
         self.pending.set(next);
-        Ok(PendingCharge { account: self.clone(), count })
+        Ok(PendingCharge {
+            _receipt: Rc::new(PendingAllocation { account: self.clone(), count }),
+        })
     }
 
     /// Retained terminal views still consume metadata quota until their ComBox drops.
@@ -133,13 +135,20 @@ impl Drop for ByteCharge {
 }
 
 /// Copied command/state capacity; contains no renderer/domain owner.
+#[derive(Clone)]
 pub(crate) struct PendingCharge {
+    /// CPU and native command representations share one refund at actual last release.
+    _receipt: Rc<PendingAllocation>,
+}
+
+/// One accounting reservation, shared across lowering without charging twice.
+struct PendingAllocation {
     /// Device-free accounting owner.
     account: Rc<Account>,
     /// Admitted command storage bytes.
     count: u64,
 }
-impl Drop for PendingCharge {
+impl Drop for PendingAllocation {
     /// Refund only at actual payload release, including sealed/in-flight copies.
     fn drop(&mut self) {
         self.account.pending.set(self.account.pending.get() - self.count);

@@ -29,13 +29,12 @@
 //
 //! OpenGL/Glow renderer backend used by examples.
 //!
-//! This module implements the `RendererBackend` trait, texture uploads, UI batching, and optional custom
-//! mesh rendering for the demo application.
+//! One context executes bounded generic graphics blocks in painter order and owns native images.
 
 mod generic;
 pub use generic::PreparedBlock;
 use core::slice;
-use std::{collections::HashMap, convert::Infallible, io, rc::Rc};
+use std::{collections::HashMap, io, rc::Rc};
 
 use neocogi_render_core::prelude::*;
 use glow::*;
@@ -47,58 +46,8 @@ mod tests;
 // GL backend overview:
 // - Regular UI quads are accumulated into CPU-side vertex/index buffers and emitted in one batch
 //   from `flush`.
-// - Backend texture draws and solid custom vertices flush the UI batch first; application GPU
-//   commands use the same ordering boundary through the concrete application renderer.
+// - Texture draws and generic graphics blocks flush preceding UI vertices at the same order boundary.
 // - Each immutable atlas texture is uploaded transactionally at construction or theme selection.
-
-/// Native frame capabilities lent to one application-renderer command.
-///
-/// This value deliberately exposes the graphics API rather than inventing a lowest-common-
-/// denominator drawing vocabulary. The application renderer may bind its own programs, buffers,
-/// textures, and fixed-function state. It cannot retain the context wrapper because the wrapper's
-/// lifetime is tied to the active microui backend frame.
-pub struct GlApplicationRenderContext<'a> {
-    /// Shared Glow context owned by the concrete backend and valid for the active frame.
-    ///
-    /// The shared owner lets lazily created application resources retain the context needed for
-    /// deterministic native-handle destruction without transferring backend ownership.
-    pub gl: &'a Rc<glow::Context>,
-    /// Complete drawable size used to translate microui's top-left coordinate space when needed.
-    pub framebuffer_size: (u32, u32),
-    /// Authoritative widget allocation and final clip supplied by microui's display-list executor.
-    pub args: RenderItemArgs,
-}
-
-/// Strongly typed application-rendering extension hosted by the Glow backend.
-///
-/// The associated command keeps every application payload concrete. A demo may use an enum when it
-/// has several operations, while an application with one operation may use a single struct. The
-/// backend never inspects that value and therefore never depends on application mesh, material, or
-/// scene types.
-pub trait GlApplicationRenderer: 'static {
-    /// Concrete command inserted into the active frame by application custom-render callbacks.
-    type Command: 'static;
-
-    /// Executes one command after the preceding UI batch has been flushed.
-    ///
-    /// Later UI draws restore their framebuffer, viewport, scissor, color writes, blending, depth,
-    /// stencil, rasterization enables, program, texture/sampler, and private vertex layout. Pixel
-    /// uploads likewise reset unpack state. Implementations must use their own GPU objects, finish
-    /// scoped operations such as queries/transform feedback, and restore extension-specific state
-    /// outside this GL ES 3 / WebGL 2 contract before returning. They must not delete or modify
-    /// backend-owned resources. The backend renders UI to the default window/canvas framebuffer.
-    /// An error is retained for `RendererFrame::finish`; later commands in that frame are skipped.
-    fn render(&mut self, context: GlApplicationRenderContext<'_>, command: Self::Command) -> Result<(), String>;
-}
-
-impl GlApplicationRenderer for () {
-    type Command = Infallible;
-
-    /// Proves exhaustively that a UI-only renderer can never receive an application command.
-    fn render(&mut self, _context: GlApplicationRenderContext<'_>, command: Self::Command) -> Result<(), String> {
-        match command {}
-    }
-}
 
 const VERTEX_SHADER: &str = "#version 100
 uniform highp mat4 uTransform;
@@ -140,10 +89,7 @@ enum DrawTarget {
 }
 
 /// Concrete GL device resources and one exclusively selected frame target.
-pub struct GLRenderer<Application = ()>
-where
-    Application: GlApplicationRenderer,
-{
+pub struct GLRenderer {
     // `GLRenderer` is deliberately simple: it keeps one shader program plus shared VBO/IBO state
     // for ordinary UI draws, and falls back to explicit immediate draw calls for custom work that
     // cannot be folded into the batch easily.
@@ -179,16 +125,11 @@ where
     framebuffers: HashMap<TextureId, Framebuffer>,
     /// Frame-local target selection; reset when the exclusive frame is released.
     target: DrawTarget,
-    /// Application-owned native renderer invoked only for its concrete command type.
-    application: Application,
     /// Common graphics executor, isolated from the legacy UI vertex layout.
     generic: generic::Executor,
 }
 
-impl<Application> GLRenderer<Application>
-where
-    Application: GlApplicationRenderer,
-{
+impl GLRenderer {
     /// Realizes a sealed common graphics block before acquiring or clearing its target.
     pub fn prepare_block(&mut self, block: &neocogi_render_gpu::record::Block, offscreen: bool) -> Result<PreparedBlock, String> {
         self.generic.prepare(block, offscreen)
@@ -386,16 +327,12 @@ where
         Some((x, y, clip.width, clip.height))
     }
 
-    /// Creates a renderer with one concrete application renderer and caller-selected UI shaders.
-    ///
-    /// Shader selection remains a construction detail of the UI backend; the application renderer
-    /// owns and compiles its own programs independently through the native context it receives.
-    pub fn new_with_application_and_shaders(
+    /// Creates a renderer with the selected native or browser UI shader dialect.
+    pub fn new_with_shaders(
         gl: Rc<glow::Context>,
         atlas: ImageSource<'_>,
         width: u32,
         height: u32,
-        application: Application,
         vertex_shader: &str,
         fragment_shader: &str,
     ) -> Result<Self, String> {
@@ -485,44 +422,17 @@ where
                 textures: HashMap::new(),
                 framebuffers: HashMap::new(),
                 target: DrawTarget::Window,
-                application,
             })
         }
     }
 
-    /// Creates a native Glow renderer with one concrete application-rendering extension.
-    pub fn new_with_application(gl: Rc<glow::Context>, atlas: ImageSource<'_>, width: u32, height: u32, application: Application) -> Result<Self, String> {
-        // Native examples use the backend's standard GLSL dialect; only the application object is
-        // supplied by the caller.
-        Self::new_with_application_and_shaders(gl, atlas, width, height, application, VERTEX_SHADER, FRAGMENT_SHADER)
-    }
-}
-
-impl GLRenderer<()> {
-    /// Creates a UI-only native Glow renderer.
+    /// Creates the common native executor and initial window atlas.
     pub fn new(gl: Rc<glow::Context>, atlas: ImageSource<'_>, width: u32, height: u32) -> Result<Self, String> {
-        Self::new_with_application(gl, atlas, width, height, ())
-    }
-
-    /// Creates a UI-only renderer using a caller-selected GLSL dialect.
-    ///
-    /// The WebGL canvas wrapper uses this constructor for its ES 3.00 UI shaders.
-    pub fn new_with_shaders(
-        gl: Rc<glow::Context>,
-        atlas: ImageSource<'_>,
-        width: u32,
-        height: u32,
-        vertex_shader: &str,
-        fragment_shader: &str,
-    ) -> Result<Self, String> {
-        Self::new_with_application_and_shaders(gl, atlas, width, height, (), vertex_shader, fragment_shader)
+        Self::new_with_shaders(gl, atlas, width, height, VERTEX_SHADER, FRAGMENT_SHADER)
     }
 }
 
-impl<Application> GLRenderer<Application>
-where
-    Application: GlApplicationRenderer,
-{
+impl GLRenderer {
     /// Resolves the atlas belonging to this frame without uploading or replacing another session.
     fn active_atlas(&self) -> Texture {
         match self.target {
@@ -682,10 +592,7 @@ where
     }
 }
 
-impl<Application> Drop for GLRenderer<Application>
-where
-    Application: GlApplicationRenderer,
-{
+impl Drop for GLRenderer {
     /// Releases every persistent GL object, including user textures that remain live at shutdown.
     fn drop(&mut self) {
         unsafe {
@@ -706,20 +613,14 @@ where
 
 /// Immediate GL frame whose pending batch must be completed explicitly.
 #[must_use = "call finish to complete the OpenGL frame and observe errors"]
-pub struct GlFrame<'a, Application = ()>
-where
-    Application: GlApplicationRenderer,
-{
+pub struct GlFrame<'a> {
     /// Exclusive renderer borrow that prevents a second frame from being acquired concurrently.
-    backend: &'a mut GLRenderer<Application>,
-    /// First application failure, returned by finish; later commands are ignored.
+    backend: &'a mut GLRenderer,
+    /// First native execution failure, returned by finish; later commands are ignored.
     error: Option<FrameError>,
 }
 
-impl<Application> GlFrame<'_, Application>
-where
-    Application: GlApplicationRenderer,
-{
+impl GlFrame<'_> {
     /// Executes only already realized common commands at this exact painter-order boundary.
     pub fn execute_block(&mut self, block: &PreparedBlock, logical: neocogi_render_gpu::abi::Size) {
         if self.error.is_some() {
@@ -737,28 +638,6 @@ where
         }
     }
 
-    /// Flushes preceding UI work and executes one typed application GPU command immediately.
-    pub fn enqueue_application(&mut self, args: RenderItemArgs, command: Application::Command) {
-        if self.error.is_some() {
-            return;
-        }
-        if matches!(self.backend.target, DrawTarget::Texture { .. }) {
-            self.error = Some(FrameError::new("application render items are unavailable on UI surfaces"));
-            return;
-        }
-        // GL records directly into the current context. Closing the UI batch here preserves the
-        // display-list order established by Context before application state changes GL bindings.
-        self.backend.flush();
-        let context = GlApplicationRenderContext {
-            gl: &self.backend.gl,
-            framebuffer_size: (self.backend.width, self.backend.height),
-            args,
-        };
-        if let Err(error) = self.backend.application.render(context, command) {
-            self.error = Some(FrameError::new(error));
-        }
-    }
-
     /// Draws pre-transformed colored vertices using the custom operation's authoritative clip.
     pub fn enqueue_colored_vertices(&mut self, args: RenderItemArgs, vertices: Vec<Vertex>) {
         if self.error.is_none() {
@@ -767,16 +646,16 @@ where
     }
 }
 
-impl<Application> RendererFrame for GlFrame<'_, Application>
-where
-    Application: GlApplicationRenderer,
-{
-    /// Flushes the final batch only if all earlier application commands succeeded.
+impl RendererFrame for GlFrame<'_> {
+    /// Flushes the final batch only if earlier generic execution succeeded.
     fn finish(mut self) -> Result<(), FrameError> {
         if let Some(error) = self.error.take() {
+            // Retain partial immediate execution through a fence, preserving the first failure.
+            let _ = self.backend.generic.complete();
             return Err(error);
         }
         self.backend.end();
+        self.backend.generic.complete().map_err(FrameError::new)?;
         Ok(())
     }
 
@@ -805,10 +684,7 @@ where
     }
 }
 
-impl<Application> Drop for GlFrame<'_, Application>
-where
-    Application: GlApplicationRenderer,
-{
+impl Drop for GlFrame<'_> {
     fn drop(&mut self) {
         // Immediate draws cannot be undone; discard only the remaining CPU batch. In particular,
         // unwinding through a custom renderer must not call GL or submit more application work.
@@ -818,14 +694,8 @@ where
     }
 }
 
-impl<Application> RendererBackend for GLRenderer<Application>
-where
-    Application: GlApplicationRenderer,
-{
-    type Frame<'a>
-        = GlFrame<'a, Application>
-    where
-        Application: 'a;
+impl RendererBackend for GLRenderer {
+    type Frame<'a> = GlFrame<'a>;
 
     fn replace_atlas(&mut self, atlas: ImageSource<'_>) -> Result<(), AtlasUploadError> {
         // Upload into a separate texture first. Only a complete candidate may displace the live
@@ -840,7 +710,7 @@ where
     }
 
     fn frame(&mut self, info: FrameInfo) -> Result<Self::Frame<'_>, FrameError> {
-        self.generic.collect();
+        self.generic.collect().map_err(FrameError::new)?;
         let dimensions = info.dimensions();
         self.target = DrawTarget::Window;
         self.begin(dimensions.width, dimensions.height, info.clear());
@@ -887,6 +757,7 @@ where
 
     /// Selects already resident output and atlas images for one opaque UI frame.
     fn texture_frame(&mut self, info: FrameInfo, output: TextureId, atlas: TextureId) -> Result<Self::Frame<'_>, FrameError> {
+        self.generic.collect().map_err(FrameError::new)?;
         if output == atlas || (output.width(), output.height()) != (info.dimensions().width, info.dimensions().height) || info.clear().a != 255 {
             return Err(FrameError::new("invalid offscreen image, size, or nonopaque clear color"));
         }
@@ -908,10 +779,7 @@ where
     }
 }
 
-impl<Application> GLRenderer<Application>
-where
-    Application: GlApplicationRenderer,
-{
+impl GLRenderer {
     /// Draws arbitrary colored triangles while preserving microui's authoritative final clip.
     pub fn enqueue_colored_vertices(&mut self, args: RenderItemArgs, vertices: Vec<Vertex>) {
         self.draw_colored_vertices(args.view, vertices.as_slice());

@@ -126,7 +126,18 @@ pub enum Command {
 }
 
 /// Opaque capacity receipt; backends can move it but cannot manufacture admission.
+#[derive(Clone)]
 pub struct CommandCharge {
     /// Opaque receipt is released with the containing command, never inspected by an adapter.
     pub(crate) _charge: PendingCharge,
+}
+
+impl Command {
+    /// Keeps accounting alive through native lowering/completion without retaining a client domain.
+    pub fn retain_capacity(&self) -> CommandCharge {
+        match self {
+            Self::Draw(draw) => CommandCharge { _charge: draw._charge.clone() },
+            Self::ClearColor { charge, .. } | Self::ClearDepth { charge, .. } => charge.clone(),
+        }
+    }
 }

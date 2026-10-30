@@ -19,6 +19,10 @@ pub(crate) struct Executor {
     pipelines: HashMap<(u64, bool), Rc<Pipeline>>,
     /// Copied uniform payload identity is pinned by each entry, preventing address reuse.
     uniforms: HashMap<usize, Rc<Uniform>>,
+    /// Immediate GL work retained even if its public frame is abandoned after issuing commands.
+    pending: Vec<PreparedBlock>,
+    /// Fences own only native snapshots and device-free accounting, never client domain authority.
+    submitted: Vec<Submitted>,
 }
 
 macro_rules! native {
@@ -66,9 +70,24 @@ impl Drop for Pipeline {
 }
 
 /// Admitted command data contains no domain, device, COM callback, or mutable client state.
+#[derive(Clone)]
 pub struct PreparedBlock {
+    /// Shared concrete data permits completion retention without copying command payloads.
+    data: Rc<PreparedData>,
+}
+/// Native lowering retains the original capacity charge until actual GPU completion.
+struct PreparedData {
     /// Painter-order operations with all native resources already realized.
     commands: Vec<PreparedCommand>,
+    /// Device-free receipts prevent early refunds when the original block is released.
+    _capacity: Vec<CommandCharge>,
+}
+/// One fence marks completion of every preceding native use in its bounded batch.
+struct Submitted {
+    /// Fence belongs to this executor's current context.
+    fence: glow::Fence,
+    /// Exact native allocations and logical byte/capacity receipts used by these commands.
+    _blocks: Vec<PreparedBlock>,
 }
 /// Complete native state for a single direct draw.
 struct PreparedDraw {
@@ -112,21 +131,63 @@ impl Executor {
             samplers: HashMap::new(),
             pipelines: HashMap::new(),
             uniforms: HashMap::new(),
+            pending: Vec::new(),
+            submitted: Vec::new(),
         })
     }
 
     /// Retires uploads whose sole CPU owner is this cache, before admitting another frame.
-    pub(crate) fn collect(&mut self) {
+    pub(crate) fn collect(&mut self) -> Result<(), String> {
+        self.complete()?;
+        let mut failure = false;
+        self.submitted.retain(|batch| {
+            // SAFETY: The plugin selects this context before preparation/collection. A zero
+            // timeout observes completion without treating public weak expiry as completion.
+            match unsafe { self.gl.client_wait_sync(batch.fence, 0, 0) } {
+                glow::ALREADY_SIGNALED | glow::CONDITION_SATISFIED => {
+                    unsafe { self.gl.delete_sync(batch.fence) };
+                    false
+                }
+                glow::TIMEOUT_EXPIRED => true,
+                _ => {
+                    failure = true;
+                    true
+                }
+            }
+        });
         self.buffers.retain(|_, entry| Rc::strong_count(&entry.source) > 1);
         self.textures.retain(|_, entry| Rc::strong_count(&entry.source) > 1);
         self.samplers.retain(|_, entry| Rc::strong_count(&entry.source) > 1);
         self.pipelines.retain(|_, entry| Rc::strong_count(&entry.source) > 1);
         self.uniforms.retain(|_, entry| Rc::strong_count(&entry.source) > 1);
+        if failure {
+            Err("failed to observe generic graphics completion".into())
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Seals issued immediate work on explicit completion or before the next preparation.
+    /// Abandonment keeps pending owners here; it never issues a native call from a frame destructor.
+    pub(crate) fn complete(&mut self) -> Result<(), String> {
+        if self.pending.is_empty() {
+            return Ok(());
+        }
+        self.submitted.try_reserve(1).map_err(|error| error.to_string())?;
+        // SAFETY: The owning context is current. Flushing makes the fence progress without
+        // requiring another window frame, which also covers texture-only rendering sessions.
+        let fence = unsafe { self.gl.fence_sync(glow::SYNC_GPU_COMMANDS_COMPLETE, 0)? };
+        unsafe { self.gl.flush() };
+        self.submitted.push(Submitted {
+            fence,
+            _blocks: std::mem::take(&mut self.pending),
+        });
+        Ok(())
     }
 
     /// Creates every driver allocation before the host acquires/clears its native target.
     pub(crate) fn prepare(&mut self, block: &Block, offscreen: bool) -> Result<PreparedBlock, String> {
-        self.collect();
+        self.collect()?;
         let mut commands = Vec::new();
         commands.try_reserve_exact(block.commands.len()).map_err(|error| error.to_string())?;
         for command in &block.commands {
@@ -137,7 +198,12 @@ impl Executor {
             });
         }
         self.check()?;
-        Ok(PreparedBlock { commands })
+        Ok(PreparedBlock {
+            data: Rc::new(PreparedData {
+                commands,
+                _capacity: block.retain_capacity(),
+            }),
+        })
     }
 
     /// Realizes exactly the resources consumed by this captured pipeline.
@@ -210,7 +276,7 @@ impl Executor {
         let texture = unsafe {
             let raw = self.gl.create_texture()?;
             let texture = Rc::new(Texture { gl: self.gl.clone(), source, raw });
-            super::GLRenderer::<()>::prepare_upload(&self.gl);
+            super::GLRenderer::prepare_upload(&self.gl);
             self.gl.bind_texture(glow::TEXTURE_2D, Some(raw));
             let desc = texture.source.desc;
             let format = if desc.format == GpuTextureFormat::Rgba8Srgb {
@@ -339,9 +405,12 @@ impl Executor {
     }
 
     /// Replays only prepared native objects; the caller has already bound its authorized target.
-    pub(crate) fn execute(&self, block: &PreparedBlock, logical: Size, physical: Size, offscreen: bool) -> Result<(), String> {
+    pub(crate) fn execute(&mut self, block: &PreparedBlock, logical: Size, physical: Size, offscreen: bool) -> Result<(), String> {
+        // Retain before the first native command, including partial failure after an earlier draw.
+        self.pending.try_reserve(1).map_err(|error| error.to_string())?;
+        self.pending.push(block.clone());
         let gl = &self.gl;
-        for command in &block.commands {
+        for command in &block.data.commands {
             let clip = match command {
                 PreparedCommand::Draw(draw) => draw.clip,
                 PreparedCommand::Color(_, clip) | PreparedCommand::Depth(_, clip) => *clip,
@@ -488,10 +557,17 @@ impl Executor {
 }
 
 impl Drop for Executor {
-    /// Deletes the private VAO; cached resources then retire through their typed owners.
+    /// Waits for final immediate uses before releasing accounting and deleting private objects.
     fn drop(&mut self) {
         // SAFETY: The plugin selects this context before destroying its renderer.
-        unsafe { self.gl.delete_vertex_array(self.array) }
+        unsafe {
+            self.gl.finish();
+            for batch in self.submitted.drain(..) {
+                self.gl.delete_sync(batch.fence);
+            }
+            self.pending.clear();
+            self.gl.delete_vertex_array(self.array);
+        }
     }
 }
 

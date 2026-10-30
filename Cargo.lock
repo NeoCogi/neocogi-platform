@@ -688,6 +688,7 @@ name = "neocogi-render-glow"
 version = "0.0.0"
 dependencies = [
  "glow 0.18.0",
+ "neocogi-com",
  "neocogi-render-core",
  "neocogi-render-gpu",
  "neocogi-render-support",
