@@ -1,4 +1,4 @@
-#[version(3)]
+#[version(1)]
 /// Native window and event-pump capability with no exposed toolkit or graphics handles.
 interface IPlatformWindow {
     /// Returns a separate trusted graphics assembly object. It retains native graphics lifetime
@@ -19,7 +19,7 @@ interface IPlatformWindow {
     fn text_input(&self, area: TextInputArea) -> Result<()>;
 }
 
-#[version(2)]
+#[version(1)]
 /// Constructible platform root whose native-window interface is its concrete API.
 interface Platform: IRenderDiagnostics {
     /// Creates an independent native window and graphics device without UI assets.

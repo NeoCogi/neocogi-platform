@@ -60,7 +60,7 @@ An embedded preview leaf declares keyboard bits `focus | Tab stop | embedded
 scope` (`1 | 2 | 512`). While focused, ordinary Tab and menu/window navigation
 keys reach the leaf instead of the outer manager. Ctrl+Tab, with optional Shift,
 leaves the scope through the editor's normal focus traversal. Outer menus and
-modal eligibility still take priority. `WidgetProperties` is now version 2;
+modal eligibility still take priority. `WidgetProperties` uses the pre-release v1 baseline;
 hosts and UI plugins must be rebuilt together.
 
 The shared application host supplies `AppState::after_update` after all editor

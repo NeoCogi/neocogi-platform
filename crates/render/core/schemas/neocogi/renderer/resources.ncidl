@@ -38,7 +38,7 @@ interface IRenderSurface {
     fn completed_image(&self) -> Result<ComPtr<ITexture>>;
 }
 
-#[version(2)]
+#[version(1)]
 /// Creates independent opaque preview surfaces without exposing native GPU handles.
 interface IRenderSurfaceFactory {
     /// Creates a surface on the same device as the factory; GFX owns its private UI resources.

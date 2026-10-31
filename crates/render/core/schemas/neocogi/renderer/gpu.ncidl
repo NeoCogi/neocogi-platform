@@ -499,7 +499,7 @@ interface IRenderClientFactory {
     fn create_client(&self, limits: RenderClientLimits) -> Result<ComBox<IRenderClientDomain>>;
 }
 
-#[version(3)]
+#[version(1)]
 /// Trusted host-only assembly capability; never delegated to widgets.
 interface IRenderHost {
     /// Privately sample an authenticated immutable UI image in this device's compositor domain.

@@ -1,4 +1,4 @@
-#[version(2)]
+#[version(1)]
 /// Metadata for one synchronous submission of sealed generic graphics blocks.
 struct RenderInfo {
     /// Positive logical drawable dimensions; native backends map them to physical pixels.
@@ -11,7 +11,7 @@ struct RenderInfo {
     block_count: u32,
 }
 
-#[version(4)]
+#[version(1)]
 /// Owned sealed contributions readable only during one active synchronous submission.
 interface IRenderStream {
     /// Observes a block without manufacturing another public resource owner.
@@ -19,7 +19,7 @@ interface IRenderStream {
     fn view(&self, invocation: u64, block: u32) -> Result<WeakComBox<IRenderViewBlock>>;
 }
 
-#[version(2)]
+#[version(1)]
 /// Device accepts only complete generic graphics blocks, with no UI layout or atlas state.
 interface IRenderer {
     /// Prepares all resources before target acquisition, executes in order and explicitly submits.
