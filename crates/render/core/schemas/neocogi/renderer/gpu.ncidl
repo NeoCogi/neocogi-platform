@@ -191,13 +191,13 @@ enum GpuBindingKind: u8 {
 #[version(1)]
 /// Exhaustive recording state; terminal states cannot add commands.
 enum RenderViewState: u8 {
-    /// Accepting bounded state and draw commands.
+    /// Accepting bounded commands; remains unfinished if the client facade is dropped.
     Recording,
-    /// First error retained; cancellation or expiry required.
+    /// First error retained until host expiry; cancellation and client Drop cannot erase it.
     Rejected,
     /// Complete immutable payload sealed for host harvest.
     Committed,
-    /// Deliberately abandoned; no contribution.
+    /// Healthy recording explicitly cancelled; no contribution.
     Cancelled,
     /// Host invocation ended or payload already transferred.
     Expired,
@@ -450,7 +450,8 @@ interface IRenderView {
     fn clear_depth(&mut self, depth: f32) -> Result<()>;
     /// Seal a balanced complete payload exactly once; never submits or presents.
     fn finish(&mut self) -> Result<()>;
-    /// Abandon and release pending storage without refunding attempted work.
+    /// Cancel healthy recording and release pending storage without refunding attempted work.
+    /// Preserve rejection, commitment and expiry. Client Drop does not imply cancellation.
     fn cancel(&mut self) -> Result<()>;
 }
 
@@ -468,7 +469,7 @@ interface IRenderViewSession {
     fn state(&self) -> Result<RenderViewState>;
     /// Move committed payload once; expire the client facade.
     fn take_block(&mut self) -> Result<ComBox<IRenderViewBlock>>;
-    /// Revoke access and release all unmoved storage.
+    /// Revoke access and release all unmoved storage, including unfinished dropped-client work.
     fn expire(&mut self) -> Result<()>;
 }
 
@@ -477,7 +478,8 @@ interface IRenderViewSession {
 interface IRenderRecordingFrame {
     /// Authenticate the factory and create a host session for committed root geometry.
     fn begin_view(&mut self, root: RenderViewRoot, resources: &IRenderResources) -> Result<ComBox<IRenderViewSession>>;
-    /// End CPU recording only after all sessions were harvested/cancelled; never submits.
+    /// End CPU recording only after all sessions were harvested, expired or explicitly cancelled.
+    /// Unfinished and rejected sessions fail this call; it never submits.
     fn finish(&mut self) -> Result<()>;
     /// Abandon unfinished sessions on error even when no GPU submission occurs.
     fn abort(&mut self) -> Result<()>;

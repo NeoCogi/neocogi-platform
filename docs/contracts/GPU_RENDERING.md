@@ -185,8 +185,29 @@ entire paint traversal. Widgets receive only `IPainter::begin_render_view` and
 their restricted resource factory. Begin reserves the contribution's display-list
 position immediately. Finish seals it; the runtime transfers the block at that
 original position before another view begins or paint returns. Explicit cancel
-leaves an empty position. Unfinished or rejected work fails the paint invocation;
-retrying begin cannot erase that failure. Every return revokes escaped facades.
+of a healthy recording leaves an empty position. Unfinished or rejected work fails
+the paint invocation; retrying begin cannot erase that failure. Every return
+revokes escaped facades.
+
+The host session owns pending CPU commands; the exclusive client view holds only
+a weak link and its bounded shell charge. Dropping that view releases the shell
+without changing the session's outcome. A dropped unfinished view therefore stays
+`Recording`, with its payload charged, until the host harvests or expires it.
+UI harvesting runs after `IWidget::paint` returns and before the paint service
+returns its combined result, or before a later begin in the same invocation. It
+rejects unfinished work and expires the session, releasing its payload before
+returning the failure. A trusted host retaining a session outside UI traversal
+must expire/drop it, abort its recording frame or close its domain to release
+unfinished payload. The existing pending-byte limits remain in force throughout.
+
+Cancellation changes only `Recording` to `Cancelled` and immediately releases its
+payload. It is idempotent; a `Rejected` session retains its first command error,
+and a `Committed` session retains its sealed contribution. Rejection releases
+payload immediately. Neither cancel nor client Drop can turn rejection into
+success. Host expiry is terminal, and a committed block transfers exactly once.
+Frame finish rejects live unfinished/rejected sessions. Attempted-work charges
+are never refunded by cancellation, destruction or failed recording. These CPU
+rules are separate from native frame maintenance and GPU completion below.
 
 The view's `info().client` is the actual visible client rectangle in widget-local
 coordinates. Its initial viewport is `(0,0,width,height)` relative to that root.

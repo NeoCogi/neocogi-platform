@@ -295,11 +295,12 @@ impl<B: crate::native::NativeResources> SessionCore<B> {
         let previous = std::mem::replace(&mut *self.state.borrow_mut(), State::Expired);
         drop(previous);
     }
-    /// Explicit cancel and pre-finish client Drop may abandon an existing rejection too.
+    /// Deliberately abandons only healthy recording; terminal outcomes retain their meaning.
+    /// Release payload after the state guard so resource destruction may safely reenter.
     fn cancel(&self) {
         let previous = {
             let mut state = self.state.borrow_mut();
-            if matches!(*state, State::Committed(_) | State::Expired) {
+            if !matches!(*state, State::Recording(_)) {
                 return;
             }
             std::mem::replace(&mut *state, State::Cancelled)
@@ -634,6 +635,7 @@ impl<B: crate::native::NativeResources> Recorder<B> {
 
 #[com_object(interfaces(IRenderView), ownership = exclusive)]
 /// Client facade cannot keep a session, domain, native renderer or command buffer alive.
+/// Its destruction refunds only the shell; the host session owns and judges unfinished work.
 struct View<B: crate::native::NativeResources> {
     /// Private lease identity cannot be rebound or forged through a public number.
     core: Weak<SessionCore<B>>,
@@ -915,7 +917,7 @@ impl<B: crate::native::NativeResources> IRenderView for View<B> {
             Ok(())
         })
     }
-    /// Cancellation is cleanup even after a rejection/domain closure, and never commits work.
+    /// Cancels healthy pending work; an earlier rejection or commit is preserved.
     fn cancel(&mut self) -> Result<(), NcStatus> {
         if let Some(core) = self.core.upgrade() {
             core.cancel();
@@ -923,15 +925,6 @@ impl<B: crate::native::NativeResources> IRenderView for View<B> {
         Ok(())
     }
 }
-impl<B: crate::native::NativeResources> Drop for View<B> {
-    /// Dropping a successfully finished client owner preserves the host's sealed contribution.
-    fn drop(&mut self) {
-        if let Some(core) = self.core.upgrade() {
-            core.cancel();
-        }
-    }
-}
-
 /// Exact admitted unsigned element width; unknown open enum values never reach a driver.
 fn index_size(format: GpuIndexFormat) -> Result<u64, NcStatus> {
     match format {

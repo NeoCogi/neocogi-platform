@@ -69,6 +69,93 @@ fn root() -> RenderViewRoot {
         target: Rect { x: 10, y: 20, width: 100, height: 80 },
     }
 }
+
+/// A facade's lifetime cannot turn an unfinished host-owned recording into deliberate cancellation.
+#[test]
+fn dropping_unfinished_view_preserves_recording_until_host_expiry() {
+    let device = new_device(
+        nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
+            .query()
+            .unwrap(),
+    );
+    let (_controller, factory) = client(&device, RenderClientLimits::default());
+    let mut frame = device.broker().begin_frame().unwrap();
+    let mut session = frame.begin_view(root(), factory.as_com_ref()).unwrap();
+    let mut view = session.view().unwrap();
+    view.clear_color(0xff112233).unwrap();
+    let pending = device.recording_usage(factory.as_com_ref()).unwrap().0;
+    assert!(pending > 0);
+    assert_eq!(device.recording_usage(factory.as_com_ref()).unwrap().1, 1);
+    drop(view);
+    assert_eq!(session.state().unwrap(), RenderViewState::Recording);
+    assert_eq!(device.recording_usage(factory.as_com_ref()).unwrap(), (pending, 0));
+    assert_eq!(session.view().err(), Some(RENDER_E_STATE));
+    assert_eq!(frame.finish(), Err(RENDER_E_STATE));
+    session.expire().unwrap();
+    assert_eq!(device.recording_usage(factory.as_com_ref()).unwrap(), (0, 0));
+    frame.finish().unwrap();
+}
+
+/// The first command error survives both explicit cancellation and client-owner destruction.
+#[test]
+fn cancel_and_drop_preserve_rejection_and_its_first_status() {
+    let device = new_device(
+        nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
+            .query()
+            .unwrap(),
+    );
+    let (_controller, factory) = client(&device, RenderClientLimits::default());
+    let mut frame = device.broker().begin_frame().unwrap();
+    let mut session = frame.begin_view(root(), factory.as_com_ref()).unwrap();
+    let mut view = session.view().unwrap();
+    view.clear_color(0xff112233).unwrap();
+    assert_eq!(view.clear_depth(f32::NAN), Err(NC_E_INVALID_ARG));
+    assert_eq!(device.recording_usage(factory.as_com_ref()).unwrap().0, 0);
+    view.cancel().unwrap();
+    view.cancel().unwrap();
+    assert_eq!(session.state().unwrap(), RenderViewState::Rejected);
+    assert_eq!(view.clear_color(0), Err(NC_E_INVALID_ARG));
+    assert_eq!(view.finish(), Err(NC_E_INVALID_ARG));
+    drop(view);
+    assert_eq!(session.state().unwrap(), RenderViewState::Rejected);
+    assert_eq!(device.recording_usage(factory.as_com_ref()).unwrap(), (0, 0));
+    assert_eq!(frame.finish(), Err(RENDER_E_STATE));
+    frame.abort().unwrap();
+    assert_eq!(session.state().unwrap(), RenderViewState::Expired);
+}
+
+/// Healthy cancellation releases payload immediately and is the only client abandonment success.
+#[test]
+fn healthy_cancel_is_idempotent_and_finish_survives_facade_drop() {
+    let device = new_device(
+        nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
+            .query()
+            .unwrap(),
+    );
+    let (_controller, factory) = client(&device, RenderClientLimits::default());
+    let mut frame = device.broker().begin_frame().unwrap();
+    let mut session = frame.begin_view(root(), factory.as_com_ref()).unwrap();
+    let mut view = session.view().unwrap();
+    view.clear_color(0xff112233).unwrap();
+    view.cancel().unwrap();
+    view.cancel().unwrap();
+    assert_eq!(session.state().unwrap(), RenderViewState::Cancelled);
+    assert_eq!(device.recording_usage(factory.as_com_ref()).unwrap().0, 0);
+    drop(view);
+    frame.finish().unwrap();
+    let mut frame = device.broker().begin_frame().unwrap();
+    let mut session = frame.begin_view(root(), factory.as_com_ref()).unwrap();
+    let mut view = session.view().unwrap();
+    view.finish().unwrap();
+    view.cancel().unwrap();
+    drop(view);
+    assert_eq!(session.state().unwrap(), RenderViewState::Committed);
+    let block = session.take_block().unwrap();
+    assert_eq!(session.take_block().err(), Some(RENDER_E_STATE));
+    frame.finish().unwrap();
+    drop(block);
+    assert_eq!(device.recording_usage(factory.as_com_ref()).unwrap(), (0, 0));
+}
 /// Retains the host controller while clients share a restricted factory.
 fn client(device: &GpuDevice, limits: RenderClientLimits) -> (ComBox<IRenderClientDomainAbi>, ComPtr<IRenderResourcesAbi>) {
     let controller = device.create_client(limits).unwrap();
@@ -310,7 +397,8 @@ fn weak_bindings_do_not_keep_resource_owners_alive() {
     assert_eq!(device.recording_usage(factory.as_com_ref()).unwrap().0, 0);
     assert!(view.finish().is_err());
     view.cancel().unwrap();
-    frame.finish().unwrap();
+    assert_eq!(frame.finish(), Err(RENDER_E_STATE));
+    frame.abort().unwrap();
 }
 
 /// Host expiry releases payload/capacity even while a client keeps the ComBox facade.
@@ -555,7 +643,8 @@ fn zero_instance_index_work_and_unsupported_restart_values_reject() {
     view.bind_index_buffer(indices.as_com_ref(), GpuIndexFormat::U16, 0).unwrap();
     assert!(matches!(view.draw_indexed(10, 0, 0), Err(NC_E_OUT_OF_RANGE)));
     view.cancel().unwrap();
-    frame.finish().unwrap();
+    assert_eq!(frame.finish(), Err(RENDER_E_STATE));
+    frame.abort().unwrap();
     let (_controller, factory) = client(&device, RenderClientLimits::default());
     let pipeline = make_pipeline(&factory, PROCEDURAL, Vec::new(), Vec::new(), Vec::new());
     let indices = buffer(&factory, GpuBufferRole::Index, [u16::MAX, 0, 1].iter().flat_map(|n| n.to_le_bytes()).collect());
@@ -601,13 +690,14 @@ fn index_range_alignment_vertex_coverage_and_invalid_depth_reject_atomically() {
         assert!(view.reset().is_err());
         assert!(view.finish().is_err());
         view.cancel().unwrap();
-        frame.finish().unwrap();
+        assert_eq!(frame.finish(), Err(RENDER_E_STATE));
+        frame.abort().unwrap();
     }
 }
 
 /// A balanced finish and explicit cancellation are distinct terminal outcomes.
 #[test]
-fn unbalanced_stack_and_root_pop_reject_and_cancel_permits_host_finish() {
+fn unbalanced_stack_and_root_pop_reject_even_after_cancel() {
     for unbalanced in [false, true] {
         let device = new_device(
             nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
@@ -627,7 +717,9 @@ fn unbalanced_stack_and_root_pop_reject_and_cancel_permits_host_finish() {
         assert!(session.take_block().is_err());
         assert!(frame.finish().is_err());
         view.cancel().unwrap();
-        frame.finish().unwrap();
+        assert_eq!(session.state().unwrap(), RenderViewState::Rejected);
+        assert_eq!(frame.finish(), Err(RENDER_E_STATE));
+        frame.abort().unwrap();
     }
 }
 
@@ -698,8 +790,12 @@ fn instance_streams_are_validated_independently_and_capture_each_binding() {
             assert!(matches!(draw.range, DrawRange::Vertices { instances: 2, .. }));
         } else {
             view.cancel().unwrap();
+            assert_eq!(frame.finish(), Err(RENDER_E_STATE));
+            frame.abort().unwrap();
         }
-        frame.finish().unwrap();
+        if valid {
+            frame.finish().unwrap();
+        }
     }
 }
 
