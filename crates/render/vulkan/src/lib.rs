@@ -930,6 +930,11 @@ impl VulkanContext {
                 .get_physical_device_surface_capabilities(self.physical_device, self.surface)
                 .map_err(|err| format!("get_surface_capabilities failed: {err:?}"))?
         };
+        // The native fixture can replace just this queried capability, including
+        // during initial construction before there is a context to configure.
+        #[cfg(test)]
+        let surface_caps = surface_tests::composition_capabilities(surface_caps);
+        let composition = Self::opaque_window_composition(surface_caps.supported_composite_alpha)?;
 
         let formats = unsafe {
             self.surface_loader
@@ -964,7 +969,7 @@ impl VulkanContext {
             .image_array_layers(1)
             .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT)
             .pre_transform(surface_caps.current_transform)
-            .composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE)
+            .composite_alpha(composition)
             .present_mode(present_mode)
             .clipped(true)
             .image_sharing_mode(vk::SharingMode::EXCLUSIVE);
@@ -977,6 +982,8 @@ impl VulkanContext {
 
         // Do not publish a swapchain until its image list can also be queried. The guard closes
         // the otherwise easy-to-miss leak when `get_swapchain_images` fails.
+        #[cfg(test)]
+        surface_tests::record_swapchain_create();
         let swapchain = ResourceGuard::new(
             unsafe { self.swapchain_loader.create_swapchain(&create_info, None) }.map_err(|err| self.core.failure("create_swapchain failed", err))?,
             |swapchain| unsafe { self.swapchain_loader.destroy_swapchain(swapchain, None) },
@@ -1401,6 +1408,16 @@ impl VulkanContext {
         Ok(())
     }
 
+    /// Preserve opaque window composition without submitting an unsupported native bit.
+    /// Other modes require a separate pixel-alpha contract and are not fallback policies.
+    fn opaque_window_composition(supported: vk::CompositeAlphaFlagsKHR) -> Result<vk::CompositeAlphaFlagsKHR> {
+        if supported.contains(vk::CompositeAlphaFlagsKHR::OPAQUE) {
+            Ok(vk::CompositeAlphaFlagsKHR::OPAQUE)
+        } else {
+            Err("Vulkan surface does not support opaque window composition".to_owned())
+        }
+    }
+
     /// Chooses the preferred swapchain surface format, falling back to the first available one.
     fn choose_surface_format(available_formats: &[vk::SurfaceFormatKHR]) -> vk::SurfaceFormatKHR {
         available_formats
@@ -1538,6 +1555,20 @@ impl VulkanContext {}
 mod tests {
 
     use super::*;
+
+    /// Every defined combination, including defensive empty input, has one policy.
+    #[test]
+    fn window_composition_requires_advertised_opaque_support() {
+        for bits in 0..16 {
+            let supported = vk::CompositeAlphaFlagsKHR::from_raw(bits);
+            let result = VulkanContext::opaque_window_composition(supported);
+            if supported.contains(vk::CompositeAlphaFlagsKHR::OPAQUE) {
+                assert!(result == Ok(vk::CompositeAlphaFlagsKHR::OPAQUE));
+            } else {
+                assert_eq!(result.err().unwrap(), "Vulkan surface does not support opaque window composition");
+            }
+        }
+    }
 
     /// Every phase/result pair has an explicit terminal or successful outcome.
     #[test]

@@ -4,6 +4,146 @@ use super::*;
 /// SDL video lifetime is process-global even though each renderer is thread-local.
 static NATIVE_SESSION: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+/// A one-shot query override and observation of the actual native dispatch boundary.
+struct CompositionProbe {
+    /// Consumed only after the real surface-capabilities query succeeds.
+    requested: Option<vk::CompositeAlphaFlagsKHR>,
+    /// Count actual vkCreateSwapchainKHR attempts, independently of selector results.
+    creates: usize,
+}
+
+thread_local! {
+    /// Initial construction has no published context on which to install fixture state.
+    /// Scope it to the current test thread and restore it on all exits, including panic.
+    static COMPOSITION: std::cell::RefCell<Option<CompositionProbe>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Owns the bounded constructor/rebuild seam; never changes production renderer state.
+struct CompositionScope;
+impl CompositionScope {
+    /// Starts exactly one native query observation under the SDL session lock.
+    fn new(requested: vk::CompositeAlphaFlagsKHR) -> Self {
+        COMPOSITION.with_borrow_mut(|slot| {
+            assert!(slot.is_none(), "composition scopes cannot nest");
+            *slot = Some(CompositionProbe { requested: Some(requested), creates: 0 });
+        });
+        Self
+    }
+
+    /// Prove both capability consumption and dispatch; an unrelated error cannot pass.
+    fn assert_observed(&self, creates: usize) {
+        COMPOSITION.with_borrow(|slot| {
+            let probe = slot.as_ref().unwrap();
+            assert!(probe.requested.is_none(), "real query did not consume the override");
+            assert_eq!(probe.creates, creates);
+        });
+    }
+}
+impl Drop for CompositionScope {
+    fn drop(&mut self) {
+        COMPOSITION.with_borrow_mut(|slot| {
+            slot.take();
+        });
+    }
+}
+
+/// Replace only the advertised composition mask, after querying the actual surface.
+pub(super) fn composition_capabilities(mut caps: vk::SurfaceCapabilitiesKHR) -> vk::SurfaceCapabilitiesKHR {
+    COMPOSITION.with_borrow_mut(|slot| {
+        if let Some(requested) = slot.as_mut().and_then(|probe| probe.requested.take()) {
+            // Negative controls bypass admission and dispatch OPAQUE. Require real
+            // OPAQUE support first so those controls never submit invalid driver usage.
+            assert!(
+                caps.supported_composite_alpha.contains(vk::CompositeAlphaFlagsKHR::OPAQUE),
+                "fixture requires a real OPAQUE-capable surface"
+            );
+            caps.supported_composite_alpha = requested;
+        }
+    });
+    caps
+}
+
+/// Count exactly at the native call, rather than assuming selector acceptance dispatched.
+pub(super) fn record_swapchain_create() {
+    COMPOSITION.with_borrow_mut(|slot| {
+        if let Some(probe) = slot {
+            probe.creates += 1;
+        }
+    });
+}
+
+/// Both supported and unsupported initial calls must reach the real query/dispatch boundary.
+#[test]
+#[ignore = "requires an SDL native display and Vulkan adapter"]
+fn initial_window_composition_is_admitted_before_native_creation() {
+    let _session = NATIVE_SESSION.lock().unwrap_or_else(|error| error.into_inner());
+    let sdl = sdl2::init().unwrap();
+    let video = sdl.video().unwrap();
+    let window = video.window("Vulkan initial composition", 64, 64).vulkan().hidden().build().unwrap();
+    for supported in [
+        vk::CompositeAlphaFlagsKHR::OPAQUE | vk::CompositeAlphaFlagsKHR::PRE_MULTIPLIED,
+        vk::CompositeAlphaFlagsKHR::PRE_MULTIPLIED,
+    ] {
+        let scope = CompositionScope::new(supported);
+        let candidate = VulkanRenderer::new(&window, 64, 64);
+        if supported.contains(vk::CompositeAlphaFlagsKHR::OPAQUE) {
+            let mut renderer = candidate.unwrap();
+            scope.assert_observed(1);
+            renderer
+                .frame(FrameInfo::try_new(Dimensioni::new(64, 64), color(0, 0, 0, 255)).unwrap())
+                .unwrap()
+                .finish()
+                .unwrap();
+        } else {
+            scope.assert_observed(0);
+            assert_eq!(candidate.err().unwrap(), "Vulkan surface does not support opaque window composition");
+        }
+    }
+}
+
+/// Destructive rebuild rejection must latch unavailable and forbid another native frame.
+#[test]
+#[ignore = "requires an SDL native display and Vulkan adapter"]
+fn rebuilt_window_composition_is_admitted_before_native_creation() {
+    let _session = NATIVE_SESSION.lock().unwrap_or_else(|error| error.into_inner());
+    let sdl = sdl2::init().unwrap();
+    let video = sdl.video().unwrap();
+    let window = video.window("Vulkan rebuilt composition", 64, 64).vulkan().hidden().build().unwrap();
+    for supported in [
+        vk::CompositeAlphaFlagsKHR::OPAQUE | vk::CompositeAlphaFlagsKHR::INHERIT,
+        vk::CompositeAlphaFlagsKHR::INHERIT,
+    ] {
+        let mut renderer = VulkanRenderer::new(&window, 64, 64).unwrap();
+        let core = renderer.context.core.clone();
+        let scope = CompositionScope::new(supported);
+        let result = renderer.context.recreate_swapchain(64, 64);
+        if supported.contains(vk::CompositeAlphaFlagsKHR::OPAQUE) {
+            result.unwrap();
+            scope.assert_observed(1);
+            assert_eq!(renderer.context.presentation, PresentationState::Ready);
+            renderer
+                .frame(FrameInfo::try_new(Dimensioni::new(64, 64), color(0, 0, 0, 255)).unwrap())
+                .unwrap()
+                .finish()
+                .unwrap();
+        } else {
+            scope.assert_observed(0);
+            assert_eq!(result, Err("Vulkan surface does not support opaque window composition".to_owned()));
+            assert_eq!(renderer.context.presentation, PresentationState::Unavailable);
+            assert_eq!(renderer.context.swapchain, vk::SwapchainKHR::null());
+            assert!(renderer.ensure_usable().is_err());
+            assert!(
+                renderer
+                    .frame(FrameInfo::try_new(Dimensioni::new(64, 64), color(0, 0, 0, 255)).unwrap())
+                    .is_err()
+            );
+            scope.assert_observed(0);
+        }
+        drop(renderer);
+        assert_eq!(core.live_allocations(), 0);
+    }
+}
+
 /// Read actual native pixels through a completed transfer, preserving the source layout.
 fn pixels(renderer: &VulkanRenderer, image: &Image) -> Vec<u8> {
     crate::generic::tests::readback(
