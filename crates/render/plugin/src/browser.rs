@@ -32,10 +32,9 @@ impl PlatformObject {
         let gpu = gpu::Gpu::from_canvas(pending.canvas.clone())?;
         let window = gpu.window();
         let device = Rc::new(Device {
-            logical: neocogi_render_gpu::GpuDevice::new(self.compiler.clone()),
+            logical: neocogi_render_gpu::GpuDevice::new(gpu.core(), self.compiler.clone()),
             render: RefCell::new(Some(RenderState { gpu, prepared: Prepared::default() })),
-            textures: RefCell::default(),
-            retired: RefCell::default(),
+            textures: Rc::default(),
             window,
         });
         let window = WindowObject { device, input, polling: Cell::new(false) };

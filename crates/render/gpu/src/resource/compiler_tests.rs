@@ -1,6 +1,8 @@
 //! Hostile-but-ABI-valid provider probes exercise the actual COM transfer rather
 //! than the unrelated counted GPU input-source protocol.
 use super::*;
+use crate::testing::device as new_device;
+type GpuDevice = crate::GpuDevice<crate::testing::Backend>;
 use neocogi_shader_core::abi::*;
 use neocogi_com::{INcStringAbi, INcBytesAbi, NcBytes};
 /// Valid source with a small deterministic artifact.
@@ -15,7 +17,7 @@ fn inactive_profile_violations_reject_through_the_resource_factory() {
     let compiler = nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
         .query()
         .unwrap();
-    let gpu = crate::GpuDevice::new(compiler);
+    let gpu = new_device(compiler);
     let controller = gpu.create_client(RenderClientLimits::default()).unwrap();
     let factory = controller.resources().unwrap();
     for case in admission::cases() {
@@ -79,7 +81,7 @@ enum Fault {
 /// Weak target avoids retaining device/domain through its own compiler dependency.
 struct Probe {
     /// Domain becomes known after the injected device constructs it.
-    domain: RefCell<Weak<Domain>>,
+    domain: RefCell<Weak<Domain<crate::testing::Backend>>>,
     /// Chosen fault, immutable for a test.
     fault: Fault,
     /// Real COM factory reached through a weak capability, avoiding a strong cycle.
@@ -234,7 +236,7 @@ fn fixture(fault: Fault, limit: u64) -> (GpuDevice, ComBox<IRenderClientDomainAb
         .query()
         .unwrap();
     let root = CompilerProxy::from_value(CompilerProxy { inner, probe: probe.clone() }).query().unwrap();
-    let device = GpuDevice::new(root);
+    let device = new_device(root);
     let domain = device.create_client(RenderClientLimits { live_bytes: limit, ..Default::default() }).unwrap();
     let factory = domain.resources().unwrap();
     *probe.factory.borrow_mut() = Some(factory.downgrade().unwrap());

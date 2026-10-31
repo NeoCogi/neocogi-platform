@@ -140,13 +140,19 @@ These intake checks cover the COM drawing boundaries; internal manager chrome
 recording still uses its existing infallible helper API.
 
 
-## Native image residency
+## Native image ownership
 
-Ordinary uploads and output creation share one native-key rule: an already
-resident key rejects before allocation or replacement, including cross-kind
-collisions. Failed creation publishes nothing and permits corrected retry. The
-public COM upload/output paths mint fresh keys for new immutable allocations.
-GL owns each installed image and optional framebuffer in one resident entry;
-retirement deletes its framebuffer before releasing its image reference. Generic
-sampled and completion owners retain only the shared image, so framebuffer
-residency does not prolong or shorten the sampled pixels' independent lifetime.
+Ordinary uploads return owned initialized native images. Private output creation
+returns a single-use destination consumed by its frame; only successful finish
+publishes an immutable image. There are no resident keys, numeric collision rules,
+renderer-global image entries or explicit destruction calls. Failed creation
+publishes nothing and permits a fresh corrected attempt.
+
+GL/Vulkan output aggregates own their framebuffer and exact image. In-flight or
+uncertain work retains that aggregate even for a host clear with no UI blocks.
+Final native backing release transfers an owned retirement packet to the existing
+driver; the framebuffer packet retains the raw image until attachment destruction.
+Sampled images and per-import receipts have their own actual owners. A retained
+completed image therefore survives framebuffer retirement and later surface work
+without retaining the renderer facade. See [GPU rendering](GPU_RENDERING.md) for
+compatible physical cores, completion, maintenance and disconnected-send cleanup.

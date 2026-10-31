@@ -131,16 +131,21 @@ pub fn read_initial(source: neocogi_com::NcValueRef<'_, InitialGpuData>, len: us
 
 #[com_object(interfaces(IRenderDriverIdentity))]
 /// Metadata token containing no native core, driver, factory or window ownership.
-struct DriverIdentity;
-impl IRenderDriverIdentity for DriverIdentity {}
+struct DriverIdentityObject;
+impl IRenderDriverIdentity for DriverIdentityObject {}
 
 /// Mints one process-local identity to retain on a newly created native core.
 /// Pointer identity is unique while retained, including across independently loaded providers.
-pub fn new_driver_identity() -> ComPtr<IRenderDriverIdentityAbi> {
-    DriverIdentity::from_value(DriverIdentity).query().expect("driver identity interface")
+pub fn new_driver_identity() -> DriverIdentity {
+    DriverIdentityObject::from_value(DriverIdentityObject)
+        .query()
+        .expect("driver identity interface")
 }
 
 /// Transfers an already owned initialized byte vector into an optional upload source.
 pub fn initial_bytes(bytes: Vec<u8>) -> InitialGpuData {
     initial(Some(Bytes::source(bytes)))
 }
+
+/// Retained compatibility metadata, independent of any native device/context lifetime.
+pub type DriverIdentity = ComPtr<IRenderDriverIdentityAbi>;

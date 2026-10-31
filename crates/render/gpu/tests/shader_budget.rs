@@ -1,6 +1,6 @@
 //! Observe real compiler allocations across the generated COM resource factory.
 use neocogi_com::{NcCopyFromBufferOffset, NC_E_OUT_OF_RANGE};
-use neocogi_render_gpu::{abi::*, source::Bytes, GpuDevice};
+use neocogi_render_gpu::{abi::*, source::Bytes};
 use std::{
     alloc::{GlobalAlloc, Layout, System},
     cell::Cell,
@@ -56,7 +56,7 @@ const EXPANDING: &str = r#"
 /// The factory must stop output expansion before allocating the artifact it cannot admit.
 #[test]
 fn generated_output_obeys_remaining_domain_quota_before_large_allocation() {
-    let device = GpuDevice::new(
+    let device = neocogi_render_gpu::testing::device(
         nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
             .query()
             .unwrap(),

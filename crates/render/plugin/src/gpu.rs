@@ -1,15 +1,19 @@
 //! Native GPU execution remains local to this plugin; only construction differs between selected backends.
 use super::*;
-use neocogi_render_core::{Color, FrameInfo, RendererBackend, RendererFrame, TextureId, prelude::Dimensioni};
+use neocogi_render_core::{Color, FrameInfo, RendererBackend, RendererFrame, prelude::Dimensioni};
 
 #[cfg(feature = "glow")]
-use neocogi_render_glow::GLRenderer as Renderer;
+pub(super) use neocogi_render_glow::{Backend, Core, GLRenderer as Renderer};
 #[cfg(feature = "vulkan")]
-use neocogi_render_vulkan::VulkanRenderer as Renderer;
+pub(super) use neocogi_render_vulkan::{Backend, VulkanRenderer as Renderer};
 #[cfg(feature = "wgpu")]
-use neocogi_render_wgpu::WgpuRenderer as Renderer;
+pub(super) use neocogi_render_wgpu::{Backend, WgpuRenderer as Renderer};
 #[cfg(feature = "webgl")]
-use neocogi_render_webgl::WebGlCanvasRenderer as Renderer;
+pub(super) use neocogi_render_webgl::{Backend, Core, WebGlCanvasRenderer as Renderer};
+/// Native immutable image selected with its statically typed resource family.
+pub(super) type Image = <Renderer as RendererBackend>::Image;
+/// Consumed private output target; cannot be reused after publication.
+type Output = <Renderer as RendererBackend>::Output;
 /// Concrete drawable owner selected at compilation, never a native-handle escape through COM.
 #[cfg(not(target_arch = "wasm32"))]
 pub(super) type Window = sdl2::video::Window;
@@ -24,12 +28,6 @@ pub(super) struct Gpu {
     /// Shared loader is used only to check GL execution errors before presentation.
     #[cfg(any(feature = "glow", feature = "webgl"))]
     gl: std::rc::Rc<glow::Context>,
-    /// GL context outlives renderer destruction, including its application pipelines and buffers.
-    #[cfg(all(not(target_arch = "wasm32"), feature = "glow"))]
-    context: sdl2::video::GLContext,
-    /// The browser context reports loss before native operations; restoration requires a new device.
-    #[cfg(target_arch = "wasm32")]
-    context: web_sys::WebGl2RenderingContext,
     /// Test-only readback captures completed GPU output before the window swap.
     #[cfg(all(test, feature = "glow"))]
     last_pixels: Vec<u8>,
@@ -41,7 +39,7 @@ impl Gpu {
     /// Test-only cost sample separates native preparation from completed execution;
     /// it bypasses acceptance readback and presentation and adds no deployed telemetry.
     #[cfg(all(test, feature = "glow", not(target_arch = "wasm32")))]
-    pub(super) fn measure(&mut self, blocks: &[std::rc::Rc<neocogi_render_gpu::record::Block>], sample: super::tests::costs::Sample) {
+    pub(super) fn measure(&mut self, blocks: &[std::rc::Rc<neocogi_render_gpu::record::Block<Backend>>], sample: super::tests::costs::Sample) {
         use glow::HasContext;
         use std::time::Instant;
         let super::tests::costs::Sample {
@@ -110,6 +108,7 @@ impl Gpu {
             attributes.set_context_profile(sdl2::video::GLProfile::GLES);
             attributes.set_context_version(3, 0);
             attributes.set_depth_size(24);
+            attributes.set_share_with_current_context(false);
         }
         let mut builder = video.window(title, size.width as u32, size.height as u32);
         builder.resizable().allow_highdpi();
@@ -134,11 +133,12 @@ impl Gpu {
                     pointer
                 })
             });
-            let renderer = Renderer::new(gl.clone(), actual.width as u32, actual.height as u32)?;
+            // SAFETY: Dispatch was loaded for this exact context, whose unique owner moves into Core.
+            let core = unsafe { Core::from_sdl(gl.clone(), window.clone(), context) }?;
+            let renderer = Renderer::new(core, actual.width as u32, actual.height as u32)?;
             Ok(Self {
                 renderer,
                 gl,
-                context,
                 window,
                 #[cfg(test)]
                 last_pixels: Vec::new(),
@@ -160,9 +160,10 @@ impl Gpu {
             .ok_or("WebGL 2 is unavailable")?
             .dyn_into::<web_sys::WebGl2RenderingContext>()
             .map_err(|_| "canvas context is not WebGL 2")?;
-        let gl = std::rc::Rc::new(glow::Context::from_webgl2_context(webgl.clone()));
-        let renderer = Renderer::new(gl.clone(), window.width(), window.height())?;
-        Ok(Self { renderer, gl, context: webgl, window })
+        let core = Core::from_canvas(window.clone(), webgl)?;
+        let gl = core.dispatch().clone();
+        let renderer = Renderer::new(core, window.width(), window.height())?;
+        Ok(Self { renderer, gl, window })
     }
     /// SDL's cheap owned clone keeps polling available while render state is temporarily detached.
     pub(super) fn window(&self) -> Window {
@@ -170,12 +171,8 @@ impl Gpu {
     }
     /// Selects this GL context before any native resource operation; explicit APIs need no global selection.
     fn current(&self) -> Result<(), String> {
-        #[cfg(target_arch = "wasm32")]
-        if self.context.is_context_lost() {
-            return Err("WebGL context was lost; recreate the platform window and its GPU resources".to_owned());
-        }
-        #[cfg(all(not(target_arch = "wasm32"), feature = "glow"))]
-        self.window.gl_make_current(&self.context)?;
+        #[cfg(any(feature = "glow", feature = "webgl"))]
+        self.renderer.make_current()?;
         Ok(())
     }
 
@@ -184,14 +181,18 @@ impl Gpu {
         self.current()?;
         self.renderer.maintain().map_err(|error| error.to_string())
     }
+    /// Shares physical device lifetime without retaining this driver or its queues.
+    pub(super) fn core(&self) -> std::rc::Rc<<Backend as neocogi_render_gpu::native::NativeResources>::Core> {
+        self.renderer.core()
+    }
     /// Atlas replacement uses the common immutable image realization before publishing UI metadata.
-    pub(super) fn prepare_texture(&mut self, texture: std::rc::Rc<neocogi_render_gpu::resource::TextureVersion>) -> Result<(), String> {
+    pub(super) fn prepare_texture(&mut self, texture: std::rc::Rc<neocogi_render_gpu::resource::TextureVersion<Backend>>) -> Result<(), String> {
         self.current()?;
         self.renderer.prepare_texture(texture)
     }
     /// Executes only validated owned commands; no foreign method is invoked while a frame is acquired.
     pub(super) fn render(&mut self, info: RenderInfo, prepared: &Prepared) -> Result<(), String> {
-        self.render_target(info, prepared, None)
+        self.render_target(info, prepared, None).map(|_| ())
     }
 
     /// Reports surface availability before accepting an independent rendering session.
@@ -199,19 +200,16 @@ impl Gpu {
         cfg!(any(feature = "glow", feature = "webgl", feature = "wgpu", feature = "vulkan"))
     }
 
-    /// Allocates an unpublished offscreen output through the native image owner.
-    pub(super) fn create_render_texture(&mut self, id: TextureId) -> Result<(), String> {
+    /// A fresh destination is consumed before a completed immutable image can be published.
+    pub(super) fn render_surface(&mut self, info: RenderInfo, prepared: &Prepared) -> Result<Image, String> {
         self.current()?;
-        self.renderer.create_render_texture(id).map_err(|error| error.to_string())
-    }
-
-    /// Executes UI into an unpublished texture without any native presentation.
-    pub(super) fn render_surface(&mut self, info: RenderInfo, prepared: &Prepared, output: TextureId) -> Result<(), String> {
-        self.render_target(info, prepared, Some(output))
+        let output = self.renderer.create_render_texture(info.size).map_err(|error| error.to_string())?;
+        self.render_target(info, prepared, Some(output))?
+            .ok_or_else(|| "offscreen frame returned no image".into())
     }
 
     /// Shares validated command execution while keeping target acquisition and presentation explicit.
-    fn render_target(&mut self, info: RenderInfo, prepared: &Prepared, target: Option<TextureId>) -> Result<(), String> {
+    fn render_target(&mut self, info: RenderInfo, prepared: &Prepared, target: Option<Output>) -> Result<Option<Image>, String> {
         self.current()?;
         let [r, g, b, a] = info.clear.to_le_bytes();
         let dimensions = Dimensioni::new(info.size.width, info.size.height);
@@ -222,6 +220,8 @@ impl Gpu {
             .iter()
             .map(|block| self.renderer.prepare_block(block, target.is_some()))
             .collect::<Result<Vec<_>, String>>()?;
+        #[cfg(all(not(target_arch = "wasm32"), feature = "glow"))]
+        let offscreen = target.is_some();
         let mut frame = match target {
             None => self.renderer.frame(frame_info),
             Some(output) => self.renderer.texture_frame(frame_info, output),
@@ -231,7 +231,7 @@ impl Gpu {
             frame.execute_block(block);
         }
         // Drop abandons; consuming finish alone submits. Vulkan/WGPU also present inside their finish.
-        frame.finish().map_err(|e| e.to_string())?;
+        let completed = frame.finish().map_err(|e| e.to_string())?;
         #[cfg(any(feature = "glow", feature = "webgl"))]
         {
             use glow::HasContext;
@@ -241,7 +241,7 @@ impl Gpu {
                 return Err(format!("OpenGL frame failed with error 0x{error:04x}"));
             }
             #[cfg(all(test, feature = "glow"))]
-            if target.is_none() {
+            if !offscreen {
                 self.last_pixels.resize(info.size.width as usize * info.size.height as usize * 4, 0);
                 // SAFETY: The complete RGBA output is allocated, and the live native context remains current.
                 unsafe {
@@ -257,32 +257,21 @@ impl Gpu {
                 }
             }
             #[cfg(not(target_arch = "wasm32"))]
-            if target.is_none() {
+            if !offscreen {
                 self.window.gl_swap_window();
             }
         }
-        Ok(())
+        Ok(completed)
     }
     /// Completed GPU output is available only to native acceptance tests, never through a production ABI.
     #[cfg(all(test, feature = "glow"))]
     pub(super) fn last_pixels(&self) -> &[u8] {
         &self.last_pixels
     }
-    /// Uploads into the native ownership map; the COM object is published only after success.
-    pub(super) fn create_texture(&mut self, id: TextureId, pixels: Option<&[u8]>) -> Result<(), String> {
+    /// Creates an immutable initialized image whose native backing owns its retirement sender.
+    pub(super) fn create_texture(&mut self, size: Size, pixels: Option<&[u8]>) -> Result<Image, String> {
         self.current()?;
-        self.renderer.create_texture(id, pixels).map_err(|e| e.to_string())
-    }
-    /// Deletes retired allocations only after native frames have finished and the right context is selected.
-    pub(super) fn retire(&mut self, ids: &mut Vec<TextureId>) -> Result<(), String> {
-        if ids.is_empty() {
-            return Ok(());
-        }
-        self.current()?;
-        for id in ids.drain(..) {
-            self.renderer.destroy_texture(id);
-        }
-        Ok(())
+        self.renderer.create_texture(size, pixels).map_err(|error| error.to_string())
     }
 }
 

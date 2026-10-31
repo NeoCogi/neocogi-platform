@@ -66,23 +66,28 @@ only into its private compositor domain. Client factories reject this bridge,
 and the imported resource exposes no conversion back to `ITexture`, native key,
 or renderer capability. Imported images cannot be updated through the factory.
 
-At the Rust backend boundary, `TextureId` is a process-unique map key with checked
-immutable dimensions. It is not an authenticated COM resource or a certificate for
-later byte slices. Every safe `RendererBackend::create_texture` validates its actual
-supplied RGBA input before ownership reservation or native work; absent data is
-initialized to zero independently of render-target usage. Uploaded storage must have
-exactly width × height × 4 bytes within the shared image budget; render-target
-allocation checks the same extent without pretending to upload an empty slice.
+At the Rust backend boundary, native images are opaque owned values. Every safe
+`RendererBackend::create_texture(size, pixels)` validates the actual RGBA slice
+before native work; absent data is initialized to zero. The checked extent is
+width × height × 4 bytes within the shared image budget. No caller-generated image
+key or explicit destruction call exists.
 
-Private CPU versions retain an imported image's COM lease until native capture.
-Native caches and submitted draws retain the shared native image allocation,
-passive weak version metadata and a device-free byte receipt. They never retain
-that COM lease or the device facade it owns. Thus public image release can retire
-its registry/map ownership while prepared/in-flight draws keep the pixels alive,
-without a device → cache → imported image → device cycle. Texture receipts retain
-logical charges through the final native owner even after private CPU bytes expire.
-`IRenderHost::prepare_ui_texture` completes the fallible native preparation boundary
-before a compositor publishes a candidate asset revision.
+`create_render_texture(size)` returns an unpublished single-use output. The caller
+moves it into `texture_frame`; successful `finish` returns `Some(image)` for that
+output and `None` for a window. Failure or abandonment publishes no image. An
+immutable image cannot be passed back as a draw target. The exact image and
+framebuffer follow every actual native use, including a zero-block host clear
+and uncertain submission. A retained completed image never changes on later
+frames, resize, or surface release.
+
+Imports capture the authenticated native image directly after receiver-owned
+foreign QI/AddRef/Release calls end. They retain no public-image COM lease. An
+ordinary image owns native pixels and physical device/context lifetime without
+retaining the driver facade, event pump, UI runtime, or provenance registry. Each
+import's logical reservation follows that import and its prepared/in-flight use;
+an unrelated long-lived alias does not retain that import's charge.
+`IRenderHost::prepare_ui_texture` completes fallible native preparation before a
+compositor publishes a candidate asset revision.
 
 ## Portable shader profile, version 1
 
@@ -204,9 +209,12 @@ Normalized graphics positions use positive Y upward and depth in `[0,1]`.
 Sampled texture row zero and fragment-position Y use the top-left convention.
 The GL executor privately normalizes direct presentation versus offscreen image
 storage, including fragment coordinates and front-face winding. It restores
-complete pipeline/binding state per draw. Its native caches retain device-free
-immutable versions; recorded blocks and domain controllers retain native lifetime
-separately, preventing an idle device-cache-domain ownership cycle.
+complete pipeline/binding state per draw. Every native allocation retains the
+actual physical context, including SDL ownership or the browser context. A GL
+handle's destruction first selects its own context. Selection failure or observed
+WebGL loss tears down that physical owner terminally; restoration requires a new
+core and identity. Supported operations reselect their context after late cleanup
+on another context. A bare GL dispatch table is not a lifetime guard.
 
 WGPU prepares explicit layouts, pipelines and immutable bindings before acquiring
 the target. Regional replacement uses private scissored clear pipelines, and
@@ -216,8 +224,8 @@ completion callback is observed. That callback owns only an atomic completion
 flag; UI-thread resource owners stay in the executor's completion collection.
 
 Vulkan prepares explicit buffers, sampled images, descriptor sets and compatible
-pipelines before target acquisition. Native versions retain a cache-free device
-core and device-free accounting. Submitted blocks remain owned through their
+pipelines before target acquisition. Native allocations retain only the physical
+device core and opaque shared accounting. Submitted blocks remain owned through their
 graphics fence, including presentation failure. Memory and sampler counts are
 checked device-wide, including host images and UI allocations, and are refunded
 only after native destruction. Image format/usage, dimensions and attachment
@@ -238,8 +246,14 @@ on the existing queue and retains typed buffer/image/uniform owners and command
 receipts until upload completion is observed. Explicit scoped buffer creation and
 aligned queue writes return native allocation errors without mapped-helper panics.
 Every WGPU error scope is popped, including failures after capturing imported
-ordinary-image initialization. Invalid native caches are cleared and a later valid
-preparation may retry; a scoped validation error alone does not indicate device loss.
+ordinary-image initialization. Each candidate's scopes finish before its native
+slot becomes Ready. A failed candidate leaves its own slot retryable and preserves
+every successful sibling target variant. No global cache rollback exists. A scoped
+validation error alone does not indicate device loss. Initialization and frame
+submission share one scoped queue boundary that installs exact owners before
+submit. A submit error may have consumed pending writes: it marks the compatible
+core unavailable and retains uncertain owners until final idle/loss teardown.
+Another facade cannot reuse that core's Ready slots to bypass failed initialization.
 Vulkan installs its transfer owner before submission. An uncertain submit or wait
 result makes that executor terminal and retains commands, staging, destination and
 accounting until proven idle or device loss at teardown. A failure status alone
@@ -264,14 +278,43 @@ charges. Editable input descriptors and owned compiler-import DTOs remain ordina
 authoring data before admission. Native pixel uploads also check the actual slice
 against its extent before allocating or passing pointers to GL.
 
-Version IDs are checked, non-reusing cache identities across logical GpuDevice
-instances in the linked implementation. Independent logical producers can feed a
-standalone Rust native adapter without cache aliasing. IDs do not authenticate
-COM provenance: device/domain registry checks remain authoritative. Exhaustion
-rejects publication instead of wrapping. Native cache keys and passive receipts
-retain no additional device owner; weak retirement and actual GPU completion
-remain separate lifetimes.
+The common resource, command and recording types are parameterized by one concrete
+`NativeResources` family. That Rust type selects native storage and a physical core;
+COM interfaces retain their existing v1 roles and contain no native handles. Each
+immutable version owns its native slot, and each pipeline version owns its target
+variants. Prepared objects retain native allocations and opaque accounting receipts,
+never the parent version or a client domain. Uniform payloads use the same mechanism.
+There are no renderer-global resource maps, numeric version IDs, source-count scans,
+or passive weak realization receipts. Small host-only regional-clear variants are
+driver state, with no application resource identities.
 
+Every source, imported image, prepared block and consumed output checks its actual
+retained core against the selected driver. Two logical producers may share one
+explicit compatible core without sharing resource/domain provenance. A matching
+backend type or metadata token alone does not establish compatibility. Terminal
+native loss invalidates previously Ready slots as well as future creation.
+
+A last native backing owner transfers a sender-free owned packet through mpsc to
+the existing driver. Packets contain native handles, narrow physical lifetime and
+opaque reservations; they contain no driver, domain, source version or sender.
+Core owns neither endpoint nor submitted work. Completion retains the actual
+backing before native use, so final-owner notification is not proof of completion.
+Maintenance observes completion, releases its owners and drains retirement packets.
+It runs before CPU admission, on frame exits, failures, abandonment and shutdown.
+Idle releases wait for maintenance; a disconnected send returns the same owned
+packet for safe late destruction. Native storage is destroyed before its final
+reservation refunds. Metadata alone cannot retain the physical core.
+
+WGPU presentation construction, resize and lost/outdated recovery use one checked
+fallible target transaction. Extents are validated against the actual device before
+surface configure/depth allocation. The candidate configuration and depth owner
+are installed only after native scopes succeed. Before a destructive configuration
+attempt the presentation state becomes NeedsConfiguration. Failure retains a retry
+template, and even a frame requesting the previous size must reconfigure before
+acquisition. Acquisition itself also scopes unexpected native errors. Presentation
+has a separate scoped phase after successful recording/submission validation;
+its native errors return through finish and require reconfiguration. Oversized
+precheck failures preserve a complete existing assembly and return errors.
 
 ## Vulkan presentation failure boundary
 

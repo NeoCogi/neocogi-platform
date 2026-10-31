@@ -1,6 +1,8 @@
 //! Pixel regressions for native GL state isolation; run with SDL_VIDEODRIVER=offscreen.
 
 use super::*;
+use neocogi_render_core::{abi::Size, prelude::color};
+use glow::{Framebuffer, VertexArray, Texture, Sampler, Buffer};
 
 /// SDL initialization is process-wide and rejects concurrent owners on different test threads.
 static NATIVE_SESSION: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -96,16 +98,21 @@ fn canonical_signed_derivatives_match_window_and_texture_pixels() {
     let _context = window.gl_create_context().unwrap();
     // SAFETY: SDL's current live context owns every GL operation and resource below.
     let gl = Rc::new(unsafe { glow::Context::from_loader_function(|name| video.gl_get_proc_address(name).cast()) });
-    let mut renderer = GLRenderer::new(gl.clone(), 8, 8).unwrap();
+    let mut renderer = GLRenderer::new(
+        // SAFETY: The loader belongs to this live SDL context; transfer its unique physical owner.
+        unsafe { Core::from_sdl(gl.clone(), window.clone(), _context) }.unwrap(),
+        8,
+        8,
+    )
+    .unwrap();
     let gpu = neocogi_render_gpu::GpuDevice::new(
+        renderer.core(),
         nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
             .query()
             .unwrap(),
     );
-    let domain = gpu.create_ui_client(Default::default(), None).unwrap();
+    let domain = gpu.create_ui_client(Default::default()).unwrap();
     let resources = domain.resources().unwrap();
-    let output = TextureId::for_render_target(8, 8).unwrap();
-    renderer.create_render_texture(output).unwrap();
     for case in derivatives::cases() {
         let owner = derivatives::block(&gpu, &resources, &case.source);
         let snapshot = gpu.block_snapshot(owner.as_com_ref()).unwrap();
@@ -113,6 +120,7 @@ fn canonical_signed_derivatives_match_window_and_texture_pixels() {
             let prepared = renderer.prepare_block(&snapshot, offscreen).unwrap();
             let info = FrameInfo::try_new(Dimensioni::new(8, 8), color(0, 0, 0, 255)).unwrap();
             let mut frame = if offscreen {
+                let output = renderer.create_render_texture(Size { width: 8, height: 8 }).unwrap();
                 renderer.texture_frame(info, output).unwrap()
             } else {
                 renderer.frame(info).unwrap()
@@ -134,7 +142,6 @@ fn canonical_signed_derivatives_match_window_and_texture_pixels() {
             );
         }
     }
-    renderer.destroy_texture(output);
 }
 
 /// Reads the default framebuffer regardless of the application-side read-target binding.
@@ -162,13 +169,20 @@ fn ui_draws_clears_and_uploads_survive_application_gl_state() {
     let gl = Rc::new(unsafe { glow::Context::from_loader_function(|name| video.gl_get_proc_address(name).cast()) });
     let foreign = ForeignState::new(gl.clone());
     foreign.bind();
-    let mut renderer = GLRenderer::new(gl.clone(), 8, 8).unwrap();
+    let mut renderer = GLRenderer::new(
+        // SAFETY: The loader belongs to this live SDL context; transfer its unique physical owner.
+        unsafe { Core::from_sdl(gl.clone(), window.clone(), _context) }.unwrap(),
+        8,
+        8,
+    )
+    .unwrap();
     let gpu = neocogi_render_gpu::GpuDevice::new(
+        renderer.core(),
         nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
             .query()
             .unwrap(),
     );
-    let domain = gpu.create_ui_client(Default::default(), None).unwrap();
+    let domain = gpu.create_ui_client(Default::default()).unwrap();
     let resources = domain.resources().unwrap();
     let root = neocogi_render_gpu::abi::Rect { x: 1, y: 1, width: 6, height: 6 };
     let block = sampled::block(&gpu, &resources, root, neocogi_render_gpu::abi::Size { width: 1, height: 1 }, &[255, 0, 0, 255]);
@@ -187,15 +201,13 @@ fn ui_draws_clears_and_uploads_survive_application_gl_state() {
     }
     // Native image upload must independently reset hostile unpack state.
     foreign.bind();
-    let image = TextureId::for_upload(1, 1, &[255; 4]).unwrap();
+    let size = Size { width: 1, height: 1 };
     // Admission must use this call's bytes, not the earlier slice that minted the key.
     for length in [0, 1, 3, 5] {
-        assert!(matches!(renderer.create_texture(image, Some(&vec![0; length])),
+        assert!(matches!(renderer.create_texture(size, Some(&vec![0; length])),
             Err(TextureError::Image { source: neocogi_render_core::ImageValidationError::PixelLength { expected: 4, actual } }) if actual == length));
-        assert!(!renderer.textures.contains_key(&image));
     }
-    renderer.create_texture(image, Some(&[255; 4])).unwrap();
-    renderer.destroy_texture(image);
+    renderer.create_texture(size, Some(&[255; 4])).unwrap();
     // Abandoning an unexecuted target never manufactures a draw or completion submission.
     drop(renderer.frame(info).unwrap());
     assert_eq!(pixel(&gl, 4, 4), [17, 19, 23, 255]);
@@ -222,10 +234,17 @@ fn native_completion_owns_resource_and_command_charges() {
     let _context = window.gl_create_context().unwrap();
     // SAFETY: SDL's current context remains owned until after every native object below drops.
     let gl = Rc::new(unsafe { glow::Context::from_loader_function(|name| video.gl_get_proc_address(name).cast()) });
-    let mut renderer = GLRenderer::new(gl.clone(), 8, 8).unwrap();
+    let mut renderer = GLRenderer::new(
+        // SAFETY: The loader belongs to this live SDL context; transfer its unique physical owner.
+        unsafe { Core::from_sdl(gl.clone(), window.clone(), _context) }.unwrap(),
+        8,
+        8,
+    )
+    .unwrap();
     let info = FrameInfo::try_new(Dimensioni::new(8, 8), color(0, 0, 0, 255)).unwrap();
     for phase in 0..3 {
         let device = GpuDevice::new(
+            renderer.core(),
             nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
                 .query()
                 .unwrap(),
@@ -323,8 +342,15 @@ fn dynamic_shader_indices_cannot_escape_uniform_or_private_storage() {
     let window = video.window("GL shader bounds", 8, 8).opengl().hidden().build().unwrap();
     let _context = window.gl_create_context().unwrap();
     let gl = Rc::new(unsafe { glow::Context::from_loader_function(|name| video.gl_get_proc_address(name).cast()) });
-    let mut renderer = GLRenderer::new(gl.clone(), 8, 8).unwrap();
+    let mut renderer = GLRenderer::new(
+        // SAFETY: The loader belongs to this live SDL context; transfer its unique physical owner.
+        unsafe { Core::from_sdl(gl.clone(), window.clone(), _context) }.unwrap(),
+        8,
+        8,
+    )
+    .unwrap();
     let gpu = GpuDevice::new(
+        renderer.core(),
         nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
             .query()
             .unwrap(),
@@ -407,8 +433,15 @@ fn fragment_identifiers_containing_builtin_names_compile_and_render() {
     let window = video.window("GL identifier normalization", 8, 8).opengl().hidden().build().unwrap();
     let _context = window.gl_create_context().unwrap();
     let gl = Rc::new(unsafe { glow::Context::from_loader_function(|name| video.gl_get_proc_address(name).cast()) });
-    let mut renderer = GLRenderer::new(gl.clone(), 8, 8).unwrap();
+    let mut renderer = GLRenderer::new(
+        // SAFETY: The loader belongs to this live SDL context; transfer its unique physical owner.
+        unsafe { Core::from_sdl(gl.clone(), window.clone(), _context) }.unwrap(),
+        8,
+        8,
+    )
+    .unwrap();
     let gpu = GpuDevice::new(
+        renderer.core(),
         nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
             .query()
             .unwrap(),
@@ -513,12 +546,19 @@ fn independent_logical_devices_keep_distinct_native_resources() {
     let _context = window.gl_create_context().unwrap();
     // SAFETY: all native resources are released before the owning current SDL context.
     let gl = Rc::new(unsafe { glow::Context::from_loader_function(|name| video.gl_get_proc_address(name).cast()) });
-    let mut renderer = GLRenderer::new(gl.clone(), 8, 8).unwrap();
+    let mut renderer = GLRenderer::new(
+        // SAFETY: The loader belongs to this live SDL context; transfer its unique physical owner.
+        unsafe { Core::from_sdl(gl.clone(), window.clone(), _context) }.unwrap(),
+        8,
+        8,
+    )
+    .unwrap();
     let mut owners = Vec::new();
     let mut snapshots = Vec::new();
     let root = neocogi_render_gpu::abi::Rect { x: 0, y: 0, width: 8, height: 8 };
     for rgba in [[255, 0, 0, 255], [0, 0, 255, 255]] {
         let gpu = neocogi_render_gpu::GpuDevice::new(
+            renderer.core(),
             nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
                 .query()
                 .unwrap(),
@@ -539,66 +579,66 @@ fn independent_logical_devices_keep_distinct_native_resources() {
     }
 }
 
-/// Creation never replaces a live image; attachment retirement is independent of sampling.
+/// Single-use output publication keeps shared pixels independent of attachment retirement.
 #[test]
-#[ignore = "requires native GL ES3; run with SDL_VIDEODRIVER=offscreen"]
-fn resident_outputs_reject_collisions_and_release_framebuffers_before_shared_images() {
-    let _session = NATIVE_SESSION.lock().unwrap_or_else(|error| error.into_inner());
+#[ignore = "requires SDL GL; run with SDL_VIDEODRIVER=offscreen"]
+fn owned_outputs_retire_attachments_without_rewriting_shared_images() {
+    let _session = NATIVE_SESSION.lock().unwrap_or_else(|e| e.into_inner());
     let sdl = sdl2::init().unwrap();
     let video = sdl.video().unwrap();
     video.gl_attr().set_context_profile(sdl2::video::GLProfile::GLES);
     video.gl_attr().set_context_version(3, 0);
-    let window = video.window("resident image ownership", 8, 8).opengl().hidden().build().unwrap();
-    let _context = window.gl_create_context().unwrap();
-    // SAFETY: native objects retire before the owning current SDL context.
+    let window = video.window("owned output", 8, 8).opengl().hidden().build().unwrap();
+    let context = window.gl_create_context().unwrap();
+    // SAFETY: dispatch is loaded for the unique context moved into Core.
     let gl = Rc::new(unsafe { glow::Context::from_loader_function(|name| video.gl_get_proc_address(name).cast()) });
-    let mut renderer = GLRenderer::new(gl.clone(), 8, 8).unwrap();
-    let output = TextureId::for_render_target(2, 2).unwrap();
-    renderer.create_render_texture(output).unwrap();
-    let framebuffer = renderer.textures[&output].framebuffer.unwrap();
-    let sampled = renderer.textures[&output].image.clone();
-    renderer.incomplete_output = true;
-    assert!(renderer.create_render_texture(output).is_err());
-    assert!(renderer.incomplete_output, "duplicate rejection precedes native attachment work");
-    assert!(renderer.create_texture(output, Some(&[0; 16])).is_err());
-    assert_eq!(renderer.textures[&output].framebuffer, Some(framebuffer));
+    let core = unsafe { Core::from_sdl(gl.clone(), window, context) }.unwrap();
+    let mut renderer = GLRenderer::new(core, 8, 8).unwrap();
+    let size = Size { width: 2, height: 2 };
+    let output = renderer.create_render_texture(size).unwrap();
+    let fbo = output.state.framebuffer();
     let info = FrameInfo::try_new(Dimensioni::new(2, 2), color(7, 31, 63, 255)).unwrap();
-    renderer.texture_frame(info, output).unwrap().finish().unwrap();
-    let mut actual = [0; 4];
-    // SAFETY: the installed framebuffer has two-by-two initialized RGBA pixels.
+    let image = renderer.texture_frame(info, output).unwrap().finish().unwrap().unwrap();
     unsafe {
-        gl.bind_framebuffer(glow::READ_FRAMEBUFFER, Some(framebuffer));
-        gl.read_pixels(0, 0, 1, 1, glow::RGBA, glow::UNSIGNED_BYTE, PixelPackData::Slice(Some(&mut actual)));
-        gl.bind_framebuffer(glow::READ_FRAMEBUFFER, None);
+        gl.finish();
     }
-    assert_eq!(actual, [7, 31, 63, 255]);
-    renderer.destroy_texture(output);
+    renderer.maintain().unwrap();
     unsafe {
-        assert!(!gl.is_framebuffer(framebuffer));
-        assert!(gl.is_texture(sampled.raw));
+        assert!(!gl.is_framebuffer(fbo));
+        assert!(gl.is_texture(image.raw));
     }
-    let raw = sampled.raw;
-    drop(sampled);
+    let actual = read_image(&gl, &image, 2, 2);
+    assert_eq!(actual, [7, 31, 63, 255].repeat(4));
+    renderer.incomplete_output = true;
+    assert!(renderer.create_render_texture(size).is_err());
+    let retry = renderer.create_render_texture(size).unwrap();
+    drop(retry);
+    renderer.maintain().unwrap();
+    assert_eq!(read_image(&gl, &image, 2, 2), actual);
+    let raw = image.raw;
+    drop(image);
+    renderer.maintain().unwrap();
     unsafe {
         assert!(!gl.is_texture(raw));
-    }
-    // The real incomplete-framebuffer path leaves no resident parts and permits retry.
-    let retry = TextureId::for_render_target(2, 2).unwrap();
-    assert!(renderer.create_render_texture(retry).is_err());
-    assert!(!renderer.textures.contains_key(&retry));
-    renderer.create_render_texture(retry).unwrap();
-    renderer.destroy_texture(retry);
-    let upload = TextureId::for_upload(1, 1, &[255; 4]).unwrap();
-    renderer.create_texture(upload, Some(&[255; 4])).unwrap();
-    let original = renderer.textures[&upload].image.raw;
-    assert!(renderer.create_texture(upload, Some(&[0; 4])).is_err());
-    assert!(renderer.create_render_texture(upload).is_err());
-    assert_eq!(renderer.textures[&upload].image.raw, original);
-    assert!(renderer.textures[&upload].framebuffer.is_none());
-    renderer.destroy_texture(upload);
-    unsafe {
         assert_eq!(gl.get_error(), glow::NO_ERROR);
     }
+}
+
+/// Reads immutable pixels using a temporary host-owned read attachment.
+fn read_image(gl: &glow::Context, image: &Image, width: i32, height: i32) -> Vec<u8> {
+    let mut pixels = vec![19; (width * height * 4) as usize];
+    // SAFETY: image belongs to this selected live context and output covers its exact RGBA extent.
+    unsafe {
+        let fbo = gl.create_framebuffer().unwrap();
+        gl.bind_framebuffer(glow::READ_FRAMEBUFFER, Some(fbo));
+        gl.framebuffer_texture_2d(glow::READ_FRAMEBUFFER, glow::COLOR_ATTACHMENT0, glow::TEXTURE_2D, Some(image.raw), 0);
+        assert_eq!(gl.check_framebuffer_status(glow::READ_FRAMEBUFFER), glow::FRAMEBUFFER_COMPLETE);
+        gl.read_pixels(0, 0, width, height, glow::RGBA, glow::UNSIGNED_BYTE, PixelPackData::Slice(Some(&mut pixels)));
+        gl.bind_framebuffer(glow::READ_FRAMEBUFFER, None);
+        gl.delete_framebuffer(fbo);
+        assert_eq!(gl.get_error(), glow::NO_ERROR);
+    }
+    pixels
 }
 
 /// Actual texture sampling and ordinary-image readback observe defined zero RGBA contents.
@@ -616,8 +656,15 @@ fn absent_initial_images_are_native_zero_without_a_cpu_zero_payload() {
     let _context = window.gl_create_context().unwrap();
     // SAFETY: SDL selected the owned live context and its loader resolves functions for it.
     let gl = Rc::new(unsafe { glow::Context::from_loader_function(|name| video.gl_get_proc_address(name) as *const _) });
-    let mut renderer = GLRenderer::new(gl.clone(), 4, 4).unwrap();
+    let mut renderer = GLRenderer::new(
+        // SAFETY: The loader belongs to this live SDL context; transfer its unique physical owner.
+        unsafe { Core::from_sdl(gl.clone(), window.clone(), _context) }.unwrap(),
+        4,
+        4,
+    )
+    .unwrap();
     let device = GpuDevice::new(
+        renderer.core(),
         nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
             .query()
             .unwrap(),
@@ -633,32 +680,18 @@ fn absent_initial_images_are_native_zero_without_a_cpu_zero_payload() {
     );
     let snapshot = device.block_snapshot(block.as_com_ref()).unwrap();
     let prepared = renderer.prepare_block(&snapshot, true).unwrap();
-    let output = TextureId::for_render_target(4, 4).unwrap();
-    renderer.create_render_texture(output).unwrap();
+    let output = renderer.create_render_texture(Size { width: 4, height: 4 }).unwrap();
     let info = FrameInfo::try_new(Dimensioni::new(4, 4), Color { r: 99, g: 77, b: 55, a: 255 }).unwrap();
     let mut frame = renderer.texture_frame(info, output).unwrap();
     frame.execute_block(&prepared);
-    frame.finish().unwrap();
-    let mut pixels = [19; 64];
-    // SAFETY: The complete RGBA8 output target is current and the complete writable RGBA output is initialized.
-    unsafe {
-        gl.bind_framebuffer(glow::READ_FRAMEBUFFER, renderer.textures[&output].framebuffer);
-        gl.read_pixels(0, 0, 4, 4, glow::RGBA, glow::UNSIGNED_BYTE, PixelPackData::Slice(Some(&mut pixels)));
-    }
-    assert_eq!(pixels, [0; 64]);
-    let id = TextureId::for_render_target(2, 2).unwrap();
-    renderer.create_texture(id, None).unwrap();
+    let image = frame.finish().unwrap().unwrap();
+    assert_eq!(read_image(&gl, &image, 4, 4), [0; 64]);
+    let image = renderer.create_texture(Size { width: 2, height: 2 }, None).unwrap();
     // SAFETY: This temporary FBO retains an installed native image and is deleted before its owner.
     unsafe {
         let framebuffer = gl.create_framebuffer().unwrap();
         gl.bind_framebuffer(glow::FRAMEBUFFER, Some(framebuffer));
-        gl.framebuffer_texture_2d(
-            glow::FRAMEBUFFER,
-            glow::COLOR_ATTACHMENT0,
-            glow::TEXTURE_2D,
-            Some(renderer.textures[&id].image.raw),
-            0,
-        );
+        gl.framebuffer_texture_2d(glow::FRAMEBUFFER, glow::COLOR_ATTACHMENT0, glow::TEXTURE_2D, Some(image.raw), 0);
         assert_eq!(gl.check_framebuffer_status(glow::FRAMEBUFFER), glow::FRAMEBUFFER_COMPLETE);
         let mut output = [19; 16];
         gl.read_pixels(0, 0, 2, 2, glow::RGBA, glow::UNSIGNED_BYTE, PixelPackData::Slice(Some(&mut output)));
@@ -667,4 +700,137 @@ fn absent_initial_images_are_native_zero_without_a_cpu_zero_payload() {
         gl.delete_framebuffer(framebuffer);
         assert_eq!(gl.get_error(), glow::NO_ERROR);
     }
+}
+
+/// A retained prepared block keeps the physical context, not its former renderer, alive.
+/// Its final release while B is current must not delete B's coincidentally numbered objects.
+#[test]
+#[ignore = "requires native GL ES3; run with SDL_VIDEODRIVER=offscreen"]
+fn late_native_owners_preserve_their_context_and_next_driver_reselects_its_own() {
+    let _session = NATIVE_SESSION.lock().unwrap_or_else(|error| error.into_inner());
+    let sdl = sdl2::init().unwrap();
+    let video = sdl.video().unwrap();
+    video.gl_attr().set_context_profile(sdl2::video::GLProfile::GLES);
+    video.gl_attr().set_context_version(3, 0);
+    video.gl_attr().set_depth_size(24);
+    let window_a = video.window("late core A", 4, 4).opengl().hidden().build().unwrap();
+    let context_a = window_a.gl_create_context().unwrap();
+    // SAFETY: SDL selected this owned physical context before resolving its dispatch.
+    let gl_a = Rc::new(unsafe { glow::Context::from_loader_function(|name| video.gl_get_proc_address(name).cast()) });
+    // SAFETY: Transfer the unique context whose dispatch was just loaded.
+    let core_a = unsafe { Core::from_sdl(gl_a, window_a, context_a) }.unwrap();
+    let weak_a = Rc::downgrade(&core_a);
+    let metadata_a = core_a.identity().clone();
+    let mut renderer_a = GLRenderer::new(core_a, 4, 4).unwrap();
+    let gpu_a = neocogi_render_gpu::GpuDevice::new(
+        renderer_a.core(),
+        nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
+            .query()
+            .unwrap(),
+    );
+    let domain_a = gpu_a.create_client(Default::default()).unwrap();
+    let resources_a = domain_a.resources().unwrap();
+    let root = neocogi_render_gpu::abi::Rect { x: 0, y: 0, width: 4, height: 4 };
+    let size = neocogi_render_gpu::abi::Size { width: 1, height: 1 };
+    let block_a = sampled::block(&gpu_a, &resources_a, root, size, &[255, 0, 0, 255]);
+    let snapshot_a = gpu_a.block_snapshot(block_a.as_com_ref()).unwrap();
+    let prepared_a = renderer_a.prepare_block(&snapshot_a, false).unwrap();
+    drop((renderer_a, snapshot_a, block_a, resources_a, domain_a, gpu_a));
+    assert!(weak_a.upgrade().is_some(), "prepared allocations retain actual context lifetime");
+
+    let window_b = video.window("live core B", 4, 4).opengl().hidden().build().unwrap();
+    let context_b = window_b.gl_create_context().unwrap();
+    // SAFETY: SDL selected B's unique live context for this dispatch.
+    let gl_b = Rc::new(unsafe { glow::Context::from_loader_function(|name| video.gl_get_proc_address(name).cast()) });
+    // SAFETY: B's unique physical owner and matching dispatch move together.
+    let core_b = unsafe { Core::from_sdl(gl_b.clone(), window_b, context_b) }.unwrap();
+    assert_ne!(metadata_a.as_raw().object, core_b.identity().as_raw().object);
+    let mut renderer_b = GLRenderer::new(core_b, 4, 4).unwrap();
+    let gpu_b = neocogi_render_gpu::GpuDevice::new(
+        renderer_b.core(),
+        nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
+            .query()
+            .unwrap(),
+    );
+    let domain_b = gpu_b.create_client(Default::default()).unwrap();
+    let resources_b = domain_b.resources().unwrap();
+    let block_b = sampled::block(&gpu_b, &resources_b, root, size, &[0, 255, 0, 255]);
+    let snapshot_b = gpu_b.block_snapshot(block_b.as_com_ref()).unwrap();
+    let prepared_b = renderer_b.prepare_block(&snapshot_b, false).unwrap();
+    let rejected_info = FrameInfo::try_new(Dimensioni::new(4, 4), color(0, 0, 0, 255)).unwrap();
+    let mut rejected = renderer_b.frame(rejected_info).unwrap();
+    rejected.execute_block(&prepared_a);
+    assert!(rejected.finish().is_err(), "prepared native handles from A cannot execute on B");
+    renderer_b.make_current().unwrap();
+    drop(prepared_a);
+    assert!(weak_a.upgrade().is_none(), "metadata cannot retain A's physical context");
+    let info = FrameInfo::try_new(Dimensioni::new(4, 4), Color { r: 99, g: 77, b: 55, a: 255 }).unwrap();
+    let mut frame = renderer_b.frame(info).unwrap();
+    frame.execute_block(&prepared_b);
+    frame.finish().unwrap();
+    let mut pixels = [19; 64];
+    // SAFETY: B's supported frame entry reselected B and this output covers its live drawable.
+    unsafe {
+        gl_b.read_pixels(0, 0, 4, 4, glow::RGBA, glow::UNSIGNED_BYTE, PixelPackData::Slice(Some(&mut pixels)));
+    }
+    assert!(pixels.as_chunks::<4>().0.iter().all(|pixel| *pixel == [0, 255, 0, 255]));
+}
+
+/// Two target variants must never pin their own source through sibling cache entries.
+#[test]
+#[ignore = "requires native GL ES3; run with SDL_VIDEODRIVER=offscreen"]
+fn unsubmitted_target_variants_release_the_source_and_all_charges() {
+    let _session = NATIVE_SESSION.lock().unwrap_or_else(|error| error.into_inner());
+    let sdl = sdl2::init().unwrap();
+    let video = sdl.video().unwrap();
+    video.gl_attr().set_context_profile(sdl2::video::GLProfile::GLES);
+    video.gl_attr().set_context_version(3, 0);
+    let window = video.window("owned variants", 8, 8).opengl().hidden().build().unwrap();
+    let context = window.gl_create_context().unwrap();
+    // SAFETY: SDL selected this unique context before loading its dispatch and transferring ownership.
+    let gl = Rc::new(unsafe { glow::Context::from_loader_function(|name| video.gl_get_proc_address(name).cast()) });
+    let core = unsafe { Core::from_sdl(gl, window, context) }.unwrap();
+    let mut renderer = GLRenderer::new(core, 8, 8).unwrap();
+    let gpu = neocogi_render_gpu::GpuDevice::new(
+        renderer.core(),
+        nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
+            .query()
+            .unwrap(),
+    );
+    let domain = gpu.create_ui_client(Default::default()).unwrap();
+    let resources = domain.resources().unwrap();
+    let shader = &derivatives::cases()[0].source;
+    for _ in 0..8 {
+        let owner = derivatives::block(&gpu, &resources, shader);
+        let snapshot = gpu.block_snapshot(owner.as_com_ref()).unwrap();
+        let neocogi_render_gpu::command::Command::Draw(draw) = &snapshot.commands()[0] else {
+            panic!("draw")
+        };
+        let source = Rc::downgrade(&draw.pipeline);
+        let window = renderer.prepare_block(&snapshot, false).unwrap();
+        let texture = renderer.prepare_block(&snapshot, true).unwrap();
+        let repeated = renderer.prepare_block(&snapshot, false).unwrap();
+        let native = |block: &PreparedBlock| block.first_pipeline();
+        assert!(Rc::ptr_eq(&native(&window), &native(&repeated)), "warm preparation must reuse the same program");
+        assert!(
+            !Rc::ptr_eq(&native(&window), &native(&texture)),
+            "target adaptation needs separate native programs"
+        );
+        drop((snapshot, owner));
+        assert!(source.upgrade().is_none(), "native programs must not retain their source version");
+        assert!(gpu.live_bytes(resources.as_com_ref()).unwrap() > 0);
+        drop((window, texture, repeated));
+        renderer.maintain().unwrap();
+        assert_eq!(gpu.live_bytes(resources.as_com_ref()).unwrap(), 0);
+        assert_eq!(gpu.recording_usage(resources.as_com_ref()).unwrap(), (0, 0));
+    }
+    let owner = sampled::zero_storage_block(&gpu, &resources);
+    let prepared = renderer.prepare_block(&gpu.block_snapshot(owner.as_com_ref()).unwrap(), true).unwrap();
+    let output = renderer.create_render_texture(Size { width: 8, height: 8 }).unwrap();
+    let mut frame = renderer
+        .texture_frame(FrameInfo::try_new(Dimensioni::new(8, 8), color(0, 255, 0, 255)).unwrap(), output)
+        .unwrap();
+    frame.execute_block(&prepared);
+    let image = frame.finish().unwrap().unwrap();
+    sampled::assert_zero_storage_pixels(&read_image(&renderer.gl, &image, 8, 8));
 }

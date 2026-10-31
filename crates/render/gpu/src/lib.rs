@@ -6,11 +6,15 @@
 
 mod budget;
 pub mod command;
+pub mod native;
 mod pipeline;
 pub mod record;
 pub mod resource;
 pub mod scope;
 pub mod shader;
+/// Opt-in concrete probe family for CPU ownership tests; never selected by production activation.
+#[cfg(any(test, feature = "test-support"))]
+pub mod testing;
 
 pub use resource::GpuDevice;
 
@@ -25,14 +29,14 @@ pub use neocogi_render_core::source;
 /// ```compile_fail
 /// use std::rc::Rc;
 /// use neocogi_render_gpu::resource::TextureVersion;
-/// fn corrupt(mut snapshot: Rc<TextureVersion>) {
+/// fn corrupt<B:neocogi_render_gpu::native::NativeResources>(mut snapshot: Rc<TextureVersion<B>>) {
 ///     Rc::get_mut(&mut snapshot).unwrap().desc.size.width = 64;
 /// }
 /// ```
 /// ```compile_fail
 /// use std::rc::Rc;
 /// use neocogi_render_gpu::resource::BufferVersion;
-/// fn corrupt(snapshot: Rc<BufferVersion>) {
+/// fn corrupt<B:neocogi_render_gpu::native::NativeResources>(snapshot: Rc<BufferVersion<B>>) {
 ///     let mut owned = Rc::try_unwrap(snapshot).ok().unwrap();
 ///     owned.bytes.clear();
 /// }
@@ -40,28 +44,28 @@ pub use neocogi_render_core::source;
 /// ```compile_fail
 /// use std::rc::Rc;
 /// use neocogi_render_gpu::resource::ShaderVersion;
-/// fn corrupt(mut snapshot: Rc<ShaderVersion>) {
+/// fn corrupt<B:neocogi_render_gpu::native::NativeResources>(mut snapshot: Rc<ShaderVersion<B>>) {
 ///     Rc::get_mut(&mut snapshot).unwrap().artifact.glsl.clear();
 /// }
 /// ```
 /// ```compile_fail
 /// use std::rc::Rc;
 /// use neocogi_render_gpu::resource::PipelineVersion;
-/// fn corrupt(mut snapshot: Rc<PipelineVersion>) {
-///     Rc::get_mut(&mut snapshot).unwrap().id = 0;
+/// fn corrupt<B:neocogi_render_gpu::native::NativeResources>(mut snapshot: Rc<PipelineVersion<B>>) {
+///     Rc::get_mut(&mut snapshot).unwrap().info.color_write = 0;
 /// }
 /// ```
 /// ```compile_fail
 /// use std::rc::Rc;
 /// use neocogi_render_gpu::record::Block;
-/// fn corrupt(mut snapshot: Rc<Block>) {
+/// fn corrupt<B:neocogi_render_gpu::native::NativeResources>(mut snapshot: Rc<Block<B>>) {
 ///     Rc::get_mut(&mut snapshot).unwrap().commands.clear();
 /// }
 /// ```
 /// ```compile_fail
 /// use std::rc::Rc;
 /// use neocogi_render_gpu::record::Block;
-/// fn corrupt(mut snapshot: Rc<Block>) {
+/// fn corrupt<B:neocogi_render_gpu::native::NativeResources>(mut snapshot: Rc<Block<B>>) {
 ///     Rc::get_mut(&mut snapshot).unwrap().root.target.width = 4096;
 /// }
 /// ```
@@ -69,7 +73,7 @@ pub use neocogi_render_core::source;
 /// use std::rc::Rc;
 /// use neocogi_render_gpu::command::{Command, UniformData};
 /// use neocogi_render_gpu::record::Block;
-/// fn corrupt(block: Rc<Block>) {
+/// fn corrupt<B:neocogi_render_gpu::native::NativeResources>(block: Rc<Block<B>>) {
 ///     let Command::Draw(draw) = &block.commands()[0] else { return };
 ///     let mut uniform = draw.uniforms[0].data.clone();
 ///     drop(block);
@@ -78,8 +82,8 @@ pub use neocogi_render_core::source;
 /// ```
 /// ```
 /// use neocogi_render_gpu::{record::Block, resource::TextureVersion};
-/// fn inspect(block: &Block, image: &TextureVersion) {
-///     let _ = (block.root(), block.commands(), image.id(), image.desc(), image.pixels());
+/// fn inspect<B:neocogi_render_gpu::native::NativeResources>(block: &Block<B>, image: &TextureVersion<B>) {
+///     let _ = (block.root(), block.commands(), image.desc(), image.pixels());
 /// }
 /// ```
 pub mod immutable_storage_contract {}

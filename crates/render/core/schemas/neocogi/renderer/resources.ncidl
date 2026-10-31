@@ -11,7 +11,8 @@ interface IRgbaImage {
 }
 
 #[version(1)]
-/// Immutable GPU texture whose final release destroys its native allocation with its owning device alive.
+/// Immutable GPU pixels retain only their native allocation and creating physical device/context.
+/// Final native use retires through driver maintenance, or owned cleanup after driver shutdown.
 interface ITexture: IRenderDriverBound {
     /// Returns positive immutable pixel dimensions, independent of its destination rectangle.
     fn size(&self) -> Result<Size>;

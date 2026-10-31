@@ -1,25 +1,25 @@
 //! Generic immutable graphics commands consumed by every concrete backend.
 //!
 //! Recording resolves public resources into immutable backing versions, without semantic geometry
-//! or native callbacks. Trusted UI imports may retain an immutable image lease during CPU
-//! preparation; native lowering strips that lease and retains device-free accounting instead.
+//! or native callbacks. Trusted UI imports capture actual native images directly. Native
+//! lowering retains their allocations and per-use receipts, without public-image COM owners.
 use crate::{abi::*, budget::PendingCharge, resource::*};
 use std::rc::Rc;
 
 /// One captured vertex/instance stream, with its immutable version and byte base.
-pub struct VertexBinding {
+pub struct VertexBinding<B: crate::native::NativeResources> {
     /// Pipeline stream slot.
     pub slot: u32,
     /// Exact admitted immutable bytes.
-    pub buffer: Rc<BufferVersion>,
+    pub buffer: Rc<BufferVersion<B>>,
     /// Four-byte-aligned byte base inside that version.
     pub offset: u64,
 }
 
 /// One captured index stream; base vertex and first instance are always zero.
-pub struct IndexBinding {
+pub struct IndexBinding<B: crate::native::NativeResources> {
     /// Exact admitted immutable index bytes.
-    pub buffer: Rc<BufferVersion>,
+    pub buffer: Rc<BufferVersion<B>>,
     /// Explicit unsigned element width.
     pub format: GpuIndexFormat,
     /// Element-aligned byte base inside that version.
@@ -27,19 +27,23 @@ pub struct IndexBinding {
 }
 
 /// Read-only sampled image and sampler versions for one stage/slot.
-pub struct SampledBinding {
+pub struct SampledBinding<B: crate::native::NativeResources> {
     /// Graphics stage consuming the pair.
     pub stage: GpuShaderStage,
     /// Stage-local pair slot.
     pub slot: u32,
     /// Exact texture version, independent of public owner liveness after admission.
-    pub texture: Rc<TextureVersion>,
+    pub texture: Rc<TextureVersion<B>>,
     /// Immutable filtering/addressing snapshot.
-    pub sampler: Rc<SamplerVersion>,
+    pub sampler: Rc<SamplerVersion<B>>,
 }
 
 /// Copied uniform bytes can be shared by successive draws until another push changes them.
-pub struct UniformData {
+pub struct UniformData<B: crate::native::NativeResources> {
+    /// Fixes compatible native instance before the payload's first use.
+    pub(crate) core: Rc<B::Core>,
+    /// Resource-local native upload, private to backend-owned realization.
+    pub(crate) native: crate::native::NativeSlot<B::Uniform>,
     /// Exact portable reflected byte layout; native final padding is separate.
     pub(crate) bytes: Vec<u8>,
     /// Follows actual copied payload ownership, including native in-flight storage.
@@ -47,13 +51,13 @@ pub struct UniformData {
 }
 
 /// One stage/slot's exact copied uniform bytes.
-pub struct UniformBinding {
+pub struct UniformBinding<B: crate::native::NativeResources> {
     /// Vertex or fragment stage.
     pub stage: GpuShaderStage,
     /// Stage-local uniform slot.
     pub slot: u32,
     /// Immutable bytes, not a borrowed application pointer.
-    pub data: Rc<UniformData>,
+    pub data: Rc<UniformData<B>>,
 }
 
 /// Validated direct-draw range; restart, indirect draws and nonzero bases are excluded.
@@ -80,17 +84,17 @@ pub enum DrawRange {
 }
 
 /// Complete immutable state for one draw; backends never re-read public resources.
-pub struct Draw {
+pub struct Draw<B: crate::native::NativeResources> {
     /// Captured logical pipeline and shader dependencies.
-    pub pipeline: Rc<PipelineVersion>,
+    pub pipeline: Rc<PipelineVersion<B>>,
     /// Only streams consumed by this pipeline, not stale unrelated binding state.
-    pub vertex_buffers: Vec<VertexBinding>,
+    pub vertex_buffers: Vec<VertexBinding<B>>,
     /// Present exactly for indexed draws.
-    pub index: Option<IndexBinding>,
+    pub index: Option<IndexBinding<B>>,
     /// Only sampled slots required by the pipeline.
-    pub textures: Vec<SampledBinding>,
+    pub textures: Vec<SampledBinding<B>>,
     /// Only uniform slots required by the pipeline, copied at draw admission.
-    pub uniforms: Vec<UniformBinding>,
+    pub uniforms: Vec<UniformBinding<B>>,
     /// Checked direct-draw counts and offsets.
     pub range: DrawRange,
     /// Host-bounded logical target mapping.
@@ -102,9 +106,9 @@ pub struct Draw {
 }
 
 /// One ordered generic operation; all coordinates are already flattened and bounded.
-pub enum Command {
+pub enum Command<B: crate::native::NativeResources> {
     /// Bind complete captured state and issue a direct triangle draw.
-    Draw(Draw),
+    Draw(Draw<B>),
     /// Exact unblended regional color replacement, independent of client pipeline masks.
     ClearColor {
         /// Packed RGBA with red in the least significant byte.
@@ -132,7 +136,7 @@ pub struct CommandCharge {
     pub(crate) _charge: PendingCharge,
 }
 
-impl Command {
+impl<B: crate::native::NativeResources> Command<B> {
     /// Keeps accounting alive through native lowering/completion without retaining a client domain.
     pub fn retain_capacity(&self) -> CommandCharge {
         match self {
@@ -142,9 +146,21 @@ impl Command {
     }
 }
 
-impl UniformData {
+impl<B: crate::native::NativeResources> UniformData<B> {
     /// Borrows the charged, immutable uniform payload captured during admission.
     pub fn bytes(&self) -> &[u8] {
         &self.bytes
+    }
+}
+
+impl<B: crate::native::NativeResources> UniformData<B> {
+    /// Exact copied-payload charge, independent of a domain or source-version owner.
+    pub fn receipt(&self) -> BackingCharge {
+        BackingCharge::pending(self._charge.clone())
+    }
+    /// Reuses only this payload's successfully initialized backing on its actual native core.
+    pub fn native(&self, preparation: &mut B::Preparation<'_>) -> Result<Rc<B::Uniform>, String> {
+        crate::native::check_core::<B>(&self.core, preparation)?;
+        self.native.realize(|| B::uniform(self, preparation))
     }
 }

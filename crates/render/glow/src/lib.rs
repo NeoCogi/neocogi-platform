@@ -27,111 +27,171 @@
 // ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 // POSSIBILITY OF SUCH DAMAGE.
 //
-//! Current-thread native GL and WebGL execution of sealed generic graphics blocks.
+//! Current-thread execution of typed resource-owned GL/WebGL graphics objects.
+mod context;
+pub use context::Core;
 mod generic;
-pub use generic::PreparedBlock;
-use std::{collections::HashMap, io, rc::Rc};
-use neocogi_render_core::prelude::*;
+pub use generic::{Backend, PreparedBlock};
+use std::{
+    io,
+    ops::Deref,
+    rc::Rc,
+    sync::mpsc::{Sender, SendError},
+};
 use glow::*;
+use neocogi_render_core::{prelude::*, abi::Size};
+use neocogi_render_gpu::resource::BackingCharge;
 use neocogi_render_support::resource_guard::ResourceGuard;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests;
 
-/// One bounded read-only upload chunk shared by allocation-only buffers and images.
-/// Its fixed size is independent of descriptors; no per-resource CPU zero vector is created.
+/// One bounded read-only chunk shared by allocation-only storage initialization.
 static ZERO_BYTES: [u8; 64 * 1024] = [0; 64 * 1024];
 
-/// Target selection is private to the exclusively borrowed frame.
-#[derive(Clone, Copy)]
-enum DrawTarget {
-    /// Native window or browser canvas.
-    Window,
-    /// Fresh unpublished color image; it has no depth attachment.
-    Texture {
-        /// Framebuffer owned by the output image allocation.
-        framebuffer: Framebuffer,
-    },
-}
-
-/// Immutable native image may be shared by public UI capabilities and prepared generic draws.
-struct Image {
-    /// Dispatch owner has no renderer/cache/domain back-reference.
-    gl: Rc<glow::Context>,
-    /// Deleted exactly once, after the last image/command/completion owner releases it.
+/// Self-contained owned pixels. Queued retirement never carries a sender or source version.
+pub struct ImageAllocation {
+    /// Actual compatible physical context lifetime.
+    core: Rc<Core>,
+    /// Exactly one native image name.
     raw: Texture,
+    /// Immutable admitted extent of this same allocation.
+    size: Size,
+    /// Generic storage charge; ordinary images/import-use receipts have distinct owners.
+    _charge: Option<BackingCharge>,
 }
-impl Drop for Image {
-    /// The plugin selects the owning context before all image and renderer retirement.
+impl Drop for ImageAllocation {
     fn drop(&mut self) {
-        // SAFETY: The plugin, or a trusted Rust caller, keeps this owning native context current.
-        unsafe { self.gl.delete_texture(self.raw) };
-    }
-}
-
-/// One installed native image and its optional render attachment. Sampling retains
-/// only the image; framebuffer residency ends when this entry is retired.
-struct ResidentImage {
-    /// Shared immutable pixels retain their existing independent completion lifetime.
-    image: Rc<Image>,
-    /// A render output owns exactly one framebuffer; ordinary uploads have none.
-    framebuffer: Option<Framebuffer>,
-}
-impl Drop for ResidentImage {
-    /// Delete attachment ownership while the image and its dispatch owner are alive.
-    fn drop(&mut self) {
-        if let Some(framebuffer) = self.framebuffer.take() {
-            // SAFETY: all backend retirement occurs on the owning current context.
-            unsafe { self.image.gl.delete_framebuffer(framebuffer) };
+        if self.core.for_drop() {
+            // SAFETY: The actual owning physical context was selected before native destruction.
+            unsafe { self.core.dispatch().delete_texture(self.raw) };
         }
     }
 }
-
-/// One current-thread native context, generic executor and immutable-image registry.
-/// Trusted Rust callers own the actual native context lifetime and must make it current
-/// for every call and resource destruction, including retained `PreparedBlock` drops.
-/// An `Rc<glow::Context>` retains dispatch data, not the OS context.
+/// Shared initialized native image backing; last wrapper release signals the existing driver.
+/// An unpublished output keeps this private until successful frame completion.
+pub struct Image {
+    /// Output attachments may retain this sender-free allocation independently of sampling wrappers.
+    allocation: Rc<ImageAllocation>,
+    /// Only the notifying wrapper retains a producer; the core and payload never do.
+    retired: Sender<generic::Retirement>,
+}
+impl Deref for Image {
+    type Target = ImageAllocation;
+    fn deref(&self) -> &ImageAllocation {
+        &self.allocation
+    }
+}
+impl Drop for Image {
+    fn drop(&mut self) {
+        if let Err(SendError(retired)) = self.retired.send(generic::Retirement::Image(self.allocation.clone())) {
+            drop(retired);
+        }
+    }
+}
+/// Owned attachment packet; it retains only raw allocation lifetime, never a notifying image wrapper.
+pub(crate) struct FramebufferAllocation {
+    /// Parent context selected for this framebuffer's destruction.
+    core: Rc<Core>,
+    /// One framebuffer name, no public target-selector API.
+    raw: Framebuffer,
+    /// Pixels outlive attachment destruction even when sampling/retirement owners overlap.
+    _image: Rc<ImageAllocation>,
+}
+impl Drop for FramebufferAllocation {
+    fn drop(&mut self) {
+        if self.core.for_drop() {
+            // SAFETY: The matching physical context and image allocation remain live.
+            unsafe { self.core.dispatch().delete_framebuffer(self.raw) };
+        }
+    }
+}
+/// Internal shared target lifetime retained by immediate/submitted work, including clear-only frames.
+struct OutputState {
+    /// Immutable image can be published only by successful frame finish.
+    image: Rc<Image>,
+    /// Taken exactly once by final target destruction; packet owns real allocation dependencies.
+    allocation: Option<FramebufferAllocation>,
+    /// Notifier remains outside the actual owned attachment packet.
+    retired: Sender<generic::Retirement>,
+}
+impl OutputState {
+    /// An active shared target always owns its attachment; only final Drop can take it.
+    fn framebuffer(&self) -> Framebuffer {
+        self.allocation.as_ref().expect("live output attachment").raw
+    }
+}
+impl Drop for OutputState {
+    fn drop(&mut self) {
+        if let Some(allocation) = self.allocation.take()
+            && let Err(SendError(retired)) = self.retired.send(generic::Retirement::Framebuffer(allocation))
+        {
+            drop(retired);
+        }
+    }
+}
+/// Single-use unpublished destination. Consuming it prevents rewriting an already returned image.
+pub struct Output {
+    /// Only native work can clone the attachment owner; callers receive no mutable pixels.
+    state: Rc<OutputState>,
+}
+/// Target authority belongs to the exclusively borrowed frame, not client commands.
+enum DrawTarget {
+    /// Actual physical default framebuffer.
+    Window,
+    /// Shared native owner exists before any clear/draw can reference its attachments.
+    Texture(Rc<OutputState>),
+}
+/// One driver execution state; actual hardware lifetime is separate and resource-owned.
 pub struct GLRenderer {
-    /// Dispatch owner outlives every native allocation.
+    /// Dispatch is accompanied by the actual context lifetime guard.
     gl: Rc<glow::Context>,
-    /// Physical dimensions of the selected output.
+    /// Owns no driver/submission/channel state and may outlive this facade.
+    core: Rc<Core>,
+    /// Current output dimensions, separate from allocation/compatibility identity.
     width: u32,
-    /// Physical dimensions of the selected output.
+    /// Current output dimensions, separate from allocation/compatibility identity.
     height: u32,
-    /// Immutable images shared by public image capabilities and generic prepared draws.
-    textures: HashMap<TextureId, ResidentImage>,
-    /// Test-only actual incomplete-framebuffer failure, consumed after allocation.
+    /// Real incomplete-FBO injection exercises actual construction rollback.
     #[cfg(test)]
     incomplete_output: bool,
-    /// Selected native target, reset when its exclusive frame is dropped.
+    /// Exclusive current target; only this native implementation constructs it.
     target: DrawTarget,
-    /// Sole draw executor; UI layout and shader policy live in GFX.
+    /// Prepared/completed work plus the one retirement receiver belong to this existing driver.
     generic: generic::Executor,
 }
 impl GLRenderer {
-    /// Creates a generic native executor without shaders, atlas or UI vertex state.
-    pub fn new(gl: Rc<glow::Context>, width: u32, height: u32) -> Result<Self, String> {
-        let generic = generic::Executor::new(gl.clone())?;
+    /// Starts a concrete executor using already owned compatible physical context lifetime.
+    pub fn new(core: Rc<Core>, width: u32, height: u32) -> Result<Self, String> {
+        core.current()?;
+        let gl = core.dispatch().clone();
+        let generic = generic::Executor::new(core.clone())?;
         Ok(Self {
             gl,
+            core,
             width,
             height,
-            textures: HashMap::new(),
             #[cfg(test)]
             incomplete_output: false,
             target: DrawTarget::Window,
             generic,
         })
     }
-    /// Realizes a sealed common graphics block before acquiring or clearing its target.
-    pub fn prepare_block(&mut self, block: &neocogi_render_gpu::record::Block, offscreen: bool) -> Result<PreparedBlock, String> {
-        self.generic.prepare(block, offscreen, &self.textures)
+    /// Shares hardware lifetime without rendering/submission or input authority.
+    pub fn core(&self) -> Rc<Core> {
+        self.core.clone()
     }
-
-    /// Trusted UI upload preparation has no target acquisition or presentation side effect.
-    pub fn prepare_texture(&mut self, texture: Rc<neocogi_render_gpu::resource::TextureVersion>) -> Result<(), String> {
-        self.generic.prepare_texture(texture, &self.textures)
+    /// Native supported entries reselect the physical context after foreign activity or late drops.
+    pub fn make_current(&self) -> Result<(), String> {
+        self.core.current()
     }
-
+    /// Realizes exact immutable objects, checking driver ownership even for empty/clear-only blocks.
+    pub fn prepare_block(&mut self, block: &neocogi_render_gpu::record::Block<Backend>, offscreen: bool) -> Result<PreparedBlock, String> {
+        self.generic.prepare(block, offscreen)
+    }
+    /// Initializes an owned private UI image without acquiring or clearing any target.
+    pub fn prepare_texture(&mut self, source: Rc<neocogi_render_gpu::resource::TextureVersion<Backend>>) -> Result<(), String> {
+        self.generic.prepare_texture(source)
+    }
     /// Returns the full default framebuffer in the UI's top-left coordinates.
     fn full_clip(&self) -> Recti {
         Recti::new(0, 0, self.width as i32, self.height as i32)
@@ -142,13 +202,13 @@ impl GLRenderer {
         // Restore the exact selected target before every draw, regardless of
         // framebuffer state left by preceding operations.
         unsafe {
-            match self.target {
+            match &self.target {
                 DrawTarget::Window => {
                     self.gl.bind_framebuffer(glow::DRAW_FRAMEBUFFER, None);
                     self.gl.draw_buffers(&[glow::BACK]);
                 }
-                DrawTarget::Texture { framebuffer, .. } => {
-                    self.gl.bind_framebuffer(glow::DRAW_FRAMEBUFFER, Some(framebuffer));
+                DrawTarget::Texture(output) => {
+                    self.gl.bind_framebuffer(glow::DRAW_FRAMEBUFFER, Some(output.framebuffer()));
                     self.gl.draw_buffers(&[glow::COLOR_ATTACHMENT0]);
                 }
             }
@@ -199,245 +259,179 @@ impl GLRenderer {
             return None;
         }
         let x = clip.x;
-        let y = match self.target {
+        let y = match &self.target {
             DrawTarget::Window => (self.height as i32).saturating_sub(clip.y.saturating_add(clip.height)),
-            DrawTarget::Texture { .. } => clip.y,
+            DrawTarget::Texture(_) => clip.y,
         };
         Some((x, y, clip.width, clip.height))
     }
 
-    /// Starts a new GL frame by clearing the backbuffer and updating cached size.
-    fn begin(&mut self, width: i32, height: i32, clr: Color) {
-        self.width = width as u32;
-        self.height = height as u32;
-        let gl = &self.gl;
+    /// Complete host-owned output clear. The caller installs target work ownership before issuing it.
+    fn begin(&mut self, info: FrameInfo) -> Result<(), FrameError> {
+        let size = info.dimensions();
+        self.width = size.width as u32;
+        self.height = size.height as u32;
+        let color = info.clear();
+        // SAFETY: The selected live target and full clip belong to this exclusively borrowed driver.
         unsafe {
             self.bind_target(self.full_clip());
-            gl.clear_color(clr.r as f32 / 255.0, clr.g as f32 / 255.0, clr.b as f32 / 255.0, clr.a as f32 / 255.0);
-            gl.clear(glow::COLOR_BUFFER_BIT);
-            debug_assert!(gl.get_error() == 0);
+            self.gl
+                .clear_color(color.r as f32 / 255., color.g as f32 / 255., color.b as f32 / 255., color.a as f32 / 255.);
+            self.gl.clear(glow::COLOR_BUFFER_BIT);
         }
-    }
-
-    /// Allocates either uploaded immutable pixels or an unpublished render image.
-    fn create_image(&mut self, id: TextureId, pixels: Option<&[u8]>) -> Result<Rc<Image>, TextureError> {
-        // A key cannot certify this new slice. Validate before reserving ownership or entering GL.
-        match pixels {
-            Some(pixels) => ImageSource {
-                width: id.width(),
-                height: id.height(),
-                pixels,
-            }
-            .validate()?,
-            None => {
-                neocogi_render_core::checked_rgba_len(id.width(), id.height())?;
-            }
-        }
-        if self.textures.contains_key(&id) {
-            return Err(TextureError::backend("native image key is already resident"));
-        }
-        let dimensions = id.size();
-
-        // Reserving the map entry can fail before any GL resource exists. Preserve that allocation
-        // failure as backend context so callers receive the renderer's structured texture error.
-        self.textures
-            .try_reserve(1)
-            .map_err(|err| TextureError::backend(format!("failed to reserve texture ownership entry: {err}")))?;
-        let gl = &self.gl;
-        unsafe {
-            // Immutable ordinary images default to nearest sampling. Wrap allocation
-            // failures immediately, before installing the resource guard, because no native
-            // handle exists for the guard to own in that case.
-            let texture_gl = gl.clone();
-            let texture = ResourceGuard::new(
-                gl.create_texture()
-                    .map_err(|err| TextureError::backend(format!("failed to create texture: {err}")))?,
-                move |texture| texture_gl.delete_texture(texture),
-            );
-            Self::prepare_upload(gl);
-            gl.bind_texture(glow::TEXTURE_2D, Some(*texture.get()));
-            gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MIN_FILTER, glow::NEAREST as i32);
-            gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, glow::NEAREST as i32);
-            gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_S, glow::CLAMP_TO_EDGE as i32);
-            gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_T, glow::CLAMP_TO_EDGE as i32);
-            gl.tex_image_2d(
-                glow::TEXTURE_2D,
-                0,
-                glow::RGBA as i32,
-                dimensions.width,
-                dimensions.height,
-                0,
-                glow::RGBA,
-                glow::UNSIGNED_BYTE,
-                PixelUnpackData::Slice(pixels),
-            );
-            let err = gl.get_error();
-            if err != 0 {
-                // Restore the binding before returning. `texture` remains guarded here, so the
-                // failed native object is deleted while the driver code is surfaced as backend
-                // error detail rather than being collapsed into an untyped string.
-                gl.bind_texture(glow::TEXTURE_2D, None);
-                return Err(TextureError::backend(format!("OpenGL texture upload failed with error 0x{err:04x}")));
-            }
-            if pixels.is_none() {
-                Self::upload_zero_pixels(gl, dimensions.width, dimensions.height).map_err(TextureError::backend)?;
-            }
-            gl.bind_texture(glow::TEXTURE_2D, None);
-            Ok(Rc::new(Image {
-                gl: gl.clone(),
-                raw: texture.into_inner(),
-            }))
-        }
-    }
-
-    /// Initializes zero pixels with bounded upload slices rather than a full CPU image.
-    fn upload_zero_pixels(gl: &glow::Context, width: i32, height: i32) -> Result<(), String> {
-        let zero = &ZERO_BYTES;
-        // SAFETY: Caller has allocated and bound the admitted complete image on the owning context.
-        unsafe {
-            for y in 0..height {
-                for x in (0..width).step_by(zero.len() / 4) {
-                    let count = (width - x).min((zero.len() / 4) as i32);
-                    gl.tex_sub_image_2d(
-                        glow::TEXTURE_2D,
-                        0,
-                        x,
-                        y,
-                        count,
-                        1,
-                        glow::RGBA,
-                        glow::UNSIGNED_BYTE,
-                        PixelUnpackData::Slice(Some(&zero[..count as usize * 4])),
-                    );
-                }
-            }
-            let error = gl.get_error();
-            if error != glow::NO_ERROR {
-                return Err(format!("zero texture initialization: 0x{error:04x}"));
-            }
-        }
-        Ok(())
-    }
-
-    /// Retires attachment residency independently of image sampling/completion owners.
-    fn destroy_texture(&mut self, id: TextureId) {
-        self.textures.remove(&id);
+        self.generic.check().map_err(FrameError::new)
     }
 }
-
-/// Immediate native frame. Explicit finish observes failures and retains execution through a fence.
-#[must_use = "call finish to complete the OpenGL frame and observe errors"]
+/// Exclusively borrowed immediate frame. Drop abandons publication and services already-issued work.
+#[must_use = "call finish to observe rendering errors and obtain a completed image"]
 pub struct GlFrame<'a> {
-    /// Exclusive target ownership prevents concurrent acquisition.
+    /// Context, selected target and completion tracker remain owned by this execution transaction.
     backend: &'a mut GLRenderer,
-    /// First native execution error; subsequent commands are ignored.
+    /// Preserve the first native failure even if safe final maintenance also reports a failure.
     error: Option<FrameError>,
 }
 impl GlFrame<'_> {
-    /// Executes only already realized common commands at this exact painter-order boundary.
+    /// Executes only prevalidated immutable native objects at their original painter position.
     pub fn execute_block(&mut self, block: &PreparedBlock) {
         if self.error.is_some() {
             return;
         }
+        if let Err(error) = self.backend.core.current() {
+            self.error = Some(FrameError::new(error));
+            return;
+        }
         self.backend.bind_target(self.backend.full_clip());
-        let physical = neocogi_render_gpu::abi::Size {
+        let size = Size {
             width: self.backend.width as i32,
             height: self.backend.height as i32,
         };
-        let logical = physical;
-        let offscreen = matches!(self.backend.target, DrawTarget::Texture { .. });
-        if let Err(error) = self.backend.generic.execute(block, logical, physical, offscreen) {
+        let offscreen = matches!(&self.backend.target, DrawTarget::Texture(_));
+        if let Err(error) = self.backend.generic.execute(block, size, size, offscreen) {
             self.error = Some(FrameError::new(error));
         }
     }
 }
 impl RendererFrame for GlFrame<'_> {
-    /// Establish completion retention even after a partial immediate failure.
-    fn finish(mut self) -> Result<(), FrameError> {
+    type Image = Rc<Image>;
+    fn finish(mut self) -> Result<Option<Rc<Image>>, FrameError> {
+        let completion = self.backend.generic.complete().map_err(FrameError::new);
         if let Some(error) = self.error.take() {
-            let _ = self.backend.generic.complete();
+            let _ = completion;
             return Err(error);
         }
-        self.backend.generic.complete().map_err(FrameError::new)
+        completion?;
+        Ok(match &self.backend.target {
+            DrawTarget::Window => None,
+            DrawTarget::Texture(output) => Some(output.image.clone()),
+        })
     }
 }
 impl Drop for GlFrame<'_> {
-    /// Abandonment does not issue more GPU work; the executor still owns pending resource backings.
     fn drop(&mut self) {
         self.backend.target = DrawTarget::Window;
+        let _ = self.backend.generic.maintain();
     }
 }
 impl RendererBackend for GLRenderer {
+    type Image = Rc<Image>;
+    type Output = Output;
     type Frame<'a> = GlFrame<'a>;
-    fn frame(&mut self, info: FrameInfo) -> Result<Self::Frame<'_>, FrameError> {
+    fn frame(&mut self, info: FrameInfo) -> Result<GlFrame<'_>, FrameError> {
         self.generic.collect().map_err(FrameError::new)?;
-        let dimensions = info.dimensions();
         self.target = DrawTarget::Window;
-        self.begin(dimensions.width, dimensions.height, info.clear());
+        if let Err(error) = self.begin(info) {
+            self.target = DrawTarget::Window;
+            let _ = self.generic.maintain();
+            return Err(error);
+        }
         Ok(GlFrame { backend: self, error: None })
     }
-
-    /// Allocates a framebuffer-backed image without CPU zero filling or window presentation.
-    fn create_render_texture(&mut self, id: TextureId) -> Result<(), TextureError> {
-        let image = self.create_image(id, None)?;
-        // Keep both parts unpublished and guarded until the real driver admits the attachment.
-        // SAFETY: the owning context is current and the local image/guard own every handle.
+    fn create_render_texture(&mut self, size: Size) -> Result<Output, TextureError> {
+        neocogi_render_core::checked_rgba_len(size.width, size.height)?;
+        self.generic.maintain().map_err(TextureError::backend)?;
+        // The image stays inaccessible in the single-use Output until the complete host clear.
+        let image = self.generic.create_image(size, glow::RGBA8, None, None, false).map_err(TextureError::backend)?;
+        let gl = self.gl.clone();
+        let core = self.core.clone();
+        // SAFETY: The matching current context owns both the guarded framebuffer and image.
         let framebuffer = unsafe {
-            let gl = &self.gl;
-            let framebuffer = ResourceGuard::new(gl.create_framebuffer().map_err(TextureError::backend)?, |value| gl.delete_framebuffer(value));
+            let cleanup = core.clone();
+            let framebuffer = ResourceGuard::new(gl.create_framebuffer().map_err(TextureError::backend)?, move |raw| {
+                if cleanup.for_drop() {
+                    cleanup.dispatch().delete_framebuffer(raw);
+                }
+            });
             gl.bind_framebuffer(glow::DRAW_FRAMEBUFFER, Some(*framebuffer.get()));
             gl.framebuffer_texture_2d(glow::DRAW_FRAMEBUFFER, glow::COLOR_ATTACHMENT0, glow::TEXTURE_2D, Some(image.raw), 0);
             #[cfg(test)]
             if std::mem::take(&mut self.incomplete_output) {
-                // Exercise production completeness rejection and guard cleanup with real handles.
                 gl.framebuffer_texture_2d(glow::DRAW_FRAMEBUFFER, glow::COLOR_ATTACHMENT0, glow::TEXTURE_2D, None, 0);
             }
             gl.draw_buffers(&[glow::COLOR_ATTACHMENT0]);
             let status = gl.check_framebuffer_status(glow::DRAW_FRAMEBUFFER);
             gl.bind_framebuffer(glow::DRAW_FRAMEBUFFER, None);
             if status != glow::FRAMEBUFFER_COMPLETE {
-                return Err(TextureError::backend(format!("incomplete preview framebuffer: 0x{status:04x}")));
+                return Err(TextureError::backend(format!("incomplete output framebuffer: 0x{status:04x}")));
             }
             framebuffer.into_inner()
         };
-        self.textures.insert(id, ResidentImage { image, framebuffer: Some(framebuffer) });
-        Ok(())
+        Ok(Output {
+            state: Rc::new(OutputState {
+                allocation: Some(FramebufferAllocation {
+                    core,
+                    raw: framebuffer,
+                    _image: image.allocation.clone(),
+                }),
+                image,
+                retired: self.generic.sender(),
+            }),
+        })
     }
-
-    /// Selects a resident private output for one opaque generic frame.
-    fn texture_frame(&mut self, info: FrameInfo, output: TextureId) -> Result<Self::Frame<'_>, FrameError> {
-        self.generic.collect().map_err(FrameError::new)?;
-        if (output.width(), output.height()) != (info.dimensions().width, info.dimensions().height) || info.clear().a != 255 {
-            return Err(FrameError::new("invalid offscreen image, size, or nonopaque clear color"));
-        }
-        let framebuffer = self
-            .textures
-            .get(&output)
-            .and_then(|entry| entry.framebuffer)
-            .ok_or_else(|| FrameError::new("missing offscreen framebuffer"))?;
-        self.target = DrawTarget::Texture { framebuffer };
+    fn texture_frame(&mut self, info: FrameInfo, output: Output) -> Result<GlFrame<'_>, FrameError> {
         let dimensions = info.dimensions();
-        self.begin(dimensions.width, dimensions.height, info.clear());
+        if !Rc::ptr_eq(&self.core, &output.state.image.core)
+            || output.state.image.size
+                != (Size {
+                    width: dimensions.width,
+                    height: dimensions.height,
+                })
+            || info.clear().a != 255
+        {
+            return Err(FrameError::new("incompatible output driver, extent or clear"));
+        }
+        self.generic.collect().map_err(FrameError::new)?;
+        self.generic.retain_target(output.state.clone()).map_err(FrameError::new)?;
+        self.target = DrawTarget::Texture(output.state);
+        if let Err(error) = self.begin(info) {
+            self.target = DrawTarget::Window;
+            let _ = self.generic.maintain();
+            return Err(error);
+        }
         Ok(GlFrame { backend: self, error: None })
     }
-    /// Observes prior completion and releases safe native owners without touching a target.
     fn maintain(&mut self) -> Result<(), FrameError> {
-        self.generic.collect().map_err(FrameError::new)
+        self.generic.maintain().map_err(FrameError::new)
     }
-    /// Creates an initialized immutable image independently of render-target selection.
-    fn create_texture(&mut self, id: TextureId, pixels: Option<&[u8]>) -> Result<(), TextureError> {
-        let image = self.create_image(id, pixels)?;
-        self.textures.insert(id, ResidentImage { image, framebuffer: None });
-        Ok(())
-    }
-    /// Retire framebuffer and image references together.
-    fn destroy_texture(&mut self, id: TextureId) {
-        self.destroy_texture(id);
+    fn create_texture(&mut self, size: Size, pixels: Option<&[u8]>) -> Result<Rc<Image>, TextureError> {
+        match pixels {
+            Some(pixels) => ImageSource {
+                width: size.width,
+                height: size.height,
+                pixels,
+            }
+            .validate()?,
+            None => {
+                neocogi_render_core::checked_rgba_len(size.width, size.height)?;
+            }
+        }
+        // Independent image admission can reclaim idle packets before allocating new native storage.
+        self.generic.maintain().map_err(TextureError::backend)?;
+        self.generic.create_image(size, glow::RGBA8, pixels, None, true).map_err(TextureError::backend)
     }
 }
 
 /// Compiles and links a GL program from vertex/fragment shader sources.
-pub fn create_program(gl: &glow::Context, vertex_shader_source: &str, fragment_shader_source: &str) -> Result<Program, io::Error> {
+fn create_program(gl: &glow::Context, vertex_shader_source: &str, fragment_shader_source: &str) -> Result<Program, io::Error> {
     unsafe {
         // Program and shader guards cover allocation errors, compile/link errors, and unwinding.
         // Handles leave these guards only after a successful link.

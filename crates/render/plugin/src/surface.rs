@@ -61,7 +61,10 @@ fn validate_size(size: Size) -> Result<(), NcStatus> {
     }
     // Validate a minimal positive counterpart so even a suspended dimension cannot
     // smuggle an unbounded extent into later allocation.
-    TextureId::for_render_target(size.width.max(1), size.height.max(1)).map_err(|_| NC_E_INVALID_ARG)?;
+    rgba_bytes(Size {
+        width: size.width.max(1),
+        height: size.height.max(1),
+    })?;
     Ok(())
 }
 
@@ -124,15 +127,8 @@ impl IRenderer for Surface {
         if state.prepared.blocks().iter().any(|block| !block.is_ui()) {
             return Err(NC_E_INVALID_ARG);
         }
-        let id = TextureId::for_render_target(info.size.width, info.size.height).map_err(|_| NC_E_INVALID_ARG)?;
-        state.gpu.create_render_texture(id).map_err(|error| self.device.failure(error))?;
-        // This guard retires failed output as well as successful images. Previously
-        // published allocations are never selected as this frame's draw target.
-        let output = retain_texture(self.device.clone(), id);
-        state
-            .gpu
-            .render_surface(info, &state.prepared, id)
-            .map_err(|error| self.device.failure(error))?;
+        let image = state.gpu.render_surface(info, &state.prepared).map_err(|error| self.device.failure(error))?;
+        let output = retain_texture(&self.device, image);
         session.completed = Some(publish_texture(output));
         Ok(())
     }

@@ -1,176 +1,360 @@
-//! Native realization of the common immutable graphics vocabulary, with no client callbacks.
+//! Owned native realizations and one driver-local retirement/completion path for GL and WebGL.
 use glow::HasContext;
-use neocogi_render_gpu::{abi::*, command::*, record::Block, resource::*, scope::physical_rect};
-use std::{collections::HashMap, rc::Rc};
+use neocogi_render_gpu::{
+    abi::*,
+    command::{DrawRange, CommandCharge},
+    native::NativeResources,
+    resource::BackingCharge,
+    scope::physical_rect,
+};
+use std::{
+    ops::Deref,
+    rc::Rc,
+    sync::mpsc::{self, Sender, Receiver, SendError},
+};
+use super::{Core, Image, ImageAllocation, OutputState};
+type BufferVersion = neocogi_render_gpu::resource::BufferVersion<Backend>;
+type TextureVersion = neocogi_render_gpu::resource::TextureVersion<Backend>;
+type SamplerVersion = neocogi_render_gpu::resource::SamplerVersion<Backend>;
+type PipelineVersion = neocogi_render_gpu::resource::PipelineVersion<Backend>;
+type UniformData = neocogi_render_gpu::command::UniformData<Backend>;
+type Draw = neocogi_render_gpu::command::Draw<Backend>;
+type Block = neocogi_render_gpu::record::Block<Backend>;
+type Command = neocogi_render_gpu::command::Command<Backend>;
 
-/// Device-local caches contain device-free CPU versions, never a domain or public COM owner.
-pub(crate) struct Executor {
-    /// The owning context remains current throughout preparation, execution and deletion.
-    gl: Rc<glow::Context>,
-    /// Private layout state prevents generic attributes from touching an unrelated VAO.
-    array: glow::VertexArray,
-    /// Immutable role-specific vertex/index uploads.
-    buffers: HashMap<u64, Rc<Buffer>>,
-    /// Immutable sampled pixel uploads.
-    textures: HashMap<u64, Rc<Texture>>,
-    /// Independent sampling state.
-    samplers: HashMap<u64, Rc<Sampler>>,
-    /// Linked variants distinguish direct presentation and top-left offscreen image storage.
-    pipelines: HashMap<(u64, bool), Rc<Pipeline>>,
-    /// Copied uniform payload identity is pinned by each entry, preventing address reuse.
-    uniforms: HashMap<usize, Rc<Uniform>>,
-    /// Immediate GL work retained even if its public frame is abandoned after issuing commands.
-    pending: Vec<PreparedBlock>,
-    /// Fences own only native snapshots and device-free accounting, never client domain authority.
-    submitted: Vec<Submitted>,
-    /// Preparatory uploads can be in flight even when the target frame is never acquired.
-    uploads: Vec<Upload>,
-    /// Original command metadata follows preparatory native work through completion too.
-    upload_capacity: Vec<CommandCharge>,
+/// Statically selected resource family; its native objects are never Rust trait objects over COM.
+pub struct Backend;
+/// Exclusive native construction capability; only this backend owns an executor reference.
+pub struct Preparation<'a> {
+    /// The existing driver owns queues and completion tracking, not the shared physical core.
+    executor: &'a mut Executor,
+}
+impl NativeResources for Backend {
+    type Core = Core;
+    type Buffer = Buffer;
+    type Image = Image;
+    type Sampler = Sampler;
+    type Pipeline = Pipeline;
+    type Uniform = Buffer;
+    type PipelineKey = bool;
+    type Preparation<'a> = Preparation<'a>;
+    fn identity(core: &Core) -> &neocogi_render_core::source::DriverIdentity {
+        core.identity()
+    }
+    fn core<'a>(preparation: &'a Preparation<'_>) -> &'a Rc<Core> {
+        &preparation.executor.core
+    }
+    fn check(preparation: &mut Preparation<'_>) -> Result<(), String> {
+        preparation.executor.core.current()?;
+        preparation.executor.check()
+    }
+    fn image_core(image: &Image) -> &Rc<Core> {
+        &image.core
+    }
+    fn image_size(image: &Image) -> Size {
+        image.size
+    }
+    fn buffer(source: &BufferVersion, preparation: &mut Preparation<'_>) -> Result<Rc<Buffer>, String> {
+        preparation.executor.create_buffer(source)
+    }
+    fn sampler(source: &SamplerVersion, preparation: &mut Preparation<'_>) -> Result<Rc<Sampler>, String> {
+        preparation.executor.create_sampler(source)
+    }
+    fn uniform(source: &UniformData, preparation: &mut Preparation<'_>) -> Result<Rc<Buffer>, String> {
+        preparation.executor.create_uniform(source)
+    }
+    fn pipeline(source: &PipelineVersion, key: &bool, preparation: &mut Preparation<'_>) -> Result<Rc<Pipeline>, String> {
+        preparation.executor.create_pipeline(source, *key)
+    }
+    fn image(source: &TextureVersion, preparation: &mut Preparation<'_>) -> Result<Rc<Image>, String> {
+        let executor = &mut preparation.executor;
+        if let Some(image) = source.imported_image() {
+            executor.uploads.try_reserve(1).map_err(|error| error.to_string())?;
+            executor.uploads.push(Upload::Image {
+                _image: image.clone(),
+                _receipt: Some(source.receipt()),
+            });
+            return Ok(image.clone());
+        }
+        let desc = source.desc();
+        let format = if desc.format == GpuTextureFormat::Rgba8Srgb {
+            glow::SRGB8_ALPHA8
+        } else {
+            glow::RGBA8
+        };
+        executor.create_image(
+            desc.size,
+            format,
+            source.pixels().ok_or("missing pixel contents")?.as_slice(),
+            Some(source.receipt()),
+            true,
+        )
+    }
 }
 
-macro_rules! native {
-    ($name:ident, $source:ty, $handle:ty, $delete:ident) => {
-        /// Native allocation and exactly one retained immutable CPU version.
-        struct $name {
-            /// Deletion context, without the renderer cache owner or a client domain.
-            gl: Rc<glow::Context>,
-            /// Detects retirement after public/current/recorded ownership ends.
-            source: Rc<$source>,
-            /// Exactly one native object of this class.
+/// Owned packets contain no sender, driver, Domain, source version or public COM resource.
+pub(crate) enum Retirement {
+    /// Vertex/index/uniform allocation and its opaque receipt.
+    Buffer(BufferAllocation),
+    /// Immutable sampling state.
+    Sampler(SamplerAllocation),
+    /// Linked program and source/dependency receipts only.
+    Program(ProgramAllocation),
+    /// Shared raw pixels, also retained independently by attachments when needed.
+    Image(Rc<ImageAllocation>),
+    /// Raw framebuffer plus sender-free image allocation lifetime.
+    Framebuffer(super::FramebufferAllocation),
+}
+/// Driver-only retirement observes owned payloads without looking them up or reusing them.
+fn discard(retired: Retirement) {
+    match retired {
+        Retirement::Buffer(value) => drop(value),
+        Retirement::Sampler(value) => drop(value),
+        Retirement::Program(value) => drop(value),
+        Retirement::Image(value) => drop(value),
+        Retirement::Framebuffer(value) => drop(value),
+    }
+}
+/// Concrete shared storage uses one destruction rule for vertex/index buffers and uniform payloads.
+macro_rules! allocation {
+    ($backing:ident,$allocation:ident,$handle:ty,$delete:ident,$variant:ident) => {
+        /// Self-contained actual native allocation with narrow lifetime and accounting only.
+        pub struct $allocation {
+            /// Actual owning context, independent of driver/queue lifetime.
+            core: Rc<Core>,
+            /// One native name, deleted exactly once after all actual uses have ended.
             raw: $handle,
+            /// Reserved bytes/capacity are refunded after native destruction.
+            _charge: BackingCharge,
         }
-        impl Drop for $name {
-            /// GL defers physical reclamation while previously issued GPU work still uses it.
+        impl Drop for $allocation {
             fn drop(&mut self) {
-                // SAFETY: The renderer/plugin selects the owning context before resource retirement.
-                unsafe { self.gl.$delete(self.raw) }
+                if self.core.for_drop() {
+                    // SAFETY: Physical context was selected and the last actual native owner is releasing.
+                    unsafe { self.core.dispatch().$delete(self.raw) };
+                }
+            }
+        }
+        /// Notifying wrapper shared by immutable versions and actual native work.
+        pub struct $backing {
+            /// Only final Drop takes/moves allocation ownership into the message.
+            allocation: Option<$allocation>,
+            /// Producers stay outside allocation packets and hardware core.
+            retired: Sender<Retirement>,
+        }
+        impl Deref for $backing {
+            type Target = $allocation;
+            fn deref(&self) -> &$allocation {
+                self.allocation.as_ref().expect("live native backing")
+            }
+        }
+        impl Drop for $backing {
+            fn drop(&mut self) {
+                if let Some(allocation) = self.allocation.take()
+                    && let Err(SendError(retired)) = self.retired.send(Retirement::$variant(allocation))
+                {
+                    discard(retired);
+                }
             }
         }
     };
 }
-native!(Buffer, BufferVersion, glow::Buffer, delete_buffer);
-/// Shared native image and device-free quota receipt; imported COM leases stop at preparation.
-struct Texture {
-    /// Image lifetime is independent of the public ordinary-image allocation and its device facade.
-    image: Rc<super::Image>,
-    /// Passive private-version expiry retires cache ownership without refunding in-flight storage.
-    source: TextureReceipt,
-}
-native!(Sampler, SamplerVersion, glow::Sampler, delete_sampler);
-native!(Uniform, UniformData, glow::Buffer, delete_buffer);
-
-/// Linked target-aware program with optional fragment-coordinate normalization.
-struct Pipeline {
-    /// Current context retained through deterministic program destruction.
-    gl: Rc<glow::Context>,
-    /// Exactly one device-free logical pipeline version.
-    source: Rc<PipelineVersion>,
-    /// Owned linked graphics program.
+allocation!(Buffer, BufferAllocation, glow::Buffer, delete_buffer, Buffer);
+allocation!(Sampler, SamplerAllocation, glow::Sampler, delete_sampler, Sampler);
+/// Linked program packet cannot retain its parent pipeline or any shader version.
+pub struct ProgramAllocation {
+    /// Program's physical context lifetime.
+    core: Rc<Core>,
+    /// Exactly one successfully linked native program.
     raw: glow::Program,
-    /// Direct window rendering converts GL's bottom-up fragment position to top-left WGSL.
-    target_height: Option<glow::UniformLocation>,
+    /// Definition and both shader reservations, with no source-owner back-edge.
+    _charges: [BackingCharge; 3],
 }
-impl Drop for Pipeline {
-    /// Submitted GL work retains native driver ownership after deleting the public name.
+impl Drop for ProgramAllocation {
     fn drop(&mut self) {
-        // SAFETY: The plugin selects this context before retiring native resources.
-        unsafe { self.gl.delete_program(self.raw) }
+        if self.core.for_drop() {
+            // SAFETY: This program's actual physical context is current and all native users ended.
+            unsafe { self.core.dispatch().delete_program(self.raw) };
+        }
     }
 }
-
-/// Admitted native commands with no device facade, COM callbacks or mutable client state.
-/// Clones retain native GL allocations. Trusted Rust callers must keep the owning native
-/// context alive and current through execution and final drop; the COM plugin enforces this.
+/// Native target variant retains immutable execution metadata, not its logical parent.
+pub struct Pipeline {
+    /// Moved to retirement only by final backing destruction.
+    allocation: Option<ProgramAllocation>,
+    /// Notification belongs to the backing, never the packet or context owner.
+    retired: Sender<Retirement>,
+    /// Exact fixed state needed by replay after the source version expires.
+    info: GpuPipelineInfo,
+    /// Checked attributes copied once at successful variant construction.
+    attributes: Vec<GpuVertexAttribute>,
+    /// Checked stream stepping copied once at successful variant construction.
+    layouts: Vec<GpuVertexBufferLayout>,
+    /// Private target-coordinate adaptation location, not shader-compiler target policy.
+    target_height: Option<glow::UniformLocation>,
+}
+impl Deref for Pipeline {
+    type Target = ProgramAllocation;
+    fn deref(&self) -> &ProgramAllocation {
+        self.allocation.as_ref().expect("live native program")
+    }
+}
+impl Drop for Pipeline {
+    fn drop(&mut self) {
+        if let Some(allocation) = self.allocation.take()
+            && let Err(SendError(retired)) = self.retired.send(Retirement::Program(allocation))
+        {
+            discard(retired);
+        }
+    }
+}
+/// Opaque prepared native commands can outlive public resources and their driver facade.
 #[derive(Clone)]
 pub struct PreparedBlock {
-    /// Shared concrete data permits completion retention without copying command payloads.
+    /// Native-only snapshots and original metadata accounting.
     data: Rc<PreparedData>,
 }
-/// Native lowering retains the original capacity charge until actual GPU completion.
+#[cfg(test)]
+impl PreparedBlock {
+    /// Native test observation checks actual warm program reuse without an instrumentation cache.
+    pub(super) fn first_pipeline(&self) -> Rc<Pipeline> {
+        let PreparedCommand::Draw(draw) = &self.data.commands[0] else {
+            panic!("draw")
+        };
+        draw.pipeline.clone()
+    }
+}
+/// Native representations retain no entire sealed block or Domain.
 struct PreparedData {
-    /// Painter-order operations with all native resources already realized.
+    /// Concrete compatible physical context, never the renderer facade.
+    core: Rc<Core>,
+    /// Coordinate/winding adaptation is part of the prepared target contract.
+    offscreen: bool,
+    /// Exact painter-order native operations.
     commands: Vec<PreparedCommand>,
-    /// Device-free receipts prevent early refunds when the original block is released.
+    /// Original source capacity, no admission authority.
     _capacity: Vec<CommandCharge>,
 }
-/// One fence marks completion of every preceding native use in its bounded batch.
+/// Real fence ownership covers draws, initialization and output attachments independently.
 struct Submitted {
-    /// Fence belongs to this executor's current context.
+    /// Fence created on this same context; successful observation releases the complete batch.
     fence: glow::Fence,
-    /// Exact native allocations and logical byte/capacity receipts used by these commands.
+    /// Actual native resources for every issued draw.
     _blocks: Vec<PreparedBlock>,
-    /// Device-free CPU versions retain accounting after partial or abandoned preparation.
+    /// Actual unpublished/native initialization owners, not CPU sources.
     _uploads: Vec<Upload>,
-    /// Shared original command receipts bound preparation metadata until completion.
+    /// Destination owner remains present for clear-only and uncertain frames too.
+    _targets: Vec<Rc<OutputState>>,
+    /// Original capacity remains charged through asynchronous initialization.
     _capacity: Vec<CommandCharge>,
 }
-
-/// Upload retirement contains no domain/device-facade or public COM owner.
+/// Issued initialization tracks actual storage even before its source slot can be published.
 enum Upload {
-    /// Vertex/index storage keeps its logical bytes reserved during driver initialization.
-    Buffer { _source: Rc<BufferVersion> },
-    /// Image initialization keeps the exact admitted pixel version charged.
-    Texture { _source: Rc<TextureVersion> },
-    /// Uniform initialization retains copied pending bytes.
-    Uniform { _source: Rc<UniformData> },
+    /// Vertex/index/uniform creation share native storage ownership.
+    Buffer { _resource: Rc<Buffer> },
+    /// Imports retain their own use charge independently from a shared image's lifetime.
+    Image { _image: Rc<Image>, _receipt: Option<BackingCharge> },
 }
-/// Complete native state for a single direct draw.
+/// Complete immutable native draw, with no source versions or client authority.
 struct PreparedDraw {
-    /// Linked fixed-state variant and its device-free logical descriptor.
+    /// Linked target variant and copied fixed/layout state.
     pipeline: Rc<Pipeline>,
-    /// Slot, native version and byte base for each consumed stream.
+    /// Exact slots, native allocation owners and validated byte bases.
     vertices: Vec<(u32, Rc<Buffer>, u64)>,
-    /// Native index version and its explicit element interpretation.
+    /// Exact index allocation, interpretation and byte base.
     index: Option<(Rc<Buffer>, GpuIndexFormat, u64)>,
-    /// Flattened texture unit and immutable image/sampler pair.
-    textures: Vec<(u32, Rc<Texture>, Rc<Sampler>)>,
-    /// Flattened UBO binding and exact copied version.
-    uniforms: Vec<(u32, Rc<Uniform>)>,
-    /// Validated direct triangle range.
+    /// Image/sampler pairs retain per-import use accounting independently of physical sharing.
+    textures: Vec<(u32, Rc<Image>, Rc<Sampler>, BackingCharge)>,
+    /// Exact immutable copied uniform backing per native slot.
+    uniforms: Vec<(u32, Rc<Buffer>)>,
+    /// Already checked direct primitive range.
     range: DrawRange,
-    /// Host-bounded logical viewport mapping.
+    /// Flattened host-bounded viewport mapping.
     viewport: Rect,
-    /// Host-bounded logical raster write region.
+    /// Flattened host-bounded raster-write region.
     clip: Rect,
 }
-/// Closed backend command set; clear operations ignore client pipeline masks and blending.
+/// One closed native operation set shared by UI and clients.
 enum PreparedCommand {
-    /// Native resources plus copied pointer-free direct draw metadata.
+    /// Exact immutable binding state.
     Draw(PreparedDraw),
-    /// Exact packed RGBA replacement within a checked clip.
+    /// Unblended color replacement inside an admitted clip.
     Color(u32, Rect),
-    /// Exact normalized depth replacement within a checked clip.
+    /// Regional normalized depth replacement.
     Depth(f32, Rect),
 }
-
+/// Existing driver owns work and retirement endpoints; no global resource realization maps remain.
+pub(crate) struct Executor {
+    /// Dispatch selected through the actual physical owner.
+    gl: Rc<glow::Context>,
+    /// Hardware-only shared lifetime, with neither channel endpoint nor submitted work.
+    core: Rc<Core>,
+    /// Private vertex layout is driver state, not a client resource.
+    array: glow::VertexArray,
+    /// Supplies clones only when concrete native backings are realized.
+    retired_tx: Sender<Retirement>,
+    /// Sole receiver for this existing driver state.
+    retired_rx: Receiver<Retirement>,
+    /// Actual issued immediate draw owners survive frame abandonment.
+    pending: Vec<PreparedBlock>,
+    /// Initialization is tracked even without an acquired rendering target.
+    uploads: Vec<Upload>,
+    /// Clear-only outputs need attachment ownership independently of block count.
+    pending_targets: Vec<Rc<OutputState>>,
+    /// Real native fence/completion ownership.
+    submitted: Vec<Submitted>,
+    /// Source capacity follows preparatory native work through completion.
+    upload_capacity: Vec<CommandCharge>,
+}
 impl Executor {
-    /// Allocates only private layout state; all resource realization is lazy and fallible.
-    pub(crate) fn new(gl: Rc<glow::Context>) -> Result<Self, String> {
-        // SAFETY: Called with the owning live GL ES 3/WebGL 2 context current.
+    /// Creates only driver-private state and transport; resources remain lazy object-owned realizations.
+    pub(crate) fn new(core: Rc<Core>) -> Result<Self, String> {
+        core.current()?;
+        let gl = core.dispatch().clone();
+        // SAFETY: The owning physical context is current.
         let array = unsafe { gl.create_vertex_array()? };
+        let (retired_tx, retired_rx) = mpsc::channel();
         Ok(Self {
             gl,
+            core,
             array,
-            buffers: HashMap::new(),
-            textures: HashMap::new(),
-            samplers: HashMap::new(),
-            pipelines: HashMap::new(),
-            uniforms: HashMap::new(),
+            retired_tx,
+            retired_rx,
             pending: Vec::new(),
-            submitted: Vec::new(),
             uploads: Vec::new(),
+            pending_targets: Vec::new(),
+            submitted: Vec::new(),
             upload_capacity: Vec::new(),
         })
     }
-
-    /// Retires uploads whose sole CPU owner is this cache, before admitting another frame.
+    /// Only concrete native creation receives a producer clone.
+    pub(crate) fn sender(&self) -> Sender<Retirement> {
+        self.retired_tx.clone()
+    }
+    /// Drops safe owned packets; a failed poll never prevents unrelated retirement maintenance.
+    fn drain(&self) {
+        while let Ok(retired) = self.retired_rx.try_recv() {
+            discard(retired);
+        }
+    }
+    /// Polls completion then drains, preserving useful first-error reporting.
+    pub(crate) fn maintain(&mut self) -> Result<(), String> {
+        let result = self.poll();
+        self.drain();
+        result
+    }
+    /// Reclaims previous work before subsequent preparation, even when the next frame is empty.
     pub(crate) fn collect(&mut self) -> Result<(), String> {
+        self.maintain()
+    }
+    /// Observes actual completion; no reference count or frame return substitutes for a fence.
+    fn poll(&mut self) -> Result<(), String> {
+        self.core.current()?;
+        self.check()?;
         self.complete()?;
         let mut failure = false;
         self.submitted.retain(|batch| {
-            // SAFETY: The plugin selects this context before preparation/collection. A zero
-            // timeout observes completion without treating public weak expiry as completion.
+            // SAFETY: The matching live context owns every fence; a zero timeout only observes.
             match unsafe { self.gl.client_wait_sync(batch.fence, 0, 0) } {
                 glow::ALREADY_SIGNALED | glow::CONDITION_SATISFIED => {
                     unsafe { self.gl.delete_sync(batch.fence) };
@@ -183,109 +367,99 @@ impl Executor {
                 }
             }
         });
-        self.buffers.retain(|_, entry| Rc::strong_count(&entry.source) > 1);
-        self.textures.retain(|_, entry| entry.source.is_alive());
-        self.samplers.retain(|_, entry| Rc::strong_count(&entry.source) > 1);
-        self.pipelines.retain(|_, entry| Rc::strong_count(&entry.source) > 1);
-        self.uniforms.retain(|_, entry| Rc::strong_count(&entry.source) > 1);
         if failure {
-            Err("failed to observe generic graphics completion".into())
+            Err("failed to observe graphics completion".into())
         } else {
             Ok(())
         }
     }
-
-    /// Seals issued immediate work on explicit completion or before the next preparation.
-    /// Abandonment keeps pending owners here; it never issues a native call from a frame destructor.
+    /// Seals all issued immediate work; failed allocation/fence creation leaves its owners installed.
     pub(crate) fn complete(&mut self) -> Result<(), String> {
-        if self.pending.is_empty() && self.uploads.is_empty() {
+        self.core.current()?;
+        if self.pending.is_empty() && self.uploads.is_empty() && self.pending_targets.is_empty() {
             return Ok(());
         }
         self.submitted.try_reserve(1).map_err(|error| error.to_string())?;
-        // SAFETY: The owning context is current. Flushing makes the fence progress without
-        // requiring another window frame, which also covers texture-only rendering sessions.
+        // SAFETY: Actual owners are already installed before fence creation/submission can fail.
         let fence = unsafe { self.gl.fence_sync(glow::SYNC_GPU_COMMANDS_COMPLETE, 0)? };
         unsafe { self.gl.flush() };
         self.submitted.push(Submitted {
             fence,
             _blocks: std::mem::take(&mut self.pending),
             _uploads: std::mem::take(&mut self.uploads),
+            _targets: std::mem::take(&mut self.pending_targets),
             _capacity: std::mem::take(&mut self.upload_capacity),
         });
         Ok(())
     }
-
-    /// Creates every driver allocation before the host acquires/clears its native target.
-    pub(crate) fn prepare(
-        &mut self,
-        block: &Block,
-        offscreen: bool,
-        images: &HashMap<neocogi_render_core::TextureId, super::ResidentImage>,
-    ) -> Result<PreparedBlock, String> {
+    /// Installs target lifetime before the host clear, independently of client block count.
+    pub(crate) fn retain_target(&mut self, output: Rc<OutputState>) -> Result<(), String> {
+        self.pending_targets.try_reserve(1).map_err(|error| error.to_string())?;
+        self.pending_targets.push(output);
+        Ok(())
+    }
+    /// Complete immutable block realization precedes target acquisition and has no foreign callbacks.
+    pub(crate) fn prepare(&mut self, block: &Block, offscreen: bool) -> Result<PreparedBlock, String> {
+        block.admit_on(&self.core).map_err(|error| error.to_string())?;
         self.collect()?;
         let capacity = block.retain_capacity();
         self.upload_capacity.try_reserve(capacity.len()).map_err(|error| error.to_string())?;
         let before = self.uploads.len();
-        let result = self.prepare_inner(block, offscreen, images);
+        let result = self.prepare_inner(block, offscreen);
         if self.uploads.len() > before {
             self.upload_capacity.extend(capacity);
         }
         result
     }
-
-    /// Partial native preparation has the same upload-completion lifetime as successful blocks.
-    fn prepare_inner(
-        &mut self,
-        block: &Block,
-        offscreen: bool,
-        images: &HashMap<neocogi_render_core::TextureId, super::ResidentImage>,
-    ) -> Result<PreparedBlock, String> {
+    /// Partial failure leaves actual initialized candidates and charges in the upload tracker.
+    fn prepare_inner(&mut self, block: &Block, offscreen: bool) -> Result<PreparedBlock, String> {
         let mut commands = Vec::new();
         commands.try_reserve_exact(block.commands().len()).map_err(|error| error.to_string())?;
         for command in block.commands() {
             commands.push(match command {
                 Command::ClearColor { rgba, clip, .. } => PreparedCommand::Color(*rgba, *clip),
                 Command::ClearDepth { depth, clip, .. } => PreparedCommand::Depth(*depth, *clip),
-                Command::Draw(draw) => PreparedCommand::Draw(self.prepare_draw(draw, offscreen, images)?),
+                Command::Draw(draw) => PreparedCommand::Draw(self.prepare_draw(draw, offscreen)?),
             });
         }
         self.check()?;
         Ok(PreparedBlock {
             data: Rc::new(PreparedData {
+                core: self.core.clone(),
+                offscreen,
                 commands,
                 _capacity: block.retain_capacity(),
             }),
         })
     }
-
-    /// Realizes exactly the resources consumed by this captured pipeline.
-    fn prepare_draw(
-        &mut self,
-        draw: &Draw,
-        offscreen: bool,
-        images: &HashMap<neocogi_render_core::TextureId, super::ResidentImage>,
-    ) -> Result<PreparedDraw, String> {
-        let pipeline = self.pipeline(draw.pipeline.clone(), offscreen)?;
+    /// Captures native owners and independent import receipts, never the source draw or sealed block.
+    fn prepare_draw(&mut self, draw: &Draw, offscreen: bool) -> Result<PreparedDraw, String> {
+        let mut preparation = Preparation { executor: self };
+        let pipeline = draw.pipeline.native(offscreen, &mut preparation)?;
         let mut vertices = Vec::new();
+        vertices.try_reserve_exact(draw.vertex_buffers.len()).map_err(|error| error.to_string())?;
         for binding in &draw.vertex_buffers {
-            vertices.push((binding.slot, self.buffer(binding.buffer.clone())?, binding.offset));
+            vertices.push((binding.slot, binding.buffer.native(&mut preparation)?, binding.offset));
         }
         let index = draw
             .index
             .as_ref()
-            .map(|binding| self.buffer(binding.buffer.clone()).map(|buffer| (buffer, binding.format, binding.offset)))
+            .map(|binding| binding.buffer.native(&mut preparation).map(|native| (native, binding.format, binding.offset)))
             .transpose()?;
         let mut textures = Vec::new();
+        textures.try_reserve_exact(draw.textures.len()).map_err(|error| error.to_string())?;
         for binding in &draw.textures {
             textures.push((
                 unit(binding.stage, binding.slot),
-                self.texture(binding.texture.clone(), images)?,
-                self.sampler(binding.sampler.clone())?,
+                binding.texture.native(&mut preparation)?,
+                binding.sampler.native(&mut preparation)?,
+                binding.texture.receipt(),
             ));
         }
         let mut uniforms = Vec::new();
+        uniforms.try_reserve_exact(draw.uniforms.len()).map_err(|error| error.to_string())?;
         for binding in &draw.uniforms {
-            uniforms.push((unit(binding.stage, binding.slot), self.uniform(binding.data.clone())?));
+            uniforms.push((unit(binding.stage, binding.slot), binding.data.native(&mut preparation)?));
         }
         Ok(PreparedDraw {
             pipeline,
@@ -298,71 +472,108 @@ impl Executor {
             clip: draw.clip,
         })
     }
-
-    /// Uploads a complete immutable buffer using its permanent portable role on first binding.
-    fn buffer(&mut self, source: Rc<BufferVersion>) -> Result<Rc<Buffer>, String> {
-        if let Some(buffer) = self.buffers.get(&source.id()) {
-            return Ok(buffer.clone());
-        }
+    /// Common typed atlas preparation uses the exact version's own image slot without target work.
+    pub(crate) fn prepare_texture(&mut self, source: Rc<TextureVersion>) -> Result<(), String> {
+        self.collect()?;
+        source.native(&mut Preparation { executor: self }).map(|_| ())
+    }
+    /// Creates actual storage and installs initialization ownership before issuing any write.
+    fn create_buffer(&mut self, source: &BufferVersion) -> Result<Rc<Buffer>, String> {
         self.uploads.try_reserve(1).map_err(|error| error.to_string())?;
-        self.uploads.push(Upload::Buffer { _source: source.clone() });
-        // SAFETY: Source bytes and role were checked by admission; private VAO owns index binding.
-        let buffer = unsafe {
-            let raw = self.gl.create_buffer()?;
-            let buffer = Rc::new(Buffer { gl: self.gl.clone(), source, raw });
+        // SAFETY: The checked owning preparation core is current.
+        unsafe {
+            let value = Rc::new(Buffer {
+                allocation: Some(BufferAllocation {
+                    core: self.core.clone(),
+                    raw: self.gl.create_buffer()?,
+                    _charge: source.receipt(),
+                }),
+                retired: self.sender(),
+            });
+            self.uploads.push(Upload::Buffer { _resource: value.clone() });
             self.gl.bind_vertex_array(Some(self.array));
-            let target = if buffer.source.desc().role == GpuBufferRole::Index {
+            let target = if source.desc().role == GpuBufferRole::Index {
                 glow::ELEMENT_ARRAY_BUFFER
             } else {
                 glow::ARRAY_BUFFER
             };
-            self.gl.bind_buffer(target, Some(raw));
-            if let Some(bytes) = buffer.source.bytes().as_slice() {
+            self.gl.bind_buffer(target, Some(value.raw));
+            if let Some(bytes) = source.bytes().as_slice() {
                 self.gl.buffer_data_u8_slice(target, bytes, glow::STATIC_DRAW);
             } else {
-                self.gl.buffer_data_size(target, buffer.source.bytes().len() as i32, glow::STATIC_DRAW);
+                self.gl.buffer_data_size(target, source.bytes().len() as i32, glow::STATIC_DRAW);
                 self.check()?;
                 let zero = &super::ZERO_BYTES;
-                for offset in (0..buffer.source.bytes().len()).step_by(zero.len()) {
-                    let count = (buffer.source.bytes().len() - offset).min(zero.len());
-                    self.gl.buffer_sub_data_u8_slice(target, offset as i32, &zero[..count]);
+                for offset in (0..source.bytes().len()).step_by(zero.len()) {
+                    self.gl
+                        .buffer_sub_data_u8_slice(target, offset as i32, &zero[..(source.bytes().len() - offset).min(zero.len())]);
                 }
             }
             self.gl.bind_vertex_array(None);
             self.check()?;
-            buffer
-        };
-        self.buffers.insert(buffer.source.id(), buffer.clone());
-        Ok(buffer)
+            Ok(value)
+        }
     }
-
-    /// Private atlas preparation also runs without a target; uploaded backing stays completion-owned.
-    pub(crate) fn prepare_texture(
+    /// Uniform payloads use the same actual GL buffer owner with private std140 end padding.
+    fn create_uniform(&mut self, source: &UniformData) -> Result<Rc<Buffer>, String> {
+        let mut bytes = Vec::new();
+        let length = source.bytes().len().div_ceil(16) * 16;
+        bytes.try_reserve_exact(length).map_err(|error| error.to_string())?;
+        bytes.extend_from_slice(source.bytes());
+        bytes.resize(length, 0);
+        self.uploads.try_reserve(1).map_err(|error| error.to_string())?;
+        // SAFETY: The same checked current context owns allocation, binding and initialization.
+        unsafe {
+            let value = Rc::new(Buffer {
+                allocation: Some(BufferAllocation {
+                    core: self.core.clone(),
+                    raw: self.gl.create_buffer()?,
+                    _charge: source.receipt(),
+                }),
+                retired: self.sender(),
+            });
+            self.uploads.push(Upload::Buffer { _resource: value.clone() });
+            self.gl.bind_buffer(glow::UNIFORM_BUFFER, Some(value.raw));
+            self.gl.buffer_data_u8_slice(glow::UNIFORM_BUFFER, &bytes, glow::STATIC_DRAW);
+            self.check()?;
+            Ok(value)
+        }
+    }
+    /// One native sampling object per immutable version, independent of public owner lifetime.
+    fn create_sampler(&mut self, source: &SamplerVersion) -> Result<Rc<Sampler>, String> {
+        // SAFETY: Portable descriptor enums were admitted and this preparation core is current.
+        unsafe {
+            let value = Rc::new(Sampler {
+                allocation: Some(SamplerAllocation {
+                    core: self.core.clone(),
+                    raw: self.gl.create_sampler()?,
+                    _charge: source.receipt(),
+                }),
+                retired: self.sender(),
+            });
+            let desc = source.desc();
+            self.gl
+                .sampler_parameter_i32(value.raw, glow::TEXTURE_MIN_FILTER, filter(desc.min_filter) as i32);
+            self.gl
+                .sampler_parameter_i32(value.raw, glow::TEXTURE_MAG_FILTER, filter(desc.mag_filter) as i32);
+            self.gl.sampler_parameter_i32(value.raw, glow::TEXTURE_WRAP_S, address(desc.address_u) as i32);
+            self.gl.sampler_parameter_i32(value.raw, glow::TEXTURE_WRAP_T, address(desc.address_v) as i32);
+            self.check()?;
+            Ok(value)
+        }
+    }
+    /// Unified allocation for sampled images, ordinary images and private unpublished output storage.
+    /// False initialization is only used by single-use Output, whose complete host clear precedes publication.
+    pub(crate) fn create_image(
         &mut self,
-        source: Rc<TextureVersion>,
-        images: &HashMap<neocogi_render_core::TextureId, super::ResidentImage>,
-    ) -> Result<(), String> {
-        self.collect()?;
-        self.texture(source, images).map(|_| ())
-    }
-
-    /// Upload pixels or capture an authenticated immutable host image without retaining its COM lease.
-    fn texture(&mut self, source: Rc<TextureVersion>, images: &HashMap<neocogi_render_core::TextureId, super::ResidentImage>) -> Result<Rc<Texture>, String> {
-        if let Some(texture) = self.textures.get(&source.id()) {
-            return Ok(texture.clone());
-        }
-        let id = source.id();
-        if let Some(import) = source.imported_id() {
-            let image = images.get(&import).ok_or("imported UI image is unavailable on this device")?.image.clone();
-            let texture = Rc::new(Texture { image, source: source.receipt() });
-            self.textures.insert(id, texture.clone());
-            return Ok(texture);
-        }
-        let pixels = source.pixels().ok_or("missing texture pixel storage")?;
-        // Validate the actual slice at the native pointer boundary, before any upload owner
-        // or GL allocation is installed. Descriptor privacy is not a substitute for this check.
-        let size = source.desc().size;
-        if let Some(pixels) = pixels.as_slice() {
+        size: Size,
+        format: u32,
+        pixels: Option<&[u8]>,
+        charge: Option<BackingCharge>,
+        initialize: bool,
+    ) -> Result<Rc<Image>, String> {
+        neocogi_render_core::checked_rgba_len(size.width, size.height).map_err(|error| error.to_string())?;
+        if let Some(pixels) = pixels {
             neocogi_render_core::ImageSource {
                 width: size.width,
                 height: size.height,
@@ -371,114 +582,109 @@ impl Executor {
             .validate()
             .map_err(|error| error.to_string())?;
         }
-        self.uploads.try_reserve(1).map_err(|error| error.to_string())?;
-        self.uploads.push(Upload::Texture { _source: source.clone() });
-        // SAFETY: Source dimensions and complete tightly packed RGBA bytes were admitted before capture.
-        let texture = unsafe {
-            let image = Rc::new(super::Image {
-                gl: self.gl.clone(),
-                raw: self.gl.create_texture()?,
+        self.core.current()?;
+        self.check()?;
+        // SAFETY: Read an immutable limit on the actual current context before allocation.
+        let limit = unsafe { self.gl.get_parameter_i32(glow::MAX_TEXTURE_SIZE) };
+        if size.width > limit || size.height > limit {
+            return Err(format!("texture {}x{} exceeds native dimension limit {limit}", size.width, size.height));
+        }
+        if initialize {
+            self.uploads.try_reserve(1).map_err(|error| error.to_string())?;
+        }
+        // SAFETY: Extent/data admitted, real context selected; ownership installed before initialization.
+        unsafe {
+            let image = Rc::new(Image {
+                allocation: Rc::new(ImageAllocation {
+                    core: self.core.clone(),
+                    raw: self.gl.create_texture()?,
+                    size,
+                    _charge: charge,
+                }),
+                retired: self.sender(),
             });
-            let texture = Rc::new(Texture { image, source: source.receipt() });
+            if initialize {
+                self.uploads.push(Upload::Image { _image: image.clone(), _receipt: None });
+            }
             super::GLRenderer::prepare_upload(&self.gl);
-            self.gl.bind_texture(glow::TEXTURE_2D, Some(texture.image.raw));
-            let desc = source.desc();
-            let format = if desc.format == GpuTextureFormat::Rgba8Srgb {
-                glow::SRGB8_ALPHA8
-            } else {
-                glow::RGBA8
-            };
+            self.gl.bind_texture(glow::TEXTURE_2D, Some(image.raw));
+            self.gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_BASE_LEVEL, 0);
+            self.gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAX_LEVEL, 0);
+            self.gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MIN_FILTER, glow::NEAREST as i32);
+            self.gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, glow::NEAREST as i32);
+            self.gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_S, glow::CLAMP_TO_EDGE as i32);
+            self.gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_T, glow::CLAMP_TO_EDGE as i32);
             self.gl.tex_image_2d(
                 glow::TEXTURE_2D,
                 0,
                 format as i32,
-                desc.size.width,
-                desc.size.height,
+                size.width,
+                size.height,
                 0,
                 glow::RGBA,
                 glow::UNSIGNED_BYTE,
-                glow::PixelUnpackData::Slice(pixels.as_slice()),
+                glow::PixelUnpackData::Slice(pixels),
             );
             self.check()?;
-            if pixels.as_slice().is_none() {
-                super::GLRenderer::upload_zero_pixels(&self.gl, desc.size.width, desc.size.height)?;
+            if initialize && pixels.is_none() {
+                let zero = &super::ZERO_BYTES;
+                for y in 0..size.height {
+                    for x in (0..size.width).step_by(zero.len() / 4) {
+                        let count = (size.width - x).min((zero.len() / 4) as i32);
+                        self.gl.tex_sub_image_2d(
+                            glow::TEXTURE_2D,
+                            0,
+                            x,
+                            y,
+                            count,
+                            1,
+                            glow::RGBA,
+                            glow::UNSIGNED_BYTE,
+                            glow::PixelUnpackData::Slice(Some(&zero[..count as usize * 4])),
+                        );
+                    }
+                }
+                self.check()?;
             }
-            self.gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_BASE_LEVEL, 0);
-            self.gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAX_LEVEL, 0);
-            self.check()?;
-            texture
-        };
-        self.textures.insert(id, texture.clone());
-        Ok(texture)
-    }
-
-    /// Creates immutable filter/wrap state independent of image storage.
-    fn sampler(&mut self, source: Rc<SamplerVersion>) -> Result<Rc<Sampler>, String> {
-        if let Some(sampler) = self.samplers.get(&source.id()) {
-            return Ok(sampler.clone());
+            self.gl.bind_texture(glow::TEXTURE_2D, None);
+            Ok(image)
         }
-        // SAFETY: All descriptor tags were checked before publication.
-        let sampler = unsafe {
-            let raw = self.gl.create_sampler()?;
-            let sampler = Rc::new(Sampler { gl: self.gl.clone(), source, raw });
-            let desc = sampler.source.desc();
-            self.gl.sampler_parameter_i32(raw, glow::TEXTURE_MIN_FILTER, filter(desc.min_filter) as i32);
-            self.gl.sampler_parameter_i32(raw, glow::TEXTURE_MAG_FILTER, filter(desc.mag_filter) as i32);
-            self.gl.sampler_parameter_i32(raw, glow::TEXTURE_WRAP_S, address(desc.address_u) as i32);
-            self.gl.sampler_parameter_i32(raw, glow::TEXTURE_WRAP_T, address(desc.address_v) as i32);
-            self.check()?;
-            sampler
-        };
-        self.samplers.insert(sampler.source.id(), sampler.clone());
-        Ok(sampler)
     }
-
-    /// Copies portable uniform bytes into a separate immutable allocation padded only at its end.
-    fn uniform(&mut self, source: Rc<UniformData>) -> Result<Rc<Uniform>, String> {
-        let key = Rc::as_ptr(&source) as usize;
-        if let Some(uniform) = self.uniforms.get(&key) {
-            return Ok(uniform.clone());
-        }
-        self.uploads.try_reserve(1).map_err(|error| error.to_string())?;
-        self.uploads.push(Upload::Uniform { _source: source.clone() });
-        // SAFETY: Reflected std140-compatible layout and exact source length were checked by draw.
-        let uniform = unsafe {
-            let raw = self.gl.create_buffer()?;
-            let uniform = Rc::new(Uniform { gl: self.gl.clone(), source, raw });
-            let mut bytes = uniform.source.bytes().to_vec();
-            bytes.resize(bytes.len().next_multiple_of(16), 0);
-            self.gl.bind_buffer(glow::UNIFORM_BUFFER, Some(raw));
-            self.gl.buffer_data_u8_slice(glow::UNIFORM_BUFFER, &bytes, glow::STATIC_DRAW);
-            self.check()?;
-            uniform
-        };
-        self.uniforms.insert(key, uniform.clone());
-        Ok(uniform)
+    /// Native metadata copy is bounded/fallible before native program construction.
+    fn copied<T: Copy>(source: &[T]) -> Result<Vec<T>, String> {
+        let mut output = Vec::new();
+        output.try_reserve_exact(source.len()).map_err(|error| error.to_string())?;
+        output.extend_from_slice(source);
+        Ok(output)
     }
-
-    /// Links validated translated stages and assigns reflected private binding names.
-    fn pipeline(&mut self, source: Rc<PipelineVersion>, offscreen: bool) -> Result<Rc<Pipeline>, String> {
-        let key = (source.id(), offscreen);
-        if let Some(pipeline) = self.pipelines.get(&key) {
-            return Ok(pipeline.clone());
+    /// Target-dependent compiler adaptation stays in this renderer and is memoized on the source owner.
+    fn create_pipeline(&mut self, source: &PipelineVersion, offscreen: bool) -> Result<Rc<Pipeline>, String> {
+        let info = source.info();
+        if offscreen && (info.depth_write || info.depth_compare != GpuCompare::Always) {
+            return Err("offscreen target has no depth attachment".into());
         }
-        // The compiler promises one fixed clip transform. The renderer owns the
-        // presentation correction and fragment-origin convention for this target.
+        let attributes = Self::copied(source.attributes())?;
+        let layouts = Self::copied(source.vertex_buffers())?;
         let vertex = super::shader_adapter::vertex(&source.vertex().artifact().glsl, offscreen)?;
         let (fragment, height_name) = super::shader_adapter::fragment(&source.fragment().artifact().glsl, offscreen)?;
         let raw = super::create_program(&self.gl, &vertex, &fragment).map_err(|error| error.to_string())?;
-        // SAFETY: The new program is linked in this current context; the generated name is unique.
+        // SAFETY: The linked program belongs to this checked current context and exact reflected stages.
         let target_height = height_name.and_then(|name| unsafe { self.gl.get_uniform_location(raw, &name) });
-        let pipeline = Rc::new(Pipeline {
-            gl: self.gl.clone(),
-            source,
-            raw,
+        let value = Rc::new(Pipeline {
+            allocation: Some(ProgramAllocation {
+                core: self.core.clone(),
+                raw,
+                _charges: source.receipts(),
+            }),
+            retired: self.sender(),
+            info,
+            attributes,
+            layouts,
             target_height,
         });
-        // SAFETY: Reflection comes from the same validated stages linked into this owned program.
         unsafe {
             self.gl.use_program(Some(raw));
-            for shader in [pipeline.source.vertex().artifact(), pipeline.source.fragment().artifact()] {
+            for shader in [source.vertex().artifact(), source.fragment().artifact()] {
                 for uniform in &shader.uniforms {
                     if let Some(index) = self.gl.get_uniform_block_index(raw, &uniform.gl_block) {
                         self.gl.uniform_block_binding(raw, index, unit(shader.stage, uniform.slot));
@@ -492,23 +698,27 @@ impl Executor {
             self.gl.use_program(None);
         }
         self.check()?;
-        self.pipelines.insert(key, pipeline.clone());
-        Ok(pipeline)
+        Ok(value)
     }
-
-    /// Reports the first driver error before target acquisition or final successful completion.
-    fn check(&self) -> Result<(), String> {
-        // SAFETY: The owning context is current for every executor operation.
+    /// Reports native errors before publication; terminal context loss invalidates all old handles.
+    pub(crate) fn check(&self) -> Result<(), String> {
+        // SAFETY: Called only in a selected live native execution phase.
         let error = unsafe { self.gl.get_error() };
         if error == glow::NO_ERROR {
             Ok(())
         } else {
-            Err(format!("generic graphics GL error 0x{error:04x}"))
+            let reason = format!("OpenGL operation failed with error 0x{error:04x}");
+            if error == glow::CONTEXT_LOST {
+                self.core.lose(reason.clone());
+            }
+            Err(reason)
         }
     }
-
     /// Replays only prepared native objects; the caller has already bound its authorized target.
     pub(crate) fn execute(&mut self, block: &PreparedBlock, logical: Size, physical: Size, offscreen: bool) -> Result<(), String> {
+        if !Rc::ptr_eq(&self.core, &block.data.core) || offscreen != block.data.offscreen {
+            return Err("prepared GL block belongs to another driver or target".into());
+        }
         // Retain before the first native command, including partial failure after an earlier draw.
         self.pending.try_reserve(1).map_err(|error| error.to_string())?;
         self.pending.push(block.clone());
@@ -562,7 +772,7 @@ impl Executor {
             return Ok(());
         };
         let gl = &self.gl;
-        let info = draw.pipeline.source.info();
+        let info = draw.pipeline.info;
         let y = if offscreen { view.y } else { physical.height as u32 - view.y - view.height };
         // SAFETY: Prepared resources belong to this context; every byte range and layout is checked
         // by immutable draw admission. CPU snapshots cannot be changed during this replay.
@@ -609,7 +819,7 @@ impl Executor {
                 gl.disable_vertex_attrib_array(location);
                 gl.vertex_attrib_divisor(location, 0);
             }
-            for attribute in draw.pipeline.source.attributes() {
+            for attribute in &draw.pipeline.attributes {
                 let (slot, buffer, offset) = draw
                     .vertices
                     .iter()
@@ -617,8 +827,7 @@ impl Executor {
                     .ok_or("prepared vertex slot missing")?;
                 let layout = draw
                     .pipeline
-                    .source
-                    .vertex_buffers()
+                    .layouts
                     .iter()
                     .find(|layout| layout.slot == *slot)
                     .ok_or("prepared vertex layout missing")?;
@@ -633,9 +842,9 @@ impl Executor {
                 }
                 gl.vertex_attrib_divisor(attribute.location, if layout.step == GpuStepMode::Instance { 1 } else { 0 });
             }
-            for (unit, texture, sampler) in &draw.textures {
+            for (unit, texture, sampler, _) in &draw.textures {
                 gl.active_texture(glow::TEXTURE0 + unit);
-                gl.bind_texture(glow::TEXTURE_2D, Some(texture.image.raw));
+                gl.bind_texture(glow::TEXTURE_2D, Some(texture.raw));
                 gl.bind_sampler(*unit, Some(sampler.raw));
             }
             for (unit, uniform) in &draw.uniforms {
@@ -660,17 +869,24 @@ impl Executor {
 }
 
 impl Drop for Executor {
-    /// Waits for final immediate uses before releasing accounting and deleting private objects.
+    /// Settle actual work before dropping tracked owners and disconnecting the receiver.
     fn drop(&mut self) {
-        // SAFETY: The plugin selects this context before destroying its renderer.
-        unsafe {
-            self.gl.finish();
-            for batch in self.submitted.drain(..) {
-                self.gl.delete_sync(batch.fence);
+        if self.core.for_drop() {
+            // SAFETY: Owning context selected; finish precedes every final issued-work owner release.
+            unsafe {
+                self.gl.finish();
+                for batch in self.submitted.drain(..) {
+                    self.gl.delete_sync(batch.fence);
+                }
+                self.gl.delete_vertex_array(self.array);
             }
-            self.pending.clear();
-            self.gl.delete_vertex_array(self.array);
         }
+        self.pending.clear();
+        self.uploads.clear();
+        self.pending_targets.clear();
+        self.submitted.clear();
+        self.upload_capacity.clear();
+        self.drain();
     }
 }
 

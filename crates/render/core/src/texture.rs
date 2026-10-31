@@ -28,20 +28,14 @@
 // POSSIBILITY OF SUCH DAMAGE.
 //
 
-//! Process-unique native texture keys and structured upload failures.
+//! Structured failures for checked native image construction.
 
-use crate::{ImageSource, ImageValidationError, checked_rgba_len};
-use rs_math3d::Dimensioni;
-use std::{
-    error::Error,
-    fmt,
-    num::NonZeroU64,
-    sync::atomic::{AtomicU64, Ordering},
-};
+use crate::ImageValidationError;
+use std::{error::Error, fmt};
 
 /// Concrete failure returned while validating or creating a native texture.
 ///
-/// Image validation, identifier allocation, and backend creation are separate failure classes.
+/// Image validation and backend creation are separate failure classes.
 /// Keeping them in one enum gives every public texture-loading entry point the same inspectable
 /// contract without erasing backend diagnostics behind `Any` or returning unclassified strings.
 #[derive(Debug)]
@@ -51,8 +45,6 @@ pub enum TextureError {
         /// Concrete dimension, storage, byte-count, or decoding failure.
         source: ImageValidationError,
     },
-    /// The process has allocated every available native texture identifier.
-    IdentifierSpaceExhausted,
     /// The rendering backend could not create or upload the validated texture.
     Backend {
         /// Stable backend diagnostic captured at the public error boundary.
@@ -85,11 +77,9 @@ impl From<ImageValidationError> for TextureError {
 impl fmt::Display for TextureError {
     /// Formats the failure class together with its concrete image or backend diagnostic.
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // Prefix composed errors at this abstraction boundary while keeping identifier exhaustion
-        // independent of the executor's private slot representation.
+        // Preserve structured image diagnostics at the shared backend boundary.
         match self {
             Self::Image { source } => write!(formatter, "texture image is invalid: {source}"),
-            Self::IdentifierSpaceExhausted => formatter.write_str("texture identifier space is exhausted"),
             Self::Backend { message } => write!(formatter, "backend texture creation failed: {message}"),
         }
     }
@@ -102,86 +92,14 @@ impl Error for TextureError {
         // as classified text rather than entering an `Any`-based downcast protocol.
         match self {
             Self::Image { source } => Some(source),
-            Self::IdentifierSpaceExhausted | Self::Backend { .. } => None,
+            Self::Backend { .. } => None,
         }
-    }
-}
-
-/// Process-wide monotonic keys; exhaustion rejects rather than reusing a live or retired identity.
-static NEXT_TEXTURE_ID: AtomicU64 = AtomicU64::new(1);
-
-/// Allocates once from the supplied sequence without publishing memory or wrapping.
-fn allocate(counter: &AtomicU64) -> Result<NonZeroU64, TextureError> {
-    let raw = counter
-        .try_update(Ordering::Relaxed, Ordering::Relaxed, |value| value.checked_add(1))
-        .map_err(|_| TextureError::IdentifierSpaceExhausted)?;
-    Ok(NonZeroU64::new(raw).expect("texture key sequence starts at one"))
-}
-
-/// Process-unique native map key with immutable, admitted dimensions.
-/// This is not a COM capability or proof that any later upload slice has the right length.
-/// Device/provenance authentication belongs to the renderer's public COM resources.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
-pub struct TextureId {
-    /// Never reused, including after a failed native creation or texture destruction.
-    key: NonZeroU64,
-    /// Positive, bounded width in pixels.
-    width: i32,
-    /// Positive, bounded height in pixels.
-    height: i32,
-}
-
-impl TextureId {
-    /// Allocates an offscreen image key after checking extent without requiring CPU pixels.
-    pub fn for_render_target(width: i32, height: i32) -> Result<Self, TextureError> {
-        checked_rgba_len(width, height)?;
-        Ok(Self {
-            key: allocate(&NEXT_TEXTURE_ID)?,
-            width,
-            height,
-        })
-    }
-
-    /// Allocates a key for admitted pixels; each later upload must validate its own slice again.
-    pub fn for_upload(width: i32, height: i32, pixels: &[u8]) -> Result<Self, TextureError> {
-        ImageSource { width, height, pixels }.validate()?;
-        Ok(Self {
-            key: allocate(&NEXT_TEXTURE_ID)?,
-            width,
-            height,
-        })
-    }
-
-    /// Returns the texture width in pixels.
-    pub fn width(self) -> i32 {
-        self.width
-    }
-
-    /// Returns the texture height in pixels.
-    pub fn height(self) -> i32 {
-        self.height
-    }
-
-    /// Returns the texture dimensions in pixels.
-    pub fn size(self) -> Dimensioni {
-        Dimensioni::new(self.width, self.height)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashSet;
-
-    /// GPU-produced images obey the same allocation limits as uploaded images.
-    #[test]
-    fn render_target_rejects_invalid_extents_without_pixel_allocation() {
-        let id = TextureId::for_render_target(64, 32).unwrap();
-        assert_eq!((id.width(), id.height()), (64, 32));
-        assert!(matches!(TextureId::for_render_target(0, 32), Err(TextureError::Image { .. })));
-        assert!(matches!(TextureId::for_render_target(-1, 32), Err(TextureError::Image { .. })));
-        assert!(matches!(TextureId::for_render_target(i32::MAX, i32::MAX), Err(TextureError::Image { .. })));
-    }
 
     /// Verifies every texture failure has stable classification, diagnostics, and source behavior.
     #[test]
@@ -190,29 +108,9 @@ mod tests {
         assert_eq!(image.to_string(), "texture image is invalid: expected 16 RGBA bytes, received 4");
         assert!(Error::source(&image).is_some());
 
-        let exhausted = TextureError::IdentifierSpaceExhausted;
-        assert_eq!(exhausted.to_string(), "texture identifier space is exhausted");
-        assert!(Error::source(&exhausted).is_none());
-
         let backend = TextureError::backend("device rejected upload");
         assert_eq!(backend.to_string(), "backend texture creation failed: device rejected upload");
         assert!(matches!(&backend, TextureError::Backend { message } if message == "device rejected upload"));
         assert!(Error::source(&backend).is_none());
-    }
-
-    /// Separately issued keys never alias, while copying preserves the same map identity.
-    #[test]
-    fn keys_are_unique_and_exhaustion_never_wraps() {
-        let first = TextureId::for_render_target(1, 1).unwrap();
-        let second = TextureId::for_upload(1, 1, &[0; 4]).unwrap();
-        assert_ne!(first, second);
-        let keys = HashSet::from([first]);
-        assert!(keys.contains(&first));
-        assert!(!keys.contains(&second));
-        let sequence = AtomicU64::new(u64::MAX - 1);
-        assert_eq!(allocate(&sequence).unwrap().get(), u64::MAX - 1);
-        assert!(matches!(allocate(&sequence), Err(TextureError::IdentifierSpaceExhausted)));
-        assert!(matches!(allocate(&sequence), Err(TextureError::IdentifierSpaceExhausted)));
-        assert_eq!(sequence.load(Ordering::Relaxed), u64::MAX);
     }
 }

@@ -5,16 +5,13 @@ use super::*;
 static NATIVE_SESSION: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// Read actual native pixels through a completed transfer, preserving the source layout.
-fn pixels(renderer: &VulkanRenderer, id: TextureId) -> Vec<u8> {
+fn pixels(renderer: &VulkanRenderer, image: &Image) -> Vec<u8> {
     crate::generic::tests::readback(
         &renderer.context.core,
-        renderer.textures[&id].image.native.as_ref().unwrap(),
-        neocogi_render_gpu::abi::Size { width: id.width(), height: id.height() },
+        &image.native,
+        <Backend as neocogi_render_gpu::native::NativeResources>::image_size(image),
     )
 }
-
-#[path = "../../gpu/tests/support/sampled.rs"]
-mod sampled;
 
 /// Real texture passes preserve source orientation and older outputs without touching window extent.
 #[test]
@@ -25,24 +22,19 @@ fn independent_texture_frames_preserve_pixels_and_native_surface_configuration()
     let video = sdl.video().unwrap();
     let mut window = video.window("Vulkan surface regression", 64, 64).vulkan().hidden().build().unwrap();
     let mut renderer = VulkanRenderer::new(&window, 64, 64).unwrap();
-    let upload = TextureId::for_upload(1, 1, &[255; 4]).unwrap();
-    // Admission must use this call's bytes, not the earlier slice that minted the key.
     for length in [0, 1, 3, 5] {
-        assert!(matches!(renderer.create_texture(upload, Some(&vec![0; length])),
-            Err(TextureError::Image { source: neocogi_render_core::ImageValidationError::PixelLength { expected: 4, actual } }) if actual == length));
-        assert!(!renderer.textures.contains_key(&upload));
+        assert!(
+            matches!(renderer.create_texture(Size{width:1,height:1},Some(&vec![0;length])),Err(TextureError::Image{source:neocogi_render_core::ImageValidationError::PixelLength{expected:4,actual}}) if actual==length)
+        );
     }
-    renderer.create_texture(upload, Some(&[255; 4])).unwrap();
-    assert!(renderer.create_texture(upload, Some(&[0; 4])).is_err());
-    assert!(renderer.create_render_texture(upload).is_err());
-    renderer.destroy_texture(upload);
     let source = [255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 0, 255];
     let gpu = neocogi_render_gpu::GpuDevice::new(
+        renderer.core(),
         nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
             .query()
             .unwrap(),
     );
-    let domain = gpu.create_ui_client(Default::default(), None).unwrap();
+    let domain = gpu.create_ui_client(Default::default()).unwrap();
     let resources = domain.resources().unwrap();
     let size = neocogi_render_gpu::abi::Size { width: 2, height: 2 };
     let owner = sampled::block(
@@ -53,57 +45,77 @@ fn independent_texture_frames_preserve_pixels_and_native_surface_configuration()
         &source,
     );
     let prepared = renderer.prepare_block(&gpu.block_snapshot(owner.as_com_ref()).unwrap(), true).unwrap();
-    let first = TextureId::for_render_target(2, 2).unwrap();
-    renderer.create_render_texture(first).unwrap();
-    assert!(renderer.create_render_texture(first).is_err());
-    assert!(renderer.create_texture(first, Some(&[0; 16])).is_err());
+    let output = renderer.create_render_texture(Size { width: 2, height: 2 }).unwrap();
     let info = FrameInfo::try_new(Dimensioni::new(2, 2), color(0, 0, 0, 255)).unwrap();
-    let mut frame = renderer.texture_frame(info, first).unwrap();
+    let mut frame = renderer.texture_frame(info, output).unwrap();
     frame.execute_block(&prepared);
-    frame.finish().unwrap();
-    assert_eq!(pixels(&renderer, first), source);
+    let first = frame.finish().unwrap().unwrap();
+    assert_eq!(pixels(&renderer, &first), source);
     assert_eq!((renderer.context.extent.width, renderer.context.extent.height), (64, 64));
-    let next = TextureId::for_render_target(3, 1).unwrap();
-    renderer.create_render_texture(next).unwrap();
-    renderer
-        .texture_frame(FrameInfo::try_new(Dimensioni::new(3, 1), color(17, 31, 63, 255)).unwrap(), next)
+    let output = renderer.create_render_texture(Size { width: 3, height: 1 }).unwrap();
+    let next = renderer
+        .texture_frame(FrameInfo::try_new(Dimensioni::new(3, 1), color(17, 31, 63, 255)).unwrap(), output)
         .unwrap()
         .finish()
+        .unwrap()
         .unwrap();
-    assert_eq!(pixels(&renderer, next), [17, 31, 63, 255].repeat(3));
-    assert_eq!(pixels(&renderer, first), source, "later passes must not mutate earlier snapshots");
-    let bad = TextureId::for_render_target(131072, 1).unwrap();
-    assert!(renderer.create_render_texture(bad).is_err());
-    assert_eq!(pixels(&renderer, first), source);
+    assert_eq!(pixels(&renderer, &next), [17, 31, 63, 255].repeat(3));
+    assert_eq!(pixels(&renderer, &first), source, "later passes must not mutate earlier snapshots");
+    assert!(renderer.create_render_texture(Size { width: 131072, height: 1 }).is_err());
+    assert_eq!(pixels(&renderer, &first), source);
     // Abandonment before submission has acquired no swapchain image and must remain recoverable.
+    let abandoned = renderer.create_render_texture(Size { width: 3, height: 1 }).unwrap();
     drop(
         renderer
-            .texture_frame(FrameInfo::try_new(Dimensioni::new(3, 1), color(0, 0, 0, 255)).unwrap(), next)
+            .texture_frame(FrameInfo::try_new(Dimensioni::new(3, 1), color(0, 0, 0, 255)).unwrap(), abandoned)
             .unwrap(),
     );
     assert!(renderer.ensure_usable().is_ok());
-    assert_eq!(pixels(&renderer, first), source);
+    assert_eq!(pixels(&renderer, &first), source);
     // A normal window frame still uses its own extent, depth attachment, and atlas binding.
     renderer
         .frame(FrameInfo::try_new(Dimensioni::new(64, 64), color(0, 0, 0, 255)).unwrap())
         .unwrap()
         .finish()
         .unwrap();
-    assert_eq!(pixels(&renderer, first), source);
+    assert_eq!(pixels(&renderer, &first), source);
     // The same original WGSL/COM blocks provide an independent native derivative reference.
-    let derivative_output = TextureId::for_render_target(8, 8).unwrap();
-    renderer.create_render_texture(derivative_output).unwrap();
     for case in derivatives::cases() {
         let owner = derivatives::block(&gpu, &resources, &case.source);
         let prepared = renderer.prepare_block(&gpu.block_snapshot(owner.as_com_ref()).unwrap(), true).unwrap();
         let info = FrameInfo::try_new(Dimensioni::new(8, 8), color(0, 0, 0, 255)).unwrap();
-        let mut frame = renderer.texture_frame(info, derivative_output).unwrap();
+        let output = renderer.create_render_texture(Size { width: 8, height: 8 }).unwrap();
+        let mut frame = renderer.texture_frame(info, output).unwrap();
         frame.execute_block(&prepared);
-        frame.finish().unwrap();
-        let output = pixels(&renderer, derivative_output);
+        let image = frame.finish().unwrap().unwrap();
+        let output = pixels(&renderer, &image);
         assert!((i32::from(output[(4 * 8 + 4) * 4]) - i32::from(case.red)).abs() <= 1, "{}", case.name);
     }
-    renderer.destroy_texture(derivative_output);
+    // Defined None contents and later updates are observed through real vertex/index fetches.
+    let owner = sampled::zero_storage_block(&gpu, &resources);
+    let prepared = renderer.prepare_block(&gpu.block_snapshot(owner.as_com_ref()).unwrap(), true).unwrap();
+    let output = renderer.create_render_texture(Size { width: 8, height: 8 }).unwrap();
+    let mut frame = renderer
+        .texture_frame(FrameInfo::try_new(Dimensioni::new(8, 8), color(0, 255, 0, 255)).unwrap(), output)
+        .unwrap();
+    frame.execute_block(&prepared);
+    let image = frame.finish().unwrap().unwrap();
+    sampled::assert_zero_storage_pixels(&pixels(&renderer, &image));
+    let empty = sampled::block_initial(
+        &gpu,
+        &resources,
+        neocogi_render_gpu::abi::Rect { x: 0, y: 0, width: 8, height: 8 },
+        Size { width: 2, height: 2 },
+        None,
+    );
+    let prepared = renderer.prepare_block(&gpu.block_snapshot(empty.as_com_ref()).unwrap(), true).unwrap();
+    let output = renderer.create_render_texture(Size { width: 8, height: 8 }).unwrap();
+    let mut frame = renderer
+        .texture_frame(FrameInfo::try_new(Dimensioni::new(8, 8), color(0, 255, 0, 255)).unwrap(), output)
+        .unwrap();
+    frame.execute_block(&prepared);
+    let image = frame.finish().unwrap().unwrap();
+    assert_eq!(pixels(&renderer, &image), [0; 8 * 8 * 4]);
     // Real native window presentation must survive resize/recreation after private outputs.
     for (width, height) in [(96, 80), (64, 64)] {
         window.set_size(width, height).unwrap();
@@ -112,11 +124,9 @@ fn independent_texture_frames_preserve_pixels_and_native_surface_configuration()
             .unwrap()
             .finish()
             .unwrap();
-        assert_eq!(pixels(&renderer, first), source, "presentation/resize mutated a retained output");
+        assert_eq!(pixels(&renderer, &first), source, "presentation/resize mutated a retained output");
         assert_eq!((renderer.context.extent.width, renderer.context.extent.height), (width, height));
     }
-    renderer.destroy_texture(next);
-    renderer.destroy_texture(first);
 }
 
 #[path = "../../gpu/tests/support/derivatives.rs"]
@@ -150,30 +160,6 @@ fn reconstruction_failure_rejects_every_native_entry_and_preserves_finalizer_pha
             RebuildPoint::Framebuffer(index),
         ]);
     }
-    let gpu = neocogi_render_gpu::GpuDevice::new(
-        nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
-            .query()
-            .unwrap(),
-    );
-    let domain = gpu.create_ui_client(Default::default(), None).unwrap();
-    let resources = domain.resources().unwrap();
-    let root = Rect { x: 0, y: 0, width: 64, height: 64 };
-    let owner = sampled::block(&gpu, &resources, root, Size { width: 1, height: 1 }, &[255; 4]);
-    let block = gpu.block_snapshot(owner.as_com_ref()).unwrap();
-    let image = resources
-        .create_texture(
-            GpuTextureDesc {
-                size: Size { width: 1, height: 1 },
-                format: GpuTextureFormat::Rgba8Unorm,
-                mip_count: 1,
-            },
-            neocogi_render_core::source::supplied(Bytes::source(vec![255; 4]).as_com_ref())
-                .unwrap()
-                .borrow()
-                .unwrap(),
-        )
-        .unwrap();
-    let snapshot = gpu.texture_snapshot(resources.as_com_ref(), image.as_com_ref()).unwrap();
     // Rebuild after an acquire error has no token: successful recovery returns the
     // established transient error, then allows a real acquisition/submission retry.
     {
@@ -205,9 +191,33 @@ fn reconstruction_failure_rejects_every_native_entry_and_preserves_finalizer_pha
         // cases exercise the successful first owner as well as a later failure.
         for entry in 0..3 {
             let mut renderer = VulkanRenderer::new(&window, 64, 64).unwrap();
+            let gpu = neocogi_render_gpu::GpuDevice::new(
+                renderer.core(),
+                nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
+                    .query()
+                    .unwrap(),
+            );
+            let domain = gpu.create_ui_client(Default::default()).unwrap();
+            let resources = domain.resources().unwrap();
+            let root = Rect { x: 0, y: 0, width: 64, height: 64 };
+            let owner = sampled::block(&gpu, &resources, root, Size { width: 1, height: 1 }, &[255; 4]);
+            let block = gpu.block_snapshot(owner.as_com_ref()).unwrap();
+            let image = resources
+                .create_texture(
+                    GpuTextureDesc {
+                        size: Size { width: 1, height: 1 },
+                        format: GpuTextureFormat::Rgba8Unorm,
+                        mip_count: 1,
+                    },
+                    neocogi_render_core::source::supplied(Bytes::source(vec![255; 4]).as_com_ref())
+                        .unwrap()
+                        .borrow()
+                        .unwrap(),
+                )
+                .unwrap();
+            let snapshot = gpu.texture_snapshot(resources.as_com_ref(), image.as_com_ref()).unwrap();
             assert!(renderer.context.swapchain_images.len() >= 2);
-            let output = TextureId::for_render_target(2, 2).unwrap();
-            renderer.create_render_texture(output).unwrap();
+            let output = renderer.create_render_texture(Size { width: 2, height: 2 }).unwrap();
             renderer.context.rebuild_failure = Some(point);
             let error = match entry {
                 0 => renderer
@@ -222,7 +232,7 @@ fn reconstruction_failure_rejects_every_native_entry_and_preserves_finalizer_pha
                         panic!("window token")
                     };
                     acquired.suboptimal = true;
-                    frame.finish().unwrap_err().to_string()
+                    frame.finish().err().unwrap().to_string()
                 }
             };
             assert!(error.contains("injected swapchain reconstruction"), "entry={entry} point={point:?}: {error}");
@@ -234,22 +244,17 @@ fn reconstruction_failure_rejects_every_native_entry_and_preserves_finalizer_pha
             // Same-size empty and client retries must reject before acquisition,
             // pipeline work, output creation or indexing incomplete command arrays.
             assert!(renderer.frame(info).is_err());
-            assert!(
-                renderer
-                    .create_texture(TextureId::for_upload(1, 1, &[255; 4]).unwrap(), Some(&[255; 4]))
-                    .is_err()
-            );
-            assert!(renderer.create_render_texture(TextureId::for_render_target(2, 2).unwrap()).is_err());
+            assert!(renderer.create_texture(Size { width: 1, height: 1 }, Some(&[255; 4])).is_err());
+            assert!(renderer.create_render_texture(Size { width: 2, height: 2 }).is_err());
             assert!(
                 renderer
                     .texture_frame(FrameInfo::try_new(Dimensioni::new(2, 2), color(0, 0, 0, 255)).unwrap(), output)
                     .is_err()
             );
             assert_eq!(renderer.context.core.live_allocations(), before);
-            renderer.destroy_texture(output);
             let core = renderer.context.core.clone();
             // Normal Drop waits idle and releases the real partial generation.
-            drop(renderer);
+            drop((renderer, gpu, domain, resources, owner, block, image, snapshot));
             assert_eq!(core.live_allocations(), 0, "partial generation leaked at {point:?}, entry={entry}");
         }
     }

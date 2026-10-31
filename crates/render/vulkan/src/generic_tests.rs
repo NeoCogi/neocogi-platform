@@ -1,10 +1,12 @@
 //! Headless direct-Vulkan acceptance uses real COM recording, native passes and readback.
 use super::*;
+use crate::sampled;
 use neocogi_com::{ComBox, ComPtr, NcCopyFromBufferOffset};
 use neocogi_render_gpu::{
-    GpuDevice,
     source::{Bytes, PipelineDesc},
 };
+
+type GpuDevice = neocogi_render_gpu::GpuDevice<Backend>;
 
 /// Opens a graphics device without requiring a native window or presentation extension.
 fn core() -> Rc<Core> {
@@ -39,6 +41,7 @@ fn uncertain_upload_status_retains_owners_until_idle_and_rejects_reuse() {
         let previous = target.read(&target.pixels);
         let baseline = core.memory_count.get();
         let gpu = GpuDevice::new(
+            executor.core.clone(),
             nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
                 .query()
                 .unwrap(),
@@ -64,7 +67,7 @@ fn uncertain_upload_status_retains_owners_until_idle_and_rejects_reuse() {
             source.desc().size,
             vk::Format::R8G8B8A8_UNORM,
             source.pixels().unwrap().as_slice(),
-            Some(Rc::new(source.receipt())),
+            Some(source.receipt()),
         ) {
             Ok(_) => panic!("injected observation failure must reject the upload"),
             Err(error) => error,
@@ -455,6 +458,7 @@ fn regional_depth_and_copied_uniforms_preserve_surrounding_targets() {
     let mut target = Target::new(core.clone(), 64, 64);
     let mut executor = Executor::new(core.clone()).unwrap();
     let gpu = GpuDevice::new(
+        executor.core.clone(),
         nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
             .query()
             .unwrap(),
@@ -508,7 +512,7 @@ fn regional_depth_and_copied_uniforms_preserve_surrounding_targets() {
     for owner in [&first, &second, &third] {
         blocks.push(
             executor
-                .prepare(&gpu.block_snapshot(owner.as_com_ref()).unwrap(), target.pass, target.signature, &HashMap::new())
+                .prepare(&gpu.block_snapshot(owner.as_com_ref()).unwrap(), target.pass, target.signature)
                 .unwrap(),
         );
     }
@@ -557,6 +561,7 @@ fn generated_bounds_guards_execute_on_the_native_driver() {
     let mut target = Target::new(core.clone(), 8, 8);
     let mut executor = Executor::new(core).unwrap();
     let gpu = GpuDevice::new(
+        executor.core.clone(),
         nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
             .query()
             .unwrap(),
@@ -611,7 +616,7 @@ fn generated_bounds_guards_execute_on_the_native_driver() {
     let owner = session.take_block().unwrap();
     frame.finish().unwrap();
     let prepared = executor
-        .prepare(&gpu.block_snapshot(owner.as_com_ref()).unwrap(), target.pass, target.signature, &HashMap::new())
+        .prepare(&gpu.block_snapshot(owner.as_com_ref()).unwrap(), target.pass, target.signature)
         .unwrap();
     target.render(&mut executor, vec![prepared], Size { width: 8, height: 8 });
     for pixel in target.read(&target.pixels).as_chunks::<4>().0 {
@@ -637,17 +642,17 @@ fn indexed_texture_case(operation: GpuBlendOp, imported: bool) {
     let mut target = Target::new(core.clone(), 8, 8);
     let mut executor = Executor::new(core).unwrap();
     let gpu = GpuDevice::new(
+        executor.core.clone(),
         nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
             .query()
             .unwrap(),
     );
     let controller = if imported {
-        gpu.create_ui_client(RenderClientLimits::default(), None)
+        gpu.create_ui_client(RenderClientLimits::default())
     } else {
         gpu.create_client(RenderClientLimits::default())
     }
     .unwrap();
-    let mut images = HashMap::new();
     let resources = controller.resources().unwrap();
     let source = Bytes::source(
         br#"
@@ -756,7 +761,7 @@ fn indexed_texture_case(operation: GpuBlendOp, imported: bool) {
         )
         .unwrap();
     let image = if imported {
-        import_native_image(&gpu, &resources, &mut executor, &mut images, image)
+        import_native_image(&gpu, &resources, &mut executor, image)
     } else {
         image
     };
@@ -791,7 +796,7 @@ fn indexed_texture_case(operation: GpuBlendOp, imported: bool) {
                     .unwrap(),
             )
             .unwrap();
-        let image_b = import_native_image(&gpu, &resources, &mut executor, &mut images, pixel);
+        let image_b = import_native_image(&gpu, &resources, &mut executor, pixel);
         view.bind_texture(GpuShaderStage::Fragment, 0, image_b.as_com_ref(), sampler.as_com_ref())
             .unwrap();
         Some(image_b)
@@ -816,8 +821,7 @@ fn indexed_texture_case(operation: GpuBlendOp, imported: bool) {
     let owner = session.take_block().unwrap();
     recording.finish().unwrap();
     let snapshot = gpu.block_snapshot(owner.as_com_ref()).unwrap();
-    let prepared = executor.prepare(&snapshot, target.pass, target.signature, &images).unwrap();
-    drop(images);
+    let prepared = executor.prepare(&snapshot, target.pass, target.signature).unwrap();
     drop((snapshot, owner, view, session, recording, vertices, indices, pipeline, image, sampler, vs, fs));
 
     let clear = if operation == GpuBlendOp::Min { [1.; 4] } else { [0., 0., 0., 1.] };
@@ -843,6 +847,7 @@ fn front_face_and_culling_match_canonical_winding() {
     let mut target = Target::new(core.clone(), 8, 8);
     let mut executor = Executor::new(core).unwrap();
     let gpu = GpuDevice::new(
+        executor.core.clone(),
         nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
             .query()
             .unwrap(),
@@ -867,7 +872,7 @@ fn front_face_and_culling_match_canonical_winding() {
         let block = session.take_block().unwrap();
         frame.finish().unwrap();
         let prepared = executor
-            .prepare(&gpu.block_snapshot(block.as_com_ref()).unwrap(), target.pass, target.signature, &HashMap::new())
+            .prepare(&gpu.block_snapshot(block.as_com_ref()).unwrap(), target.pass, target.signature)
             .unwrap();
         target.render(&mut executor, vec![prepared], Size { width: 8, height: 8 });
         let pixels = target.read(&target.pixels);
@@ -886,6 +891,7 @@ fn escaped_prepared_block_keeps_only_its_cache_free_native_core_alive() {
     let target = Target::new(core.clone(), 8, 8);
     let mut executor = Executor::new(core.clone()).unwrap();
     let gpu = GpuDevice::new(
+        executor.core.clone(),
         nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
             .query()
             .unwrap(),
@@ -904,7 +910,7 @@ fn escaped_prepared_block_keeps_only_its_cache_free_native_core_alive() {
     let owner = session.take_block().unwrap();
     frame.finish().unwrap();
     let prepared = executor
-        .prepare(&gpu.block_snapshot(owner.as_com_ref()).unwrap(), target.pass, target.signature, &HashMap::new())
+        .prepare(&gpu.block_snapshot(owner.as_com_ref()).unwrap(), target.pass, target.signature)
         .unwrap();
     drop((owner, session, view, frame, pipeline, controller, resources, gpu));
     drop((executor, target, core));
@@ -961,6 +967,7 @@ fn logical_images_exceeding_native_dimensions_reject_before_native_allocation() 
         return;
     }
     let gpu = GpuDevice::new(
+        executor.core.clone(),
         nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
             .query()
             .unwrap(),
@@ -979,7 +986,13 @@ fn logical_images_exceeding_native_dimensions_reject_before_native_allocation() 
         )
         .unwrap();
     let snapshot = gpu.texture_snapshot(resources.as_com_ref(), image.as_com_ref()).unwrap();
-    let error = executor.texture(snapshot, &HashMap::new()).err().unwrap();
+    let error = snapshot
+        .native(&mut Preparation {
+            executor: &mut executor,
+            pass: vk::RenderPass::null(),
+        })
+        .err()
+        .unwrap();
     assert_eq!(error, "Vulkan image dimensions exceed device limits");
     assert_eq!(core.memory_count.get(), 0);
     assert!(!executor.unusable());
@@ -996,59 +1009,34 @@ fn logical_images_exceeding_native_dimensions_reject_before_native_allocation() 
                 .unwrap(),
         )
         .unwrap();
-    let native = executor
-        .texture(gpu.texture_snapshot(resources.as_com_ref(), valid.as_com_ref()).unwrap(), &HashMap::new())
+    let version = gpu.texture_snapshot(resources.as_com_ref(), valid.as_com_ref()).unwrap();
+    let native = version
+        .native(&mut Preparation {
+            executor: &mut executor,
+            pass: vk::RenderPass::null(),
+        })
         .unwrap();
     assert_eq!(core.memory_count.get(), 1);
     drop(native);
     drop(executor);
+    assert_eq!(core.memory_count.get(), 1, "returned version owns native storage beyond the driver");
+    drop((version, valid));
     assert_eq!(core.memory_count.get(), 0);
 }
 
-/// Trusted test image lease stands in for the host's separately authenticated immutable capability.
-#[neocogi_com::com_object(interfaces(ITexture))]
-struct ImportedImage;
-impl neocogi_render_core::abi::IRenderDriverBound for ImportedImage {
-    fn driver_identity(&self) -> Result<neocogi_com::ComPtr<neocogi_render_core::abi::IRenderDriverIdentityAbi>, neocogi_com::NcStatus> {
-        Err(neocogi_com::NC_E_NOINTERFACE)
-    }
-}
-impl ITexture for ImportedImage {
-    /// The native metadata is fixed; no pixel or device getter is exposed.
-    fn size(&self) -> Result<Size, neocogi_com::NcStatus> {
-        Ok(Size { width: 2, height: 2 })
-    }
-}
-
-/// Initialize real native pixels, then hand only a cache-free shared image to the host map.
+/// Initialize ordinary native pixels and capture the actual shared image without a public lease.
 fn import_native_image(
     gpu: &GpuDevice,
     resources: &ComPtr<IRenderResourcesAbi>,
     executor: &mut Executor,
-    images: &mut HashMap<neocogi_render_core::TextureId, crate::VulkanTexture>,
     pixel: ComBox<IGpuTextureAbi>,
 ) -> ComBox<IGpuTextureAbi> {
+    let source = gpu.texture_snapshot(resources.as_com_ref(), pixel.as_com_ref()).unwrap();
     let native = executor
-        .texture(gpu.texture_snapshot(resources.as_com_ref(), pixel.as_com_ref()).unwrap(), &HashMap::new())
+        .create_image(source.desc().size, vk::Format::R8G8B8A8_UNORM, source.pixels().unwrap().as_slice(), None)
         .unwrap();
-    let id = neocogi_render_core::TextureId::for_upload(2, 2, &[0; 16]).unwrap();
-    images.insert(
-        id,
-        crate::VulkanTexture {
-            image: crate::ImageResource {
-                native: Some(native.native.clone()),
-                extent: vk::Extent2D { width: 2, height: 2 },
-                layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-            },
-            framebuffer: None,
-        },
-    );
-    let lease: ComPtr<ITextureAbi> = ImportedImage::from_value(ImportedImage).query().unwrap();
-    gpu.import_ui_texture(resources.as_com_ref(), id, lease).unwrap()
+    gpu.import_ui_texture(resources.as_com_ref(), native).unwrap()
 }
-
-#[path = "../../gpu/tests/support/sampled.rs"]
-mod sampled;
 
 /// Production private-output pass and fence submission render initialized generic UI pixels.
 #[test]
@@ -1079,20 +1067,22 @@ fn private_output_uses_production_pass_upload_and_completion_paths() {
         )
     }
     .unwrap();
-    let output = crate::VulkanTexture {
-        image: crate::ImageResource {
-            native: Some(native.clone()),
-            extent: vk::Extent2D { width: 2, height: 2 },
-            layout: vk::ImageLayout::UNDEFINED,
-        },
-        framebuffer: Some(framebuffer),
-    };
+    let output = Rc::new(crate::OutputState {
+        image: executor.own_image(native.clone(), size, None),
+        framebuffer: Some(crate::FramebufferAllocation {
+            core: core.clone(),
+            raw: framebuffer,
+            _native: native.clone(),
+        }),
+        retired: executor.sender(),
+    });
     let gpu = GpuDevice::new(
+        executor.core.clone(),
         nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
             .query()
             .unwrap(),
     );
-    let domain = gpu.create_ui_client(Default::default(), None).unwrap();
+    let domain = gpu.create_ui_client(Default::default()).unwrap();
     let resources = domain.resources().unwrap();
     let colors = [255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 0, 255];
     let owner = sampled::block(&gpu, &resources, Rect { x: 0, y: 0, width: 2, height: 2 }, size, &colors);
@@ -1104,7 +1094,6 @@ fn private_output_uses_production_pass_upload_and_completion_paths() {
                 color: vk::Format::R8G8B8A8_UNORM,
                 depth: None,
             },
-            &HashMap::new(),
         )
         .unwrap();
     drop(owner);
@@ -1123,9 +1112,8 @@ fn private_output_uses_production_pass_upload_and_completion_paths() {
     assert!(!output_session.unusable());
     assert_eq!(readback(&core, &native, size), colors);
     core.wait_idle();
-    unsafe {
-        core.device.destroy_framebuffer(framebuffer, None);
-    }
+    drop(output);
+    executor.collect().unwrap();
 }
 
 /// Native fixture readback preserves a completed image's shader-readable layout for later sampling.
@@ -1198,6 +1186,109 @@ pub(crate) fn readback(core: &Rc<Core>, native: &super::Image, size: Size) -> Ve
             .queue_submit(core.queue, &[vk::SubmitInfo::default().command_buffers(&[target.command])], target.fence)
             .unwrap();
     }
-    let pixels = target.read(&target.pixels);
-    pixels
+    target.read(&target.pixels)
+}
+
+/// Native siblings reuse their own target signatures without pinning the source or a driver cache.
+#[test]
+#[ignore = "requires a native Vulkan device"]
+fn unsubmitted_variants_reuse_native_objects_and_reject_other_cores() {
+    let core = core();
+    let mut executor = Executor::new(core.clone()).unwrap();
+    let target = Target::new(core.clone(), 8, 8);
+    let output = crate::offscreen::Offscreen::new(&core).unwrap();
+    let offscreen = Signature {
+        color: vk::Format::R8G8B8A8_UNORM,
+        depth: None,
+    };
+    let gpu = GpuDevice::new(
+        core.clone(),
+        nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
+            .query()
+            .unwrap(),
+    );
+    let domain = gpu.create_ui_client(Default::default()).unwrap();
+    let resources = domain.resources().unwrap();
+    let mut other = Executor::new(self::core()).unwrap();
+    let baseline = core.live_allocations();
+    for _ in 0..8 {
+        let owner = sampled::block(
+            &gpu,
+            &resources,
+            Rect { x: 0, y: 0, width: 8, height: 8 },
+            Size { width: 1, height: 1 },
+            &[255; 4],
+        );
+        let snapshot = gpu.block_snapshot(owner.as_com_ref()).unwrap();
+        let Command::Draw(draw) = &snapshot.commands()[0] else { panic!("draw") };
+        let source = Rc::downgrade(&draw.pipeline);
+        assert!(other.prepare(&snapshot, vk::RenderPass::null(), offscreen).is_err());
+        let first = executor.prepare(&snapshot, target.pass, target.signature).unwrap();
+        let second = executor.prepare(&snapshot, output.render_pass, offscreen).unwrap();
+        let repeated = executor.prepare(&snapshot, target.pass, target.signature).unwrap();
+        let native = |block: &PreparedBlock| {
+            let PreparedCommand::Draw(draw) = &block.0.commands[0] else { panic!("draw") };
+            draw.pipeline.clone()
+        };
+        assert!(Rc::ptr_eq(&native(&first), &native(&repeated)));
+        assert!(!Rc::ptr_eq(&native(&first), &native(&second)));
+        assert!(other.admit(&first, target.signature).is_err());
+        drop((snapshot, owner));
+        assert!(source.upgrade().is_none());
+        drop((first, second, repeated));
+        executor.collect().unwrap();
+        assert_eq!(core.live_allocations(), baseline);
+        assert_eq!(gpu.live_bytes(resources.as_com_ref()).unwrap(), 0);
+        assert_eq!(gpu.recording_usage(resources.as_com_ref()).unwrap(), (0, 0));
+    }
+}
+
+/// Constructor/completion loss observations invalidate existing Ready slots on that same native core.
+#[test]
+#[ignore = "requires a native Vulkan device"]
+fn observed_device_loss_rejects_previously_realized_native_storage() {
+    let core = core();
+    let mut executor = Executor::new(core.clone()).unwrap();
+    let gpu = GpuDevice::new(
+        core.clone(),
+        nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
+            .query()
+            .unwrap(),
+    );
+    let domain = gpu.create_client(Default::default()).unwrap();
+    let resources = domain.resources().unwrap();
+    let buffer = resources
+        .create_buffer(
+            GpuBufferDesc {
+                role: GpuBufferRole::Vertex,
+                byte_len: 16,
+            },
+            neocogi_render_core::source::initial(None).borrow().unwrap(),
+        )
+        .unwrap();
+    let source = gpu.buffer_snapshot(resources.as_com_ref(), buffer.as_com_ref()).unwrap();
+    let native = source
+        .native(&mut Preparation {
+            executor: &mut executor,
+            pass: vk::RenderPass::null(),
+        })
+        .unwrap();
+    assert_eq!(core.live_allocations(), 1);
+    // Exercise the same error classifier used by actual Vulkan calls; deliberately losing a
+    // physical device is neither deterministic nor necessary to test the authoritative latch.
+    assert!(
+        core.failure("observed native operation", vk::Result::ERROR_DEVICE_LOST)
+            .contains("ERROR_DEVICE_LOST")
+    );
+    assert!(
+        source
+            .native(&mut Preparation {
+                executor: &mut executor,
+                pass: vk::RenderPass::null()
+            })
+            .is_err()
+    );
+    drop((source, buffer, native));
+    assert!(executor.collect().is_err());
+    assert_eq!(core.live_allocations(), 0, "terminal admission must still drain safe native retirement");
 }

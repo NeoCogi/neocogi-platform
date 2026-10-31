@@ -53,7 +53,7 @@
 //! Public renderer integration types.
 
 use super::texture::TextureError;
-use crate::{Color, TextureId};
+use crate::{Color, abi::Size};
 use rs_math3d::Dimensioni;
 use std::{error::Error, fmt};
 /// Error returned when constructing frame metadata.
@@ -160,37 +160,42 @@ impl From<&str> for FrameError {
 /// Dropping an unfinished frame abandons its pending CPU work. Immediate APIs may already
 /// have executed draws; failure is not a GPU rollback guarantee.
 pub trait RendererFrame {
-    /// Consume this frame and report command, submission or presentation failure.
-    fn finish(self) -> Result<(), FrameError>;
+    /// Immutable initialized native image returned only after successful offscreen completion.
+    type Image: Clone + 'static;
+    /// Consumes one frame. Window frames return None; successful offscreen frames return an image.
+    /// Failed/abandoned frames never expose their unpublished target as an immutable image.
+    fn finish(self) -> Result<Option<Self::Image>, FrameError>;
 }
 
-/// Concrete current-thread backend. Generic command realization is an inherent native operation;
-/// it cannot be exposed as a client callback or recovered through a public resource interface.
+/// Concrete current-thread execution with owned image capabilities and single-use outputs.
+/// Native types remain binary-local; no output target or callback is delegated through COM.
+///
+/// A published destination cannot be selected again through the safe Rust API:
+/// ```compile_fail
+/// use neocogi_render_core::{RendererBackend,RendererFrame,FrameInfo};
+/// fn reuse<B:RendererBackend>(driver:&mut B,info:FrameInfo,output:B::Output){
+///     driver.texture_frame(info,output).unwrap().finish().unwrap();
+///     driver.texture_frame(info,output).unwrap();
+/// }
+/// ```
 pub trait RendererBackend: 'static {
-    /// Exclusive target borrow prevents concurrent frame acquisition in safe Rust.
-    type Frame<'a>: RendererFrame
+    /// Immutable initialized native pixels; cloning shares the exact allocation, not an editable target.
+    type Image: Clone + 'static;
+    /// Fresh unpublished destination. It is consumed by texture_frame and has no public image getter.
+    type Output: 'static;
+    /// Exclusive target borrow prevents concurrent acquisition through this facade.
+    type Frame<'a>: RendererFrame<Image = Self::Image>
     where
         Self: 'a;
-    /// Acquire and initialize the native presentation target.
+    /// Acquires and initializes the native presentation target.
     fn frame(&mut self, info: FrameInfo) -> Result<Self::Frame<'_>, FrameError>;
-    /// Allocate a fresh unpublished offscreen output without CPU zero-fill.
-    fn create_render_texture(&mut self, _id: TextureId) -> Result<(), TextureError> {
-        Err(TextureError::backend("offscreen rendering is unavailable on this backend"))
-    }
-    /// Acquire an offscreen output without presentation. The host admits private UI blocks only.
-    fn texture_frame(&mut self, _info: FrameInfo, _output: TextureId) -> Result<Self::Frame<'_>, FrameError> {
-        Err(FrameError::new("offscreen rendering is unavailable on this backend"))
-    }
-    /// Polls completion and releases safe retired storage without acquiring or presenting a target.
+    /// Creates one unpublished destination; allocation alone does not publish undefined pixels.
+    fn create_render_texture(&mut self, size: Size) -> Result<Self::Output, TextureError>;
+    /// Consumes a destination exactly once. Only successful finish can return its immutable image.
+    fn texture_frame(&mut self, info: FrameInfo, output: Self::Output) -> Result<Self::Frame<'_>, FrameError>;
+    /// Observes completion and reclaims safe retired storage without touching a target.
     fn maintain(&mut self) -> Result<(), FrameError>;
-    /// Upload exact validated immutable RGBA bytes for the supplied native image key.
-    /// Both creation methods reject an already resident key before native allocation,
-    /// including upload/output collisions. Failed unpublished creation permits retry.
-    /// New immutable allocations use freshly issued keys; no tombstone registry is retained.
-    /// Checks this call's exact RGBA byte count before reserving ownership or entering native code.
-    /// A texture key certifies only its immutable extent, never a separately supplied slice.
-    /// Absent initial data denotes initialized transparent-black pixels.
-    fn create_texture(&mut self, id: TextureId, pixels: Option<&[u8]>) -> Result<(), TextureError>;
-    /// Retire an image key after native frames have released their references.
-    fn destroy_texture(&mut self, id: TextureId);
+    /// Creates immutable initialized pixels; absent input means transparent black, independently
+    /// from output-target usage. Validate the actual extent/data before native allocation.
+    fn create_texture(&mut self, size: Size, pixels: Option<&[u8]>) -> Result<Self::Image, TextureError>;
 }

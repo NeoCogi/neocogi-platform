@@ -5,19 +5,18 @@
 //! registry borrows are taken; no such borrow spans a foreign reader or destructor.
 use crate::{
     abi::*,
-    budget::{Account, ByteCharge, ResourceCharge},
+    budget::{Account, ByteCharge, PendingCharge, ResourceCharge},
     shader::Shader,
 };
 use neocogi_com::{
     com_object, ComBox, ComInterface, ComObject, ComPtr, ComRef, IUnknown, LocalBox, NcCopyFromBufferOffset, NcOutputBuffer, NcStatus, ThreadLocal, WeakComBox,
     WeakComPtr, WeakLocalBox, NC_E_DROPPED, NC_E_INVALID_ARG, NC_E_OUT_OF_MEMORY, NC_E_OUT_OF_RANGE,
 };
-use neocogi_render_core::TextureId;
+use crate::native::{NativeResources, NativeSlot, check_core};
 use std::{
     cell::{Cell, RefCell},
     collections::HashMap,
     rc::{Rc, Weak},
-    sync::atomic::{AtomicU64, Ordering},
 };
 
 /// Maximum storage for a single logical vertex/index byte buffer.
@@ -26,61 +25,64 @@ pub const MAX_BUFFER_BYTES: usize = 64 * 1024 * 1024;
 pub const SOURCE_CHUNK: usize = 64 * 1024;
 
 /// Shared logical renderer authority; contains no UI tree or native API callback.
-#[derive(Clone)]
-pub struct GpuDevice {
+pub struct GpuDevice<B: crate::native::NativeResources> {
     /// Private registries and operation gate shared by factories and recording frames.
-    pub(crate) inner: Rc<Device>,
+    pub(crate) inner: Rc<Device<B>>,
+}
+
+impl<B: NativeResources> Clone for GpuDevice<B> {
+    fn clone(&self) -> Self {
+        Self { inner: self.inner.clone() }
+    }
 }
 
 /// Registries hold only construction-proven weak observers, never resource owners.
-pub(crate) struct Device {
+pub(crate) struct Device<B: crate::native::NativeResources> {
     /// Required compiler capability, acquired once by the renderer assembly.
     compiler: ComPtr<neocogi_shader_core::abi::ShaderCompilerAbi>,
     /// One bounded diagnostic shared with the native renderer. Interior mutability
     /// supports shareable COM methods, with no borrow across foreign calls.
     diagnostic: RefCell<String>,
-    /// Retained identity minted for this concrete driver instance.
-    identity: ComPtr<IRenderDriverIdentityAbi>,
+    /// Actual compatible native instance retained without any renderer or submission owner.
+    pub(crate) core: Rc<B::Core>,
     /// Exclusive buffer objects constructed by this device.
-    pub(crate) buffers: RefCell<Registry<BufferObject>>,
+    pub(crate) buffers: RefCell<Registry<BufferObject<B>>>,
     /// Exclusive texture objects constructed by this device.
-    pub(crate) textures: RefCell<Registry<TextureObject>>,
+    pub(crate) textures: RefCell<Registry<TextureObject<B>>>,
     /// Exclusive sampler objects constructed by this device.
-    pub(crate) samplers: RefCell<Registry<SamplerObject>>,
+    pub(crate) samplers: RefCell<Registry<SamplerObject<B>>>,
     /// Exclusive shader objects constructed by this device.
-    pub(crate) shaders: RefCell<Registry<ShaderObject>>,
+    pub(crate) shaders: RefCell<Registry<ShaderObject<B>>>,
     /// Exclusive pipeline objects constructed by this device.
-    pub(crate) pipelines: RefCell<Registry<PipelineObject>>,
+    pub(crate) pipelines: RefCell<Registry<PipelineObject<B>>>,
     /// Restricted factories are authenticated without querying a client object.
-    pub(crate) factories: RefCell<HashMap<usize, FactoryEntry>>,
+    pub(crate) factories: RefCell<HashMap<usize, FactoryEntry<B>>>,
     /// Sealed GPU blocks use construction-proven weak provenance too.
-    pub(crate) blocks: RefCell<Registry<crate::record::BlockObject>>,
+    pub(crate) blocks: RefCell<Registry<crate::record::BlockObject<B>>>,
     /// A non-borrowing gate spanning foreign reads or native preparation.
     pub(crate) busy: Cell<bool>,
 }
 
 /// Weak factory metadata prevents allocation-address reuse while its registry entry exists.
-pub(crate) struct FactoryEntry {
+pub(crate) struct FactoryEntry<B: crate::native::NativeResources> {
     /// Keeps metadata, not the shareable factory value, alive.
     observer: WeakComPtr<IRenderResourcesAbi>,
     /// Controllers/resources may outlive a factory; this link is deliberately weak.
-    domain: Weak<Domain>,
+    domain: Weak<Domain<B>>,
 }
 
 /// One host-controlled domain; immutable versions retain its account, not this device owner.
-pub(crate) struct Domain {
+pub(crate) struct Domain<B: crate::native::NativeResources> {
     /// Established by trusted host construction, never copied from caller-reported metadata.
     pub(crate) kind: DomainKind,
     /// Logical device used for provenance and guarded creation.
-    pub(crate) device: GpuDevice,
+    pub(crate) device: GpuDevice<B>,
     /// Closing gates new admission without freeing retained snapshots.
     pub(crate) closed: Cell<bool>,
     /// Device-free allocation counters.
     pub(crate) account: Rc<Account>,
     /// Weak pending sessions allow immediate close without retaining payloads.
-    pub(crate) sessions: RefCell<Vec<Weak<crate::record::SessionCore>>>,
-    /// Optional native host lease; private caches never retain this domain.
-    _native: Option<ComPtr<IRenderDeviceLeaseAbi>>,
+    pub(crate) sessions: RefCell<Vec<Weak<crate::record::SessionCore<B>>>>,
 }
 
 /// Trusted compositor provenance is separate from every publicly created client domain.
@@ -92,7 +94,7 @@ pub(crate) enum DomainKind {
     Ui,
 }
 
-impl Domain {
+impl<B: crate::native::NativeResources> Domain<B> {
     /// Rechecked after every foreign reader before publication or frame admission.
     pub(crate) fn open(&self) -> Result<(), NcStatus> {
         if self.closed.get() { Err(NC_E_DROPPED) } else { Ok(()) }
@@ -122,25 +124,25 @@ pub(crate) struct Entry<T: ComObject<Threading = ThreadLocal>> {
 pub(crate) type Registry<T> = HashMap<usize, Entry<T>>;
 
 /// Operation ownership does not hold a registry/account borrow across callbacks.
-pub struct Operation {
+pub struct Operation<B: crate::native::NativeResources> {
     /// Logical device stays alive until the Busy flag is restored.
-    inner: Rc<Device>,
+    inner: Rc<Device<B>>,
 }
-impl Drop for Operation {
+impl<B: crate::native::NativeResources> Drop for Operation<B> {
     /// Restore ordinary admission on every success/error/unwind path.
     fn drop(&mut self) {
         self.inner.busy.set(false);
     }
 }
 
-impl GpuDevice {
+impl<B: crate::native::NativeResources> GpuDevice<B> {
     /// Creates no native object and retains no UI or client capability.
-    pub fn new(compiler: ComPtr<neocogi_shader_core::abi::ShaderCompilerAbi>) -> Self {
+    pub fn new(core: Rc<B::Core>, compiler: ComPtr<neocogi_shader_core::abi::ShaderCompilerAbi>) -> Self {
         Self {
             inner: Rc::new(Device {
                 compiler,
                 diagnostic: RefCell::new(String::new()),
-                identity: neocogi_render_core::source::new_driver_identity(),
+                core,
                 buffers: RefCell::new(HashMap::new()),
                 textures: RefCell::new(HashMap::new()),
                 samplers: RefCell::new(HashMap::new()),
@@ -155,7 +157,7 @@ impl GpuDevice {
 
     /// Stable compatibility metadata; this getter grants no renderer or factory authority.
     pub fn driver_identity(&self) -> ComPtr<IRenderDriverIdentityAbi> {
-        self.inner.identity.clone()
+        B::identity(self.inner.core.as_ref()).clone()
     }
 
     /// Copies current bounded detail for the native diagnostic facade.
@@ -176,35 +178,16 @@ impl GpuDevice {
 
     /// Creates a host controller for a purely logical domain, useful for independent CPU clients.
     pub fn create_client(&self, limits: RenderClientLimits) -> Result<ComBox<IRenderClientDomainAbi>, NcStatus> {
-        self.create_client_inner(limits, None, DomainKind::Client)
+        self.create_client_inner(limits, DomainKind::Client)
     }
 
-    /// Retains a narrow native lifetime token without exposing it through resource QI/getters.
-    pub fn create_client_with_lease(
-        &self,
-        limits: RenderClientLimits,
-        native: ComPtr<IRenderDeviceLeaseAbi>,
-    ) -> Result<ComBox<IRenderClientDomainAbi>, NcStatus> {
-        self.create_client_inner(limits, Some(native), DomainKind::Client)
-    }
-
-    /// Trusted host assembly creates a private compositor domain. Its factory must stay inside GFX.
-    /// Public client creation never selects this provenance, and resource QI cannot obtain it.
-    pub fn create_ui_client(
-        &self,
-        limits: RenderClientLimits,
-        native: Option<ComPtr<IRenderDeviceLeaseAbi>>,
-    ) -> Result<ComBox<IRenderClientDomainAbi>, NcStatus> {
-        self.create_client_inner(limits, native, DomainKind::Ui)
+    /// Trusted compositor provenance shares this same native core without a facade lifetime lease.
+    pub fn create_ui_client(&self, limits: RenderClientLimits) -> Result<ComBox<IRenderClientDomainAbi>, NcStatus> {
+        self.create_client_inner(limits, DomainKind::Ui)
     }
 
     /// Publishes separate controller and factory identities only after limits validate.
-    fn create_client_inner(
-        &self,
-        limits: RenderClientLimits,
-        native: Option<ComPtr<IRenderDeviceLeaseAbi>>,
-        kind: DomainKind,
-    ) -> Result<ComBox<IRenderClientDomainAbi>, NcStatus> {
+    fn create_client_inner(&self, limits: RenderClientLimits, kind: DomainKind) -> Result<ComBox<IRenderClientDomainAbi>, NcStatus> {
         let _operation = self.operation()?;
         let domain = Rc::new(Domain {
             kind,
@@ -212,7 +195,6 @@ impl GpuDevice {
             closed: Cell::new(false),
             account: Account::new(limits)?,
             sessions: RefCell::new(Vec::new()),
-            _native: native,
         });
         let factory: ComPtr<IRenderResourcesAbi> = Factory::from_value(Factory { domain: domain.clone() }).query()?;
         let entry = FactoryEntry {
@@ -232,7 +214,7 @@ impl GpuDevice {
     }
 
     /// Blocks reentrant factory writes throughout CPU source transactions/native preparation.
-    pub fn operation(&self) -> Result<Operation, NcStatus> {
+    pub fn operation(&self) -> Result<Operation<B>, NcStatus> {
         if self.inner.busy.replace(true) {
             return Err(RENDER_E_BUSY);
         }
@@ -240,7 +222,7 @@ impl GpuDevice {
     }
 
     /// Authenticates the factory's registered identity and checks its current domain gate.
-    pub(crate) fn domain(&self, factory: ComRef<'_, IRenderResourcesAbi>) -> Result<Rc<Domain>, NcStatus> {
+    pub(crate) fn domain(&self, factory: ComRef<'_, IRenderResourcesAbi>) -> Result<Rc<Domain<B>>, NcStatus> {
         let (observer, domain) = {
             let factories = self.inner.factories.try_borrow().map_err(|_| RENDER_E_BUSY)?;
             let entry = factories.get(&(factory.as_raw().object as usize)).ok_or(RENDER_E_OWNER)?;
@@ -257,30 +239,27 @@ impl GpuDevice {
         Ok(self.domain(factory)?.account.live_bytes())
     }
 
-    /// Trusted native assembly authenticates the immutable image and supplies its actual native key.
-    /// This bridge is restricted to private UI domains and has no public client-resource method.
-    pub fn import_ui_texture(
-        &self,
-        factory: ComRef<'_, IRenderResourcesAbi>,
-        id: TextureId,
-        image: ComPtr<ITextureAbi>,
-    ) -> Result<ComBox<IGpuTextureAbi>, NcStatus> {
+    /// Imports an already authenticated native image only into trusted compositor provenance.
+    /// The actual allocation, not caller-reported metadata, determines compatible core and extent.
+    pub fn import_ui_texture(&self, factory: ComRef<'_, IRenderResourcesAbi>, image: Rc<B::Image>) -> Result<ComBox<IGpuTextureAbi>, NcStatus> {
         let _operation = self.operation()?;
         let domain = self.domain(factory)?;
-        if domain.kind != DomainKind::Ui {
+        if domain.kind != DomainKind::Ui || !Rc::ptr_eq(&self.inner.core, B::image_core(image.as_ref())) {
+            self.set_diagnostic("image or factory belongs to an incompatible driver/domain".into());
             return Err(RENDER_E_OWNER);
         }
         let desc = GpuTextureDesc {
-            size: Size { width: id.width(), height: id.height() },
+            size: B::image_size(image.as_ref()),
             format: GpuTextureFormat::Rgba8Unorm,
             mip_count: 1,
         };
         let len = texture_desc(desc)?;
         let owner = domain.account.resource()?;
-        let current = Rc::new(TextureVersion {
-            id: next_version_id()?,
+        let current = Rc::new(TextureVersion::<B> {
+            core: self.inner.core.clone(),
+            native: NativeSlot::default(),
             desc,
-            contents: TextureContents::Imported { id, _image: image },
+            contents: TextureContents::Imported { image },
             charge: Rc::new(domain.account.bytes(len)?),
         });
         publish(
@@ -290,7 +269,11 @@ impl GpuDevice {
     }
 
     /// Native preflight for a private UI upload cannot accept a client factory or foreign resource.
-    pub fn ui_texture_snapshot(&self, factory: ComRef<'_, IRenderResourcesAbi>, texture: ComRef<'_, IGpuTextureAbi>) -> Result<Rc<TextureVersion>, NcStatus> {
+    pub fn ui_texture_snapshot(
+        &self,
+        factory: ComRef<'_, IRenderResourcesAbi>,
+        texture: ComRef<'_, IGpuTextureAbi>,
+    ) -> Result<Rc<TextureVersion<B>>, NcStatus> {
         let _operation = self.operation()?;
         if self.domain(factory)?.kind != DomainKind::Ui {
             return Err(RENDER_E_OWNER);
@@ -302,9 +285,9 @@ impl GpuDevice {
 /// Concrete typed capture methods share one provenance/lifetime rule with all callers.
 macro_rules! snapshot_method {
     ($method:ident, $interface:ident, $field:ident, $version:ident) => {
-        impl GpuDevice {
+        impl<B: NativeResources> GpuDevice<B> {
             #[doc = concat!("Captures one live same-domain ", stringify!($version), " under its provider reader gate; no public owner is promoted.")]
-            pub fn $method(&self, factory: ComRef<'_, IRenderResourcesAbi>, resource: ComRef<'_, $interface>) -> Result<Rc<$version>, NcStatus> {
+            pub fn $method(&self, factory: ComRef<'_, IRenderResourcesAbi>, resource: ComRef<'_, $interface>) -> Result<Rc<$version<B>>, NcStatus> {
                 let domain = self.domain(factory)?;
                 let observer = observe(&self.inner.$field, resource.as_raw().object as usize)?;
                 observer.with(|resource| {
@@ -373,117 +356,199 @@ impl VersionBytes {
     }
 }
 
-/// Immutable logical vertex/index version; native caches may retain this device-free value.
-pub struct BufferVersion {
-    /// Renderer-private cache identity.
-    pub(crate) id: u64,
-    /// Immutable role/extent.
-    pub(crate) desc: GpuBufferDesc,
-    /// Explicit GPU bytes; no Rust semantic vertex layout is involved.
-    pub(crate) bytes: VersionBytes,
-    /// Persists through actual last backing ownership.
-    _charge: ByteCharge,
+/// Opaque shared accounting that native owners can retain but cannot manufacture or reopen.
+#[derive(Clone)]
+pub struct BackingCharge {
+    /// One authoritative receipt; moving/cloning this token never reserves another charge.
+    _receipt: Charge,
 }
-/// Immutable sampled texture version with tightly packed top-left RGBA pixels.
-pub struct TextureVersion {
-    /// Renderer-private cache identity.
-    pub(crate) id: u64,
-    /// Immutable sampled texture shape.
+/// Byte and command receipts have distinct ledgers but share ordinary last-owner release.
+#[derive(Clone)]
+enum Charge {
+    /// Full resource/version extent, independent of public-owner count.
+    Bytes { _receipt: Rc<ByteCharge> },
+    /// Exact copied uniform/command capacity, independent of domain/native authority.
+    Pending { _receipt: PendingCharge },
+}
+impl BackingCharge {
+    /// Only admitted immutable versions can construct a resource receipt.
+    fn bytes(receipt: Rc<ByteCharge>) -> Self {
+        Self {
+            _receipt: Charge::Bytes { _receipt: receipt },
+        }
+    }
+    /// Only the recorder can construct a copied-payload receipt.
+    pub(crate) fn pending(receipt: PendingCharge) -> Self {
+        Self {
+            _receipt: Charge::Pending { _receipt: receipt },
+        }
+    }
+}
+
+/// Immutable buffer version owns its native realization, with no native-to-version back-reference.
+pub struct BufferVersion<B: NativeResources> {
+    /// Fixes compatible native device/context before first realization.
+    pub(crate) core: Rc<B::Core>,
+    /// Immutable role and logical extent.
+    pub(crate) desc: GpuBufferDesc,
+    /// Defined contents, including compact allocation-only zeros.
+    pub(crate) bytes: VersionBytes,
+    /// Native memoization is private and may only publish backend-validated candidates.
+    native: NativeSlot<B::Buffer>,
+    /// Shared opaque bytes remain charged through native use and queued disposal.
+    _charge: Rc<ByteCharge>,
+}
+/// Immutable sampled version owns either initialized pixels or a directly shared native image.
+pub struct TextureVersion<B: NativeResources> {
+    /// Driver compatibility/lifetime independent of logical domain admission.
+    pub(crate) core: Rc<B::Core>,
+    /// Complete admitted logical sampled-image shape.
     pub(crate) desc: GpuTextureDesc,
-    /// Pixel storage or a trusted immutable-image lease; never an editable native handle.
-    contents: TextureContents,
-    /// Native lowering retains this device-free receipt instead of an imported COM/device lease.
+    /// Import keeps no public image COM capability, numeric key, or renderer facade.
+    contents: TextureContents<B>,
+    /// First imported use also crosses backend initialization/accounting admission.
+    native: NativeSlot<B::Image>,
+    /// Per-import reservation stays with that import/use, never globally on a shared image.
     charge: Rc<ByteCharge>,
 }
-
-/// An ordinary immutable image can be sampled privately without exposing a client conversion API.
-enum TextureContents {
-    /// Complete initialized row-major bytes; updates publish a fresh complete version.
+/// Authoritative immutable texture contents; native imports are not writable storage.
+enum TextureContents<B: NativeResources> {
+    /// Complete initialized pixel values; an update atomically replaces the entire version.
     Pixels(VersionBytes),
-    /// Authenticated host key and the immutable public lifetime needed during CPU preparation.
+    /// Construction-proven same-core image; no public image lease or facade back-edge.
     Imported {
-        /// Resolved by the same native device's private image map.
-        id: TextureId,
-        /// Never retained in native caches or GPU completion collections.
-        _image: ComPtr<ITextureAbi>,
+        /// Actual independently owned native pixels.
+        image: Rc<B::Image>,
     },
 }
-
-impl TextureVersion {
-    /// Imported native images have no CPU pixel buffer and cannot be updated through the factory.
+impl<B: NativeResources> TextureVersion<B> {
+    /// Imported images have no CPU contents and reject factory mutation.
     pub fn pixels(&self) -> Option<&VersionBytes> {
         match &self.contents {
             TextureContents::Pixels(bytes) => Some(bytes),
             TextureContents::Imported { .. } => None,
         }
     }
-
-    /// A native executor resolves only keys installed by trusted UI import on this exact device.
-    pub fn imported_id(&self) -> Option<TextureId> {
-        match self.contents {
-            TextureContents::Imported { id, .. } => Some(id),
+    /// Backend-only realization input after trusted ordinary-image authentication.
+    pub fn imported_image(&self) -> Option<&Rc<B::Image>> {
+        match &self.contents {
+            TextureContents::Imported { image } => Some(image),
             TextureContents::Pixels(_) => None,
         }
     }
-
-    /// Strip COM/native-facade ownership before native caching or submission retention.
-    pub fn receipt(self: &Rc<Self>) -> TextureReceipt {
-        TextureReceipt {
-            alive: Rc::downgrade(self),
-            _charge: self.charge.clone(),
-        }
+    /// No passive source expiry or COM owner is retained in native work.
+    pub fn receipt(&self) -> BackingCharge {
+        BackingCharge::bytes(self.charge.clone())
     }
 }
-
-/// Device-free native image accounting plus passive private-version retirement metadata.
-pub struct TextureReceipt {
-    /// Retaining metadata cannot retain the imported image or its native device facade.
-    alive: Weak<TextureVersion>,
-    /// Refunded only when all CPU/native/completion owners release the actual backing charge.
+/// Immutable sampler version owns its one device-local realization.
+pub struct SamplerVersion<B: NativeResources> {
+    /// Native instance identity/lifetime, not a backend-name test.
+    pub(crate) core: Rc<B::Core>,
+    /// Complete immutable filter/address state.
+    pub(crate) desc: GpuSamplerDesc,
+    /// Shared native state is populated only after successful backend construction.
+    native: NativeSlot<B::Sampler>,
+    /// Descriptor reservation follows actual logical/native ownership.
     _charge: Rc<ByteCharge>,
 }
-impl TextureReceipt {
-    /// Cache-only entries retire after private CPU ownership ends; in-flight owners stay separate.
-    pub fn is_alive(&self) -> bool {
-        self.alive.strong_count() > 0
+/// Driver-bound validated shader artifacts; pipelines retain these exact immutable dependencies.
+pub struct ShaderVersion<B: NativeResources> {
+    /// Fixes the resource's creating native instance even before pipeline realization.
+    pub(crate) core: Rc<B::Core>,
+    /// Portable validated code, native artifacts and reflection copied from the compiler plugin.
+    pub(crate) artifact: Shader,
+    /// Native pipelines retain only the opaque receipt, not this source version.
+    _charge: Rc<ByteCharge>,
+}
+/// Successful native variants are owned by one immutable pipeline definition.
+type PipelineVariants<B> = Vec<(<B as NativeResources>::PipelineKey, Rc<<B as NativeResources>::Pipeline>)>;
+
+/// Complete immutable pipeline definition with resource-local target variants.
+pub struct PipelineVersion<B: NativeResources> {
+    /// All shader/resources and target variants belong to this compatible native core.
+    pub(crate) core: Rc<B::Core>,
+    /// Admitted triangle, blend, depth and raster state.
+    pub(crate) info: GpuPipelineInfo,
+    /// Explicit portable stream stepping.
+    pub(crate) vertex_buffers: Vec<GpuVertexBufferLayout>,
+    /// Checked locations, formats and offsets.
+    pub(crate) attributes: Vec<GpuVertexAttribute>,
+    /// Exact reflected stage-local resource declarations.
+    pub(crate) bindings: Vec<GpuShaderBinding>,
+    /// Immutable validated vertex dependency.
+    pub(crate) vertex: Rc<ShaderVersion<B>>,
+    /// Immutable validated fragment dependency.
+    pub(crate) fragment: Rc<ShaderVersion<B>>,
+    /// Required shared memoization; no borrow spans native pipeline construction.
+    pub(crate) variants: RefCell<PipelineVariants<B>>,
+    /// Native variant receipts share this and both shader reservations exactly once.
+    pub(crate) _charge: Rc<ByteCharge>,
+}
+
+/// One realization rule for each non-variant native resource family.
+macro_rules! native_resource {
+    ($version:ident,$native:ident,$create:ident) => {
+        impl<B: NativeResources> $version<B> {
+            /// Reuses or creates this exact version on the checked live preparation core.
+            /// Only backend-owned constructors can populate the private native slot.
+            pub fn native(&self, preparation: &mut B::Preparation<'_>) -> Result<Rc<B::$native>, String> {
+                check_core::<B>(&self.core, preparation)?;
+                self.native.realize(|| B::$create(self, preparation))
+            }
+        }
+    };
+}
+native_resource!(BufferVersion, Buffer, buffer);
+native_resource!(TextureVersion, Image, image);
+native_resource!(SamplerVersion, Sampler, sampler);
+impl<B: NativeResources> BufferVersion<B> {
+    /// Device-free shared reservation for actual native buffer use and disposal.
+    pub fn receipt(&self) -> BackingCharge {
+        BackingCharge::bytes(self._charge.clone())
     }
 }
-/// Immutable sampler state, independent of its exclusive public owner.
-pub struct SamplerVersion {
-    /// Renderer-private cache identity.
-    pub(crate) id: u64,
-    /// Complete portable filtering/address state.
-    pub(crate) desc: GpuSamplerDesc,
-    /// Device-free logical-state charge.
-    _charge: ByteCharge,
+impl<B: NativeResources> SamplerVersion<B> {
+    /// Native sampling state keeps no resource-version back-reference.
+    pub fn receipt(&self) -> BackingCharge {
+        BackingCharge::bytes(self._charge.clone())
+    }
 }
-/// Validated shader CPU artifacts can outlive their public owner in a pipeline.
-pub struct ShaderVersion {
-    /// Renderer-private cache identity.
-    pub(crate) id: u64,
-    /// Canonical source, native artifacts and reflection.
-    pub(crate) artifact: Shader,
-    /// Owned artifact bytes remain charged through pipeline/cache lifetime.
-    _charge: ByteCharge,
+impl<B: NativeResources> ShaderVersion<B> {
+    /// Receipt only; native modules/programs must not retain a source version.
+    pub fn receipt(&self) -> BackingCharge {
+        BackingCharge::bytes(self._charge.clone())
+    }
 }
-/// Immutable complete graphics pipeline and captured shader dependencies.
-pub struct PipelineVersion {
-    /// Renderer-private cache identity.
-    pub(crate) id: u64,
-    /// Fixed triangle pipeline state.
-    pub(crate) info: GpuPipelineInfo,
-    /// Explicit byte stepping for each declared stream.
-    pub(crate) vertex_buffers: Vec<GpuVertexBufferLayout>,
-    /// Explicit attribute footprints and locations.
-    pub(crate) attributes: Vec<GpuVertexAttribute>,
-    /// Exact active stage/slot resource declarations.
-    pub(crate) bindings: Vec<GpuShaderBinding>,
-    /// Captured vertex shader, independent of public shader owner lifetime.
-    pub(crate) vertex: Rc<ShaderVersion>,
-    /// Captured fragment shader, independent of public shader owner lifetime.
-    pub(crate) fragment: Rc<ShaderVersion>,
-    /// Copied descriptor charge, without any device/domain reference.
-    pub(crate) _charge: ByteCharge,
+impl<B: NativeResources> PipelineVersion<B> {
+    /// Keeps the admitted definition and both exact shader dependencies charged during native use.
+    pub fn receipts(&self) -> [BackingCharge; 3] {
+        [BackingCharge::bytes(self._charge.clone()), self.vertex.receipt(), self.fragment.receipt()]
+    }
+    /// Target-dependent variants belong to this source, never a global resource-id map.
+    pub fn native(&self, key: B::PipelineKey, preparation: &mut B::Preparation<'_>) -> Result<Rc<B::Pipeline>, String> {
+        check_core::<B>(&self.core, preparation)?;
+        if let Some((_, value)) = self
+            .variants
+            .try_borrow()
+            .map_err(|_| "pipeline variants are busy")?
+            .iter()
+            .find(|(existing, _)| *existing == key)
+        {
+            return Ok(value.clone());
+        }
+        self.variants
+            .try_borrow_mut()
+            .map_err(|_| "pipeline variants are busy")?
+            .try_reserve(1)
+            .map_err(|error| error.to_string())?;
+        let value = B::pipeline(self, &key, preparation)?;
+        self.variants
+            .try_borrow_mut()
+            .map_err(|_| "pipeline variants are busy")?
+            .push((key, value.clone()));
+        Ok(value)
+    }
 }
 
 /// Produces concrete exclusive resource classes without type-erased storage.
@@ -491,18 +556,18 @@ macro_rules! resource_object {
     ($name:ident, $interface:ident, $version:ident) => {
         #[com_object(interfaces($interface), ownership = exclusive)]
         /// Exclusive public owner; registry observers retain only lifetime metadata.
-        pub(crate) struct $name {
+        pub(crate) struct $name<B: NativeResources> {
             /// Domain/device authority exists only while this public value exists.
-            pub(crate) domain: Rc<Domain>,
+            pub(crate) domain: Rc<Domain<B>>,
             /// Ordinary mutable current pointer, accessed through checked local gates.
-            pub(crate) current: Rc<$version>,
+            pub(crate) current: Rc<$version<B>>,
             /// Released at public value destruction, independently of version bytes.
             _owner: ResourceCharge,
         }
-        impl $interface for $name {}
-        impl IRenderDriverBound for $name {
+        impl<B: NativeResources> $interface for $name<B> {}
+        impl<B: NativeResources> IRenderDriverBound for $name<B> {
             fn driver_identity(&self) -> Result<ComPtr<IRenderDriverIdentityAbi>, NcStatus> {
-                Ok(self.domain.device.driver_identity())
+                Ok(B::identity(self.current.core.as_ref()).clone())
             }
         }
     };
@@ -544,20 +609,20 @@ pub(crate) fn observe<T: ComObject<Threading = ThreadLocal>>(registry: &RefCell<
 }
 
 /// Enforces exact device/domain admission without calling a client object.
-pub(crate) fn same_domain(expected: &Rc<Domain>, actual: &Rc<Domain>) -> Result<(), NcStatus> {
+pub(crate) fn same_domain<B: crate::native::NativeResources>(expected: &Rc<Domain<B>>, actual: &Rc<Domain<B>>) -> Result<(), NcStatus> {
     expected.open()?;
     if Rc::ptr_eq(expected, actual) { Ok(()) } else { Err(RENDER_E_OWNER) }
 }
 
 #[com_object(interfaces(IRenderClientDomain), ownership = exclusive)]
 /// Host controller and resource factory deliberately have different QI identities.
-struct DomainOwner {
+struct DomainOwner<B: crate::native::NativeResources> {
     /// One authoritative close/account record.
-    domain: Rc<Domain>,
+    domain: Rc<Domain<B>>,
     /// Shareable restricted creation service delegated explicitly to clients.
     factory: ComPtr<IRenderResourcesAbi>,
 }
-impl IRenderClientDomain for DomainOwner {
+impl<B: crate::native::NativeResources> IRenderClientDomain for DomainOwner<B> {
     /// Existing factory clones remain in the same domain and never reset accounting.
     fn resources(&self) -> Result<ComPtr<IRenderResourcesAbi>, NcStatus> {
         self.domain.open()?;
@@ -569,7 +634,7 @@ impl IRenderClientDomain for DomainOwner {
         Ok(())
     }
 }
-impl Drop for DomainOwner {
+impl<B: crate::native::NativeResources> Drop for DomainOwner<B> {
     /// Controller removal revokes admission but does not free retained backing versions.
     fn drop(&mut self) {
         self.domain.close();
@@ -578,9 +643,9 @@ impl Drop for DomainOwner {
 
 #[com_object(interfaces(IRenderResources))]
 /// Shareable factory; exclusive resources carry separate identities and ownership.
-struct Factory {
+struct Factory<B: crate::native::NativeResources> {
     /// Holds device authority while clients deliberately retain this service.
-    domain: Rc<Domain>,
+    domain: Rc<Domain<B>>,
 }
 
 /// Reserves initialized bytes without panicking on allocation failure.
@@ -641,12 +706,12 @@ fn sampler_desc(desc: GpuSamplerDesc) -> Result<(), NcStatus> {
     Ok(())
 }
 
-impl IRenderDriverBound for Factory {
+impl<B: crate::native::NativeResources> IRenderDriverBound for Factory<B> {
     fn driver_identity(&self) -> Result<ComPtr<IRenderDriverIdentityAbi>, NcStatus> {
         Ok(self.domain.device.driver_identity())
     }
 }
-impl IRenderResources for Factory {
+impl<B: crate::native::NativeResources> IRenderResources for Factory<B> {
     /// Whole-version quota admission precedes bulk reads; public owner is transferred last.
     fn create_buffer(&self, desc: GpuBufferDesc, source: neocogi_com::NcValueRef<'_, InitialGpuData>) -> Result<ComBox<IGpuBufferAbi>, NcStatus> {
         let _operation = self.domain.device.operation()?;
@@ -660,10 +725,11 @@ impl IRenderResources for Factory {
         };
         self.domain.open()?;
         let current = Rc::new(BufferVersion {
-            id: next_version_id()?,
+            core: self.domain.device.inner.core.clone(),
+            native: NativeSlot::default(),
             desc,
             bytes,
-            _charge: charge,
+            _charge: Rc::new(charge),
         });
         publish(
             &self.domain.device.inner.buffers,
@@ -688,7 +754,8 @@ impl IRenderResources for Factory {
         };
         self.domain.open()?;
         let current = Rc::new(TextureVersion {
-            id: next_version_id()?,
+            core: self.domain.device.inner.core.clone(),
+            native: NativeSlot::default(),
             desc,
             contents: TextureContents::Pixels(bytes),
             charge: Rc::new(charge),
@@ -710,9 +777,10 @@ impl IRenderResources for Factory {
         sampler_desc(desc)?;
         let owner = self.domain.account.resource()?;
         let current = Rc::new(SamplerVersion {
-            id: next_version_id()?,
+            core: self.domain.device.inner.core.clone(),
+            native: NativeSlot::default(),
             desc,
-            _charge: self.domain.account.bytes(std::mem::size_of::<GpuSamplerDesc>())?,
+            _charge: Rc::new(self.domain.account.bytes(std::mem::size_of::<GpuSamplerDesc>())?),
         });
         publish(
             &self.domain.device.inner.samplers,
@@ -793,9 +861,9 @@ impl IRenderResources for Factory {
             }
         })?;
         let current = Rc::new(ShaderVersion {
-            id: next_version_id()?,
+            core: self.domain.device.inner.core.clone(),
             artifact,
-            _charge: charge,
+            _charge: Rc::new(charge),
         });
         publish(
             &self.domain.device.inner.shaders,
@@ -837,14 +905,15 @@ impl IRenderResources for Factory {
         })?;
         debug_assert!(end <= bytes.len());
         let current = Rc::new(BufferVersion {
-            id: next_version_id()?,
+            core: self.domain.device.inner.core.clone(),
+            native: NativeSlot::default(),
             desc: previous.desc,
             bytes: VersionBytes::Owned(bytes),
-            _charge: charge,
+            _charge: Rc::new(charge),
         });
         let retired = observer.with_mut(|buffer| {
             same_domain(&self.domain, &buffer.domain)?;
-            if buffer.current.id != previous.id {
+            if !Rc::ptr_eq(&buffer.current, &previous) {
                 return Err(RENDER_E_BUSY);
             }
             Ok(std::mem::replace(&mut buffer.current, current))
@@ -893,14 +962,15 @@ impl IRenderResources for Factory {
             }
         })?;
         let current = Rc::new(TextureVersion {
-            id: next_version_id()?,
+            core: self.domain.device.inner.core.clone(),
+            native: NativeSlot::default(),
             desc: previous.desc,
             contents: TextureContents::Pixels(VersionBytes::Owned(bytes)),
             charge: Rc::new(charge),
         });
         let retired = observer.with_mut(|texture| {
             same_domain(&self.domain, &texture.domain)?;
-            if texture.current.id != previous.id {
+            if !Rc::ptr_eq(&texture.current, &previous) {
                 return Err(RENDER_E_BUSY);
             }
             Ok(std::mem::replace(&mut texture.current, current))
@@ -911,7 +981,11 @@ impl IRenderResources for Factory {
 }
 
 /// Constructs one fully validated immutable pipeline after all foreign descriptor reads.
-pub(crate) fn publish_pipeline(domain: &Rc<Domain>, version: PipelineVersion, owner: ResourceCharge) -> Result<ComBox<IGpuPipelineAbi>, NcStatus> {
+pub(crate) fn publish_pipeline<B: crate::native::NativeResources>(
+    domain: &Rc<Domain<B>>,
+    version: PipelineVersion<B>,
+    owner: ResourceCharge,
+) -> Result<ComBox<IGpuPipelineAbi>, NcStatus> {
     domain.open()?;
     let current = Rc::new(version);
     publish(
@@ -930,11 +1004,7 @@ mod tests;
 #[cfg(test)]
 mod compiler_tests;
 
-impl BufferVersion {
-    /// Reads the admitted id without granting mutation authority.
-    pub fn id(&self) -> u64 {
-        self.id
-    }
+impl<B: crate::native::NativeResources> BufferVersion<B> {
     /// Reads the admitted desc without granting mutation authority.
     pub fn desc(&self) -> GpuBufferDesc {
         self.desc
@@ -945,44 +1015,28 @@ impl BufferVersion {
     }
 }
 
-impl TextureVersion {
-    /// Reads the admitted id without granting mutation authority.
-    pub fn id(&self) -> u64 {
-        self.id
-    }
+impl<B: crate::native::NativeResources> TextureVersion<B> {
     /// Reads the admitted desc without granting mutation authority.
     pub fn desc(&self) -> GpuTextureDesc {
         self.desc
     }
 }
 
-impl SamplerVersion {
-    /// Reads the admitted id without granting mutation authority.
-    pub fn id(&self) -> u64 {
-        self.id
-    }
+impl<B: crate::native::NativeResources> SamplerVersion<B> {
     /// Reads the admitted desc without granting mutation authority.
     pub fn desc(&self) -> GpuSamplerDesc {
         self.desc
     }
 }
 
-impl ShaderVersion {
-    /// Reads the admitted id without granting mutation authority.
-    pub fn id(&self) -> u64 {
-        self.id
-    }
+impl<B: crate::native::NativeResources> ShaderVersion<B> {
     /// Reads the admitted artifact without granting mutation authority.
     pub fn artifact(&self) -> &Shader {
         &self.artifact
     }
 }
 
-impl PipelineVersion {
-    /// Reads the admitted id without granting mutation authority.
-    pub fn id(&self) -> u64 {
-        self.id
-    }
+impl<B: crate::native::NativeResources> PipelineVersion<B> {
     /// Reads the admitted info without granting mutation authority.
     pub fn info(&self) -> GpuPipelineInfo {
         self.info
@@ -1000,27 +1054,11 @@ impl PipelineVersion {
         &self.bindings
     }
     /// Reads the admitted vertex without granting mutation authority.
-    pub fn vertex(&self) -> &Rc<ShaderVersion> {
+    pub fn vertex(&self) -> &Rc<ShaderVersion<B>> {
         &self.vertex
     }
     /// Reads the admitted fragment without granting mutation authority.
-    pub fn fragment(&self) -> &Rc<ShaderVersion> {
+    pub fn fragment(&self) -> &Rc<ShaderVersion<B>> {
         &self.fragment
     }
-}
-
-/// Cache identity spans logical devices that can feed the same native adapter.
-/// It never authenticates COM provenance and owns no device or resource lifetime.
-static NEXT_VERSION_ID: AtomicU64 = AtomicU64::new(1);
-
-/// Allocates identity only; relaxed ordering does not publish resource contents.
-fn allocate_version_id(sequence: &AtomicU64) -> Result<u64, NcStatus> {
-    sequence
-        .try_update(Ordering::Relaxed, Ordering::Relaxed, |value| value.checked_add(1))
-        .map_err(|_| NC_E_OUT_OF_RANGE)
-}
-
-/// All creation/import/update paths use the same checked, non-reusing sequence.
-pub(crate) fn next_version_id() -> Result<u64, NcStatus> {
-    allocate_version_id(&NEXT_VERSION_ID)
 }

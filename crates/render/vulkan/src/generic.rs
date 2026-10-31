@@ -1,12 +1,153 @@
 //! Direct Vulkan realization of the shared immutable graphics vocabulary.
-//! Native owners keep only a cache-free device core and device-free logical versions.
+//! Native allocations retain a narrow device core and opaque accounting, without source versions.
 use ash::{Entry, vk};
-use neocogi_render_gpu::{abi::*, command::*, record::Block, resource::*, scope::physical_rect};
+use neocogi_render_gpu::{
+    abi::*,
+    command::{DrawRange, CommandCharge},
+    resource::BackingCharge,
+    native::NativeResources,
+    scope::physical_rect,
+};
 use neocogi_render_support::resource_guard::ResourceGuard;
-use std::{cell::Cell, collections::HashMap, ffi::CString, rc::Rc};
+use std::{
+    cell::Cell,
+    ops::Deref,
+    sync::mpsc::{self, Sender, Receiver, SendError},
+    ffi::CString,
+    rc::Rc,
+};
+
+type Block = neocogi_render_gpu::record::Block<Backend>;
+type Command = neocogi_render_gpu::command::Command<Backend>;
+type Draw = neocogi_render_gpu::command::Draw<Backend>;
+type BufferVersion = neocogi_render_gpu::resource::BufferVersion<Backend>;
+type TextureVersion = neocogi_render_gpu::resource::TextureVersion<Backend>;
+type SamplerVersion = neocogi_render_gpu::resource::SamplerVersion<Backend>;
+type PipelineVersion = neocogi_render_gpu::resource::PipelineVersion<Backend>;
+type UniformData = neocogi_render_gpu::command::UniformData<Backend>;
+/// Statically selected concrete Vulkan resource family.
+pub struct Backend;
+/// Exclusive native construction capability; render-pass compatibility comes only from the host.
+pub struct Preparation<'a> {
+    /// Exclusive existing driver; native construction never borrows a foreign capability.
+    executor: &'a mut Executor,
+    /// Host-selected compatible render pass, borrowed only for native pipeline construction.
+    pass: vk::RenderPass,
+}
+impl NativeResources for Backend {
+    type Core = Core;
+    type Buffer = Buffer;
+    type Image = Texture;
+    type Sampler = Sampler;
+    type Pipeline = Pipeline;
+    type Uniform = Buffer;
+    type PipelineKey = Signature;
+    type Preparation<'a> = Preparation<'a>;
+    fn identity(core: &Core) -> &neocogi_render_core::source::DriverIdentity {
+        &core.identity
+    }
+    fn core<'a>(preparation: &'a Preparation<'_>) -> &'a Rc<Core> {
+        &preparation.executor.core
+    }
+    fn check(preparation: &mut Preparation<'_>) -> Result<(), String> {
+        if preparation.executor.unusable() {
+            Err("Vulkan executor is unavailable".into())
+        } else {
+            preparation.executor.core.check()
+        }
+    }
+    fn image_core(image: &Texture) -> &Rc<Core> {
+        &image.native.core
+    }
+    fn image_size(image: &Texture) -> Size {
+        image.size
+    }
+    fn buffer(source: &BufferVersion, preparation: &mut Preparation<'_>) -> Result<Rc<Buffer>, String> {
+        preparation.executor.buffer(source)
+    }
+    fn sampler(source: &SamplerVersion, preparation: &mut Preparation<'_>) -> Result<Rc<Sampler>, String> {
+        preparation.executor.sampler(source)
+    }
+    fn uniform(source: &UniformData, preparation: &mut Preparation<'_>) -> Result<Rc<Buffer>, String> {
+        preparation.executor.uniform(source)
+    }
+    fn pipeline(source: &PipelineVersion, key: &Signature, preparation: &mut Preparation<'_>) -> Result<Rc<Pipeline>, String> {
+        preparation.executor.pipeline(source, preparation.pass, *key)
+    }
+    fn image(source: &TextureVersion, preparation: &mut Preparation<'_>) -> Result<Rc<Texture>, String> {
+        if let Some(image) = source.imported_image() {
+            return Ok(image.clone());
+        }
+        preparation.executor.create_image(
+            source.desc().size,
+            if source.desc().format == GpuTextureFormat::Rgba8Srgb {
+                vk::Format::R8G8B8A8_SRGB
+            } else {
+                vk::Format::R8G8B8A8_UNORM
+            },
+            source.pixels().and_then(|p| p.as_slice()),
+            Some(source.receipt()),
+        )
+    }
+}
+/// Complete owned packets contain no logical source, domain, driver or producer endpoint.
+pub(crate) enum Retirement {
+    /// Vertex/index/uniform storage and its opaque receipt.
+    Buffer(BufferAllocation),
+    /// Independent native sampling state.
+    Sampler(SamplerAllocation),
+    /// One target-compatible executable and dependency receipts.
+    Pipeline(PipelineAllocation),
+    /// Shared immutable native pixels and original allocation charge.
+    Texture(TextureAllocation),
+    /// Native framebuffer and its sender-free raw image owner.
+    Framebuffer(super::FramebufferAllocation),
+}
+impl Retirement {
+    /// Exhaustively destroy the returned/drained owned packet; payloads contain no producer.
+    pub(crate) fn discard(self) {
+        match self {
+            Self::Buffer(value) => drop(value),
+            Self::Sampler(value) => drop(value),
+            Self::Pipeline(value) => drop(value),
+            Self::Texture(value) => drop(value),
+            Self::Framebuffer(value) => drop(value),
+        }
+    }
+}
+macro_rules! notifying {
+    ($name:ident,$allocation:ident) => {
+        /// Native last-owner notification; the owned packet itself contains no producer back-edge.
+        pub struct $name {
+            /// Taken once; the notifying wrapper and producer never enter the packet.
+            owner: Option<$allocation>,
+            /// Producer exists only on this native backing; disconnected sends recover ownership.
+            retired: Sender<Retirement>,
+        }
+        impl Deref for $name {
+            type Target = $allocation;
+            fn deref(&self) -> &$allocation {
+                self.owner.as_ref().expect("live native backing")
+            }
+        }
+        impl Drop for $name {
+            fn drop(&mut self) {
+                if let Some(owner) = self.owner.take()
+                    && let Err(SendError(packet)) = self.retired.send(Retirement::$name(owner))
+                {
+                    packet.discard();
+                }
+            }
+        }
+    };
+}
 
 /// Raw device/instance ownership is independent of presentation, caches and client domains.
-pub(crate) struct Core {
+pub struct Core {
+    /// Retained metadata token has no native back-edge.
+    identity: neocogi_render_core::source::DriverIdentity,
+    /// A native device-loss observation permanently invalidates every old slot.
+    lost: Cell<bool>,
     /// Loader must remain live until instance and device destruction completes.
     _entry: Entry,
     /// Parent of the logical device; no swapchain or cache is owned here.
@@ -29,6 +170,17 @@ pub(crate) struct Core {
     pub(super) family: u32,
 }
 impl Core {
+    /// Authoritative device-loss observation shared with every immutable resource slot.
+    pub(super) fn check(&self) -> Result<(), String> {
+        if self.lost.get() { Err("Vulkan device is lost".into()) } else { Ok(()) }
+    }
+    /// Preserve the original native failure while making actual device loss terminal.
+    pub(super) fn failure(&self, context: &str, error: vk::Result) -> String {
+        if error == vk::Result::ERROR_DEVICE_LOST {
+            self.lost.set(true);
+        }
+        format!("{context}: {error:?}")
+    }
     /// Observe production allocation accounting without exposing mutable counters to tests.
     #[cfg(test)]
     pub(super) fn live_allocations(&self) -> u32 {
@@ -40,7 +192,11 @@ impl Core {
     pub(crate) fn wait_idle(&self) {
         loop {
             match unsafe { self.device.device_wait_idle() } {
-                Ok(()) | Err(vk::Result::ERROR_DEVICE_LOST) => return,
+                Ok(()) => return,
+                Err(vk::Result::ERROR_DEVICE_LOST) => {
+                    self.lost.set(true);
+                    return;
+                }
                 Err(_) => std::thread::yield_now(),
             }
         }
@@ -52,6 +208,8 @@ impl Core {
         let limits = unsafe { instance.get_physical_device_properties(physical) }.limits;
         let queue = unsafe { device.get_device_queue(family, 0) };
         Rc::new(Self {
+            identity: neocogi_render_core::source::new_driver_identity(),
+            lost: Cell::new(false),
             _entry: entry,
             instance,
             device,
@@ -79,7 +237,7 @@ impl Core {
             return Err("Vulkan device memory allocation count exhausted".into());
         }
         // SAFETY: All callers supply a queried memory type and actual bound-object requirements.
-        let raw = unsafe { self.device.allocate_memory(info, None) }.map_err(|error| format!("allocate Vulkan memory: {error:?}"))?;
+        let raw = unsafe { self.device.allocate_memory(info, None) }.map_err(|error| self.failure("allocate Vulkan memory", error))?;
         self.memory_count.set(count + 1);
         Ok(Memory { core: self.clone(), raw })
     }
@@ -91,7 +249,7 @@ impl Core {
             return Err("Vulkan sampler allocation count exhausted".into());
         }
         // SAFETY: Callers use normalized descriptors without unenabled optional features.
-        let raw = unsafe { self.device.create_sampler(info, None) }.map_err(|error| format!("create Vulkan sampler: {error:?}"))?;
+        let raw = unsafe { self.device.create_sampler(info, None) }.map_err(|error| self.failure("create Vulkan sampler", error))?;
         self.sampler_count.set(count + 1);
         Ok(NativeSampler { core: self.clone(), raw })
     }
@@ -122,7 +280,7 @@ impl Core {
                 vk::ImageCreateFlags::empty(),
             )
         }
-        .map_err(|error| format!("unsupported Vulkan image format/usage: {error:?}"))?;
+        .map_err(|error| self.failure("unsupported Vulkan image format/usage", error))?;
         if width > properties.max_extent.width || height > properties.max_extent.height || !properties.sample_counts.contains(vk::SampleCountFlags::TYPE_1) {
             return Err("Vulkan image dimensions or samples exceed format capabilities".into());
         }
@@ -198,7 +356,7 @@ impl Allocation {
                         &vk::BufferCreateInfo::default().size(size).usage(usage).sharing_mode(vk::SharingMode::EXCLUSIVE),
                         None,
                     )
-                    .map_err(|error| format!("create graphics buffer: {error:?}"))?,
+                    .map_err(|error| core.failure("create graphics buffer", error))?,
                 |value| device.destroy_buffer(value, None),
             );
             let requirements = device.get_buffer_memory_requirements(*raw.get());
@@ -210,7 +368,7 @@ impl Allocation {
             let memory = core.allocate(&vk::MemoryAllocateInfo::default().allocation_size(requirements.size).memory_type_index(kind))?;
             device
                 .bind_buffer_memory(*raw.get(), memory.raw, 0)
-                .map_err(|error| format!("bind graphics buffer: {error:?}"))?;
+                .map_err(|error| core.failure("bind graphics buffer", error))?;
             let value = Self {
                 core: core.clone(),
                 raw: raw.into_inner(),
@@ -219,7 +377,7 @@ impl Allocation {
             };
             let mapped = device
                 .map_memory(value.memory.raw, 0, vk::WHOLE_SIZE, vk::MemoryMapFlags::empty())
-                .map_err(|error| format!("map graphics buffer: {error:?}"))?;
+                .map_err(|error| core.failure("map graphics buffer", error))?;
             std::ptr::write_bytes(mapped.cast::<u8>(), 0, size as usize);
             if let Some(bytes) = bytes {
                 std::ptr::copy_nonoverlapping(bytes.as_ptr(), mapped.cast::<u8>(), bytes.len());
@@ -230,7 +388,7 @@ impl Allocation {
                 device.flush_mapped_memory_ranges(&[vk::MappedMemoryRange::default().memory(value.memory.raw).offset(0).size(vk::WHOLE_SIZE)])
             };
             device.unmap_memory(value.memory.raw);
-            visibility.map_err(|error| format!("flush graphics buffer: {error:?}"))?;
+            visibility.map_err(|error| core.failure("flush graphics buffer", error))?;
             Ok(value)
         }
     }
@@ -244,20 +402,14 @@ impl Drop for Allocation {
     }
 }
 
-/// Exact native buffer backing and its device-free logical byte receipt.
-struct Buffer {
-    /// Initialized native allocation.
+/// Sender-free storage packet keeps allocation destruction before its final opaque receipt.
+pub struct BufferAllocation {
+    /// Mapped initialized native storage is destroyed before refunding its reservation.
     allocation: Allocation,
-    /// Logical receipts drop after native storage, including cache-only retirement.
-    source: Rc<BufferVersion>,
+    /// Shared original reservation, with no source-version or domain reference.
+    _charge: BackingCharge,
 }
-/// Exact copied uniform backing, retaining pending-byte accounting through completion.
-struct Uniform {
-    /// std140-compatible native allocation with final padding only.
-    allocation: Allocation,
-    /// Logical receipts drop after native storage and have no client/domain owner.
-    source: Rc<UniformData>,
-}
+notifying!(Buffer, BufferAllocation);
 /// Cache-free native image can be shared by ordinary UI images and generic sampled bindings.
 pub(crate) struct Image {
     /// Bound storage drops after this owner's view and image destruction.
@@ -305,7 +457,7 @@ impl Image {
                     None,
                 )
             }
-            .map_err(|error| format!("create graphics image: {error:?}"))?,
+            .map_err(|error| core.failure("create graphics image", error))?,
             |value| unsafe { device.destroy_image(value, None) },
         );
         let requirements = unsafe { device.get_image_memory_requirements(*image.get()) };
@@ -313,7 +465,7 @@ impl Image {
             .memory_type(requirements.memory_type_bits, vk::MemoryPropertyFlags::DEVICE_LOCAL)
             .or_else(|_| core.memory_type(requirements.memory_type_bits, vk::MemoryPropertyFlags::empty()))?;
         let memory = core.allocate(&vk::MemoryAllocateInfo::default().allocation_size(requirements.size).memory_type_index(kind))?;
-        unsafe { device.bind_image_memory(*image.get(), memory.raw, 0) }.map_err(|error| format!("bind graphics image: {error:?}"))?;
+        unsafe { device.bind_image_memory(*image.get(), memory.raw, 0) }.map_err(|error| core.failure("bind graphics image", error))?;
         let range = vk::ImageSubresourceRange::default().aspect_mask(aspect).level_count(1).layer_count(1);
         let view = ResourceGuard::new(
             unsafe {
@@ -326,7 +478,7 @@ impl Image {
                     None,
                 )
             }
-            .map_err(|error| format!("create graphics image view: {error:?}"))?,
+            .map_err(|error| core.failure("create graphics image view", error))?,
             |view| unsafe { device.destroy_image_view(view, None) },
         );
         Ok(Rc::new(Self::new(core.clone(), image.into_inner(), memory, view.into_inner())))
@@ -346,33 +498,37 @@ impl Drop for Image {
     }
 }
 
-/// Logical pixel receipt and its independently retained native image allocation.
-struct Texture {
-    /// Native storage drops before logical accounting if this is its final owner.
-    native: Rc<Image>,
-    /// Exact immutable version, currently containing no domain or native facade reference.
-    source: Rc<TextureReceipt>,
+/// Sender-free image packet shares raw storage without retaining a source version or public image.
+pub struct TextureAllocation {
+    /// Shared raw image owner contains neither a sender nor a logical source.
+    pub(crate) native: Rc<Image>,
+    /// Immutable admitted extent of this exact native allocation.
+    size: Size,
+    /// Generic allocation charge; per-import use reservations stay outside this image.
+    _charge: Option<BackingCharge>,
 }
-/// Separate immutable sampling state and its logical receipt.
-struct Sampler {
-    /// Native storage drops before the logical receipt and decrements the physical-device count.
+notifying!(Texture, TextureAllocation);
+/// Native sampling packet owns physical-count accounting and an opaque logical reservation.
+pub struct SamplerAllocation {
+    /// The native owner also accounts for the physical device sampler limit.
     native: NativeSampler,
-    /// Device-free sampled-state identity.
-    source: Rc<SamplerVersion>,
+    /// Shared original reservation, with no source-version or domain reference.
+    _charge: BackingCharge,
 }
+notifying!(Sampler, SamplerAllocation);
 
 /// Target compatibility is independent of swapchain geometry or descriptor-pool generations.
 #[derive(Clone, Copy, Eq, PartialEq, Hash)]
-pub(crate) struct Signature {
+pub struct Signature {
     /// Host-selected single color attachment format.
     pub(crate) color: vk::Format,
     /// Optional host depth attachment; clients cannot add one.
     pub(crate) depth: Option<vk::Format>,
 }
 /// Pipeline layouts/descriptors are owned independently of the presentation render pass.
-struct Pipeline {
-    /// Immutable shaders/layout/fixed state and their device-free receipts.
-    source: Rc<PipelineVersion>,
+pub struct PipelineAllocation {
+    /// Opaque definition/shader reservations contain no authority or version back-reference.
+    _charges: [BackingCharge; 3],
     /// Native core, without renderer/cache/domain authority.
     core: Rc<Core>,
     /// Exact target-compatible graphics executable.
@@ -382,7 +538,7 @@ struct Pipeline {
     /// Graphics pipeline layout has no push constants or native client escapes.
     layout: vk::PipelineLayout,
 }
-impl Drop for Pipeline {
+impl Drop for PipelineAllocation {
     /// All command buffers referencing this pipeline have completed before final release.
     fn drop(&mut self) {
         unsafe {
@@ -394,6 +550,7 @@ impl Drop for Pipeline {
         }
     }
 }
+notifying!(Pipeline, PipelineAllocation);
 /// One block's descriptor sets have the same completion lifetime as its prepared commands.
 struct Pool {
     /// Keeps descriptor destruction valid after presentation teardown.
@@ -434,6 +591,8 @@ enum PreparedCommand {
     /// Exact regional normalized depth replacement.
     Depth(f32, Rect),
 }
+/// Native descriptor namespace/slot, exact image/sampler owners and this import's independent charge.
+type SampledBinding = (u32, u32, Rc<Texture>, Rc<Sampler>, BackingCharge);
 /// Consumed native binding owners are explicit; descriptor handles alone do not retain accounting.
 struct PreparedDraw {
     /// Native pipeline and immutable shader/layout dependencies.
@@ -445,9 +604,9 @@ struct PreparedDraw {
     /// Four native sets allocated from the containing block pool.
     groups: Vec<vk::DescriptorSet>,
     /// Actual image/sampler accounting stays alive behind sampled descriptors.
-    _textures: Vec<(u32, u32, Rc<Texture>, Rc<Sampler>)>,
+    _textures: Vec<SampledBinding>,
     /// Copied uniform payload accounting stays alive behind buffer descriptors.
-    _uniforms: Vec<(u32, u32, Rc<Uniform>)>,
+    _uniforms: Vec<(u32, u32, Rc<Buffer>)>,
     /// Checked primitive/instance ranges.
     range: DrawRange,
     /// Host-bounded mapping and independent raster clip.
@@ -496,7 +655,9 @@ struct Transfer {
     /// Destination survives any failed preparation without a COM/device-facade back-reference.
     _image: Rc<Image>,
     /// Generic allocations retain accounting; ordinary native images have no client-domain charge.
-    _receipt: Option<Rc<TextureReceipt>>,
+    _receipt: Option<BackingCharge>,
+    /// Original block capacity follows a failed preparatory upload through uncertain completion.
+    _capacity: Vec<CommandCharge>,
 }
 impl Drop for Transfer {
     /// Successful wait or final device-idle/loss is required before this aggregate is released.
@@ -514,16 +675,10 @@ pub(crate) struct Executor {
     core: Rc<Core>,
     /// Dedicated upload command pool never selects or acquires presentation targets.
     uploads: vk::CommandPool,
-    /// Immutable vertex/index uploads keyed by canonical backing identity.
-    buffers: HashMap<u64, Rc<Buffer>>,
-    /// Immutable sampled pixel versions.
-    textures: HashMap<u64, Rc<Texture>>,
-    /// Immutable sampler versions.
-    samplers: HashMap<u64, Rc<Sampler>>,
-    /// Compatible variants own their own layouts, not the UI/swapchain descriptor pools.
-    pipelines: HashMap<(u64, Signature), Rc<Pipeline>>,
-    /// Exact copied uniform identity stays pinned by each cache entry.
-    uniforms: HashMap<usize, Rc<Uniform>>,
+    /// Receiver remains on the existing executor; only actual native backings clone the producer.
+    retired_tx: Sender<Retirement>,
+    /// Drained after completion, failures, maintenance and shutdown, never owned by Core.
+    retired_rx: Receiver<Retirement>,
     /// Native completion retains private backing/receipts without retaining client domain authority.
     submitted: Vec<Submitted>,
     /// Usually empty because initialization waits before returning; errors retain uncertain use.
@@ -546,15 +701,13 @@ impl Executor {
                 None,
             )
         }
-        .map_err(|error| format!("create graphics upload pool: {error:?}"))?;
+        .map_err(|error| core.failure("create graphics upload pool", error))?;
+        let (retired_tx, retired_rx) = mpsc::channel();
         Ok(Self {
             core,
             uploads,
-            buffers: HashMap::new(),
-            textures: HashMap::new(),
-            samplers: HashMap::new(),
-            pipelines: HashMap::new(),
-            uniforms: HashMap::new(),
+            retired_tx,
+            retired_rx,
             submitted: Vec::new(),
             transfers: Vec::new(),
             health: Health::Active,
@@ -563,7 +716,7 @@ impl Executor {
         })
     }
 
-    /// Polls context-owned fences before retiring cache-only versions and their accounting.
+    /// Polls context-owned fences, releases completed native owners and drains owned retirement packets.
     pub(crate) fn collect(&mut self) -> Result<(), String> {
         let mut failure = None;
         self.submitted.retain(|entry| match unsafe { self.core.device.get_fence_status(entry.fence) } {
@@ -574,25 +727,28 @@ impl Executor {
                 true
             }
         });
-        self.buffers.retain(|_, entry| Rc::strong_count(&entry.source) > 1);
-        self.textures.retain(|_, entry| entry.source.is_alive());
-        self.samplers.retain(|_, entry| Rc::strong_count(&entry.source) > 1);
-        self.pipelines.retain(|_, entry| Rc::strong_count(&entry.source) > 1);
-        self.uniforms.retain(|_, entry| Rc::strong_count(&entry.source) > 1);
+        self.drain();
         match failure {
-            Some(error) => Err(format!("observe graphics completion: {error:?}")),
-            None => Ok(()),
+            Some(error) => Err(self.core.failure("observe graphics completion", error)),
+            None => self.core.check(),
         }
     }
 
     /// Realizes immutable native snapshots against a compatible host-selected render pass.
-    pub(crate) fn prepare(
-        &mut self,
-        block: &Block,
-        pass: vk::RenderPass,
-        signature: Signature,
-        images: &HashMap<neocogi_render_core::TextureId, super::VulkanTexture>,
-    ) -> Result<PreparedBlock, String> {
+    pub(crate) fn prepare(&mut self, block: &Block, pass: vk::RenderPass, signature: Signature) -> Result<PreparedBlock, String> {
+        block.admit_on(&self.core).map_err(|error| error.to_string())?;
+        let first = self.transfers.len();
+        let result = self.prepare_inner(block, pass, signature);
+        if result.is_err() {
+            for transfer in &mut self.transfers[first..] {
+                transfer._capacity = block.retain_capacity();
+            }
+        }
+        result
+    }
+    /// Converts authenticated CPU captures, publishing no partial prepared block on failure.
+    fn prepare_inner(&mut self, block: &Block, pass: vk::RenderPass, signature: Signature) -> Result<PreparedBlock, String> {
+        block.admit_on(&self.core).map_err(|error| error.to_string())?;
         if self.unusable() {
             return Err("Vulkan graphics executor is unavailable after a native submission failure".into());
         }
@@ -603,9 +759,7 @@ impl Executor {
         commands.try_reserve_exact(block.commands().len()).map_err(|error| error.to_string())?;
         for command in block.commands() {
             commands.push(match command {
-                Command::Draw(draw) => {
-                    PreparedCommand::Draw(self.draw(draw, pass, signature, pool.as_ref().ok_or("missing graphics descriptor pool")?, images)?)
-                }
+                Command::Draw(draw) => PreparedCommand::Draw(self.draw(draw, pass, signature, pool.as_ref().ok_or("missing graphics descriptor pool")?)?),
                 Command::ClearColor { rgba, clip, .. } => PreparedCommand::Color(*rgba, *clip),
                 Command::ClearDepth { depth, clip, .. } => {
                     if signature.depth.is_none() {
@@ -657,29 +811,23 @@ impl Executor {
                 None,
             )
         }
-        .map_err(|error| format!("create graphics descriptor pool: {error:?}"))?;
+        .map_err(|error| self.core.failure("create graphics descriptor pool", error))?;
         Ok(Some(Pool { core: self.core.clone(), raw }))
     }
 
     /// Captures concrete native owners before constructing descriptor writes into the private pool.
-    fn draw(
-        &mut self,
-        draw: &Draw,
-        pass: vk::RenderPass,
-        signature: Signature,
-        pool: &Pool,
-        images: &HashMap<neocogi_render_core::TextureId, super::VulkanTexture>,
-    ) -> Result<PreparedDraw, String> {
-        let pipeline = self.pipeline(draw.pipeline.clone(), pass, signature)?;
+    fn draw(&mut self, draw: &Draw, pass: vk::RenderPass, signature: Signature, pool: &Pool) -> Result<PreparedDraw, String> {
+        let mut preparation = Preparation { executor: self, pass };
+        let pipeline = draw.pipeline.native(signature, &mut preparation)?;
         let mut vertices = Vec::new();
         for binding in &draw.vertex_buffers {
-            vertices.push((binding.slot, self.buffer(binding.buffer.clone())?, binding.offset));
+            vertices.push((binding.slot, binding.buffer.native(&mut preparation)?, binding.offset));
         }
         let index = draw
             .index
             .as_ref()
             .map(|binding| {
-                self.buffer(binding.buffer.clone()).map(|buffer| {
+                binding.buffer.native(&mut preparation).map(|buffer| {
                     (
                         buffer,
                         if binding.format == GpuIndexFormat::U16 {
@@ -697,23 +845,24 @@ impl Executor {
             textures.push((
                 texture_group(binding.stage),
                 binding.slot,
-                self.texture(binding.texture.clone(), images)?,
-                self.sampler(binding.sampler.clone())?,
+                binding.texture.native(&mut preparation)?,
+                binding.sampler.native(&mut preparation)?,
+                binding.texture.receipt(),
             ));
         }
         let mut uniforms = Vec::new();
         for binding in &draw.uniforms {
-            uniforms.push((uniform_group(binding.stage), binding.slot, self.uniform(binding.data.clone())?));
+            uniforms.push((uniform_group(binding.stage), binding.slot, binding.data.native(&mut preparation)?));
         }
         let groups = unsafe {
             self.core
                 .device
                 .allocate_descriptor_sets(&vk::DescriptorSetAllocateInfo::default().descriptor_pool(pool.raw).set_layouts(&pipeline.groups))
         }
-        .map_err(|error| format!("allocate graphics descriptor sets: {error:?}"))?;
+        .map_err(|error| self.core.failure("allocate graphics descriptor sets", error))?;
         // Descriptor arrays remain live for the synchronous update call. The prepared draw keeps
         // every referenced resource owner; Vulkan descriptor sets do not retain logical receipts.
-        for (group, slot, texture, sampler) in &textures {
+        for (group, slot, texture, sampler, _) in &textures {
             let image = [vk::DescriptorImageInfo::default()
                 .image_view(texture.native.view)
                 .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)];
@@ -763,40 +912,29 @@ impl Executor {
         })
     }
 
-    /// Host-visible immutable data avoids a hidden pending transfer lifetime for vertex/index bytes.
-    fn buffer(&mut self, source: Rc<BufferVersion>) -> Result<Rc<Buffer>, String> {
-        if let Some(value) = self.buffers.get(&source.id()) {
-            return Ok(value.clone());
-        }
+    /// Host-visible initialization has no queued transfer, while its opaque receipt follows storage.
+    fn buffer(&mut self, source: &BufferVersion) -> Result<Rc<Buffer>, String> {
         let usage = if source.desc().role == GpuBufferRole::Index {
             vk::BufferUsageFlags::INDEX_BUFFER
         } else {
             vk::BufferUsageFlags::VERTEX_BUFFER
         };
         let allocation = Allocation::new(&self.core, source.bytes().len(), source.bytes().as_slice(), usage)?;
-        let id = source.id();
-        let value = Rc::new(Buffer { source, allocation });
-        self.buffers.insert(id, value.clone());
-        Ok(value)
+        Ok(Rc::new(Buffer {
+            owner: Some(BufferAllocation { allocation, _charge: source.receipt() }),
+            retired: self.retired_tx.clone(),
+        }))
     }
-
-    /// Exact copied uniforms use the same explicit initialized native allocation mechanism.
-    fn uniform(&mut self, source: Rc<UniformData>) -> Result<Rc<Uniform>, String> {
-        let key = Rc::as_ptr(&source) as usize;
-        if let Some(value) = self.uniforms.get(&key) {
-            return Ok(value.clone());
-        }
+    /// Copied uniforms use the same native storage ownership as vertex/index bytes.
+    fn uniform(&mut self, source: &UniformData) -> Result<Rc<Buffer>, String> {
         let allocation = Allocation::new(&self.core, source.bytes().len(), Some(source.bytes()), vk::BufferUsageFlags::UNIFORM_BUFFER)?;
-        let value = Rc::new(Uniform { source, allocation });
-        self.uniforms.insert(key, value.clone());
-        Ok(value)
+        Ok(Rc::new(Buffer {
+            owner: Some(BufferAllocation { allocation, _charge: source.receipt() }),
+            retired: self.retired_tx.clone(),
+        }))
     }
-
-    /// Sampling state is immutable, one-level and separate from image ownership.
-    fn sampler(&mut self, source: Rc<SamplerVersion>) -> Result<Rc<Sampler>, String> {
-        if let Some(value) = self.samplers.get(&source.id()) {
-            return Ok(value.clone());
-        }
+    /// One normalized native sampler owns its exact physical count until packet destruction.
+    fn sampler(&mut self, source: &SamplerVersion) -> Result<Rc<Sampler>, String> {
         let desc = source.desc();
         let native = self.core.sampler(
             &vk::SamplerCreateInfo::default()
@@ -809,70 +947,47 @@ impl Executor {
                 .min_lod(0.)
                 .max_lod(0.),
         )?;
-        let id = source.id();
-        let value = Rc::new(Sampler { source, native });
-        self.samplers.insert(id, value.clone());
-        Ok(value)
+        Ok(Rc::new(Sampler {
+            owner: Some(SamplerAllocation { native, _charge: source.receipt() }),
+            retired: self.retired_tx.clone(),
+        }))
     }
-
-    /// Private UI uploads have the same completion and native failure boundary as block preparation.
-    pub(crate) fn prepare_texture(
-        &mut self,
-        source: Rc<TextureVersion>,
-        images: &HashMap<neocogi_render_core::TextureId, super::VulkanTexture>,
-    ) -> Result<(), String> {
-        if self.unusable() {
-            return Err("Vulkan graphics executor is unavailable".into());
-        }
+    /// Private UI uploads share the exact same immutable version-owned slot and completion path.
+    pub(crate) fn prepare_texture(&mut self, source: Rc<TextureVersion>) -> Result<(), String> {
         self.collect()?;
-        self.texture(source, images).map(|_| ())
+        source
+            .native(&mut Preparation {
+                executor: self,
+                pass: vk::RenderPass::null(),
+            })
+            .map(|_| ())
     }
-
-    /// Image initialization completes on the shared queue before target acquisition; no hidden
-    /// pending-write storage depends on a later successful frame to retire.
-    fn texture(&mut self, source: Rc<TextureVersion>, images: &HashMap<neocogi_render_core::TextureId, super::VulkanTexture>) -> Result<Rc<Texture>, String> {
-        if let Some(value) = self.textures.get(&source.id()) {
-            return Ok(value.clone());
+    /// Wrap actual same-core native pixels without retaining any public COM image or source version.
+    pub(crate) fn own_image(&self, native: Rc<Image>, size: Size, charge: Option<BackingCharge>) -> Rc<Texture> {
+        Rc::new(Texture {
+            owner: Some(TextureAllocation { native, size, _charge: charge }),
+            retired: self.retired_tx.clone(),
+        })
+    }
+    /// Ordinary and generic images share explicit initialized uploads with no renderer-global map.
+    pub(crate) fn create_image(&mut self, size: Size, format: vk::Format, pixels: Option<&[u8]>, charge: Option<BackingCharge>) -> Result<Rc<Texture>, String> {
+        let native = self.upload_image(size, format, pixels, charge.clone())?;
+        Ok(self.own_image(native, size, charge))
+    }
+    /// Only actual native backings clone a producer; source versions and Core own none.
+    pub(crate) fn sender(&self) -> Sender<Retirement> {
+        self.retired_tx.clone()
+    }
+    /// Drains sender-free owned packets, including packets arriving while previous packets are dropped.
+    fn drain(&mut self) {
+        while let Ok(packet) = self.retired_rx.try_recv() {
+            packet.discard();
         }
-        if let Some(import) = source.imported_id() {
-            let native = images
-                .get(&import)
-                .and_then(|image| image.image.native.as_ref())
-                .ok_or("imported UI image is unavailable on this device")?
-                .clone();
-            let value = Rc::new(Texture {
-                native,
-                source: Rc::new(source.receipt()),
-            });
-            self.textures.insert(source.id(), value.clone());
-            return Ok(value);
-        }
-        let receipt = Rc::new(source.receipt());
-        let format = if source.desc().format == GpuTextureFormat::Rgba8Srgb {
-            vk::Format::R8G8B8A8_SRGB
-        } else {
-            vk::Format::R8G8B8A8_UNORM
-        };
-        let native = self.upload_image(
-            source.desc().size,
-            format,
-            source.pixels().ok_or("missing texture pixel storage")?.as_slice(),
-            Some(receipt.clone()),
-        )?;
-        let value = Rc::new(Texture { native, source: receipt });
-        self.textures.insert(source.id(), value.clone());
-        Ok(value)
     }
 
     /// Shared ordinary/generic initialization retains commands, source and destination before
     /// submitting. A failed wait is terminal and keeps every referenced owner until idle/loss.
-    pub(crate) fn upload_image(
-        &mut self,
-        size: Size,
-        format: vk::Format,
-        pixels: Option<&[u8]>,
-        receipt: Option<Rc<TextureReceipt>>,
-    ) -> Result<Rc<Image>, String> {
+    pub(crate) fn upload_image(&mut self, size: Size, format: vk::Format, pixels: Option<&[u8]>, receipt: Option<BackingCharge>) -> Result<Rc<Image>, String> {
         if self.unusable() {
             return Err("Vulkan graphics executor is unavailable".into());
         }
@@ -909,11 +1024,11 @@ impl Executor {
                     .command_buffer_count(1),
             )
         }
-        .map_err(|error| format!("allocate image upload command: {error:?}"))?[0];
+        .map_err(|error| core.failure("allocate image upload command", error))?[0];
         let pool = self.uploads;
         let command = ResourceGuard::new(command, |value| unsafe { device.free_command_buffers(pool, &[value]) });
         let fence = ResourceGuard::new(
-            unsafe { device.create_fence(&vk::FenceCreateInfo::default(), None) }.map_err(|error| format!("create image upload fence: {error:?}"))?,
+            unsafe { device.create_fence(&vk::FenceCreateInfo::default(), None) }.map_err(|error| core.failure("create image upload fence", error))?,
             |value| unsafe { device.destroy_fence(value, None) },
         );
         unsafe {
@@ -922,7 +1037,7 @@ impl Executor {
                     *command.get(),
                     &vk::CommandBufferBeginInfo::default().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT),
                 )
-                .map_err(|error| format!("begin image upload: {error:?}"))?;
+                .map_err(|error| core.failure("begin image upload", error))?;
             let transition = |old, new, src, dst| {
                 vk::ImageMemoryBarrier::default()
                     .old_layout(old)
@@ -968,7 +1083,7 @@ impl Executor {
             );
             device
                 .end_command_buffer(*command.get())
-                .map_err(|error| format!("end image upload: {error:?}"))?;
+                .map_err(|error| core.failure("end image upload", error))?;
         }
         self.transfers.try_reserve(1).map_err(|error| error.to_string())?;
         let command = command.into_inner();
@@ -981,6 +1096,7 @@ impl Executor {
             _staging: staging,
             _image: native.clone(),
             _receipt: receipt,
+            _capacity: Vec::new(),
         });
         // The aggregate is installed before submission: neither an error nor a failed wait can
         // release queued source/destination objects while native completion remains uncertain.
@@ -990,7 +1106,7 @@ impl Executor {
         #[cfg(test)]
         let failure = self.upload_failure.take();
         #[cfg(test)]
-        let submission = submission.and_then(|()| match failure {
+        let submission = submission.and(match failure {
             Some(UploadFailure::Submit) => Err(vk::Result::ERROR_UNKNOWN),
             _ => Ok(()),
         });
@@ -1004,7 +1120,7 @@ impl Executor {
         });
         if let Err(error) = completion {
             self.health = Health::Failed;
-            return Err(format!("complete graphics image upload: {error:?}"));
+            return Err(self.core.failure("complete graphics image upload", error));
         }
         self.transfers.pop();
         Ok(native)
@@ -1012,17 +1128,13 @@ impl Executor {
 
     /// Host acquisition must also reject a failed executor, including frames without client blocks.
     pub(crate) fn unusable(&self) -> bool {
-        matches!(self.health, Health::Failed)
+        matches!(self.health, Health::Failed) || self.core.lost.get()
     }
 }
 
 impl Executor {
     /// Creates one exact layout/fixed-state executable for the compatible attachment signature.
-    fn pipeline(&mut self, source: Rc<PipelineVersion>, pass: vk::RenderPass, signature: Signature) -> Result<Rc<Pipeline>, String> {
-        let key = (source.id(), signature);
-        if let Some(value) = self.pipelines.get(&key) {
-            return Ok(value.clone());
-        }
+    fn pipeline(&mut self, source: &PipelineVersion, pass: vk::RenderPass, signature: Signature) -> Result<Rc<Pipeline>, String> {
         if signature.depth.is_none() && (source.info().depth_write || source.info().depth_compare != GpuCompare::Always) {
             return Err("graphics pipeline requires a host depth attachment".into());
         }
@@ -1063,23 +1175,23 @@ impl Executor {
                 }
             }
             let raw = unsafe { device.create_descriptor_set_layout(&vk::DescriptorSetLayoutCreateInfo::default().bindings(&bindings), None) }
-                .map_err(|error| format!("create graphics binding layout: {error:?}"))?;
+                .map_err(|error| core.failure("create graphics binding layout", error))?;
             groups.push(ResourceGuard::new(raw, |value| unsafe { device.destroy_descriptor_set_layout(value, None) }));
         }
         let raw_groups: Vec<_> = groups.iter().map(|value| *value.get()).collect();
         let layout = ResourceGuard::new(
             unsafe { device.create_pipeline_layout(&vk::PipelineLayoutCreateInfo::default().set_layouts(&raw_groups), None) }
-                .map_err(|error| format!("create graphics pipeline layout: {error:?}"))?,
+                .map_err(|error| core.failure("create graphics pipeline layout", error))?,
             |value| unsafe { device.destroy_pipeline_layout(value, None) },
         );
         let vertex = ResourceGuard::new(
             unsafe { device.create_shader_module(&vk::ShaderModuleCreateInfo::default().code(&source.vertex().artifact().spirv), None) }
-                .map_err(|error| format!("create vertex shader: {error:?}"))?,
+                .map_err(|error| core.failure("create vertex shader", error))?,
             |value| unsafe { device.destroy_shader_module(value, None) },
         );
         let fragment = ResourceGuard::new(
             unsafe { device.create_shader_module(&vk::ShaderModuleCreateInfo::default().code(&source.fragment().artifact().spirv), None) }
-                .map_err(|error| format!("create fragment shader: {error:?}"))?,
+                .map_err(|error| core.failure("create fragment shader", error))?,
             |value| unsafe { device.destroy_shader_module(value, None) },
         );
         let vertex_entry = CString::new(source.vertex().artifact().entry.as_bytes()).map_err(|_| "invalid vertex entry name")?;
@@ -1176,20 +1288,23 @@ impl Executor {
                         device.destroy_pipeline(value, None);
                     }
                 }
-                return Err(format!("create graphics pipeline: {error:?}"));
+                return Err(core.failure("create graphics pipeline", error));
             }
         };
         let groups: Vec<_> = groups.into_iter().map(ResourceGuard::into_inner).collect();
         // Exactly four layouts were created above, without foreign callbacks or count inputs.
         let groups: [vk::DescriptorSetLayout; 4] = groups.try_into().map_err(|_| "internal graphics layout count")?;
-        let value = Rc::new(Pipeline {
-            source,
+        let owner = PipelineAllocation {
+            _charges: source.receipts(),
             core: core.clone(),
             raw,
             groups,
             layout: layout.into_inner(),
+        };
+        let value = Rc::new(Pipeline {
+            owner: Some(owner),
+            retired: self.retired_tx.clone(),
         });
-        self.pipelines.insert(key, value.clone());
         Ok(value)
     }
 
@@ -1303,11 +1418,12 @@ impl Executor {
     }
 }
 impl Drop for Executor {
-    /// All pending native uses end before caches, descriptor pools and the upload pool are released.
+    /// All pending native uses end before descriptors, retirement packets and the upload pool are released.
     fn drop(&mut self) {
         self.core.wait_idle();
         self.submitted.clear();
         self.transfers.clear();
+        self.drain();
         unsafe {
             self.core.device.destroy_command_pool(self.uploads, None);
         }

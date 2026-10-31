@@ -3,7 +3,6 @@
 use neocogi_render_core::platform::*;
 use neocogi_render_core::abi::*;
 use neocogi_render_support::com::{PreparedFrame, Resources};
-use neocogi_render_core::TextureId;
 use neocogi_com::{ComInterface, ComPtr, ComRef, IUnknown, INcStringAbi, NcCopyFromBufferOffset, NcStatus, NcString, NC_E_INVALID_ARG, com_object};
 use std::{
     cell::{Cell, RefCell},
@@ -28,7 +27,7 @@ mod surface;
 use resources::TextureRecord;
 
 /// Prepared resources are concrete native records, never erased objects or callbacks.
-type Prepared = PreparedFrame;
+type Prepared = PreparedFrame<gpu::Backend>;
 
 #[com_object(neocogi_render_core::platform::Platform)]
 /// Native bootstrap; initialization is fallible and no native subsystem crosses the COM boundary.
@@ -81,16 +80,14 @@ struct RenderState {
     prepared: Prepared,
 }
 
-/// Shared native lifetime retained by window, image and generic graphics capabilities.
+/// Existing driver facade retained by active window/surface/host capabilities; images retain only Core.
 struct Device {
     /// None throughout preparation and submission; reentrant GPU operations receive RENDER_E_BUSY.
     render: RefCell<Option<RenderState>>,
     /// Generic resource provenance and CPU recording shared with this native device.
-    logical: neocogi_render_gpu::GpuDevice,
+    logical: neocogi_render_gpu::GpuDevice<gpu::Backend>,
     /// Canonical COM identity maps contain weak native records and never own their COM objects.
-    textures: RefCell<HashMap<usize, Weak<TextureRecord>>>,
-    /// Final texture releases during a detached frame wait until native execution has ended.
-    retired: RefCell<Vec<TextureId>>,
+    textures: Rc<RefCell<HashMap<usize, Weak<TextureRecord>>>>,
     /// Polling can access a live SDL owner even while renderer state is detached.
     window: gpu::Window,
     /// SDL subsystems outlive the backend and every native window clone.
@@ -116,13 +113,6 @@ impl Device {
         self.logical.set_diagnostic(error.to_string());
         RENDER_E_BACKEND
     }
-    /// Deletes immediately when idle; a live frame's ownership transaction drains the same queue on Drop.
-    fn retire(&self, id: TextureId) {
-        self.retired.borrow_mut().push(id);
-        if let Ok(access) = self.access() {
-            drop(access);
-        }
-    }
 }
 impl RenderAccess<'_> {
     /// Gives local Rust execution exclusive access without lending it through a COM object.
@@ -136,9 +126,6 @@ impl Drop for RenderAccess<'_> {
         let mut state = self.state.take().expect("render transaction restored once");
         state.prepared.clear();
         if let Err(error) = state.gpu.maintain() {
-            self.device.failure(error);
-        }
-        if let Err(error) = state.gpu.retire(&mut self.device.retired.borrow_mut()) {
             self.device.failure(error);
         }
         *self.device.render.borrow_mut() = Some(state);
@@ -170,18 +157,10 @@ impl Drop for Polling<'_> {
     }
 }
 
-#[com_object(interfaces(IRenderDeviceLease))]
-/// Private lifetime marker; no native operation or host projection can be queried from it.
-struct DeviceLease {
-    /// Public resource/domain owners keep the native context alive through final release.
-    _device: Rc<Device>,
-}
-impl IRenderDeviceLease for DeviceLease {}
 impl IRenderClientFactory for WindowObject {
     /// Publishes only a narrow domain controller, then clients receive its separate factory.
     fn create_client(&self, limits: RenderClientLimits) -> Result<neocogi_com::ComBox<IRenderClientDomainAbi>, NcStatus> {
-        let lease = DeviceLease::from_value(DeviceLease { _device: self.device.clone() }).query()?;
-        self.device.logical.create_client_with_lease(limits, lease)
+        self.device.logical.create_client(limits)
     }
 }
 #[com_object(interfaces(IRenderHost))]
@@ -209,9 +188,12 @@ impl IRenderHost for GraphicsHost {
         image: ComRef<'_, ITextureAbi>,
     ) -> Result<neocogi_com::ComBox<IGpuTextureAbi>, NcStatus> {
         let _access = self.device.access()?;
-        let image = image.try_add_ref()?;
-        let record = self.device.texture(image.clone())?;
-        self.device.logical.import_ui_texture(resources, record.id, image)
+        // Finish canonical QI and the receiver-owned foreign Release before final admission.
+        let record = {
+            let image = image.try_add_ref()?;
+            self.device.texture(image)?
+        };
+        self.device.logical.import_ui_texture(resources, record.image.clone())
     }
 
     /// Logical provenance is checked while native state is detached; driver calls consume owned data.
@@ -221,10 +203,9 @@ impl IRenderHost for GraphicsHost {
         access.state().gpu.prepare_texture(version).map_err(|error| self.device.failure(error))
     }
 
-    /// Private compositor resources retain the same narrow native lifetime lease as client resources.
+    /// Private compositor domains share the physical core without retaining this driver facade.
     fn create_ui_client(&self, limits: RenderClientLimits) -> Result<neocogi_com::ComBox<IRenderClientDomainAbi>, NcStatus> {
-        let lease = DeviceLease::from_value(DeviceLease { _device: self.device.clone() }).query()?;
-        self.device.logical.create_ui_client(limits, Some(lease))
+        self.device.logical.create_ui_client(limits)
     }
     /// Separate broker identity prevents indirect QueryInterface access to the window.
     fn recording_broker(&self) -> Result<ComPtr<IRenderViewBrokerAbi>, NcStatus> {

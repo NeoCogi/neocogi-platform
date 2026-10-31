@@ -98,7 +98,8 @@ the importer copies plain immutable data and rechecks lengths/metadata. It drops
 all report/export owners outside registry borrows while provider P and the busy
 gate remain live, refunds provider P, then checks domain openness after the last
 foreign Release. Only then does it publish one complete shader retaining receiving
-P. Native caches and completion retain that plain snapshot and device-free charge,
+P. Pipeline versions retain that immutable shader snapshot; native executables and
+completion retain opaque shared definition/shader charges,
 with no foreign compiler calls during drawing or destruction.
 
 ## Renderer handoff and diagnostics

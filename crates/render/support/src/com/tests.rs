@@ -1,13 +1,14 @@
 //! Real COM streams exercise generic provenance, bounded intake, closure and cleanup.
 use super::*;
 use neocogi_com::{com_object, ComBox, ComPtr, NC_E_DROPPED};
-use neocogi_render_gpu::GpuDevice;
+type GpuDevice = neocogi_render_gpu::GpuDevice<neocogi_render_gpu::testing::Backend>;
 use std::cell::{Cell, RefCell};
 
 /// Assembly resolves only canonical blocks registered on this exact logical device.
 struct Resolver(GpuDevice);
 impl Resources for Resolver {
-    fn view(&self, block: WeakComBox<IRenderViewBlockAbi>) -> Result<Rc<Block>, NcStatus> {
+    type Backend = neocogi_render_gpu::testing::Backend;
+    fn view(&self, block: WeakComBox<IRenderViewBlockAbi>) -> Result<Rc<Block<neocogi_render_gpu::testing::Backend>>, NcStatus> {
         self.0.block_snapshot(block.as_com_ref())
     }
 }
@@ -77,7 +78,7 @@ const ROOT: Rect = Rect { x: 0, y: 0, width: 10, height: 10 };
 /// Preparation owns real snapshots after public block expiry, until receiver cleanup.
 #[test]
 fn prepared_blocks_preserve_order_and_release_resources_on_clear() {
-    let device = GpuDevice::new(
+    let device = neocogi_render_gpu::testing::device(
         nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
             .query()
             .unwrap(),
@@ -103,7 +104,7 @@ fn prepared_blocks_preserve_order_and_release_resources_on_clear() {
 /// Invalid envelopes reject before the first callback or allocation driven by an unbounded count.
 #[test]
 fn envelope_limits_precede_stream_callbacks() {
-    let device = GpuDevice::new(
+    let device = neocogi_render_gpu::testing::device(
         nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
             .query()
             .unwrap(),
@@ -128,12 +129,12 @@ fn envelope_limits_precede_stream_callbacks() {
 /// Later failure cannot leave an earlier valid prefix ready for native execution.
 #[test]
 fn short_foreign_and_outside_blocks_clear_the_entire_preparation() {
-    let device = GpuDevice::new(
+    let device = neocogi_render_gpu::testing::device(
         nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
             .query()
             .unwrap(),
     );
-    let other = GpuDevice::new(
+    let other = neocogi_render_gpu::testing::device(
         nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
             .query()
             .unwrap(),
@@ -159,7 +160,7 @@ fn short_foreign_and_outside_blocks_clear_the_entire_preparation() {
 /// Closing the first controller in a later accessor must fail the final admission gate.
 #[test]
 fn all_domains_are_rechecked_after_the_last_foreign_call() {
-    let device = GpuDevice::new(
+    let device = neocogi_render_gpu::testing::device(
         nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
             .query()
             .unwrap(),

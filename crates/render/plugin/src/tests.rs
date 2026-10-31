@@ -3,7 +3,6 @@
 use super::*;
 use neocogi_com::INcStringComPtrExt;
 use neocogi_com::ComBox;
-use neocogi_gfx_support::abi::RenderVertex;
 use neocogi_render_gpu::source::{Bytes, PipelineDesc};
 
 #[cfg(feature = "glow")]
@@ -81,10 +80,10 @@ impl IRenderStream for Stream {
             Some(RENDER_E_BUSY)
         );
         let retire = self.input.retire.borrow_mut().take();
-        let retired = retire.is_some();
+        let retired = retire.as_ref().map(|image| identity(image).unwrap());
         drop(retire);
-        if retired {
-            assert_eq!(self.input.device.upgrade().unwrap().retired.borrow().len(), 1);
+        if let Some(key) = retired {
+            assert!(!self.input.device.upgrade().unwrap().textures.borrow().contains_key(&key));
         }
         self.input.reentries.set(self.input.reentries.get() + 1);
         Ok(self.input.block.borrow().downgrade())
@@ -223,7 +222,6 @@ fn native_order_ownership_reentry_and_final_release() {
     assert_eq!(input.reentries.get(), 1);
     {
         let owner = device.upgrade().unwrap();
-        assert!(owner.retired.borrow().is_empty());
         assert!(!owner.textures.borrow().contains_key(&spare_key));
         assert!(owner.render.borrow().as_ref().unwrap().prepared.blocks().is_empty());
         #[cfg(feature = "glow")]
@@ -292,10 +290,12 @@ fn native_order_ownership_reentry_and_final_release() {
     }
     drop((foreign_resources, foreign_controller, foreign_clients, foreign_broker, foreign_factory, foreign));
     assert!(foreign_device.upgrade().is_none());
+    let physical = Rc::downgrade(&device.upgrade().unwrap().access().unwrap().state().gpu.core());
     drop((stream, input, resources, controller, clients, broker, factory, renderer, unknown, platform));
-    assert!(device.upgrade().is_some(), "image must retain window and context after public window release");
+    assert!(device.upgrade().is_none(), "immutable images must release the driver facade");
+    assert!(physical.upgrade().is_some(), "image retains its physical native lifetime");
     drop(background);
-    assert!(device.upgrade().is_none(), "no registry or idle prepared-frame cycle may retain the device");
+    assert!(physical.upgrade().is_none(), "metadata and weak registry cannot retain the physical core");
 }
 
 #[com_object(interfaces(IInputSink))]
@@ -375,3 +375,63 @@ fn input_delivery(unknown: &ComPtr<IUnknown>, device: &Weak<Device>) {
     assert_eq!(Rc::strong_count(&received), 1);
 }
 
+#[com_object(interfaces(IGpuDataSource))]
+/// Foreign byte callbacks must observe the same detached native transaction as stream callbacks.
+struct InitialReentry {
+    /// Rendering here must reject before acquiring or clearing another target.
+    renderer: ComPtr<IRendererAbi>,
+    /// Zero-block stream needs no logical graphics resource ownership.
+    empty: ComPtr<IRenderStreamAbi>,
+    /// Proves the actual generated source getter executed, rather than merely receiving Busy early.
+    calls: Rc<Cell<u32>>,
+}
+impl IGpuDataSource for InitialReentry {
+    fn byte_count(&self) -> Result<u64, NcStatus> {
+        self.calls.set(self.calls.get() + 1);
+        assert_eq!(
+            self.renderer.render(RenderInfo { block_count: 0, ..info() }, self.empty.as_com_ref()),
+            Err(RENDER_E_BUSY)
+        );
+        Ok(4)
+    }
+    fn read(&self, mut output: neocogi_com::NcOutputWriter<'_, u8>) -> Result<(), NcStatus> {
+        if output.offset() != 0 || output.capacity() != 4 {
+            return Err(NC_E_INVALID_ARG);
+        }
+        output.extend_from_slice(&[0; 4])
+    }
+}
+
+/// Ordinary optional image sources cross real COM while native execution remains detached and recoverable.
+#[test]
+#[ignore = "requires a native renderer; run with SDL_VIDEODRIVER=offscreen for GL"]
+fn ordinary_image_source_reentry_cannot_acquire_the_native_renderer() {
+    let _session = native_session();
+    let platform = PlatformObject::new(
+        nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
+            .query()
+            .unwrap(),
+    );
+    let native = platform.window("initial source reentry", SIZE).unwrap();
+    let window = WindowObject::from_value(native);
+    let renderer: ComPtr<IRendererAbi> = window.query().unwrap();
+    let factory: ComPtr<ITextureFactoryAbi> = window.query().unwrap();
+    let empty: ComPtr<IRenderStreamAbi> = Empty::from_value(Empty).query().unwrap();
+    let calls = Rc::new(Cell::new(0));
+    let source: ComPtr<IGpuDataSourceAbi> = InitialReentry::from_value(InitialReentry {
+        renderer: renderer.clone(),
+        empty: empty.clone(),
+        calls: calls.clone(),
+    })
+    .query()
+    .unwrap();
+    let image = factory
+        .create_texture(
+            Size { width: 1, height: 1 },
+            neocogi_render_core::source::initial(Some(source)).borrow().unwrap(),
+        )
+        .unwrap();
+    assert!(calls.get() > 0);
+    assert_eq!(image.size().unwrap(), Size { width: 1, height: 1 });
+    renderer.render(RenderInfo { block_count: 0, ..info() }, empty.as_com_ref()).unwrap();
+}

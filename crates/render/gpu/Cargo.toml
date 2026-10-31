@@ -16,3 +16,11 @@ neocogi-shader-core.workspace = true
 [dev-dependencies]
 neocogi-shader-compiler.workspace = true
 neocogi-com = { workspace = true, features = ["runtime"] }
+
+[features]
+# Only explicit headless fixtures select the virtual native family.
+test-support = []
+
+[[test]]
+name="shader_budget"
+required-features=["test-support"]

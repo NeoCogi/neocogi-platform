@@ -718,6 +718,7 @@ dependencies = [
  "neocogi-render-support",
  "neocogi-shader-compiler",
  "sdl2",
+ "web-sys",
 ]
 
 [[package]]

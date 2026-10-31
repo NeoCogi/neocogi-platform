@@ -35,7 +35,11 @@
 //! and submitted blocks retain typed native owners through completion. GFX owns all UI
 //! shaders, vertex layouts, atlas selection and batching.
 
-use std::{collections::HashMap, rc::Rc};
+use std::{
+    rc::Rc,
+    sync::mpsc::{Sender, SendError},
+};
+use neocogi_render_core::abi::Size;
 
 use ash::{khr, vk, Entry};
 use neocogi_render_core::prelude::*;
@@ -47,7 +51,10 @@ use neocogi_render_support::resource_guard::ResourceGuard;
 mod generic;
 mod offscreen;
 mod pass;
-pub use generic::PreparedBlock;
+pub use generic::{Backend, Core, Texture as Image, PreparedBlock};
+#[cfg(test)]
+#[path = "../../gpu/tests/support/sampled.rs"]
+mod sampled;
 #[cfg(test)]
 mod surface_tests;
 
@@ -70,10 +77,7 @@ enum FrameTarget {
     /// Native image and binary semaphores follow the established acquire/present state machine.
     Window(AcquiredVulkanFrame),
     /// Device images are selected without touching any swapchain synchronization slot.
-    Texture {
-        /// Fresh output whose previous pixels have never been published.
-        output: TextureId,
-    },
+    Texture(Rc<OutputState>),
 }
 
 /// Readiness of complete presentation storage and the active acquired-image lifecycle.
@@ -178,8 +182,6 @@ enum RebuildPoint {
 /// Vulkan presentation and texture ownership with one validated generic graphics executor.
 /// Prepared commands never expose the device, render pass or command buffer to clients.
 pub struct VulkanRenderer {
-    /// Native immutable images shared by ordinary UI capabilities and generic bindings.
-    textures: HashMap<TextureId, VulkanTexture>,
     /// Generic caches and completion owners drop before context-owned fences and presentation.
     generic: generic::Executor,
     /// Private UI-only submission state is destroyed before its logical device.
@@ -203,7 +205,6 @@ impl VulkanRenderer {
         let generic = generic::Executor::new(context.core.clone())?;
 
         Ok(Self {
-            textures: HashMap::new(),
             offscreen: None,
             context,
             commands: Vec::new(),
@@ -214,6 +215,10 @@ impl VulkanRenderer {
         })
     }
 
+    /// Retains only physical device lifetime; queued work and input remain with their existing owners.
+    pub fn core(&self) -> Rc<Core> {
+        self.context.core.clone()
+    }
     /// Every public native-work entry checks the genuine retained lifecycle owners.
     /// Collection, diagnostics and destruction remain available after terminal failure.
     fn ensure_usable(&self) -> Result<()> {
@@ -241,7 +246,7 @@ impl VulkanRenderer {
     }
 
     /// Compiles immutable resources before acquiring or clearing a presentation target.
-    pub fn prepare_block(&mut self, block: &neocogi_render_gpu::record::Block, offscreen: bool) -> Result<PreparedBlock> {
+    pub fn prepare_block(&mut self, block: &neocogi_render_gpu::record::Block<Backend>, offscreen: bool) -> Result<PreparedBlock> {
         self.ensure_usable()?;
         if offscreen {
             if !block.is_ui() {
@@ -257,16 +262,15 @@ impl VulkanRenderer {
                     color: vk::Format::R8G8B8A8_UNORM,
                     depth: None,
                 },
-                &self.textures,
             );
         }
-        self.generic.prepare(block, self.context.render_pass, self.context.signature(), &self.textures)
+        self.generic.prepare(block, self.context.render_pass, self.context.signature())
     }
 
     /// Trusted UI resource preparation never acquires or clears a rendering target.
-    pub fn prepare_texture(&mut self, texture: Rc<neocogi_render_gpu::resource::TextureVersion>) -> Result<()> {
+    pub fn prepare_texture(&mut self, texture: Rc<neocogi_render_gpu::resource::TextureVersion<Backend>>) -> Result<()> {
         self.ensure_usable()?;
-        self.generic.prepare_texture(texture, &self.textures)
+        self.generic.prepare_texture(texture)
     }
 
     /// Converts a packed clear color into the Vulkan clear value used for the render pass.
@@ -294,23 +298,20 @@ impl VulkanRenderer {
     }
 
     /// Finalizes the frame by submitting the queued generic blocks to Vulkan.
-    fn finish(&mut self, target: FrameTarget) -> Result<()> {
+    fn finish(&mut self, target: FrameTarget) -> Result<Option<Rc<Image>>> {
         match target {
-            FrameTarget::Window(acquired) => self.finish_window(acquired),
-            FrameTarget::Texture { output } => {
+            FrameTarget::Window(acquired) => self.finish_window(acquired).map(|_| None),
+            FrameTarget::Texture(output) => {
                 let result = self.offscreen.as_mut().ok_or("offscreen execution was not initialized")?.render(
                     &self.generic,
-                    &self.textures[&output],
+                    &output,
                     Self::color_to_vk_clear(self.clear_color),
                     self.width,
                     self.height,
                     &self.commands,
                 );
-                if result.is_ok() {
-                    self.textures.get_mut(&output).expect("output remains owned").image.layout = vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL;
-                }
                 self.commands.clear();
-                result
+                result.map(|_| Some(output.image.clone()))
             }
         }
     }
@@ -338,72 +339,29 @@ impl VulkanRenderer {
         result
     }
 
-    /// Creates a backend-owned sampled texture and tracks it by `TextureId`.
-    /// Creates an initialized immutable image independently of render-target selection.
-    fn create_texture(&mut self, id: TextureId, pixels: Option<&[u8]>) -> std::result::Result<(), TextureError> {
-        // Reject malformed storage before map reservation, native allocation or submission.
+    /// Ordinary immutable images share the generic initialized storage owner and retirement path.
+    fn create_texture(&mut self, size: Size, pixels: Option<&[u8]>) -> std::result::Result<Rc<Image>, TextureError> {
         if let Some(pixels) = pixels {
             ImageSource {
-                width: id.width(),
-                height: id.height(),
+                width: size.width,
+                height: size.height,
                 pixels,
             }
             .validate()?;
         } else {
-            neocogi_render_core::checked_rgba_len(id.width(), id.height())?;
+            neocogi_render_core::checked_rgba_len(size.width, size.height)?;
         }
-        if self.textures.contains_key(&id) {
-            return Err(TextureError::backend("native image key is already resident"));
-        }
-        // Texture creation is the public backend boundary, so convert Vulkan's string-based
-        // operational failures into the renderer's typed texture error without changing the
-        // file-wide `Result<T>` used by unrelated swapchain and resource internals.
         self.ensure_usable().map_err(TextureError::backend)?;
-        self.textures
-            .try_reserve(1)
-            .map_err(|err| TextureError::backend(format!("failed to reserve texture ownership entry: {err}")))?;
-        // Dimensions and actual storage have now been admitted together.
-        let size = neocogi_render_gpu::abi::Size { width: id.width(), height: id.height() };
-        let native = self
-            .generic
-            .upload_image(size, vk::Format::R8G8B8A8_UNORM, pixels, None)
-            .map_err(TextureError::backend)?;
-        let texture = VulkanTexture {
-            image: ImageResource {
-                native: Some(native),
-                extent: vk::Extent2D {
-                    width: id.width() as u32,
-                    height: id.height() as u32,
-                },
-                layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-            },
-            framebuffer: None,
-        };
-        // Duplicate admission above guarantees this is the first publication of this key.
-        self.textures.insert(id, texture);
-        Ok(())
-    }
-
-    /// Destroys a backend-owned sampled texture if it is still tracked.
-    fn destroy_texture(&mut self, id: TextureId) {
-        if let Some(mut texture) = self.textures.remove(&id) {
-            // Texture destruction is rare in the examples; a simple idle boundary guarantees no
-            // submitted frame still samples the image before its view/memory are released.
-            self.context.core.wait_idle();
-            texture.destroy(&self.context);
-        }
+        self.generic
+            .create_image(size, vk::Format::R8G8B8A8_UNORM, pixels, None)
+            .map_err(TextureError::backend)
     }
 }
 
 impl Drop for VulkanRenderer {
-    /// Destroys user images while the context/device they depend on are still alive.
+    /// Native quiescence precedes facade field teardown; escaped allocations retain only Core.
     fn drop(&mut self) {
-        // `VulkanContext::drop` also waits, but renderer-owned images must be released before the
-        // context field itself is dropped. Establish the idle boundary here first.
         self.context.core.wait_idle();
-        for (_, mut texture) in self.textures.drain() {
-            texture.destroy(&self.context);
-        }
     }
 }
 
@@ -424,8 +382,9 @@ impl VulkanFrame<'_> {
 }
 
 impl RendererFrame for VulkanFrame<'_> {
+    type Image = Rc<Image>;
     /// Completes the acquired transaction; Drop still guards against any unwinding escape.
-    fn finish(mut self) -> std::result::Result<(), FrameError> {
+    fn finish(mut self) -> std::result::Result<Option<Rc<Image>>, FrameError> {
         let target = self.target.take().expect("an active Vulkan frame owns its explicit target");
         self.backend.finish(target).map_err(FrameError::new)
     }
@@ -436,11 +395,15 @@ impl Drop for VulkanFrame<'_> {
         // Success has already restored Ready. Any other escape, including a panic after taking
         // the token in finish, must forbid reuse of the potentially signaled acquire semaphore.
         self.backend.context.abandon_acquired_frame();
+        self.target.take();
         self.backend.commands.clear();
+        let _ = self.backend.generic.collect();
     }
 }
 
 impl RendererBackend for VulkanRenderer {
+    type Image = Rc<Image>;
+    type Output = Output;
     type Frame<'a> = VulkanFrame<'a>;
 
     fn frame(&mut self, info: FrameInfo) -> std::result::Result<Self::Frame<'_>, FrameError> {
@@ -459,99 +422,119 @@ impl RendererBackend for VulkanRenderer {
         })
     }
 
-    /// Creates an image/framebuffer/descriptor transaction without acquiring a presentation image.
-    fn create_render_texture(&mut self, id: TextureId) -> std::result::Result<(), TextureError> {
+    /// Constructs one private target aggregate. It can be consumed exactly once before publication.
+    fn create_render_texture(&mut self, size: Size) -> std::result::Result<Output, TextureError> {
+        neocogi_render_core::checked_rgba_len(size.width, size.height)?;
         self.ensure_usable().map_err(TextureError::backend)?;
-        if self.textures.contains_key(&id) {
-            return Err(TextureError::backend("Vulkan render target is unavailable or already exists"));
-        }
-        self.textures.try_reserve(1).map_err(|error| TextureError::backend(error.to_string()))?;
+        self.generic.collect().map_err(TextureError::backend)?;
         if self.offscreen.is_none() {
             self.offscreen = Some(offscreen::Offscreen::new(&self.context.core).map_err(TextureError::backend)?);
         }
-        let device = self.context.device.clone();
-        let image = self
-            .context
-            .create_image_with_usage(
-                id.width() as u32,
-                id.height() as u32,
-                vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_SRC,
-            )
-            .map_err(TextureError::backend)?
-            .guarded(&device);
-        let attachments = [image.get().view()];
+        let native = generic::Image::allocate(
+            &self.context.core,
+            size,
+            vk::Format::R8G8B8A8_UNORM,
+            vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_SRC,
+            vk::ImageAspectFlags::COLOR,
+        )
+        .map_err(TextureError::backend)?;
+        let attachments = [native.view];
         let info = vk::FramebufferCreateInfo::default()
             .render_pass(self.offscreen.as_ref().expect("initialized above").render_pass)
             .attachments(&attachments)
-            .width(id.width() as u32)
-            .height(id.height() as u32)
+            .width(size.width as u32)
+            .height(size.height as u32)
             .layers(1);
-        // SAFETY: The attachment, render pass, and logical device remain owned by this transaction.
-        let framebuffer = ResourceGuard::new(
-            unsafe { device.create_framebuffer(&info, None) }.map_err(|error| TextureError::backend(format!("offscreen framebuffer: {error:?}")))?,
-            |framebuffer| unsafe { device.destroy_framebuffer(framebuffer, None) },
-        );
-        self.textures.insert(
-            id,
-            VulkanTexture {
-                image: image.into_inner(),
-                framebuffer: Some(framebuffer.into_inner()),
-            },
-        );
-        Ok(())
+        // SAFETY: Matching retained Core owns the unpublished pass, image and framebuffer.
+        let raw = unsafe { self.context.device.create_framebuffer(&info, None) }
+            .map_err(|error| TextureError::backend(format!("offscreen framebuffer: {error:?}")))?;
+        let framebuffer = FramebufferAllocation {
+            core: self.context.core.clone(),
+            raw,
+            _native: native.clone(),
+        };
+        let image = self.generic.own_image(native, size, None);
+        Ok(Output {
+            state: Rc::new(OutputState {
+                image,
+                framebuffer: Some(framebuffer),
+                retired: self.generic.sender(),
+            }),
+        })
     }
-
-    /// Opens a fresh immutable-output target; the plugin admits private UI blocks only.
-    fn texture_frame(&mut self, info: FrameInfo, output: TextureId) -> std::result::Result<Self::Frame<'_>, FrameError> {
+    /// Consumes one compatible unpublished destination; completed pixels cannot be retargeted.
+    fn texture_frame(&mut self, info: FrameInfo, output: Output) -> std::result::Result<VulkanFrame<'_>, FrameError> {
         self.ensure_usable().map_err(FrameError::new)?;
         let size = info.dimensions();
-        if (output.width(), output.height()) != (size.width, size.height)
+        let actual = <Backend as neocogi_render_gpu::native::NativeResources>::image_size(&output.state.image);
+        if !Rc::ptr_eq(
+            &self.context.core,
+            <Backend as neocogi_render_gpu::native::NativeResources>::image_core(&output.state.image),
+        ) || (size.width, size.height) != (actual.width, actual.height)
             || info.clear().a != 255
-            || !self.textures.get(&output).is_some_and(|image| image.framebuffer.is_some())
         {
             return Err(FrameError::new("invalid Vulkan output, extent, or clear"));
         }
         self.begin(size.width, size.height, info.clear()).map_err(FrameError::new)?;
         Ok(VulkanFrame {
             backend: self,
-            target: Some(FrameTarget::Texture { output }),
+            target: Some(FrameTarget::Texture(output.state)),
         })
     }
-
-    /// Observes prior completion and releases safe native owners without touching a target.
+    /// Completion collection and owned packet destruction never acquire or clear a target.
     fn maintain(&mut self) -> std::result::Result<(), FrameError> {
         self.generic.collect().map_err(FrameError::new)
     }
-    /// Creates an initialized immutable image independently of render-target selection.
-    fn create_texture(&mut self, id: TextureId, pixels: Option<&[u8]>) -> std::result::Result<(), TextureError> {
-        // Preserve the typed texture failure returned by the inherent native upload helper.
-        self.create_texture(id, pixels)
-    }
-
-    fn destroy_texture(&mut self, id: TextureId) {
-        self.destroy_texture(id);
+    /// Creates initialized native pixels; no global image ID or explicit destruction API exists.
+    fn create_texture(&mut self, size: Size, pixels: Option<&[u8]>) -> std::result::Result<Rc<Image>, TextureError> {
+        self.create_texture(size, pixels)
     }
 }
 
-impl VulkanRenderer {}
-
-/// One device image and its authenticated sampled binding, optionally usable as an output.
-struct VulkanTexture {
-    /// Complete image/view/allocation ownership.
-    image: ImageResource,
-    /// Only render outputs have a framebuffer for the private UI-only render pass.
-    framebuffer: Option<vk::Framebuffer>,
+/// Single-use unpublished native output; no Clone or initialized-image getter is provided.
+pub struct Output {
+    /// Private target aggregate moves into one frame and cannot be reacquired after publication.
+    state: Rc<OutputState>,
 }
-
-impl VulkanTexture {
-    /// Releases the individually allocated descriptor before destroying its referenced image.
-    fn destroy(&mut self, context: &VulkanContext) {
-        if let Some(framebuffer) = self.framebuffer.take() {
-            unsafe {
-                context.device.destroy_framebuffer(framebuffer, None);
-            }
+/// Private completed/uncertain work shares the actual framebuffer/image aggregate.
+struct OutputState {
+    /// Exact native pixels, retained independently of any public image or driver facade.
+    image: Rc<Image>,
+    /// Attachment ownership follows uncertain use, including an empty host clear.
+    framebuffer: Option<FramebufferAllocation>,
+    /// Only this native target/backing clones the existing driver producer.
+    retired: Sender<generic::Retirement>,
+}
+impl OutputState {
+    /// The private aggregate owns this handle until final retirement notification.
+    fn framebuffer(&self) -> vk::Framebuffer {
+        self.framebuffer.as_ref().expect("live framebuffer").raw
+    }
+}
+impl Drop for OutputState {
+    fn drop(&mut self) {
+        if let Some(framebuffer) = self.framebuffer.take()
+            && let Err(SendError(packet)) = self.retired.send(generic::Retirement::Framebuffer(framebuffer))
+        {
+            packet.discard();
         }
-        self.image.destroy(&context.device);
+    }
+}
+/// Sender-free framebuffer packet retains its raw attachment until framebuffer destruction.
+pub(crate) struct FramebufferAllocation {
+    /// Same native device remains alive independently of the renderer facade.
+    core: Rc<Core>,
+    /// One framebuffer is destroyed before releasing its raw attachment owner.
+    raw: vk::Framebuffer,
+    /// Raw attachment survives framebuffer destruction and contains no producer endpoint.
+    _native: Rc<generic::Image>,
+}
+impl Drop for FramebufferAllocation {
+    fn drop(&mut self) {
+        // SAFETY: Completion or final idle/loss ended every use; this Core owns the handle.
+        unsafe {
+            self.core.device.destroy_framebuffer(self.raw, None);
+        }
     }
 }
 
@@ -559,10 +542,6 @@ impl VulkanTexture {
 struct ImageResource {
     /// Present while live; explicit host retirement takes only this reference.
     native: Option<Rc<generic::Image>>,
-    /// Pixel extent used when recording uploads.
-    extent: vk::Extent2D,
-    /// Last layout established by host transfer/render commands.
-    layout: vk::ImageLayout,
 }
 
 impl ImageResource {
@@ -697,7 +676,6 @@ pub(crate) struct VulkanContext {
     #[cfg(test)]
     rebuild_failure: Option<RebuildPoint>,
     depth_images: Vec<ImageResource>,
-    device_lost: bool,
     /// Shared SDL native-window/video owner, retained until after Vulkan surface destruction.
     ///
     /// `Drop` destroys GPU objects before Rust drops fields. This last field also preserves that
@@ -803,7 +781,6 @@ impl VulkanContext {
             #[cfg(test)]
             rebuild_failure: None,
             depth_images: Vec::new(),
-            device_lost: false,
             _window: window,
         };
 
@@ -1001,7 +978,7 @@ impl VulkanContext {
         // Do not publish a swapchain until its image list can also be queried. The guard closes
         // the otherwise easy-to-miss leak when `get_swapchain_images` fails.
         let swapchain = ResourceGuard::new(
-            unsafe { self.swapchain_loader.create_swapchain(&create_info, None) }.map_err(|err| format!("create_swapchain failed: {err:?}"))?,
+            unsafe { self.swapchain_loader.create_swapchain(&create_info, None) }.map_err(|err| self.core.failure("create_swapchain failed", err))?,
             |swapchain| unsafe { self.swapchain_loader.destroy_swapchain(swapchain, None) },
         );
         let images = unsafe { self.swapchain_loader.get_swapchain_images(*swapchain.get()) }.map_err(|err| format!("get_swapchain_images failed: {err:?}"))?;
@@ -1204,7 +1181,7 @@ impl VulkanContext {
 
     /// Acquires one swapchain image before higher-level display-list execution begins.
     fn acquire_frame(&mut self, width: u32, height: u32) -> Result<AcquiredVulkanFrame> {
-        if self.device_lost {
+        if self.core.check().is_err() {
             return Err("device is lost; VulkanContext is disabled".into());
         }
         // Never reuse a binary acquire semaphore or swapchain image left outstanding by an earlier
@@ -1275,7 +1252,7 @@ impl VulkanContext {
         commands: &mut Vec<PreparedBlock>,
         generic: &mut generic::Executor,
     ) -> Result<()> {
-        if self.device_lost {
+        if self.core.check().is_err() {
             return Err("device is lost; VulkanContext is disabled".into());
         }
         // `draw_frame` receives the image acquired by `RendererBackend::frame`; by the time it
@@ -1468,12 +1445,7 @@ impl VulkanContext {
 
     /// Converts a Vulkan error into a user-facing string and latches device-lost state.
     fn handle_vk_error(&mut self, op: &str, err: vk::Result) -> String {
-        if err == vk::Result::ERROR_DEVICE_LOST {
-            self.device_lost = true;
-            format!("{op} failed: {err:?} (device lost)")
-        } else {
-            format!("{op} failed: {err:?}")
-        }
+        self.core.failure(op, err)
     }
 
     /// Latches an acquired frame that escaped normal Result-based finalization.
@@ -1486,27 +1458,13 @@ impl VulkanContext {
     fn is_unusable(&self) -> bool {
         // Actual device loss and an abandoned acquired-frame transaction are both permanent here;
         // this example deliberately chooses a simple fatal policy instead of partial sync repair.
-        self.device_lost || self.presentation.is_unavailable()
+        self.core.check().is_err() || self.presentation.is_unavailable()
     }
 
     /// Returns the current swapchain extent.
     fn extent(&self) -> vk::Extent2D {
         self.extent
     }
-    /// Shares guarded RGBA image ownership while keeping render and upload usage explicit.
-    fn create_image_with_usage(&self, width: u32, height: u32, usage: vk::ImageUsageFlags) -> Result<ImageResource> {
-        let size = neocogi_render_gpu::abi::Size {
-            width: width as i32,
-            height: height as i32,
-        };
-        let native = generic::Image::allocate(&self.core, size, vk::Format::R8G8B8A8_UNORM, usage, vk::ImageAspectFlags::COLOR)?;
-        Ok(ImageResource {
-            native: Some(native),
-            extent: vk::Extent2D { width, height },
-            layout: vk::ImageLayout::UNDEFINED,
-        })
-    }
-
     /// Recreates the per-swapchain-image depth attachments for the current extent.
     fn create_depth_images(&mut self) -> Result<()> {
         // A failed nth attachment must clean the first n-1 and leave the installed set alone.
@@ -1535,11 +1493,7 @@ impl VulkanContext {
             height: extent.height as i32,
         };
         let native = generic::Image::allocate(&self.core, size, self.depth_format, vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT, aspect)?;
-        Ok(ImageResource {
-            native: Some(native),
-            extent,
-            layout: vk::ImageLayout::UNDEFINED,
-        })
+        Ok(ImageResource { native: Some(native) })
     }
 
     /// Returns whether the chosen depth format also carries a stencil component.

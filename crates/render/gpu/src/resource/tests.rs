@@ -1,5 +1,7 @@
 //! Real generated COM calls exercise quota, provenance, reentry and owner/version lifetime.
 use super::*;
+use crate::testing::device as new_device;
+type GpuDevice = crate::GpuDevice<crate::testing::Backend>;
 use neocogi_com::{ComInlineValue, NcOutputWriter};
 
 /// Deliberate provider behavior at a foreign-source boundary.
@@ -88,49 +90,23 @@ fn client(device: &GpuDevice, limits: RenderClientLimits) -> (ComBox<IRenderClie
     (owner, factory)
 }
 
-#[com_object(interfaces(ITexture))]
-/// Imported-image lease reports its release independently of private native accounting.
-struct ImageLease {
-    /// Local drop observation contains no native device or domain edge.
-    dropped: Rc<Cell<u32>>,
-}
-impl neocogi_render_core::abi::IRenderDriverBound for ImageLease {
-    fn driver_identity(&self) -> Result<neocogi_com::ComPtr<neocogi_render_core::abi::IRenderDriverIdentityAbi>, neocogi_com::NcStatus> {
-        Err(neocogi_com::NC_E_NOINTERFACE)
-    }
-}
-impl ITexture for ImageLease {
-    /// Trusted native assembly already knows the dimensions; the bridge must not consult this getter.
-    fn size(&self) -> Result<Size, NcStatus> {
-        panic!("trusted native keys establish image dimensions")
-    }
-}
-impl Drop for ImageLease {
-    /// A native receipt must not keep this COM capability or its hypothetical device facade alive.
-    fn drop(&mut self) {
-        self.dropped.set(self.dropped.get() + 1);
-    }
-}
-
-/// UI import is host-only, immutable, same-domain authenticated and stripped before native retention.
+/// Native imports are same-core immutable objects; per-domain receipts do not pin global images.
 #[test]
-fn ui_image_import_separates_com_lifetime_from_native_byte_receipts() {
-    let device = GpuDevice::new(
+fn ui_image_import_shares_native_storage_without_public_com_or_domain_cycles() {
+    let device = new_device(
         nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
             .query()
             .unwrap(),
     );
     let (_client, ordinary) = client(&device, RenderClientLimits::default());
-    let ui = device.create_ui_client(RenderClientLimits::default(), None).unwrap();
+    let ui = device.create_ui_client(Default::default()).unwrap();
     let factory = ui.resources().unwrap();
-    let dropped = Rc::new(Cell::new(0));
-    let image: ComPtr<ITextureAbi> = ImageLease::from_value(ImageLease { dropped: dropped.clone() }).query().unwrap();
-    let id = TextureId::for_upload(1, 1, &[255; 4]).unwrap();
-    assert!(matches!(
-        device.import_ui_texture(ordinary.as_com_ref(), id, image.clone()),
-        Err(RENDER_E_OWNER)
-    ));
-    let imported = device.import_ui_texture(factory.as_com_ref(), id, image.clone()).unwrap();
+    let core = device.inner.core.clone();
+    let image = crate::testing::Image::ordinary(core.clone(), Size { width: 1, height: 1 }, 7);
+    let other = crate::testing::Image::ordinary(crate::testing::Core::new(), Size { width: 1, height: 1 }, 8);
+    assert!(matches!(device.import_ui_texture(ordinary.as_com_ref(), image.clone()), Err(RENDER_E_OWNER)));
+    assert!(matches!(device.import_ui_texture(factory.as_com_ref(), other), Err(RENDER_E_OWNER)));
+    let imported = device.import_ui_texture(factory.as_com_ref(), image.clone()).unwrap();
     assert!(imported.query_ref::<ITextureAbi>().is_err());
     assert!(imported.query_ref::<IRenderHostAbi>().is_err());
     assert!(matches!(
@@ -138,20 +114,21 @@ fn ui_image_import_separates_com_lifetime_from_native_byte_receipts() {
         Err(RENDER_E_OWNER)
     ));
     let snapshot = device.ui_texture_snapshot(factory.as_com_ref(), imported.as_com_ref()).unwrap();
-    assert_eq!(snapshot.imported_id(), Some(id));
     assert!(snapshot.pixels().is_none());
-    let (update, _, _) = source(vec![0; 4], ReadMode::Exact);
+    assert!(Rc::ptr_eq(snapshot.imported_image().unwrap(), &image));
+    let patch = neocogi_render_core::source::Bytes::source(vec![0; 4]);
     assert_eq!(
-        factory.update_texture(imported.as_com_ref(), Rect { x: 0, y: 0, width: 1, height: 1 }, update.as_com_ref()),
+        factory.update_texture(imported.as_com_ref(), Rect { x: 0, y: 0, width: 1, height: 1 }, patch.as_com_ref()),
         Err(NC_E_INVALID_ARG)
     );
+    let native = snapshot.native(&mut crate::testing::Preparation::new(&core)).unwrap();
+    assert!(Rc::ptr_eq(&native, &image));
     let receipt = snapshot.receipt();
-    drop((image, imported, snapshot));
-    assert_eq!(dropped.get(), 1, "native accounting must not retain the imported COM/device lease");
-    assert!(!receipt.is_alive());
+    drop((imported, snapshot));
     assert_eq!(device.live_bytes(factory.as_com_ref()).unwrap(), 4);
     drop(receipt);
     assert_eq!(device.live_bytes(factory.as_com_ref()).unwrap(), 0);
+    assert_eq!(native.origin(), Some(7), "another image owner does not retain this import's charge");
 }
 
 /// Complete buffer descriptor for a supplied byte payload.
@@ -171,7 +148,7 @@ fn buffer(factory: &ComPtr<IRenderResourcesAbi>, bytes: &[u8]) -> ComBox<IGpuBuf
 /// Large byte payloads avoid semantic-vertex codec limits and use bounded output chunks.
 #[test]
 fn exclusive_buffer_creation_reads_bounded_chunks_and_exposes_no_renderer() {
-    let device = GpuDevice::new(
+    let device = new_device(
         nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
             .query()
             .unwrap(),
@@ -208,7 +185,7 @@ fn exclusive_buffer_creation_reads_bounded_chunks_and_exposes_no_renderer() {
 /// No public owner promotion occurs; captured A/B versions determine actual byte retirement.
 #[test]
 fn weak_expiry_does_not_invalidate_snapshots_or_refund_retained_versions() {
-    let device = GpuDevice::new(
+    let device = new_device(
         nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
             .query()
             .unwrap(),
@@ -222,7 +199,7 @@ fn weak_expiry_does_not_invalidate_snapshots_or_refund_retained_versions() {
     let b = device.buffer_snapshot(factory.as_com_ref(), weak.as_com_ref()).unwrap();
     assert_eq!(a.bytes.as_slice().unwrap(), [1, 2, 3, 4]);
     assert_eq!(b.bytes.as_slice().unwrap(), [1, 9, 8, 4]);
-    assert_ne!(a.id, b.id);
+    assert!(!Rc::ptr_eq(&a, &b));
     assert_eq!(device.live_bytes(factory.as_com_ref()).unwrap(), 8);
     drop(owner);
     assert!(!weak.is_alive());
@@ -238,7 +215,7 @@ fn weak_expiry_does_not_invalidate_snapshots_or_refund_retained_versions() {
 /// Owner/resource limits reject before foreign bulk reads, and controller clones cannot reset them.
 #[test]
 fn quota_admission_precedes_bulk_copy_and_retained_versions_keep_their_charge() {
-    let device = GpuDevice::new(
+    let device = new_device(
         nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
             .query()
             .unwrap(),
@@ -276,7 +253,7 @@ fn quota_admission_precedes_bulk_copy_and_retained_versions_keep_their_charge() 
 /// Short prefixes/errors/changing headers roll back the entire unpublished candidate.
 #[test]
 fn failed_sources_preserve_current_buffer_and_release_candidate_charges() {
-    let device = GpuDevice::new(
+    let device = new_device(
         nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
             .query()
             .unwrap(),
@@ -288,7 +265,7 @@ fn failed_sources_preserve_current_buffer_and_release_candidate_charges() {
         let (input, _, _) = source(vec![9; 4], mode);
         assert!(factory.update_buffer(owner.as_com_ref(), 0, input.as_com_ref()).is_err());
         let after = device.buffer_snapshot(factory.as_com_ref(), owner.as_com_ref()).unwrap();
-        assert_eq!(after.id, a.id);
+        assert!(Rc::ptr_eq(&after, &a));
         assert_eq!(device.live_bytes(factory.as_com_ref()).unwrap(), 4);
     }
 }
@@ -305,12 +282,12 @@ fn different_domains_devices_and_forged_buffers_reject() {
         }
     }
     impl IGpuBuffer for Forged {}
-    let device = GpuDevice::new(
+    let device = new_device(
         nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
             .query()
             .unwrap(),
     );
-    let other = GpuDevice::new(
+    let other = new_device(
         nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
             .query()
             .unwrap(),
@@ -335,7 +312,7 @@ fn different_domains_devices_and_forged_buffers_reject() {
 /// Closing can happen inside a source callback; publication rechecks it with no borrowed account.
 #[test]
 fn close_during_source_read_rejects_publication_and_drop_closes_shared_factories() {
-    let device = GpuDevice::new(
+    let device = new_device(
         nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
             .query()
             .unwrap(),
@@ -362,7 +339,7 @@ fn close_during_source_read_rejects_publication_and_drop_closes_shared_factories
 /// The resource reader/writer gate is never retained through a foreign read that removes its owner.
 #[test]
 fn owner_removal_during_update_rejects_final_commit_without_pinning_public_value() {
-    let device = GpuDevice::new(
+    let device = new_device(
         nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
             .query()
             .unwrap(),
@@ -383,7 +360,7 @@ fn owner_removal_during_update_rejects_final_commit_without_pinning_public_value
 /// CPU input methods cannot borrow native/device preparation state recursively.
 #[test]
 fn factory_reentry_returns_busy_and_the_outer_copy_remains_valid() {
-    let device = GpuDevice::new(
+    let device = new_device(
         nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
             .query()
             .unwrap(),
@@ -412,7 +389,7 @@ fn factory_reentry_returns_busy_and_the_outer_copy_remains_valid() {
 /// Texture patches can cross output-chunk and pixel-row boundaries without touching other texels.
 #[test]
 fn texture_update_captures_old_pixels_and_copies_only_the_admitted_patch() {
-    let device = GpuDevice::new(
+    let device = new_device(
         nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
             .query()
             .unwrap(),
@@ -450,7 +427,7 @@ fn texture_update_captures_old_pixels_and_copies_only_the_admitted_patch() {
 /// All pointer-free descriptors still reject unknown open-enum and inconsistent size values.
 #[test]
 fn malformed_descriptors_and_overflowing_updates_reject_before_bulk_reads() {
-    let device = GpuDevice::new(
+    let device = new_device(
         nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
             .query()
             .unwrap(),
@@ -494,41 +471,31 @@ fn malformed_descriptors_and_overflowing_updates_reject_before_bulk_reads() {
     assert_eq!(reads.get(), 0);
 }
 
-/// Weak registry headers and device-free version accounts cannot keep a native host lease alive.
+/// Captured native owners retain hardware and receipts without retaining logical admission authority.
 #[test]
-fn native_lifetime_token_retires_independently_from_cached_cpu_versions() {
-    #[com_object(interfaces(IRenderDeviceLease))]
-    /// A closed marker representing host native lifetime, with no getters or renderer QI.
-    struct Lease {
-        /// Destruction receipt is owned by the test, not by any renderer object.
-        dropped: Rc<Cell<bool>>,
-    }
-    impl IRenderDeviceLease for Lease {}
-    impl Drop for Lease {
-        /// Models native host release without introducing an execution callback.
-        fn drop(&mut self) {
-            self.dropped.set(true);
-        }
-    }
-    let device = GpuDevice::new(
+fn native_backing_keeps_only_narrow_core_and_accounting_alive() {
+    let device = new_device(
         nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
             .query()
             .unwrap(),
     );
-    let dropped = Rc::new(Cell::new(false));
-    let lease: ComPtr<IRenderDeviceLeaseAbi> = Lease::from_value(Lease { dropped: dropped.clone() }).query().unwrap();
-    let controller = device.create_client_with_lease(RenderClientLimits::default(), lease).unwrap();
-    let factory = controller.resources().unwrap();
-    let owner = factory.create_sampler(GpuSamplerDesc::default()).unwrap();
-    let weak = owner.downgrade();
-    let captured = device.sampler_snapshot(factory.as_com_ref(), weak.as_com_ref()).unwrap();
-    drop(controller);
-    assert!(!dropped.get()); // Remaining public factory/resource intentionally retain the domain.
-    drop(factory);
-    drop(owner);
-    assert!(!weak.is_alive());
-    assert!(dropped.get()); // Only weak entries and device-free CPU backing remain.
-    assert_eq!(captured.desc.min_filter, GpuFilter::Nearest);
+    let weak_device = Rc::downgrade(&device.inner);
+    let core = device.inner.core.clone();
+    let weak_core = Rc::downgrade(&core);
+    let metadata = device.driver_identity();
+    let (controller, factory) = client(&device, Default::default());
+    let account = device.domain(factory.as_com_ref()).unwrap().account.clone();
+    let owner = buffer(&factory, &[1, 2, 3, 4]);
+    let captured = device.buffer_snapshot(factory.as_com_ref(), owner.as_com_ref()).unwrap();
+    let native = captured.native(&mut crate::testing::Preparation::new(&core)).unwrap();
+    drop((captured, owner, factory, controller, device, core));
+    assert!(weak_device.upgrade().is_none());
+    assert!(weak_core.upgrade().is_some());
+    assert_eq!(account.live_bytes(), 4);
+    drop(native);
+    assert!(weak_core.upgrade().is_none());
+    assert_eq!(account.live_bytes(), 0);
+    assert!(metadata.query::<IRenderDriverIdentityAbi>().is_ok());
 }
 
 #[com_object(interfaces(IGpuPipelineSource))]
@@ -583,7 +550,7 @@ fn shader(factory: &ComPtr<IRenderResourcesAbi>, stage: GpuShaderStage, entry: &
 /// The native pipeline owns immutable artifacts, not shared promotions of its shader inputs.
 #[test]
 fn pipeline_retains_shader_artifacts_after_exclusive_shader_owners_expire() {
-    let device = GpuDevice::new(
+    let device = new_device(
         nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
             .query()
             .unwrap(),
@@ -624,6 +591,23 @@ fn pipeline_retains_shader_artifacts_after_exclusive_shader_owners_expire() {
     assert_eq!(captured.fragment.artifact.entry, "fs");
     assert_eq!(captured.attributes[0].format, GpuVertexFormat::Float32x3);
     assert_eq!(captured.vertex.artifact.spirv[0], 0x0723_0203);
+    let core = device.inner.core.clone();
+    let account = device.domain(factory.as_com_ref()).unwrap().account.clone();
+    let first = captured.native(0, &mut crate::testing::Preparation::new(&core)).unwrap();
+    core.fail_next();
+    assert!(captured.native(1, &mut crate::testing::Preparation::new(&core)).is_err());
+    assert!(Rc::ptr_eq(&first, &captured.native(0, &mut crate::testing::Preparation::new(&core)).unwrap()));
+    let second = captured.native(1, &mut crate::testing::Preparation::new(&core)).unwrap();
+    let weak_source = Rc::downgrade(&captured);
+    drop((captured, pipeline));
+    assert!(weak_source.upgrade().is_none(), "native siblings never own their source");
+    assert!(account.live_bytes() > 0);
+    drop(first);
+    assert!(account.live_bytes() > 0);
+    drop(second);
+    assert_eq!(account.live_bytes(), 0);
+    assert_eq!(core.created(), 2);
+    assert_eq!(core.destroyed(), 2);
     assert!(
         factory
             .create_pipeline(layout.as_com_ref(), weak_vertex.as_com_ref(), weak_vertex.as_com_ref())
@@ -634,7 +618,7 @@ fn pipeline_retains_shader_artifacts_after_exclusive_shader_owners_expire() {
 /// Correctly typed but inconsistent descriptors cannot defer validation to a native driver.
 #[test]
 fn incompatible_attribute_footprints_and_shader_shapes_reject() {
-    let device = GpuDevice::new(
+    let device = new_device(
         nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
             .query()
             .unwrap(),
@@ -675,7 +659,7 @@ fn incompatible_attribute_footprints_and_shader_shapes_reject() {
 /// Even byte-normalized four-channel formats require portable four-byte attribute alignment.
 #[test]
 fn packed_color_footprint_uses_webgpu_alignment() {
-    let device = GpuDevice::new(
+    let device = new_device(
         nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
             .query()
             .unwrap(),
@@ -724,7 +708,7 @@ fn packed_color_footprint_uses_webgpu_alignment() {
 /// Equal varying shapes with conflicting interpolation reject before any native driver linking.
 #[test]
 fn independent_shader_stages_require_matching_interpolation() {
-    let device = GpuDevice::new(
+    let device = new_device(
         nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
             .query()
             .unwrap(),
@@ -753,19 +737,22 @@ struct V {{ @builtin(position) p:vec4<f32>, @location(0) {vertex_interpolation} 
     }
 }
 
-/// Independently valid logical devices can feed one native cache without aliasing.
+/// Ownership, not an allocated numeric ID, separates versions and their native backings.
 #[test]
-fn version_identity_spans_devices_and_survives_owner_release_and_update() {
-    let mut identities = std::collections::HashSet::new();
+fn owned_versions_stay_distinct_across_drivers_updates_and_owner_release() {
     let mut retained = Vec::new();
+    let mut native = Vec::new();
+    let mut metadata = Vec::new();
     for pixel in [17, 233] {
-        let device = GpuDevice::new(
+        let device = new_device(
             nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
                 .query()
                 .unwrap(),
         );
         let (_owner, factory) = client(&device, Default::default());
-        let (bytes, _, _) = source(vec![pixel; 4], ReadMode::Exact);
+        let core = device.inner.core.clone();
+        metadata.push(device.driver_identity());
+        let initial = neocogi_render_core::source::initial_bytes(vec![pixel; 4]);
         let texture = factory
             .create_texture(
                 GpuTextureDesc {
@@ -773,42 +760,63 @@ fn version_identity_spans_devices_and_survives_owner_release_and_update() {
                     format: GpuTextureFormat::Rgba8Unorm,
                     mip_count: 1,
                 },
-                neocogi_render_core::source::supplied(bytes.as_com_ref()).unwrap().borrow().unwrap(),
+                initial.borrow().unwrap(),
             )
             .unwrap();
         let before = device.texture_snapshot(factory.as_com_ref(), texture.as_com_ref()).unwrap();
-        assert!(identities.insert(before.id()));
-        let (replacement, _, _) = source(vec![pixel + 1; 4], ReadMode::Exact);
+        let replacement = neocogi_render_core::source::Bytes::source(vec![pixel + 1; 4]);
         factory
             .update_texture(texture.as_com_ref(), Rect { x: 0, y: 0, width: 1, height: 1 }, replacement.as_com_ref())
             .unwrap();
         let after = device.texture_snapshot(factory.as_com_ref(), texture.as_com_ref()).unwrap();
-        assert!(identities.insert(after.id()));
-        let sampler = factory.create_sampler(Default::default()).unwrap();
-        assert!(identities.insert(device.sampler_snapshot(factory.as_com_ref(), sampler.as_com_ref()).unwrap().id()));
+        let a = before.native(&mut crate::testing::Preparation::new(&core)).unwrap();
+        let b = after.native(&mut crate::testing::Preparation::new(&core)).unwrap();
+        assert!(!Rc::ptr_eq(&a, &b));
+        assert!(Rc::ptr_eq(&a, &before.native(&mut crate::testing::Preparation::new(&core)).unwrap()));
+        let other = crate::testing::Core::new();
+        assert!(before.native(&mut crate::testing::Preparation::new(&other)).is_err());
+        assert_eq!(other.created(), 0);
         drop(texture);
         assert_eq!(before.pixels().unwrap().as_slice().unwrap(), [pixel; 4]);
         assert_eq!(after.pixels().unwrap().as_slice().unwrap(), [pixel + 1; 4]);
         retained.extend([before, after]);
+        native.extend([a, b]);
     }
-    assert_eq!(identities.len(), 6);
+    assert_ne!(metadata[0].as_raw().object, metadata[1].as_raw().object);
     assert_eq!(retained.len(), 4);
+    assert_eq!(native.len(), 4);
 }
 
-/// A failed terminal allocation never wraps, publishes zero or reuses an ID.
+/// Native failure never publishes a stale Ready slot; native loss rejects reuse of an earlier success.
 #[test]
-fn version_identity_exhaustion_is_sticky_without_global_reset() {
-    let sequence = AtomicU64::new(u64::MAX - 1);
-    assert_eq!(allocate_version_id(&sequence), Ok(u64::MAX - 1));
-    assert_eq!(allocate_version_id(&sequence), Err(NC_E_OUT_OF_RANGE));
-    assert_eq!(allocate_version_id(&sequence), Err(NC_E_OUT_OF_RANGE));
-    assert_eq!(sequence.load(Ordering::Relaxed), u64::MAX);
+fn resource_owned_slots_retry_failures_and_check_health_on_reuse() {
+    let device = new_device(
+        nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
+            .query()
+            .unwrap(),
+    );
+    let (_owner, factory) = client(&device, Default::default());
+    let owner = buffer(&factory, &[1, 2, 3, 4]);
+    let source = device.buffer_snapshot(factory.as_com_ref(), owner.as_com_ref()).unwrap();
+    let core = device.inner.core.clone();
+    core.fail_next();
+    assert!(source.native(&mut crate::testing::Preparation::new(&core)).is_err());
+    assert_eq!(core.created(), 0);
+    let first = source.native(&mut crate::testing::Preparation::new(&core)).unwrap();
+    assert!(Rc::ptr_eq(&first, &source.native(&mut crate::testing::Preparation::new(&core)).unwrap()));
+    assert_eq!(core.created(), 1);
+    core.lose();
+    assert!(source.native(&mut crate::testing::Preparation::new(&core)).is_err());
+    assert_eq!(core.created(), 1);
+    let mut bytes = [0; 4];
+    source.bytes().read(0, &mut bytes).unwrap();
+    assert_eq!(bytes, [1, 2, 3, 4]);
 }
 
 /// None reserves the descriptor extent but owns no CPU zero vector; updates preserve old snapshots.
 #[test]
 fn absent_initial_contents_are_zero_and_updates_are_immutable() {
-    let device = GpuDevice::new(
+    let device = new_device(
         nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
             .query()
             .unwrap(),
@@ -863,7 +871,7 @@ fn absent_initial_contents_are_zero_and_updates_are_immutable() {
 /// Optional-tag rejection uses valid aligned initialized wire, not arbitrary foreign pointers.
 #[test]
 fn optional_wire_tags_and_supplied_lengths_are_checked_before_publication() {
-    let device = GpuDevice::new(
+    let device = new_device(
         nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
             .query()
             .unwrap(),
@@ -909,8 +917,8 @@ fn driver_identity_is_stable_without_owning_the_driver() {
     let compiler: ComPtr<neocogi_shader_core::abi::ShaderCompilerAbi> = nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
         .query()
         .unwrap();
-    let first = GpuDevice::new(compiler.clone());
-    let second = GpuDevice::new(compiler);
+    let first = new_device(compiler.clone());
+    let second = new_device(compiler);
     let weak = Rc::downgrade(&first.inner);
     let first_id = first.driver_identity();
     let second_id = second.driver_identity();
@@ -943,7 +951,7 @@ fn version_one_keeps_structural_query_admission() {
         type VTable = <IRenderResourcesAbi as ComInterface>::VTable;
         type Threading = ThreadLocal;
     }
-    let device = GpuDevice::new(
+    let device = new_device(
         nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
             .query()
             .unwrap(),

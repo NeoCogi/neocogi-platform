@@ -28,6 +28,8 @@ pub(super) struct Offscreen {
     submission: Submission,
     /// Native descriptor/backing/accounting owners survive a failed completion observation.
     pending: Vec<PreparedBlock>,
+    /// Exact attachment aggregate survives uncertain use, including an empty clear-only frame.
+    attachment: Option<Rc<OutputState>>,
 }
 impl Offscreen {
     /// Construct all output submission handles transactionally, without creating UI shader state.
@@ -75,6 +77,7 @@ impl Offscreen {
             fence: fence.into_inner(),
             submission: Submission::Ready,
             pending: Vec::new(),
+            attachment: None,
         })
     }
 
@@ -87,7 +90,7 @@ impl Offscreen {
     pub(super) fn render(
         &mut self,
         executor: &generic::Executor,
-        output: &VulkanTexture,
+        output: &Rc<OutputState>,
         clear: vk::ClearValue,
         width: u32,
         height: u32,
@@ -106,8 +109,12 @@ impl Offscreen {
         let mut pending = Vec::new();
         pending.try_reserve_exact(blocks.len()).map_err(|error| error.to_string())?;
         pending.extend(blocks.iter().cloned());
-        let framebuffer = output.framebuffer.ok_or("image is not a Vulkan render target")?;
-        let extent = output.image.extent;
+        let framebuffer = output.framebuffer();
+        let size = <Backend as neocogi_render_gpu::native::NativeResources>::image_size(&output.image);
+        let extent = vk::Extent2D {
+            width: size.width as u32,
+            height: size.height as u32,
+        };
         let device = &self.core.device;
         // SAFETY: Ready proves no GPU access to this command storage. All handles belong to
         // the retained Core; output/framebuffer and realized blocks outlive recording/submission.
@@ -158,6 +165,7 @@ impl Offscreen {
             device.reset_fences(&[self.fence]).map_err(|e| format!("reset offscreen fence: {e:?}"))?;
         }
         self.pending = pending;
+        self.attachment = Some(output.clone());
         let command_buffers = [self.command_buffer];
         let submit = vk::SubmitInfo::default().command_buffers(&command_buffers);
         // Ownership is installed before submit: even a failed native call cannot release resources
@@ -168,7 +176,7 @@ impl Offscreen {
             Ok(()) => self.submission = Submission::Submitted,
             Err(e) => {
                 self.submission = Submission::Failed;
-                return Err(format!("submit offscreen commands: {e:?}"));
+                return Err(self.core.failure("submit offscreen commands", e));
             }
         }
         // SAFETY: The live owned fence is attached to the successful submission above.
@@ -176,11 +184,12 @@ impl Offscreen {
             Ok(()) => {
                 self.submission = Submission::Ready;
                 self.pending.clear();
+                self.attachment.take();
                 Ok(())
             }
             Err(e) => {
                 self.submission = Submission::Failed;
-                Err(format!("wait offscreen commands: {e:?}"))
+                Err(self.core.failure("wait offscreen commands", e))
             }
         }
     }
@@ -192,6 +201,7 @@ impl Drop for Offscreen {
             self.core.wait_idle();
         }
         self.pending.clear();
+        self.attachment.take();
         // SAFETY: Successful completion or idle/device loss ends all pending use; Core remains
         // alive until after these handles are destroyed and owns their exact native device.
         unsafe {

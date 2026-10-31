@@ -1,24 +1,30 @@
 //! Complete generic-frame validation before native target acquisition.
 use neocogi_render_core::abi::*;
 use neocogi_com::{ComRef, NcStatus, WeakComBox, NC_E_INVALID_ARG, NC_E_OUT_OF_MEMORY};
-use neocogi_render_gpu::record::Block;
+use neocogi_render_gpu::{record::Block, native::NativeResources};
 use std::rc::Rc;
 
 /// Trusted device assembly authenticates canonical block identities without calling client code.
 pub trait Resources {
+    /// Concrete binary-local resource family authenticated by this provider.
+    type Backend: NativeResources;
     /// Resolve one weak exclusive observer to immutable data, retaining its domain admission gate.
-    fn view(&self, view: WeakComBox<IRenderViewBlockAbi>) -> Result<Rc<Block>, NcStatus>;
+    fn view(&self, view: WeakComBox<IRenderViewBlockAbi>) -> Result<Rc<Block<Self::Backend>>, NcStatus>;
 }
 
 /// Reusable ordered block storage. Foreign callbacks finish before any native frame is acquired.
-#[derive(Default)]
-pub struct PreparedFrame {
+pub struct PreparedFrame<B: NativeResources> {
     /// Each snapshot retains its original domain and immutable resource versions through preparation.
-    blocks: Vec<Rc<Block>>,
+    blocks: Vec<Rc<Block<B>>>,
 }
-impl PreparedFrame {
+impl<B: NativeResources> Default for PreparedFrame<B> {
+    fn default() -> Self {
+        Self { blocks: Vec::new() }
+    }
+}
+impl<B: NativeResources> PreparedFrame<B> {
     /// Complete authenticated contributions in painter order.
-    pub fn blocks(&self) -> &[Rc<Block>] {
+    pub fn blocks(&self) -> &[Rc<Block<B>>] {
         &self.blocks
     }
 
@@ -30,7 +36,7 @@ impl PreparedFrame {
     /// Validate the complete envelope and snapshot all blocks before native execution.
     /// On any failure, release every partially prepared contribution. Callers own this storage
     /// across foreign callbacks; this method rechecks all domain gates after the last callback.
-    pub fn read<R: Resources>(&mut self, info: RenderInfo, stream: ComRef<'_, IRenderStreamAbi>, resources: &R) -> Result<(), NcStatus> {
+    pub fn read<R: Resources<Backend = B>>(&mut self, info: RenderInfo, stream: ComRef<'_, IRenderStreamAbi>, resources: &R) -> Result<(), NcStatus> {
         self.clear();
         let result = self.read_once(info, stream, resources);
         if result.is_err() {
@@ -40,7 +46,7 @@ impl PreparedFrame {
     }
 
     /// Count limits precede reservations and callbacks; roots cannot extend beyond the drawable.
-    fn read_once<R: Resources>(&mut self, info: RenderInfo, stream: ComRef<'_, IRenderStreamAbi>, resources: &R) -> Result<(), NcStatus> {
+    fn read_once<R: Resources<Backend = B>>(&mut self, info: RenderInfo, stream: ComRef<'_, IRenderStreamAbi>, resources: &R) -> Result<(), NcStatus> {
         if info.invocation == 0 || info.size.width <= 0 || info.size.height <= 0 || info.block_count > MAX_RENDER_BLOCKS {
             return Err(NC_E_INVALID_ARG);
         }

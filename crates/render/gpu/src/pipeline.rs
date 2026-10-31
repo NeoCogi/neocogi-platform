@@ -8,8 +8,8 @@ use neocogi_com::{ComBox, ComRef, NcOutputBuffer, NcStatus, NC_E_INVALID_ARG, NC
 use std::rc::Rc;
 
 /// Reads bounded descriptor arrays before taking any resource gate, then captures shader snapshots.
-pub(crate) fn create(
-    domain: &Rc<Domain>,
+pub(crate) fn create<B: crate::native::NativeResources>(
+    domain: &Rc<Domain<B>>,
     source: ComRef<'_, IGpuPipelineSourceAbi>,
     vertex: ComRef<'_, IGpuShaderAbi>,
     fragment: ComRef<'_, IGpuShaderAbi>,
@@ -128,14 +128,15 @@ pub(crate) fn create(
         }
     }
     let version = resource::PipelineVersion {
-        id: crate::resource::next_version_id()?,
+        core: domain.device.inner.core.clone(),
+        variants: std::cell::RefCell::new(Vec::new()),
         info,
         vertex_buffers: layouts,
         attributes,
         bindings,
         vertex,
         fragment,
-        _charge: charge,
+        _charge: Rc::new(charge),
     };
     resource::publish_pipeline(domain, version, owner)
 }

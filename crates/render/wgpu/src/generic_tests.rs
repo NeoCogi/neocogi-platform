@@ -3,10 +3,11 @@ use super::*;
 use neocogi_render_gpu::abi::{Rect, Size};
 use neocogi_com::{ComBox, ComPtr, NcCopyFromBufferOffset};
 use neocogi_render_gpu::{
-    GpuDevice,
     abi::*,
     source::{Bytes, PipelineDesc},
 };
+
+type GpuDevice = neocogi_render_gpu::GpuDevice<Backend>;
 
 /// Obtains a real native adapter/device without requiring presentation or an SDL display.
 fn device() -> (wgpu::Device, wgpu::Queue) {
@@ -81,8 +82,9 @@ fn values(view: &mut ComBox<IRenderViewAbi>, color: [f32; 4], depth: f32) {
 fn regional_depth_clears_ordered_views_and_completion_keep_their_contracts() {
     let (native, queue) = device();
     let outer = native.push_error_scope(wgpu::ErrorFilter::Validation);
-    let mut executor = crate::generic::Executor::new(&native, &queue);
+    let mut executor = crate::generic::Executor::new(Core::new(native.clone(), queue.clone()));
     let gpu = GpuDevice::new(
+        executor.core.clone(),
         nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
             .query()
             .unwrap(),
@@ -135,7 +137,7 @@ fn regional_depth_clears_ordered_views_and_completion_keep_their_contracts() {
     let mut blocks = Vec::new();
     for owner in [&first, &second_owner, &third_owner] {
         let snapshot = gpu.block_snapshot(owner.as_com_ref()).unwrap();
-        blocks.push(executor.prepare(&snapshot, wgpu::TextureFormat::Rgba8Unorm, true, &HashMap::new()).unwrap());
+        blocks.push(executor.prepare(&snapshot, wgpu::TextureFormat::Rgba8Unorm, true).unwrap());
     }
     drop((
         first,
@@ -168,7 +170,7 @@ fn regional_depth_clears_ordered_views_and_completion_keep_their_contracts() {
         view_formats: &[],
     });
     let target_view = target.create_view(&wgpu::TextureViewDescriptor::default());
-    let depth = WgpuRenderer::create_depth_target(&native, 64, 64);
+    let depth = WgpuRenderer::create_depth_target(&executor.core, 64, 64).unwrap();
     let mut encoder = native.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
     {
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -201,7 +203,8 @@ fn regional_depth_clears_ordered_views_and_completion_keep_their_contracts() {
         }
     }
     queue.submit(Some(encoder.finish()));
-    executor.submitted(blocks);
+    executor.reserve_submission().unwrap();
+    executor.submitted(blocks, Vec::new());
     assert_eq!(gpu.recording_usage(resources.as_com_ref()).unwrap(), (charged, 0));
     let pixels = texture_pixels(&native, &queue, &target, Dimensioni::new(64, 64));
     let pixel = |x: usize, y: usize| &pixels[(y * 64 + x) * 4..(y * 64 + x) * 4 + 4];
@@ -234,19 +237,19 @@ fn indexed_textures_and_uniform_versions_execute_without_public_owners() {
 fn indexed_texture_case(operation: GpuBlendOp, imported: bool) {
     let (native, queue) = device();
     let outer = native.push_error_scope(wgpu::ErrorFilter::Validation);
-    let mut executor = crate::generic::Executor::new(&native, &queue);
+    let mut executor = crate::generic::Executor::new(Core::new(native.clone(), queue.clone()));
     let gpu = GpuDevice::new(
+        executor.core.clone(),
         nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
             .query()
             .unwrap(),
     );
     let controller = if imported {
-        gpu.create_ui_client(RenderClientLimits::default(), None)
+        gpu.create_ui_client(RenderClientLimits::default())
     } else {
         gpu.create_client(RenderClientLimits::default())
     }
     .unwrap();
-    let mut images = HashMap::new();
     let resources = controller.resources().unwrap();
     let source = Bytes::source(
         br#"
@@ -355,7 +358,7 @@ fn indexed_texture_case(operation: GpuBlendOp, imported: bool) {
         )
         .unwrap();
     let image = if imported {
-        import_native_image(&gpu, &resources, &native, &queue, &mut images, image)
+        import_native_image(&gpu, &resources, &mut executor, image)
     } else {
         image
     };
@@ -390,7 +393,7 @@ fn indexed_texture_case(operation: GpuBlendOp, imported: bool) {
                     .unwrap(),
             )
             .unwrap();
-        let image_b = import_native_image(&gpu, &resources, &native, &queue, &mut images, pixel);
+        let image_b = import_native_image(&gpu, &resources, &mut executor, pixel);
         view.bind_texture(GpuShaderStage::Fragment, 0, image_b.as_com_ref(), sampler.as_com_ref())
             .unwrap();
         Some(image_b)
@@ -415,8 +418,7 @@ fn indexed_texture_case(operation: GpuBlendOp, imported: bool) {
     let owner = session.take_block().unwrap();
     recording.finish().unwrap();
     let snapshot = gpu.block_snapshot(owner.as_com_ref()).unwrap();
-    let prepared = executor.prepare(&snapshot, wgpu::TextureFormat::Rgba8Unorm, true, &images).unwrap();
-    drop(images);
+    let prepared = executor.prepare(&snapshot, wgpu::TextureFormat::Rgba8Unorm, true).unwrap();
     drop((snapshot, owner, view, session, recording, vertices, indices, pipeline, image, sampler, vs, fs));
     let target = native.create_texture(&wgpu::TextureDescriptor {
         label: Some("indexed acceptance color"),
@@ -433,7 +435,7 @@ fn indexed_texture_case(operation: GpuBlendOp, imported: bool) {
         view_formats: &[],
     });
     let target_view = target.create_view(&wgpu::TextureViewDescriptor::default());
-    let depth = WgpuRenderer::create_depth_target(&native, 8, 8);
+    let depth = WgpuRenderer::create_depth_target(&executor.core, 8, 8).unwrap();
     let mut encoder = native.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
     {
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -468,7 +470,8 @@ fn indexed_texture_case(operation: GpuBlendOp, imported: bool) {
             .unwrap();
     }
     queue.submit(Some(encoder.finish()));
-    executor.submitted(vec![prepared]);
+    executor.reserve_submission().unwrap();
+    executor.submitted(vec![prepared], Vec::new());
     let pixels = texture_pixels(&native, &queue, &target, Dimensioni::new(8, 8));
     let pixel = |x: usize, y: usize| &pixels[(y * 8 + x) * 4..(y * 8 + x) * 4 + 4];
     assert_eq!(pixel(0, 0), [255, 0, 0, 255]);
@@ -501,8 +504,9 @@ fn clear_block(gpu: &GpuDevice, resources: &ComPtr<IRenderResourcesAbi>) -> ComB
 #[ignore = "requires a native WGPU adapter, including a software adapter"]
 fn abandoned_preparation_retains_upload_capacity_until_completion() {
     let (native, queue) = device();
-    let mut executor = crate::generic::Executor::new(&native, &queue);
+    let mut executor = crate::generic::Executor::new(Core::new(native.clone(), queue.clone()));
     let gpu = GpuDevice::new(
+        executor.core.clone(),
         nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
             .query()
             .unwrap(),
@@ -511,7 +515,7 @@ fn abandoned_preparation_retains_upload_capacity_until_completion() {
     let resources = controller.resources().unwrap();
     let owner = clear_block(&gpu, &resources);
     let snapshot = gpu.block_snapshot(owner.as_com_ref()).unwrap();
-    let prepared = executor.prepare(&snapshot, wgpu::TextureFormat::Rgba8Unorm, true, &HashMap::new()).unwrap();
+    let prepared = executor.prepare(&snapshot, wgpu::TextureFormat::Rgba8Unorm, true).unwrap();
     let charged = gpu.recording_usage(resources.as_com_ref()).unwrap().0;
     assert!(charged > 0);
     drop((prepared, snapshot, owner));
@@ -533,8 +537,9 @@ fn native_buffer_creation_failure_returns_error_without_panicking_or_leaking_sco
         ..Default::default()
     });
     let outer = native.push_error_scope(wgpu::ErrorFilter::Validation);
-    let mut executor = crate::generic::Executor::new(&native, &queue);
+    let mut executor = crate::generic::Executor::new(Core::new(native.clone(), queue.clone()));
     let gpu = GpuDevice::new(
+        executor.core.clone(),
         nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
             .query()
             .unwrap(),
@@ -545,7 +550,7 @@ fn native_buffer_creation_failure_returns_error_without_panicking_or_leaking_sco
     let snapshot = gpu.block_snapshot(owner.as_com_ref()).unwrap();
     for _ in 0..2 {
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            executor.prepare(&snapshot, wgpu::TextureFormat::Rgba8Unorm, true, &HashMap::new())
+            executor.prepare(&snapshot, wgpu::TextureFormat::Rgba8Unorm, true)
         }));
         let error = match result {
             Ok(Err(error)) => error,
@@ -570,13 +575,14 @@ fn partial_preparation_failure_keeps_resource_versions_charged_through_upload_co
             ..Default::default()
         });
         let outer = native.push_error_scope(wgpu::ErrorFilter::Validation);
-        let mut executor = crate::generic::Executor::new(&native, &queue);
+        let mut executor = crate::generic::Executor::new(Core::new(native.clone(), queue.clone()));
         let gpu = GpuDevice::new(
+            executor.core.clone(),
             nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
                 .query()
                 .unwrap(),
         );
-        let controller = gpu.create_ui_client(RenderClientLimits::default(), None).unwrap();
+        let controller = gpu.create_ui_client(RenderClientLimits::default()).unwrap();
         let resources = controller.resources().unwrap();
         let source = Bytes::source(
             br#"
@@ -651,9 +657,8 @@ fn partial_preparation_failure_keeps_resource_versions_charged_through_upload_co
                     .unwrap(),
             )
             .unwrap();
-        let mut images = HashMap::new();
         let image = if imported {
-            import_native_image(&gpu, &resources, &native, &queue, &mut images, image)
+            import_native_image(&gpu, &resources, &mut executor, image)
         } else {
             image
         };
@@ -675,13 +680,12 @@ fn partial_preparation_failure_keeps_resource_versions_charged_through_upload_co
         let owner = session.take_block().unwrap();
         recording.finish().unwrap();
         let snapshot = gpu.block_snapshot(owner.as_com_ref()).unwrap();
-        let error = match executor.prepare(&snapshot, wgpu::TextureFormat::Rgba8Unorm, true, &images) {
+        let error = match executor.prepare(&snapshot, wgpu::TextureFormat::Rgba8Unorm, true) {
             Ok(_) => panic!("native vertex allocation must fail"),
             Err(error) => error,
         };
         assert!(error.contains("maximum buffer size"), "unexpected error: {error}");
         drop((snapshot, owner, view, session, recording, pipeline, vertices, image, sampler, vs, fs));
-        drop(images);
         // The CPU versions include 36 vertex bytes and 16 image bytes. Both still have private
         // upload owners even though the frame failed and its native caches have been invalidated.
         assert!(gpu.live_bytes(resources.as_com_ref()).unwrap() >= 52);
@@ -706,7 +710,7 @@ fn partial_preparation_failure_keeps_resource_versions_charged_through_upload_co
             )
             .unwrap();
         executor
-            .prepare_texture(gpu.texture_snapshot(resources.as_com_ref(), retry.as_com_ref()).unwrap(), &HashMap::new())
+            .prepare_texture(gpu.texture_snapshot(resources.as_com_ref(), retry.as_com_ref()).unwrap())
             .unwrap();
         drop(retry);
         native.poll(wgpu::PollType::wait_indefinitely()).unwrap();
@@ -716,73 +720,24 @@ fn partial_preparation_failure_keeps_resource_versions_charged_through_upload_co
     }
 }
 
-/// Trusted fixture capability represents the host-authenticated immutable image.
-#[neocogi_com::com_object(interfaces(ITexture))]
-struct ImportedImage(Size);
-impl neocogi_render_core::abi::IRenderDriverBound for ImportedImage {
-    fn driver_identity(&self) -> Result<neocogi_com::ComPtr<neocogi_render_core::abi::IRenderDriverIdentityAbi>, neocogi_com::NcStatus> {
-        Err(neocogi_com::NC_E_NOINTERFACE)
-    }
-}
-impl ITexture for ImportedImage {
-    /// Initialization and dimensions belong to the native map, without a device getter.
-    fn size(&self) -> Result<Size, neocogi_com::NcStatus> {
-        Ok(self.0)
-    }
-}
-
-/// Real native handles survive removal of their ordinary-image facade before submission.
+/// Trusted native image is captured directly, without a public COM image lease or identity map.
 fn import_native_image(
     gpu: &GpuDevice,
     resources: &ComPtr<IRenderResourcesAbi>,
-    native: &wgpu::Device,
-    queue: &wgpu::Queue,
-    images: &mut HashMap<neocogi_render_core::TextureId, crate::GpuTexture>,
+    executor: &mut crate::generic::Executor,
     pixel: ComBox<IGpuTextureAbi>,
 ) -> ComBox<IGpuTextureAbi> {
-    let snapshot = gpu.texture_snapshot(resources.as_com_ref(), pixel.as_com_ref()).unwrap();
-    let size = wgpu::Extent3d {
-        width: 2,
-        height: 2,
-        depth_or_array_layers: 1,
-    };
-    let texture = native.create_texture(&wgpu::TextureDescriptor {
-        label: None,
-        size,
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format: wgpu::TextureFormat::Rgba8Unorm,
-        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-        view_formats: &[],
-    });
-    queue.write_texture(
-        wgpu::TexelCopyTextureInfo {
-            texture: &texture,
-            mip_level: 0,
-            origin: wgpu::Origin3d::ZERO,
-            aspect: wgpu::TextureAspect::All,
-        },
-        snapshot.pixels().unwrap().as_slice().unwrap(),
-        wgpu::TexelCopyBufferLayout {
-            offset: 0,
-            bytes_per_row: Some(8),
-            rows_per_image: Some(2),
-        },
-        size,
-    );
-    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-    let id = neocogi_render_core::TextureId::for_upload(2, 2, &[0; 16]).unwrap();
-    images.insert(
-        id,
-        crate::GpuTexture {
-            _texture: texture,
-            view,
-            render_target: false,
-        },
-    );
-    let lease: ComPtr<ITextureAbi> = ImportedImage::from_value(ImportedImage(Size { width: 2, height: 2 })).query().unwrap();
-    gpu.import_ui_texture(resources.as_com_ref(), id, lease).unwrap()
+    let source = gpu.texture_snapshot(resources.as_com_ref(), pixel.as_com_ref()).unwrap();
+    let image = executor
+        .image(
+            source.desc().size,
+            wgpu::TextureFormat::Rgba8Unorm,
+            source.pixels().unwrap().as_slice(),
+            None,
+            false,
+        )
+        .unwrap();
+    gpu.import_ui_texture(resources.as_com_ref(), image).unwrap()
 }
 
 /// An import-only preflight must flush source initialization and retire it without a target frame.
@@ -790,32 +745,30 @@ fn import_native_image(
 #[ignore = "requires a native WGPU adapter with native allocation counters"]
 fn imported_preparation_flushes_initialization_before_refunding_native_storage() {
     let (native, queue) = device();
-    let mut executor = crate::generic::Executor::new(&native, &queue);
+    let mut executor = crate::generic::Executor::new(Core::new(native.clone(), queue.clone()));
     let gpu = GpuDevice::new(
+        executor.core.clone(),
         nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
             .query()
             .unwrap(),
     );
-    let controller = gpu.create_ui_client(RenderClientLimits { live_bytes: 8, ..Default::default() }, None).unwrap();
+    let controller = gpu.create_ui_client(RenderClientLimits { live_bytes: 8, ..Default::default() }).unwrap();
     let resources = controller.resources().unwrap();
-    let mut images = HashMap::new();
     let baseline = native.get_internal_counters().hal.texture_memory.read();
     for value in 0..8 {
         let pixels = [value, 0, 0, 255];
-        let image = WgpuRenderer::create_gpu_texture(&native, &queue, 1, 1, Some(&pixels), false).unwrap();
+        let image = executor
+            .image(Size { width: 1, height: 1 }, wgpu::TextureFormat::Rgba8Unorm, Some(&pixels), None, false)
+            .unwrap();
         assert!(
             native.get_internal_counters().hal.texture_memory.read() > baseline,
             "this native regression requires observable image allocation counters"
         );
-        let id = TextureId::for_upload(1, 1, &pixels).unwrap();
-        images.insert(id, image);
-        let lease: ComPtr<ITextureAbi> = ImportedImage::from_value(ImportedImage(Size { width: 1, height: 1 })).query().unwrap();
-        let imported = gpu.import_ui_texture(resources.as_com_ref(), id, lease).unwrap();
+        let imported = gpu.import_ui_texture(resources.as_com_ref(), image).unwrap();
         executor
-            .prepare_texture(gpu.ui_texture_snapshot(resources.as_com_ref(), imported.as_com_ref()).unwrap(), &images)
+            .prepare_texture(gpu.ui_texture_snapshot(resources.as_com_ref(), imported.as_com_ref()).unwrap())
             .unwrap();
         drop(imported);
-        images.remove(&id);
         assert_eq!(gpu.live_bytes(resources.as_com_ref()).unwrap(), 4);
         // Wait/poll only observe submissions. This deliberately never submits a compensating
         // empty batch or renders a target: preparation must already have made progress possible.
@@ -829,4 +782,99 @@ fn imported_preparation_flushes_initialization_before_refunding_native_storage()
             "pending ordinary initialization outlived its imported receipt"
         );
     }
+}
+
+/// Successful target variants own native objects; failed variants neither poison siblings nor pin sources.
+#[test]
+#[ignore = "requires a native WGPU adapter"]
+fn native_slots_reuse_variants_reject_other_devices_and_release_without_submission() {
+    let (native, queue) = device();
+    let mut executor = crate::generic::Executor::new(Core::new(native.clone(), queue.clone()));
+    let gpu = GpuDevice::new(
+        executor.core.clone(),
+        nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
+            .query()
+            .unwrap(),
+    );
+    let domain = gpu.create_ui_client(Default::default()).unwrap();
+    let resources = domain.resources().unwrap();
+    let (other_native, other_queue) = device();
+    let mut other = crate::generic::Executor::new(Core::new(other_native, other_queue));
+    assert_ne!(gpu.driver_identity().as_raw().object, other.core.identity.as_raw().object);
+    let shader = &super::derivatives::cases()[0].source;
+    for _ in 0..8 {
+        let owner = super::derivatives::block(&gpu, &resources, shader);
+        let snapshot = gpu.block_snapshot(owner.as_com_ref()).unwrap();
+        let neocogi_render_gpu::command::Command::Draw(draw) = &snapshot.commands()[0] else {
+            panic!("draw")
+        };
+        let source = Rc::downgrade(&draw.pipeline);
+        assert!(other.prepare(&snapshot, wgpu::TextureFormat::Rgba8Unorm, false).is_err());
+        let first = executor.prepare(&snapshot, wgpu::TextureFormat::Rgba8Unorm, false).unwrap();
+        let second = executor.prepare(&snapshot, wgpu::TextureFormat::Rgba8Unorm, true).unwrap();
+        assert!(executor.prepare(&snapshot, wgpu::TextureFormat::Depth24Plus, false).is_err());
+        let repeated = executor.prepare(&snapshot, wgpu::TextureFormat::Rgba8Unorm, false).unwrap();
+        assert!(Rc::ptr_eq(&first.first_pipeline(), &repeated.first_pipeline()));
+        assert!(!Rc::ptr_eq(&first.first_pipeline(), &second.first_pipeline()));
+        assert!(other.admit(&first, (wgpu::TextureFormat::Rgba8Unorm, false)).is_err());
+        drop((snapshot, owner));
+        assert!(source.upgrade().is_none(), "native siblings must not retain their parent version");
+        drop((first, second, repeated));
+        executor.collect().unwrap();
+        assert_eq!(gpu.live_bytes(resources.as_com_ref()).unwrap(), 0);
+        assert_eq!(gpu.recording_usage(resources.as_com_ref()).unwrap(), (0, 0));
+    }
+}
+
+/// A real native queue-submit validation error stays in Result and retains uncertain initialization.
+#[test]
+#[ignore = "requires a native WGPU adapter"]
+fn initialization_submission_is_scoped_and_invalidates_all_compatible_facades_on_failure() {
+    let (native, queue) = device();
+    let core = Core::new(native.clone(), queue);
+    let mut executor = crate::generic::Executor::new(core.clone());
+    let gpu = GpuDevice::new(
+        core.clone(),
+        nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
+            .query()
+            .unwrap(),
+    );
+    let domain = gpu.create_client(Default::default()).unwrap();
+    let resources = domain.resources().unwrap();
+    let image = resources
+        .create_texture(
+            GpuTextureDesc {
+                size: Size { width: 1, height: 1 },
+                format: GpuTextureFormat::Rgba8Unorm,
+                mip_count: 1,
+            },
+            neocogi_render_core::source::initial_bytes(vec![255; 4]).borrow().unwrap(),
+        )
+        .unwrap();
+    let source = gpu.texture_snapshot(resources.as_com_ref(), image.as_com_ref()).unwrap();
+    let outer = native.push_error_scope(wgpu::ErrorFilter::Validation);
+    executor.submit_failure = true;
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| executor.prepare_texture(source.clone())));
+    let error = match result {
+        Ok(Err(error)) => error,
+        Ok(Ok(())) => panic!("native submission must fail"),
+        Err(_) => panic!("submission must return its scoped error"),
+    };
+    assert!(error.to_lowercase().contains("mapped"), "unexpected error: {error}");
+    assert!(pollster::block_on(outer.pop()).is_none(), "submission scopes must own the native error");
+    let mut compatible = crate::generic::Executor::new(core);
+    assert!(
+        compatible.prepare_texture(source.clone()).is_err(),
+        "a Ready slot cannot bypass failed initialization through another facade"
+    );
+    drop((source, image, compatible));
+    native.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+    assert!(executor.collect().is_err());
+    assert_eq!(
+        gpu.live_bytes(resources.as_com_ref()).unwrap(),
+        4,
+        "uncertain ownership must survive a callback until final idle teardown"
+    );
+    drop(executor);
+    assert_eq!(gpu.live_bytes(resources.as_com_ref()).unwrap(), 0);
 }

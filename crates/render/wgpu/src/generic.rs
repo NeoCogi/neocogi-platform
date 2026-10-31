@@ -1,72 +1,212 @@
 //! Native WGPU realization of the shared immutable command vocabulary.
 //! No client callbacks or COM owners enter a render pass or completion collection.
-use neocogi_render_gpu::{abi::*, command::*, record::Block, resource::*, scope::physical_rect};
+use neocogi_render_gpu::{
+    abi::*,
+    command::{DrawRange, CommandCharge},
+    resource::BackingCharge,
+    native::NativeResources,
+    scope::physical_rect,
+};
 use std::{
     collections::HashMap,
     num::NonZeroU64,
     rc::Rc,
+    ops::Deref,
     sync::{
+        mpsc::{self, Sender, Receiver, SendError},
         Arc,
         atomic::{AtomicBool, Ordering},
     },
 };
-
-/// Native caches own device-free CPU versions; completion owns the exact prepared snapshots.
-pub(crate) struct Executor {
-    /// WGPU's internal native owner has no reference to logical client registries/domains.
-    device: wgpu::Device,
-    /// Upload and completion operations use the same submission queue as final presentation.
-    queue: wgpu::Queue,
-    /// Immutable vertex and index uploads, keyed by canonical backing identity.
-    buffers: HashMap<u64, Rc<Buffer>>,
-    /// Immutable sampled image versions.
-    textures: HashMap<u64, Rc<Texture>>,
-    /// Immutable sampler versions.
-    samplers: HashMap<u64, Rc<Sampler>>,
-    /// Target signature participates in the key, including depth-attachment presence.
-    pipelines: HashMap<(u64, wgpu::TextureFormat, bool), Rc<Pipeline>>,
-    /// Source ownership pins each address until removal, preventing pointer-key reuse.
-    uniforms: HashMap<usize, Rc<Uniform>>,
-    /// Small host-owned pipelines implement regional color/depth replacement.
-    clears: HashMap<(wgpu::TextureFormat, bool, bool), Rc<ClearPipeline>>,
-    /// Only a completion callback's atomic signal crosses threads; snapshots remain UI-thread owned.
-    submitted: Vec<Submitted>,
-    /// Preparatory queue writes own their backings even when no frame ever submits.
-    uploads: Vec<Upload>,
+use super::{Core, Image, ImageAllocation};
+type Block = neocogi_render_gpu::record::Block<Backend>;
+type Command = neocogi_render_gpu::command::Command<Backend>;
+type Draw = neocogi_render_gpu::command::Draw<Backend>;
+type BufferVersion = neocogi_render_gpu::resource::BufferVersion<Backend>;
+type TextureVersion = neocogi_render_gpu::resource::TextureVersion<Backend>;
+type SamplerVersion = neocogi_render_gpu::resource::SamplerVersion<Backend>;
+type PipelineVersion = neocogi_render_gpu::resource::PipelineVersion<Backend>;
+type UniformData = neocogi_render_gpu::command::UniformData<Backend>;
+/// Statically selected native WGPU resource family, never an erased payload or COM extension.
+pub struct Backend;
+/// Exclusive native construction capability, not publicly constructible from a resource owner.
+pub struct Preparation<'a> {
+    /// Exclusive existing driver; native construction never borrows a foreign capability.
+    executor: &'a mut Executor,
 }
-
+impl NativeResources for Backend {
+    type Core = Core;
+    type Buffer = Buffer;
+    type Image = Image;
+    type Sampler = Sampler;
+    type Pipeline = Pipeline;
+    type Uniform = Buffer;
+    type PipelineKey = (wgpu::TextureFormat, bool);
+    type Preparation<'a> = Preparation<'a>;
+    fn identity(core: &Core) -> &neocogi_render_core::source::DriverIdentity {
+        &core.identity
+    }
+    fn core<'a>(preparation: &'a Preparation<'_>) -> &'a Rc<Core> {
+        &preparation.executor.core
+    }
+    fn check(preparation: &mut Preparation<'_>) -> Result<(), String> {
+        preparation.executor.core.check()
+    }
+    fn image_core(image: &Image) -> &Rc<Core> {
+        &image.core
+    }
+    fn image_size(image: &Image) -> Size {
+        image.size
+    }
+    fn buffer(source: &BufferVersion, preparation: &mut Preparation<'_>) -> Result<Rc<Buffer>, String> {
+        let core = preparation.executor.core.clone();
+        core.scoped(|| preparation.executor.buffer(source))
+    }
+    fn sampler(source: &SamplerVersion, preparation: &mut Preparation<'_>) -> Result<Rc<Sampler>, String> {
+        let core = preparation.executor.core.clone();
+        core.scoped(|| preparation.executor.sampler(source))
+    }
+    fn uniform(source: &UniformData, preparation: &mut Preparation<'_>) -> Result<Rc<Buffer>, String> {
+        let core = preparation.executor.core.clone();
+        core.scoped(|| preparation.executor.uniform(source))
+    }
+    fn pipeline(source: &PipelineVersion, key: &Self::PipelineKey, preparation: &mut Preparation<'_>) -> Result<Rc<Pipeline>, String> {
+        let core = preparation.executor.core.clone();
+        core.scoped(|| preparation.executor.pipeline(source, key.0, key.1))
+    }
+    fn image(source: &TextureVersion, preparation: &mut Preparation<'_>) -> Result<Rc<Image>, String> {
+        let executor = &mut preparation.executor;
+        if let Some(image) = source.imported_image() {
+            executor.uploads.try_reserve(1).map_err(|e| e.to_string())?;
+            executor.uploads.push(Upload::Image {
+                _resource: image.clone(),
+                _receipt: Some(source.receipt()),
+            });
+            return Ok(image.clone());
+        }
+        executor.create_image(
+            source.desc().size,
+            if source.desc().format == GpuTextureFormat::Rgba8Srgb {
+                wgpu::TextureFormat::Rgba8UnormSrgb
+            } else {
+                wgpu::TextureFormat::Rgba8Unorm
+            },
+            source.pixels().and_then(|p| p.as_slice()),
+            Some(source.receipt()),
+            false,
+        )
+    }
+}
+/// Sender-free owned packets retain only actual native handles, physical lifetime and reservations.
+pub(crate) enum Retirement {
+    /// Vertex/index/uniform storage and its opaque receipt.
+    Buffer(BufferAllocation),
+    /// Independent native sampling state.
+    Sampler(SamplerAllocation),
+    /// One target-compatible executable and dependency receipts.
+    Pipeline(PipelineAllocation),
+    /// Exact immutable native pixels and physical lifetime.
+    Image(ImageAllocation),
+}
+impl Retirement {
+    /// Exhaustively destroy the returned/drained owned packet; payloads contain no producer.
+    pub(crate) fn discard(self) {
+        match self {
+            Self::Buffer(value) => drop(value),
+            Self::Sampler(value) => drop(value),
+            Self::Pipeline(value) => drop(value),
+            Self::Image(value) => drop(value),
+        }
+    }
+}
 macro_rules! allocation {
-    ($name:ident, $source:ty, $native:ty) => {
-        /// Native allocation with exactly one immutable CPU version/accounting reference.
-        struct $name {
-            /// Holds byte receipts without retaining a client domain or COM capability.
-            source: Rc<$source>,
-            /// WGPU handles retain native storage for the declared usage.
+    ($name:ident,$allocation:ident,$native:ty) => {
+        /// Owned sender-free native allocation with no logical version or facade back-reference.
+        pub struct $allocation {
+            /// Physical device lifetime only, with no driver or channel endpoint.
+            _core: Rc<Core>,
+            /// Exact native handle is destroyed before its reservation refunds.
             raw: $native,
+            /// Shared original reservation, with no source-version or domain reference.
+            _charge: BackingCharge,
+        }
+        /// Last-owner notification transfers the complete native allocation to the existing driver.
+        pub struct $name {
+            /// Taken exactly once into an owned packet on final native backing release.
+            allocation: Option<$allocation>,
+            /// Producer exists only on this native backing; disconnected sends recover ownership.
+            retired: Sender<Retirement>,
+        }
+        impl Deref for $name {
+            type Target = $allocation;
+            fn deref(&self) -> &$allocation {
+                self.allocation.as_ref().expect("live native allocation")
+            }
+        }
+        impl Drop for $name {
+            fn drop(&mut self) {
+                if let Some(allocation) = self.allocation.take()
+                    && let Err(SendError(packet)) = self.retired.send(Retirement::$name(allocation))
+                {
+                    packet.discard();
+                }
+            }
         }
     };
 }
-allocation!(Buffer, BufferVersion, wgpu::Buffer);
-allocation!(Sampler, SamplerVersion, wgpu::Sampler);
-allocation!(Uniform, UniformData, wgpu::Buffer);
-
-/// Immutable native texture plus view and device-free accounting.
-struct Texture {
-    /// Captured pixel version, with no device/domain back-reference.
-    source: TextureReceipt,
-    /// Native image owner kept beside its sampling view.
-    _raw: wgpu::Texture,
-    /// Read-only view used only by graphics bind groups.
-    view: wgpu::TextureView,
-}
-/// Target-compatible native pipeline and its four stage-separated layouts.
-struct Pipeline {
-    /// Immutable layout/shader versions also retain their logical accounting.
-    source: Rc<PipelineVersion>,
-    /// Native executable with complete fixed state.
+allocation!(Buffer, BufferAllocation, wgpu::Buffer);
+allocation!(Sampler, SamplerAllocation, wgpu::Sampler);
+/// Sender-free native executable/layout owner; only opaque definition/shader receipts are retained.
+pub struct PipelineAllocation {
+    /// Physical device lifetime only, with no driver or channel endpoint.
+    _core: Rc<Core>,
+    /// Complete target-compatible native executable.
     raw: wgpu::RenderPipeline,
-    /// Vertex textures/uniforms, then fragment textures/uniforms.
+    /// Stage-separated layouts remain with the matching executable.
     groups: [wgpu::BindGroupLayout; 4],
+    /// Shared definition/shader reservations have no parent-version back-reference.
+    _charges: [BackingCharge; 3],
+}
+/// Target-specific native variant owned by its immutable logical version.
+pub struct Pipeline {
+    /// Taken exactly once before final executable retirement.
+    allocation: Option<PipelineAllocation>,
+    /// Producer exists only on this native backing; disconnected sends recover ownership.
+    retired: Sender<Retirement>,
+}
+impl Deref for Pipeline {
+    type Target = PipelineAllocation;
+    fn deref(&self) -> &PipelineAllocation {
+        self.allocation.as_ref().expect("live native pipeline")
+    }
+}
+impl Drop for Pipeline {
+    fn drop(&mut self) {
+        if let Some(allocation) = self.allocation.take()
+            && let Err(SendError(packet)) = self.retired.send(Retirement::Pipeline(allocation))
+        {
+            packet.discard();
+        }
+    }
+}
+/// One existing driver owns completion and retirement. Only tiny host clear variants are cached here;
+/// application realizations live in their returned versions and are never indexed globally.
+pub(crate) struct Executor {
+    /// Actual physical device identity/lifetime, independent from the driver facade.
+    pub(super) core: Rc<Core>,
+    /// Only actual native construction clones this producer.
+    retired_tx: Sender<Retirement>,
+    /// The existing driver is the sole receiver and drains after safe completion.
+    retired_rx: Receiver<Retirement>,
+    /// Small host clear variants have no application resource/source keys.
+    clears: HashMap<(wgpu::TextureFormat, bool, bool), Rc<ClearPipeline>>,
+    /// Actual native owners follow their real queue completion signals.
+    submitted: Vec<Submitted>,
+    /// Unpublished storage is retained before its first queued initialization use.
+    uploads: Vec<Upload>,
+    /// Inject one real mapped-buffer submission error after valid initialization has been issued.
+    #[cfg(test)]
+    pub(super) submit_failure: bool,
 }
 /// A host-created exact replacement pipeline; never exposed as a client resource.
 struct ClearPipeline {
@@ -79,8 +219,20 @@ struct ClearPipeline {
 /// Opaque native block can be retained for submission without retaining logical domain authority.
 #[derive(Clone)]
 pub struct PreparedBlock(Rc<PreparedData>);
+#[cfg(test)]
+impl PreparedBlock {
+    /// Observe actual native reuse, without adding a production registry or performance counter.
+    pub(crate) fn first_pipeline(&self) -> Rc<Pipeline> {
+        let PreparedCommand::Draw(draw) = &self.0.commands[0] else { panic!("draw") };
+        draw.pipeline.clone()
+    }
+}
 /// Concrete native lowering and original metadata receipts share one completion lifetime.
 struct PreparedData {
+    /// Exact physical device and target signature are checked before replay.
+    core: Rc<Core>,
+    /// Host color format and depth presence required by this prepared data.
+    signature: (wgpu::TextureFormat, bool),
     /// Only native draw/clear operations, in exact painter order.
     commands: Vec<PreparedCommand>,
     /// Original recording capacity remains charged through native completion.
@@ -102,6 +254,8 @@ enum PreparedCommand {
         clip: Rect,
     },
 }
+/// Native descriptor namespace/slot, exact image/sampler owners and this import's independent charge.
+type SampledBinding = (u32, u32, Rc<Image>, Rc<Sampler>, BackingCharge);
 /// Complete draw state; bind-group ownership alone does not refund logical bytes early.
 struct PreparedDraw {
     /// Executable/layout plus device-free pipeline/shader accounting.
@@ -113,9 +267,9 @@ struct PreparedDraw {
     /// Exactly four explicit groups, including empty groups where a stage has no resources.
     groups: Vec<wgpu::BindGroup>,
     /// Retains actual image/sampler charges through completion, not merely native bind-group handles.
-    _textures: Vec<(u32, u32, Rc<Texture>, Rc<Sampler>)>,
+    _textures: Vec<SampledBinding>,
     /// Retains copied uniform payload charges through completion.
-    _uniforms: Vec<(u32, u32, Rc<Uniform>)>,
+    _uniforms: Vec<(u32, u32, Rc<Buffer>)>,
     /// Checked direct triangle ranges.
     range: DrawRange,
     /// Viewport mapping is independent of its raster clip.
@@ -123,16 +277,25 @@ struct PreparedDraw {
     /// Effective host-bounded raster write rectangle.
     clip: Rect,
 }
+/// Native success permits signal-based collection; uncertain submission requires final idle/loss.
+enum Completion {
+    /// Queue callback owns only this atomic flag; UI-thread native owners stay in Submitted.
+    Pending(Arc<AtomicBool>),
+    /// An error after submit does not establish which native work ran; callbacks cannot refund it.
+    Uncertain,
+}
 /// UI-thread resources are released only after the queue's ordered completion callback fires.
 struct Submitted {
-    /// Callback owns only this thread-safe signal, never an Rc or COM owner.
-    done: Arc<AtomicBool>,
+    /// Actual submission outcome controls when its native owners may be collected.
+    completion: Completion,
     /// Exact snapshots/accounting used by the submitted encoder.
     _blocks: Vec<PreparedBlock>,
     /// Native initialization is submitted separately from attachment rendering on the same queue.
     _uploads: Vec<Upload>,
     /// Partial preparation retains original capacity without retaining domain authority.
     _capacity: Vec<CommandCharge>,
+    /// Includes offscreen clear-only attachments until actual submission completion.
+    _attachments: Vec<Rc<Image>>,
 }
 
 /// Exact typed backing references for asynchronous initialization; none owns a client domain.
@@ -140,143 +303,162 @@ enum Upload {
     /// Vertex/index logical bytes remain charged while the native upload is in flight.
     Buffer { _resource: Rc<Buffer> },
     /// Image bytes remain charged independently from later frame acquisition.
-    Texture { _resource: Rc<Texture> },
-    /// Uniform pending bytes follow their native initialization as well as later draws.
-    Uniform { _resource: Rc<Uniform> },
+    Image { _resource: Rc<Image>, _receipt: Option<BackingCharge> },
     /// Private clear values use the containing command's retained capacity receipt.
     Clear { _buffer: wgpu::Buffer },
 }
 
 impl Executor {
-    /// Shares the concrete device/queue without exposing them through a client interface.
-    pub(crate) fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
+    /// Existing driver receives owned packets; the shared physical core owns neither endpoint.
+    pub(crate) fn new(core: Rc<Core>) -> Self {
+        let (retired_tx, retired_rx) = mpsc::channel();
         Self {
-            device: device.clone(),
-            queue: queue.clone(),
-            buffers: HashMap::new(),
-            textures: HashMap::new(),
-            samplers: HashMap::new(),
-            pipelines: HashMap::new(),
-            uniforms: HashMap::new(),
+            core,
+            retired_tx,
+            retired_rx,
             clears: HashMap::new(),
             submitted: Vec::new(),
             uploads: Vec::new(),
+            #[cfg(test)]
+            submit_failure: false,
         }
     }
-
-    /// Observes completion before dropping cache-only versions; public weak expiry is insufficient.
+    /// Poll actual completion, drop completed owners, then drain even when polling reports failure.
     pub(crate) fn collect(&mut self) -> Result<(), String> {
-        self.device.poll(wgpu::PollType::Poll).map_err(|error| error.to_string())?;
-        self.submitted.retain(|entry| !entry.done.load(Ordering::Acquire));
-        self.buffers.retain(|_, entry| Rc::strong_count(&entry.source) > 1);
-        self.textures.retain(|_, entry| entry.source.is_alive());
-        self.samplers.retain(|_, entry| Rc::strong_count(&entry.source) > 1);
-        self.pipelines.retain(|_, entry| Rc::strong_count(&entry.source) > 1);
-        self.uniforms.retain(|_, entry| Rc::strong_count(&entry.source) > 1);
-        Ok(())
+        let result = self.core.device.poll(wgpu::PollType::Poll).map_err(|e| e.to_string());
+        self.submitted.retain(|entry| match &entry.completion {
+            Completion::Pending(done) => !done.load(Ordering::Acquire),
+            Completion::Uncertain => true,
+        });
+        self.drain();
+        result?;
+        self.core.check()
     }
-
-    /// Realizes a complete block under native error scopes before target acquisition or clearing.
-    pub(crate) fn prepare(
-        &mut self,
-        block: &Block,
-        format: wgpu::TextureFormat,
-        depth: bool,
-        images: &HashMap<neocogi_render_core::TextureId, super::GpuTexture>,
-    ) -> Result<PreparedBlock, String> {
-        self.preflight(block.retain_capacity(), |executor| executor.prepare_inner(block, format, depth, images))
+    /// Destruction of safe queued packets never traverses a logical version or producer back-edge.
+    fn drain(&mut self) {
+        while let Ok(packet) = self.retired_rx.try_recv() {
+            packet.discard();
+        }
     }
-
-    /// Private UI image preparation shares the same fallible upload/completion boundary.
-    pub(crate) fn prepare_texture(
-        &mut self,
-        source: Rc<TextureVersion>,
-        images: &HashMap<neocogi_render_core::TextureId, super::GpuTexture>,
-    ) -> Result<(), String> {
-        self.preflight(Vec::new(), |executor| executor.texture(source, images).map(|_| ()))
+    /// Authenticate the core before any native operation, including a clear-only block.
+    pub(crate) fn prepare(&mut self, block: &Block, format: wgpu::TextureFormat, depth: bool) -> Result<PreparedBlock, String> {
+        block.admit_on(&self.core).map_err(|e| e.to_string())?;
+        self.preflight(block.retain_capacity(), |executor| executor.prepare_inner(block, format, depth))
     }
-
-    /// Every scope is popped on success and failure; initialized resources retire independently of frames.
+    /// Native slots resolve all constructor scopes before publishing Ready; no global rollback exists.
+    pub(crate) fn prepare_texture(&mut self, source: Rc<TextureVersion>) -> Result<(), String> {
+        self.preflight(Vec::new(), |executor| source.native(&mut Preparation { executor }).map(|_| ()))
+    }
+    /// Even failed preparation seals queued initialization and retains its exact owners/receipts.
     fn preflight<T>(&mut self, capacity: Vec<CommandCharge>, operation: impl FnOnce(&mut Self) -> Result<T, String>) -> Result<T, String> {
         self.collect()?;
-        // Reserve the completion owner before initiating native writes. A failed preparation
-        // still submits those writes and retains their storage without requiring a target frame.
-        self.submitted.try_reserve(1).map_err(|error| error.to_string())?;
-        let scopes =
-            [wgpu::ErrorFilter::OutOfMemory, wgpu::ErrorFilter::Internal, wgpu::ErrorFilter::Validation].map(|filter| self.device.push_error_scope(filter));
-        let result = operation(self);
-        self.finish_uploads(capacity);
-        let mut failure = None;
-        for scope in scopes.into_iter().rev() {
-            if let Some(error) = pollster::block_on(scope.pop()) {
-                failure.get_or_insert_with(|| error.to_string());
+        self.reserve_submission()?;
+        let core = self.core.clone();
+        let result = core.scoped(|| operation(self));
+        let submission = self.finish_uploads(capacity);
+        match result {
+            Err(first) => Err(first),
+            Ok(value) => {
+                submission?;
+                Ok(value)
             }
         }
-        if let Some(error) = failure {
-            // No invalid handle may become a successful retry through an already populated cache.
-            self.buffers.clear();
-            self.textures.clear();
-            self.samplers.clear();
-            self.pipelines.clear();
-            self.uniforms.clear();
-            self.clears.clear();
-            Err(error)
-        } else {
-            result
-        }
     }
-
+    /// Reserve before uncertain submission so registering already-used native owners is infallible.
+    pub(crate) fn reserve_submission(&mut self) -> Result<(), String> {
+        self.submitted.try_reserve(1).map_err(|e| e.to_string())
+    }
     /// Makes queued uploads progress even after preparation/acquisition failure or abandonment.
     /// This uses the same device queue and emits no attachment commands or presentation.
-    fn finish_uploads(&mut self, capacity: Vec<CommandCharge>) {
+    fn finish_uploads(&mut self, capacity: Vec<CommandCharge>) -> Result<(), String> {
         if self.uploads.is_empty() {
-            return;
+            return Ok(());
         }
-        self.queue.submit([]);
+        self.submit(None, Vec::new(), Vec::new(), capacity)
+    }
+    /// One fallible queue boundary owns every actual resource before submit, including queued writes.
+    /// A scoped submit failure is terminal for this compatible core, without evicting version slots.
+    pub(crate) fn submit(
+        &mut self,
+        command: Option<wgpu::CommandBuffer>,
+        blocks: Vec<PreparedBlock>,
+        attachments: Vec<Rc<Image>>,
+        capacity: Vec<CommandCharge>,
+    ) -> Result<(), String> {
+        self.core.check()?;
+        self.reserve_submission()?;
         let done = Arc::new(AtomicBool::new(false));
         let callback = done.clone();
-        self.queue.on_submitted_work_done(move || callback.store(true, Ordering::Release));
+        let index = self.submitted.len();
         self.submitted.push(Submitted {
-            done,
-            _blocks: Vec::new(),
+            completion: Completion::Pending(done),
+            _blocks: blocks,
             _uploads: std::mem::take(&mut self.uploads),
             _capacity: capacity,
+            _attachments: attachments,
         });
+        let core = self.core.clone();
+        #[cfg(test)]
+        let failure = std::mem::take(&mut self.submit_failure);
+        let result = core.scoped(|| {
+            core.queue.submit(command);
+            #[cfg(test)]
+            if failure {
+                // This reaches WGPU's actual queue-submit validation, after valid native work.
+                // Capturing this error proves the submission itself remains inside its scopes.
+                let source = core.device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("injected mapped submit source"),
+                    size: 4,
+                    usage: wgpu::BufferUsages::COPY_SRC,
+                    mapped_at_creation: true,
+                });
+                let target = core.device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("injected submit destination"),
+                    size: 4,
+                    usage: wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                });
+                let mut encoder = core.device.create_command_encoder(&Default::default());
+                encoder.copy_buffer_to_buffer(&source, 0, &target, 0, 4);
+                core.queue.submit(Some(encoder.finish()));
+            }
+            core.queue.on_submitted_work_done(move || callback.store(true, Ordering::Release));
+            Ok(())
+        });
+        if result.is_err() {
+            self.submitted[index].completion = Completion::Uncertain;
+            core.fail_submission();
+        }
+        result
     }
 
     /// Explicit creation and scoped queue writes propagate native failures without mapped-range
     /// convenience helpers that panic when creation returns an invalid/OOM buffer.
     fn upload_buffer(&self, bytes: &[u8], usage: wgpu::BufferUsages, label: &'static str) -> wgpu::Buffer {
         let padded = bytes.len().div_ceil(4) * 4;
-        let raw = self.device.create_buffer(&wgpu::BufferDescriptor {
+        let raw = self.core.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some(label),
             size: padded as u64,
             usage: usage | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
         if padded == bytes.len() {
-            self.queue.write_buffer(&raw, 0, bytes);
+            self.core.queue.write_buffer(&raw, 0, bytes);
         } else {
             let mut data = bytes.to_vec();
             data.resize(padded, 0);
-            self.queue.write_buffer(&raw, 0, &data);
+            self.core.queue.write_buffer(&raw, 0, &data);
         }
         raw
     }
 
     /// Converts only authenticated immutable CPU snapshots, without entering a native pass.
-    fn prepare_inner(
-        &mut self,
-        block: &Block,
-        format: wgpu::TextureFormat,
-        depth: bool,
-        images: &HashMap<neocogi_render_core::TextureId, super::GpuTexture>,
-    ) -> Result<PreparedBlock, String> {
+    fn prepare_inner(&mut self, block: &Block, format: wgpu::TextureFormat, depth: bool) -> Result<PreparedBlock, String> {
         let mut commands = Vec::new();
         commands.try_reserve_exact(block.commands().len()).map_err(|error| error.to_string())?;
         for command in block.commands() {
             commands.push(match command {
-                Command::Draw(draw) => PreparedCommand::Draw(self.draw(draw, format, depth, images)?),
+                Command::Draw(draw) => PreparedCommand::Draw(self.draw(draw, format, depth)?),
                 Command::ClearColor { rgba, clip, .. } => self.clear(format, depth, false, rgba.to_le_bytes().map(|byte| f32::from(byte) / 255.), 0., *clip)?,
                 Command::ClearDepth { depth: value, clip, .. } => {
                     if !depth {
@@ -287,165 +469,167 @@ impl Executor {
             });
         }
         Ok(PreparedBlock(Rc::new(PreparedData {
+            core: self.core.clone(),
+            signature: (format, depth),
             commands,
             _capacity: block.retain_capacity(),
         })))
     }
 
-    /// Uploads one immutable buffer; native WGPU copy alignment does not change logical bounds.
-    fn buffer(&mut self, source: Rc<BufferVersion>) -> Rc<Buffer> {
-        if let Some(value) = self.buffers.get(&source.id()) {
-            return value.clone();
-        }
+    /// Retains the actual unpublished native candidate before the first queued write.
+    fn buffer(&mut self, source: &BufferVersion) -> Result<Rc<Buffer>, String> {
         let usage = if source.desc().role == GpuBufferRole::Index {
             wgpu::BufferUsages::INDEX
         } else {
             wgpu::BufferUsages::VERTEX
         };
-        let raw = match source.bytes().as_slice() {
-            Some(bytes) => self.upload_buffer(bytes, usage, "neocogi.gpu.bytes"),
-            None => self.device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("neocogi.gpu.zeroed"),
-                size: source.bytes().len().div_ceil(4) as u64 * 4,
-                usage: usage | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            }), // WGPU initializes newly allocated buffers before any read can observe them.
-        };
-        let id = source.id();
-        let value = Rc::new(Buffer { raw, source });
-        self.uploads.push(Upload::Buffer { _resource: value.clone() });
-        self.buffers.insert(id, value.clone());
-        value
+        self.storage(source.bytes().len(), source.bytes().as_slice(), usage, source.receipt())
     }
-
-    /// Resolve only trusted immutable imports, otherwise upload top-left pixels with scoped native errors.
-    fn texture(&mut self, source: Rc<TextureVersion>, images: &HashMap<neocogi_render_core::TextureId, super::GpuTexture>) -> Result<Rc<Texture>, String> {
-        if let Some(value) = self.textures.get(&source.id()) {
-            return Ok(value.clone());
-        }
-        let id = source.id();
-        if let Some(import) = source.imported_id() {
-            let image = images.get(&import).ok_or("imported UI image is unavailable on this device")?;
-            let value = Rc::new(Texture {
-                source: source.receipt(),
-                _raw: image._texture.clone(),
-                view: image.view.clone(),
-            });
-            // Ordinary image construction may still have initialization queued on this same
-            // queue. Flush it and retain this device-free receipt through completion, even if
-            // import preparation is the only operation and no target frame is ever acquired.
-            self.uploads.push(Upload::Texture { _resource: value.clone() });
-            self.textures.insert(id, value.clone());
-            return Ok(value);
-        }
-        let size = wgpu::Extent3d {
-            width: source.desc().size.width as u32,
-            height: source.desc().size.height as u32,
-            depth_or_array_layers: 1,
-        };
-        let raw = self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("neocogi.gpu.image"),
-            size,
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: if source.desc().format == GpuTextureFormat::Rgba8Srgb {
-                wgpu::TextureFormat::Rgba8UnormSrgb
-            } else {
-                wgpu::TextureFormat::Rgba8Unorm
-            },
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
+    /// Uniform padding remains native-only; original immutable payload accounting follows storage.
+    fn uniform(&mut self, source: &UniformData) -> Result<Rc<Buffer>, String> {
+        self.storage(
+            source.bytes().len().div_ceil(16) * 16,
+            Some(source.bytes()),
+            wgpu::BufferUsages::UNIFORM,
+            source.receipt(),
+        )
+    }
+    /// New WGPU storage has defined zero contents; write only the supplied prefix and at most 3 pad bytes.
+    fn storage(&mut self, len: usize, bytes: Option<&[u8]>, usage: wgpu::BufferUsages, charge: BackingCharge) -> Result<Rc<Buffer>, String> {
+        self.uploads.try_reserve(1).map_err(|e| e.to_string())?;
+        let raw = self.core.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("neocogi.storage"),
+            size: len.div_ceil(4) as u64 * 4,
+            usage: usage | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
         });
-        // WGPU guarantees zero initialization before first observation for absent contents.
-        if let Some(pixels) = source.pixels().and_then(VersionBytes::as_slice) {
-            self.queue.write_texture(
-                wgpu::TexelCopyTextureInfo {
-                    texture: &raw,
-                    mip_level: 0,
-                    origin: wgpu::Origin3d::ZERO,
-                    aspect: wgpu::TextureAspect::All,
-                },
-                pixels,
-                wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(size.width * 4),
-                    rows_per_image: Some(size.height),
-                },
-                size,
-            );
-        }
-        let view = raw.create_view(&wgpu::TextureViewDescriptor::default());
-        let value = Rc::new(Texture {
-            source: source.receipt(),
-            _raw: raw,
-            view,
+        let value = Rc::new(Buffer {
+            allocation: Some(BufferAllocation {
+                _core: self.core.clone(),
+                raw,
+                _charge: charge,
+            }),
+            retired: self.retired_tx.clone(),
         });
-        self.uploads.push(Upload::Texture { _resource: value.clone() });
-        self.textures.insert(id, value.clone());
+        self.uploads.push(Upload::Buffer { _resource: value.clone() });
+        if let Some(bytes) = bytes {
+            let full = bytes.len() / 4 * 4;
+            if full != 0 {
+                self.core.queue.write_buffer(&value.raw, 0, &bytes[..full]);
+            }
+            if full < bytes.len() {
+                let mut tail = [0; 4];
+                tail[..bytes.len() - full].copy_from_slice(&bytes[full..]);
+                self.core.queue.write_buffer(&value.raw, full as u64, &tail);
+            }
+        }
         Ok(value)
     }
-
-    /// Creates immutable one-level sampling state independently of the image resource.
-    fn sampler(&mut self, source: Rc<SamplerVersion>) -> Rc<Sampler> {
-        self.samplers
-            .entry(source.id())
-            .or_insert_with(|| {
-                Rc::new(Sampler {
-                    raw: self.device.create_sampler(&wgpu::SamplerDescriptor {
-                        label: Some("neocogi.gpu.sampler"),
-                        address_mode_u: address(source.desc().address_u),
-                        address_mode_v: address(source.desc().address_v),
-                        mag_filter: filter(source.desc().mag_filter),
-                        min_filter: filter(source.desc().min_filter),
-                        ..Default::default()
-                    }),
-                    source,
-                })
-            })
-            .clone()
+    /// Scope validation before a sampler can become the version's native Ready value.
+    fn sampler(&mut self, source: &SamplerVersion) -> Result<Rc<Sampler>, String> {
+        let raw = self.core.device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("neocogi.sampler"),
+            address_mode_u: address(source.desc().address_u),
+            address_mode_v: address(source.desc().address_v),
+            mag_filter: filter(source.desc().mag_filter),
+            min_filter: filter(source.desc().min_filter),
+            ..Default::default()
+        });
+        Ok(Rc::new(Sampler {
+            allocation: Some(SamplerAllocation {
+                _core: self.core.clone(),
+                raw,
+                _charge: source.receipt(),
+            }),
+            retired: self.retired_tx.clone(),
+        }))
     }
-
-    /// Copies initialized uniform bytes and pads only the native allocation's final extent.
-    fn uniform(&mut self, source: Rc<UniformData>) -> Rc<Uniform> {
-        let key = Rc::as_ptr(&source) as usize;
-        if let Some(value) = self.uniforms.get(&key) {
-            return value.clone();
-        }
-        let mut bytes = source.bytes().to_vec();
-        bytes.resize(bytes.len().div_ceil(16) * 16, 0);
-        let raw = self.upload_buffer(&bytes, wgpu::BufferUsages::UNIFORM, "neocogi.gpu.uniform");
-        let value = Rc::new(Uniform { raw, source });
-        self.uploads.push(Upload::Uniform { _resource: value.clone() });
-        self.uniforms.insert(key, value.clone());
-        value
+    /// Standalone ordinary/output construction owns initialization progress without a later frame.
+    pub(crate) fn image(
+        &mut self,
+        size: Size,
+        format: wgpu::TextureFormat,
+        pixels: Option<&[u8]>,
+        charge: Option<BackingCharge>,
+        target: bool,
+    ) -> Result<Rc<Image>, String> {
+        self.preflight(Vec::new(), |executor| executor.create_image(size, format, pixels, charge, target))
+    }
+    /// Generic textures, ordinary images and private outputs use exactly one owned native allocation.
+    fn create_image(
+        &mut self,
+        size: Size,
+        format: wgpu::TextureFormat,
+        pixels: Option<&[u8]>,
+        charge: Option<BackingCharge>,
+        target: bool,
+    ) -> Result<Rc<Image>, String> {
+        self.core.extent(size.width as u32, size.height as u32)?;
+        self.uploads.try_reserve(1).map_err(|e| e.to_string())?;
+        self.reserve_submission()?;
+        let core = self.core.clone();
+        let result = core.scoped(|| {
+            let extent = wgpu::Extent3d {
+                width: size.width as u32,
+                height: size.height as u32,
+                depth_or_array_layers: 1,
+            };
+            let raw = core.device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("neocogi.image"),
+                size: extent,
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING
+                    | wgpu::TextureUsages::COPY_DST
+                    | wgpu::TextureUsages::COPY_SRC
+                    | if target {
+                        wgpu::TextureUsages::RENDER_ATTACHMENT
+                    } else {
+                        wgpu::TextureUsages::empty()
+                    },
+                view_formats: &[],
+            });
+            let view = raw.create_view(&Default::default());
+            let image = Rc::new(Image {
+                allocation: Some(ImageAllocation {
+                    core: core.clone(),
+                    _texture: raw,
+                    view,
+                    size,
+                    _charge: charge,
+                }),
+                retired: self.retired_tx.clone(),
+            });
+            self.uploads.push(Upload::Image { _resource: image.clone(), _receipt: None });
+            if let Some(bytes) = pixels {
+                core.queue.write_texture(
+                    wgpu::TexelCopyTextureInfo {
+                        texture: &image._texture,
+                        mip_level: 0,
+                        origin: wgpu::Origin3d::ZERO,
+                        aspect: wgpu::TextureAspect::All,
+                    },
+                    bytes,
+                    wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(extent.width * 4),
+                        rows_per_image: Some(extent.height),
+                    },
+                    extent,
+                );
+            }
+            Ok(image)
+        });
+        // The enclosing preflight seals uploads with the original source capacity receipt.
+        result
     }
 
     /// Captures every binding owner before constructing borrowed bind-group descriptors.
-    fn draw(
-        &mut self,
-        draw: &Draw,
-        format: wgpu::TextureFormat,
-        depth: bool,
-        images: &HashMap<neocogi_render_core::TextureId, super::GpuTexture>,
-    ) -> Result<PreparedDraw, String> {
-        let pipeline = self.pipeline(draw.pipeline.clone(), format, depth)?;
-        let vertices = draw
-            .vertex_buffers
-            .iter()
-            .map(|binding| (binding.slot, self.buffer(binding.buffer.clone()), binding.offset))
-            .collect();
-        let index = draw.index.as_ref().map(|binding| {
-            (
-                self.buffer(binding.buffer.clone()),
-                if binding.format == GpuIndexFormat::U16 {
-                    wgpu::IndexFormat::Uint16
-                } else {
-                    wgpu::IndexFormat::Uint32
-                },
-                binding.offset,
-            )
-        });
+    fn draw(&mut self, draw: &Draw, format: wgpu::TextureFormat, depth: bool) -> Result<PreparedDraw, String> {
+        let mut preparation = Preparation { executor: self };
+        let pipeline = draw.pipeline.native((format, depth), &mut preparation)?;
         let textures: Vec<_> = draw
             .textures
             .iter()
@@ -453,20 +637,41 @@ impl Executor {
                 Ok((
                     texture_group(binding.stage),
                     binding.slot,
-                    self.texture(binding.texture.clone(), images)?,
-                    self.sampler(binding.sampler.clone()),
+                    binding.texture.native(&mut preparation)?,
+                    binding.sampler.native(&mut preparation)?,
+                    binding.texture.receipt(),
                 ))
             })
             .collect::<Result<_, String>>()?;
         let uniforms: Vec<_> = draw
             .uniforms
             .iter()
-            .map(|binding| (uniform_group(binding.stage), binding.slot, self.uniform(binding.data.clone())))
-            .collect();
+            .map(|binding| Ok((uniform_group(binding.stage), binding.slot, binding.data.native(&mut preparation)?)))
+            .collect::<Result<_, String>>()?;
+        let vertices = draw
+            .vertex_buffers
+            .iter()
+            .map(|binding| Ok((binding.slot, binding.buffer.native(&mut preparation)?, binding.offset)))
+            .collect::<Result<_, String>>()?;
+        let index = draw
+            .index
+            .as_ref()
+            .map(|binding| {
+                Ok::<_, String>((
+                    binding.buffer.native(&mut preparation)?,
+                    if binding.format == GpuIndexFormat::U16 {
+                        wgpu::IndexFormat::Uint16
+                    } else {
+                        wgpu::IndexFormat::Uint32
+                    },
+                    binding.offset,
+                ))
+            })
+            .transpose()?;
         let groups = (0..4)
             .map(|group| {
                 let mut entries = Vec::new();
-                for (stage, slot, texture, sampler) in &textures {
+                for (stage, slot, texture, sampler, _) in &textures {
                     if *stage == group {
                         entries.push(wgpu::BindGroupEntry {
                             binding: slot * 2,
@@ -486,7 +691,7 @@ impl Executor {
                         });
                     }
                 }
-                self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                self.core.device.create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some("neocogi.gpu.bindings"),
                     layout: &pipeline.groups[group as usize],
                     entries: &entries,
@@ -507,11 +712,7 @@ impl Executor {
     }
 
     /// Creates an exact reflected layout and complete fixed-state variant for the host target.
-    fn pipeline(&mut self, source: Rc<PipelineVersion>, format: wgpu::TextureFormat, depth: bool) -> Result<Rc<Pipeline>, String> {
-        let key = (source.id(), format, depth);
-        if let Some(value) = self.pipelines.get(&key) {
-            return Ok(value.clone());
-        }
+    fn pipeline(&mut self, source: &PipelineVersion, format: wgpu::TextureFormat, depth: bool) -> Result<Rc<Pipeline>, String> {
         if !depth && (source.info().depth_write || source.info().depth_compare != GpuCompare::Always) {
             return Err("graphics pipeline requires a host depth attachment".into());
         }
@@ -553,21 +754,21 @@ impl Executor {
                     });
                 }
             }
-            self.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            self.core.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("neocogi.gpu.layout"),
                 entries: &entries,
             })
         });
-        let layout = self.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        let layout = self.core.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("neocogi.gpu.pipeline.layout"),
             bind_group_layouts: &groups.each_ref().map(Some),
             immediate_size: 0,
         });
-        let vertex = self.device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        let vertex = self.core.device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("neocogi.gpu.vertex"),
             source: wgpu::ShaderSource::Wgsl(source.vertex().artifact().wgsl.clone().into()),
         });
-        let fragment = self.device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        let fragment = self.core.device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("neocogi.gpu.fragment"),
             source: wgpu::ShaderSource::Wgsl(source.fragment().artifact().wgsl.clone().into()),
         });
@@ -602,7 +803,7 @@ impl Executor {
             color: component(state.blend.src_color, state.blend.dst_color, state.blend.color_op),
             alpha: component(state.blend.src_alpha, state.blend.dst_alpha, state.blend.alpha_op),
         });
-        let raw = self.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        let raw = self.core.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("neocogi.gpu.pipeline"),
             layout: Some(&layout),
             vertex: wgpu::VertexState {
@@ -646,8 +847,15 @@ impl Executor {
             multiview_mask: None,
             cache: None,
         });
-        let value = Rc::new(Pipeline { source, raw, groups });
-        self.pipelines.insert(key, value.clone());
+        let value = Rc::new(Pipeline {
+            allocation: Some(PipelineAllocation {
+                _core: self.core.clone(),
+                raw,
+                groups,
+                _charges: source.receipts(),
+            }),
+            retired: self.retired_tx.clone(),
+        });
         Ok(value)
     }
 
@@ -661,11 +869,12 @@ impl Executor {
         value: f32,
         clip: Rect,
     ) -> Result<PreparedCommand, String> {
-        let pipeline = self
-            .clears
-            .entry((format, depth, depth_only))
-            .or_insert_with(|| {
-                let layout = self.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        let key = (format, depth, depth_only);
+        let pipeline = if let Some(pipeline) = self.clears.get(&key) {
+            pipeline.clone()
+        } else {
+            let pipeline = self.core.scoped(|| {
+                let layout = self.core.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                     label: Some("neocogi.gpu.clear.layout"),
                     entries: &[wgpu::BindGroupLayoutEntry {
                         binding: 0,
@@ -678,16 +887,16 @@ impl Executor {
                         count: None,
                     }],
                 });
-                let module = self.device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                let module = self.core.device.create_shader_module(wgpu::ShaderModuleDescriptor {
                     label: Some("neocogi.gpu.clear.shader"),
                     source: wgpu::ShaderSource::Wgsl(CLEAR_SHADER.into()),
                 });
-                let pipeline_layout = self.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                let pipeline_layout = self.core.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                     label: Some("neocogi.gpu.clear.pipeline.layout"),
                     bind_group_layouts: &[Some(&layout)],
                     immediate_size: 0,
                 });
-                let raw = self.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                let raw = self.core.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                     label: Some("neocogi.gpu.clear.pipeline"),
                     layout: Some(&pipeline_layout),
                     vertex: wgpu::VertexState {
@@ -718,16 +927,18 @@ impl Executor {
                     multiview_mask: None,
                     cache: None,
                 });
-                Rc::new(ClearPipeline { raw, layout })
-            })
-            .clone();
+                Ok(Rc::new(ClearPipeline { raw, layout }))
+            })?;
+            self.clears.insert(key, pipeline.clone());
+            pipeline
+        };
         let mut bytes = [0u8; 32];
         for (target, number) in bytes.as_chunks_mut::<4>().0.iter_mut().zip(color.into_iter().chain([value, 0., 0., 0.])) {
             target.copy_from_slice(&number.to_le_bytes());
         }
         let buffer = self.upload_buffer(&bytes, wgpu::BufferUsages::UNIFORM, "neocogi.gpu.clear.value");
         self.uploads.push(Upload::Clear { _buffer: buffer.clone() });
-        let group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let group = self.core.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("neocogi.gpu.clear.bindings"),
             layout: &pipeline.layout,
             entries: &[wgpu::BindGroupEntry {
@@ -788,19 +999,28 @@ impl Executor {
         Ok(())
     }
 
-    /// Called immediately after queue submission; callback ownership cannot form a logical-device cycle.
-    pub(crate) fn submitted(&mut self, blocks: Vec<PreparedBlock>) {
-        if blocks.is_empty() {
-            return;
+    /// Reject foreign-device or incompatible target blocks before attachment recording/submission.
+    pub(crate) fn admit(&self, block: &PreparedBlock, signature: (wgpu::TextureFormat, bool)) -> Result<(), String> {
+        self.core.check()?;
+        if Rc::ptr_eq(&self.core, &block.0.core) && block.0.signature == signature {
+            Ok(())
+        } else {
+            Err("prepared WGPU block belongs to another device or target".into())
         }
+    }
+
+    /// Both clear-only attachments and draw resources follow the actual ordered completion signal.
+    #[cfg(test)]
+    pub(crate) fn submitted(&mut self, blocks: Vec<PreparedBlock>, attachments: Vec<Rc<Image>>) {
         let done = Arc::new(AtomicBool::new(false));
         let callback = done.clone();
-        self.queue.on_submitted_work_done(move || callback.store(true, Ordering::Release));
+        self.core.queue.on_submitted_work_done(move || callback.store(true, Ordering::Release));
         self.submitted.push(Submitted {
-            done,
+            completion: Completion::Pending(done),
             _blocks: blocks,
             _uploads: Vec::new(),
             _capacity: Vec::new(),
+            _attachments: attachments,
         });
     }
 }
@@ -808,7 +1028,12 @@ impl Executor {
 impl Drop for Executor {
     /// Final native wait precedes the release of byte/capacity receipts and native handle owners.
     fn drop(&mut self) {
-        let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
+        let _ = self.finish_uploads(Vec::new());
+        let _ = self.core.device.poll(wgpu::PollType::wait_indefinitely());
+        self.uploads.clear();
+        self.submitted.clear();
+        self.clears.clear();
+        self.drain();
     }
 }
 

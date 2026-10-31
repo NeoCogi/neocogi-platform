@@ -14,7 +14,8 @@ mod derivatives;
 /// Exercises actual browser WebGL target adaptation and the delegated safe upload boundary.
 fn canonical_browser_derivatives() {
     use glow::HasContext;
-    use neocogi_render_core::{FrameInfo, RendererBackend, RendererFrame, TextureId};
+    use neocogi_render_core::abi::{GpuTextureDesc, GpuTextureFormat};
+    use neocogi_render_core::{FrameInfo, RendererBackend, RendererFrame};
     use neocogi_render_core::prelude::{Dimensioni, color};
     let document = web_sys::window().unwrap().document().unwrap();
     let canvas = document.create_element("canvas").unwrap().dyn_into::<HtmlCanvasElement>().unwrap();
@@ -26,26 +27,25 @@ fn canonical_browser_derivatives() {
         .unwrap()
         .dyn_into::<web_sys::WebGl2RenderingContext>()
         .unwrap();
-    let gl = std::rc::Rc::new(glow::Context::from_webgl2_context(native));
-    let mut renderer = neocogi_render_webgl::WebGlCanvasRenderer::new(gl.clone(), 8, 8).unwrap();
-    let upload = TextureId::for_upload(1, 1, &[0; 4]).unwrap();
+    let core = neocogi_render_webgl::Core::from_canvas(canvas, native.clone()).unwrap();
+    let gl = core.dispatch().clone();
+    let mut renderer = neocogi_render_webgl::WebGlCanvasRenderer::new(core, 8, 8).unwrap();
+    let size = Size { width: 1, height: 1 };
     for len in [0, 1, 3, 5] {
         assert!(matches!(
-            renderer.create_texture(upload, &vec![0; len]),
+            renderer.create_texture(size, Some(&vec![0; len])),
             Err(neocogi_render_core::TextureError::Image { .. })
         ));
     }
-    renderer.create_texture(upload, Some(&[0; 4])).unwrap();
-    renderer.destroy_texture(upload);
+    renderer.create_texture(size, Some(&[0; 4])).unwrap();
     let gpu = neocogi_render_gpu::GpuDevice::new(
+        renderer.core(),
         nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
             .query()
             .unwrap(),
     );
-    let domain = gpu.create_ui_client(Default::default(), None).unwrap();
+    let domain = gpu.create_ui_client(Default::default()).unwrap();
     let resources = domain.resources().unwrap();
-    let output = TextureId::for_render_target(8, 8).unwrap();
-    renderer.create_render_texture(output).unwrap();
     for case in derivatives::cases() {
         let owner = derivatives::block(&gpu, &resources, &case.source);
         let snapshot = gpu.block_snapshot(owner.as_com_ref()).unwrap();
@@ -53,6 +53,7 @@ fn canonical_browser_derivatives() {
             let prepared = renderer.prepare_block(&snapshot, offscreen).unwrap();
             let info = FrameInfo::try_new(Dimensioni::new(8, 8), color(0, 0, 0, 255)).unwrap();
             let mut frame = if offscreen {
+                let output = renderer.create_render_texture(Size { width: 8, height: 8 }).unwrap();
                 renderer.texture_frame(info, output).unwrap()
             } else {
                 renderer.frame(info).unwrap()
@@ -79,12 +80,31 @@ fn canonical_browser_derivatives() {
             );
         }
     }
-    renderer.destroy_texture(output);
+    let image = resources
+        .create_texture(
+            GpuTextureDesc {
+                size: Size { width: 1, height: 1 },
+                format: GpuTextureFormat::Rgba8Unorm,
+                mip_count: 1,
+            },
+            neocogi_render_core::source::initial(None).borrow().unwrap(),
+        )
+        .unwrap();
+    let version = gpu.ui_texture_snapshot(resources.as_com_ref(), image.as_com_ref()).unwrap();
+    renderer.prepare_texture(version.clone()).unwrap();
+    lose_test_context(&native);
+    assert!(renderer.make_current().is_err(), "actual WebGL loss invalidates the physical owner");
+    assert!(renderer.prepare_texture(version).is_err(), "a Ready image cannot bypass terminal context loss");
 }
 
 // Synthetic DOM events exercise translation deterministically. Pointer capture itself requires
 // trusted browser input, so this fixture stubs only that platform primitive, not the Rust routing.
 #[wasm_bindgen(inline_js = r#"
+export function lose_test_context(context) {
+    const extension = context.getExtension("WEBGL_lose_context");
+    if (!extension) throw new Error("WebGL loss extension unavailable");
+    extension.loseContext();
+}
 export function record_panic(text) {
     document.getElementById('result').dataset.panic = text;
 }
@@ -125,6 +145,7 @@ extern "C" {
     /// Keeps the Rust panic diagnostic in the dumped DOM even when wasm traps without unwinding.
     fn record_panic(text: &str);
     /// Dispatches one deterministic DOM sequence against the actual installed Rust listeners.
+    fn lose_test_context(context: &web_sys::WebGl2RenderingContext);
     fn exercise(target: &EventTarget, name: &str);
 }
 

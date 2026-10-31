@@ -14,13 +14,11 @@ mod texture;
 pub use backend::{FrameError, FrameInfo, FrameInfoError, RendererBackend, RendererFrame};
 pub use color::{Color, color};
 pub use image::{ImageSource, ImageValidationError, MAX_IMAGE_BYTES, checked_rgba_len};
-pub use texture::{TextureError, TextureId};
+pub use texture::{TextureError};
 
 /// Convenient imports for concrete backend implementations.
 pub mod prelude {
-    pub use crate::{
-        Color, FrameError, FrameInfo, FrameInfoError, ImageSource, ImageValidationError, RendererBackend, RendererFrame, TextureError, TextureId, color,
-    };
+    pub use crate::{Color, FrameError, FrameInfo, FrameInfoError, ImageSource, ImageValidationError, RendererBackend, RendererFrame, TextureError, color};
     pub use rs_math3d::{
         Box3f, Color4b, CrossProduct, Dimension, Dimensioni, FloatVector, Mat4f, Quat, Quatf, Rect, Recti, Vec2f, Vec2i, Vec3f, Vec4f, Vector, Vector3,
         color4b, ortho4,
