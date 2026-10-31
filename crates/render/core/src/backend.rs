@@ -181,13 +181,16 @@ pub trait RendererBackend: 'static {
     fn texture_frame(&mut self, _info: FrameInfo, _output: TextureId) -> Result<Self::Frame<'_>, FrameError> {
         Err(FrameError::new("offscreen rendering is unavailable on this backend"))
     }
+    /// Polls completion and releases safe retired storage without acquiring or presenting a target.
+    fn maintain(&mut self) -> Result<(), FrameError>;
     /// Upload exact validated immutable RGBA bytes for the supplied native image key.
     /// Both creation methods reject an already resident key before native allocation,
     /// including upload/output collisions. Failed unpublished creation permits retry.
     /// New immutable allocations use freshly issued keys; no tombstone registry is retained.
     /// Checks this call's exact RGBA byte count before reserving ownership or entering native code.
     /// A texture key certifies only its immutable extent, never a separately supplied slice.
-    fn create_texture(&mut self, id: TextureId, pixels: &[u8]) -> Result<(), TextureError>;
+    /// Absent initial data denotes initialized transparent-black pixels.
+    fn create_texture(&mut self, id: TextureId, pixels: Option<&[u8]>) -> Result<(), TextureError>;
     /// Retire an image key after native frames have released their references.
     fn destroy_texture(&mut self, id: TextureId);
 }

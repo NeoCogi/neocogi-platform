@@ -12,22 +12,22 @@ interface IRgbaImage {
 
 #[version(1)]
 /// Immutable GPU texture whose final release destroys its native allocation with its owning device alive.
-interface ITexture {
+interface ITexture: IRenderDriverBound {
     /// Returns positive immutable pixel dimensions, independent of its destination rectangle.
     fn size(&self) -> Result<Size>;
 }
 
 #[version(1)]
 /// Optional renderer capability for uploading immutable external images.
-interface ITextureFactory {
-    /// Uploads exactly width * height * 4 RGBA bytes at offset zero.
-    fn create_texture(&self, size: Size, pixels: &[u8]) -> Result<ComPtr<ITexture>>;
+interface ITextureFactory: IRenderDriverBound {
+    /// Some copies exact tightly packed RGBA; None creates initialized transparent-black pixels.
+    fn create_texture(&self, size: Size, pixels: &Option<ComPtr<IGpuDataSource>>) -> Result<ComPtr<ITexture>>;
 }
 
 #[version(1)]
 /// Independent two-dimensional rendering session on its creating renderer's device.
 /// Query IRenderer to submit private UI blocks at the selected size.
-interface IRenderSurface {
+interface IRenderSurface: IRenderDriverBound {
     /// Returns the requested physical size; a zero component suspends rendering.
     fn size(&self) -> Result<Size>;
     /// Changes the next frame's size without mutating any completed image.
@@ -40,7 +40,7 @@ interface IRenderSurface {
 
 #[version(1)]
 /// Creates independent opaque preview surfaces without exposing native GPU handles.
-interface IRenderSurfaceFactory {
+interface IRenderSurfaceFactory: IRenderDriverBound {
     /// Creates a surface on the same device as the factory; GFX owns its private UI resources.
     /// Rendering never presents or clears the window. Output uses top-left texture coordinates
     /// and an opaque clear color; client graphics blocks are unsupported.

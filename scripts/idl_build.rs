@@ -42,12 +42,14 @@ pub fn sources(repository: &str, local: &[&str]) -> neocogi_idl::cargo::SharedSo
 }
 
 /// Publishes generated include paths for the calling crate only.
-pub fn build(request: neocogi_idl::cargo::SharedSources) {
-    for module in request.build().expect("generate shared IDL bindings") {
+pub fn build(request: neocogi_idl::cargo::SharedSources) -> Vec<neocogi_idl::cargo::BuildOutput> {
+    let modules = request.build().expect("generate shared IDL bindings");
+    for module in &modules {
         println!(
             "cargo::rustc-env=IDL_{}={}",
             module.module_name.replace('.', "_").to_uppercase(),
             module.include.display()
         );
     }
+    modules
 }

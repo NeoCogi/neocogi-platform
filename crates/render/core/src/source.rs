@@ -77,3 +77,70 @@ fn copy<T: ComInlineValue>(data: &[T], mut output: NcOutputWriter<'_, T>) -> Res
     let end = first.checked_add(output.capacity()).ok_or(NC_E_OUT_OF_RANGE)?;
     output.extend_from_slice(data.get(first..end).ok_or(NC_E_INVALID_ARG)?)
 }
+
+/// Converts a Rust optional shared source to the generated checked-value representation.
+/// Initial data remains portable; it does not acquire driver identity or native ownership.
+pub fn initial(source: Option<ComPtr<IGpuDataSourceAbi>>) -> InitialGpuData {
+    match source {
+        None => InitialGpuData::None,
+        Some(source) => InitialGpuData::Some(source),
+    }
+}
+
+/// Acquires a shared source for callers that currently hold only a borrowed interface.
+/// AddRef is a foreign call and may fail; callers must propagate that failure.
+pub fn supplied(source: neocogi_com::ComRef<'_, IGpuDataSourceAbi>) -> Result<InitialGpuData, NcStatus> {
+    source.try_add_ref().map(|source| initial(Some(source)))
+}
+
+impl InitialGpuData {
+    /// Borrows the generated wire representation without assuming Rust Option layout.
+    pub fn borrow(&self) -> Result<neocogi_com::NcValueRef<'_, Self>, NcStatus> {
+        neocogi_com::NcValueRef::new(self)
+    }
+}
+
+/// Copies supplied initial bytes in bounded chunks, or represents absent zero data by None.
+/// The receiver's owned source and its final foreign Release end before this returns.
+/// Callers validate shape/reserve quotas first, then recheck admission before publication.
+pub fn read_initial(source: neocogi_com::NcValueRef<'_, InitialGpuData>, len: usize) -> Result<Option<Vec<u8>>, NcStatus> {
+    match source.to_owned()? {
+        InitialGpuData::None => Ok(None),
+        InitialGpuData::Some(source) => {
+            if source.byte_count()? != len as u64 {
+                return Err(NC_E_INVALID_ARG);
+            }
+            let mut bytes = Vec::new();
+            bytes.try_reserve_exact(len).map_err(|_| neocogi_com::NC_E_OUT_OF_MEMORY)?;
+            let mut output = neocogi_com::NcOutputBuffer::new();
+            for offset in (0..len).step_by(64 * 1024) {
+                let wanted = (len - offset).min(64 * 1024);
+                source.read(output.output(offset as u64, wanted))?;
+                if output.len() != wanted {
+                    return Err(NC_E_INVALID_ARG);
+                }
+                bytes.extend_from_slice(output.as_slice());
+            }
+            if source.byte_count()? != len as u64 {
+                return Err(NC_E_INVALID_ARG);
+            }
+            Ok(Some(bytes))
+        }
+    }
+}
+
+#[com_object(interfaces(IRenderDriverIdentity))]
+/// Metadata token containing no native core, driver, factory or window ownership.
+struct DriverIdentity;
+impl IRenderDriverIdentity for DriverIdentity {}
+
+/// Mints one process-local identity to retain on a newly created native core.
+/// Pointer identity is unique while retained, including across independently loaded providers.
+pub fn new_driver_identity() -> ComPtr<IRenderDriverIdentityAbi> {
+    DriverIdentity::from_value(DriverIdentity).query().expect("driver identity interface")
+}
+
+/// Transfers an already owned initialized byte vector into an optional upload source.
+pub fn initial_bytes(bytes: Vec<u8>) -> InitialGpuData {
+    initial(Some(Bytes::source(bytes)))
+}

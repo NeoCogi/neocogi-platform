@@ -184,8 +184,11 @@ struct Allocation {
 }
 impl Allocation {
     /// Creates initialized host-visible storage with explicit visibility before any queue submission.
-    fn new(core: &Rc<Core>, bytes: &[u8], usage: vk::BufferUsageFlags) -> Result<Self, String> {
-        let size = bytes.len().max(1).div_ceil(16) as u64 * 16;
+    fn new(core: &Rc<Core>, len: usize, bytes: Option<&[u8]>, usage: vk::BufferUsageFlags) -> Result<Self, String> {
+        let size = len.max(1).div_ceil(16) as u64 * 16;
+        if bytes.is_some_and(|bytes| bytes.len() != len) {
+            return Err("native buffer extent mismatch".into());
+        }
         let device = &core.device;
         // SAFETY: All pointers reference call-local initialized descriptors or owned input bytes.
         unsafe {
@@ -218,7 +221,9 @@ impl Allocation {
                 .map_memory(value.memory.raw, 0, vk::WHOLE_SIZE, vk::MemoryMapFlags::empty())
                 .map_err(|error| format!("map graphics buffer: {error:?}"))?;
             std::ptr::write_bytes(mapped.cast::<u8>(), 0, size as usize);
-            std::ptr::copy_nonoverlapping(bytes.as_ptr(), mapped.cast::<u8>(), bytes.len());
+            if let Some(bytes) = bytes {
+                std::ptr::copy_nonoverlapping(bytes.as_ptr(), mapped.cast::<u8>(), bytes.len());
+            }
             let visibility = if core.memory.memory_types[kind as usize].property_flags.contains(coherent) {
                 Ok(())
             } else {
@@ -768,7 +773,7 @@ impl Executor {
         } else {
             vk::BufferUsageFlags::VERTEX_BUFFER
         };
-        let allocation = Allocation::new(&self.core, source.bytes(), usage)?;
+        let allocation = Allocation::new(&self.core, source.bytes().len(), source.bytes().as_slice(), usage)?;
         let id = source.id();
         let value = Rc::new(Buffer { source, allocation });
         self.buffers.insert(id, value.clone());
@@ -781,7 +786,7 @@ impl Executor {
         if let Some(value) = self.uniforms.get(&key) {
             return Ok(value.clone());
         }
-        let allocation = Allocation::new(&self.core, source.bytes(), vk::BufferUsageFlags::UNIFORM_BUFFER)?;
+        let allocation = Allocation::new(&self.core, source.bytes().len(), Some(source.bytes()), vk::BufferUsageFlags::UNIFORM_BUFFER)?;
         let value = Rc::new(Uniform { source, allocation });
         self.uniforms.insert(key, value.clone());
         Ok(value)
@@ -851,7 +856,7 @@ impl Executor {
         let native = self.upload_image(
             source.desc().size,
             format,
-            source.pixels().ok_or("missing texture pixel storage")?,
+            source.pixels().ok_or("missing texture pixel storage")?.as_slice(),
             Some(receipt.clone()),
         )?;
         let value = Rc::new(Texture { native, source: receipt });
@@ -861,7 +866,13 @@ impl Executor {
 
     /// Shared ordinary/generic initialization retains commands, source and destination before
     /// submitting. A failed wait is terminal and keeps every referenced owner until idle/loss.
-    pub(crate) fn upload_image(&mut self, size: Size, format: vk::Format, pixels: &[u8], receipt: Option<Rc<TextureReceipt>>) -> Result<Rc<Image>, String> {
+    pub(crate) fn upload_image(
+        &mut self,
+        size: Size,
+        format: vk::Format,
+        pixels: Option<&[u8]>,
+        receipt: Option<Rc<TextureReceipt>>,
+    ) -> Result<Rc<Image>, String> {
         if self.unusable() {
             return Err("Vulkan graphics executor is unavailable".into());
         }
@@ -884,7 +895,12 @@ impl Executor {
             .aspect_mask(vk::ImageAspectFlags::COLOR)
             .level_count(1)
             .layer_count(1);
-        let staging = Allocation::new(&core, pixels, vk::BufferUsageFlags::TRANSFER_SRC)?;
+        let staging = Allocation::new(
+            &core,
+            rgba_bytes(size).map_err(|error| error.to_string())?,
+            pixels,
+            vk::BufferUsageFlags::TRANSFER_SRC,
+        )?;
         let command = unsafe {
             device.allocate_command_buffers(
                 &vk::CommandBufferAllocateInfo::default()

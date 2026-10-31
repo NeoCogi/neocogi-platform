@@ -333,12 +333,15 @@ fn indexed_texture_case(operation: GpuBlendOp, imported: bool) {
                 role: GpuBufferRole::Vertex,
                 byte_len: 48,
             },
-            source.as_com_ref(),
+            neocogi_render_core::source::supplied(source.as_com_ref()).unwrap().borrow().unwrap(),
         )
         .unwrap();
     let source = Bytes::source([0u16, 1, 2, 0, 2, 3].into_iter().flat_map(u16::to_le_bytes).collect());
     let indices = resources
-        .create_buffer(GpuBufferDesc { role: GpuBufferRole::Index, byte_len: 12 }, source.as_com_ref())
+        .create_buffer(
+            GpuBufferDesc { role: GpuBufferRole::Index, byte_len: 12 },
+            neocogi_render_core::source::supplied(source.as_com_ref()).unwrap().borrow().unwrap(),
+        )
         .unwrap();
     let source = Bytes::source(vec![255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 0, 255]);
     let image = resources
@@ -348,7 +351,7 @@ fn indexed_texture_case(operation: GpuBlendOp, imported: bool) {
                 format: GpuTextureFormat::Rgba8Unorm,
                 mip_count: 1,
             },
-            source.as_com_ref(),
+            neocogi_render_core::source::supplied(source.as_com_ref()).unwrap().borrow().unwrap(),
         )
         .unwrap();
     let image = if imported {
@@ -381,7 +384,10 @@ fn indexed_texture_case(operation: GpuBlendOp, imported: bool) {
                     format: GpuTextureFormat::Rgba8Unorm,
                     mip_count: 1,
                 },
-                Bytes::source(vec![255; 16]).as_com_ref(),
+                neocogi_render_core::source::supplied(Bytes::source(vec![255; 16]).as_com_ref())
+                    .unwrap()
+                    .borrow()
+                    .unwrap(),
             )
             .unwrap();
         let image_b = import_native_image(&gpu, &resources, &native, &queue, &mut images, pixel);
@@ -626,7 +632,10 @@ fn partial_preparation_failure_keeps_resource_versions_charged_through_upload_co
                     role: GpuBufferRole::Vertex,
                     byte_len: 36,
                 },
-                Bytes::source(vec![0; 36]).as_com_ref(),
+                neocogi_render_core::source::supplied(Bytes::source(vec![0; 36]).as_com_ref())
+                    .unwrap()
+                    .borrow()
+                    .unwrap(),
             )
             .unwrap();
         let image = resources
@@ -636,7 +645,10 @@ fn partial_preparation_failure_keeps_resource_versions_charged_through_upload_co
                     format: GpuTextureFormat::Rgba8Unorm,
                     mip_count: 1,
                 },
-                Bytes::source(vec![255; 16]).as_com_ref(),
+                neocogi_render_core::source::supplied(Bytes::source(vec![255; 16]).as_com_ref())
+                    .unwrap()
+                    .borrow()
+                    .unwrap(),
             )
             .unwrap();
         let mut images = HashMap::new();
@@ -687,7 +699,10 @@ fn partial_preparation_failure_keeps_resource_versions_charged_through_upload_co
                     format: GpuTextureFormat::Rgba8Unorm,
                     mip_count: 1,
                 },
-                Bytes::source(vec![255; 4]).as_com_ref(),
+                neocogi_render_core::source::supplied(Bytes::source(vec![255; 4]).as_com_ref())
+                    .unwrap()
+                    .borrow()
+                    .unwrap(),
             )
             .unwrap();
         executor
@@ -704,6 +719,11 @@ fn partial_preparation_failure_keeps_resource_versions_charged_through_upload_co
 /// Trusted fixture capability represents the host-authenticated immutable image.
 #[neocogi_com::com_object(interfaces(ITexture))]
 struct ImportedImage(Size);
+impl neocogi_render_core::abi::IRenderDriverBound for ImportedImage {
+    fn driver_identity(&self) -> Result<neocogi_com::ComPtr<neocogi_render_core::abi::IRenderDriverIdentityAbi>, neocogi_com::NcStatus> {
+        Err(neocogi_com::NC_E_NOINTERFACE)
+    }
+}
 impl ITexture for ImportedImage {
     /// Initialization and dimensions belong to the native map, without a device getter.
     fn size(&self) -> Result<Size, neocogi_com::NcStatus> {
@@ -743,7 +763,7 @@ fn import_native_image(
             origin: wgpu::Origin3d::ZERO,
             aspect: wgpu::TextureAspect::All,
         },
-        snapshot.pixels().unwrap(),
+        snapshot.pixels().unwrap().as_slice().unwrap(),
         wgpu::TexelCopyBufferLayout {
             offset: 0,
             bytes_per_row: Some(8),
@@ -782,7 +802,7 @@ fn imported_preparation_flushes_initialization_before_refunding_native_storage()
     let baseline = native.get_internal_counters().hal.texture_memory.read();
     for value in 0..8 {
         let pixels = [value, 0, 0, 255];
-        let image = WgpuRenderer::create_gpu_texture(&native, &queue, 1, 1, Some(&pixels)).unwrap();
+        let image = WgpuRenderer::create_gpu_texture(&native, &queue, 1, 1, Some(&pixels), false).unwrap();
         assert!(
             native.get_internal_counters().hal.texture_memory.read() > baseline,
             "this native regression requires observable image allocation counters"

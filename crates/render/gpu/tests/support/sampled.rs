@@ -8,6 +8,11 @@ use neocogi_render_gpu::{
 
 /// Record one full-root sampled contribution. The caller keeps its domain controller alive.
 pub fn block(gpu: &GpuDevice, resources: &ComPtr<IRenderResourcesAbi>, root: Rect, size: Size, pixels: &[u8]) -> ComBox<IRenderViewBlockAbi> {
+    block_initial(gpu, resources, root, size, Some(pixels))
+}
+
+/// Records the same real public shader/image path with explicitly optional initial contents.
+pub fn block_initial(gpu: &GpuDevice, resources: &ComPtr<IRenderResourcesAbi>, root: Rect, size: Size, pixels: Option<&[u8]>) -> ComBox<IRenderViewBlockAbi> {
     let code = Bytes::source(
         br#"
         @group(2) @binding(0) var image:texture_2d<f32>;
@@ -46,7 +51,9 @@ pub fn block(gpu: &GpuDevice, resources: &ComPtr<IRenderResourcesAbi>, root: Rec
                 format: GpuTextureFormat::Rgba8Unorm,
                 mip_count: 1,
             },
-            Bytes::source(pixels.to_vec()).as_com_ref(),
+            neocogi_render_core::source::initial(pixels.map(|pixels| Bytes::source(pixels.to_vec())))
+                .borrow()
+                .unwrap(),
         )
         .unwrap();
     let sampler = resources.create_sampler(GpuSamplerDesc::default()).unwrap();

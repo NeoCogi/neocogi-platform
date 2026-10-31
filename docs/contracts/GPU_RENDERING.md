@@ -29,6 +29,32 @@ artifacts independently of public shader owners. Weak expiry is not a callback
 or proof of GPU completion. Retirement releases only storage whose actual owners
 and completion requirements are satisfied.
 
+Initial buffer and sampled-image contents use the checked borrowed optional value
+`&Option<ComPtr<IGpuDataSource>>` in NCIDL. `None` means descriptor-sized zero
+contents, not undefined memory. It reserves the full extent without a CPU zero
+vector. `Some` supplies exactly the required bytes; empty/short/long sources reject.
+Updates and shader source remain required inputs. Use `source::initial` or
+`source::initial_bytes` and borrow the generated `InitialGpuData` alias for Rust
+calls. That alias derives from the actual generated method rather than a copied
+specialization UUID. Receiver-owned source references and their foreign Release
+calls end before final admission and publication.
+
+Driver-bound resources, factories and renderer/surface capabilities expose the
+same opaque `IRenderDriverIdentity` for one compatible native driver instance.
+Independent devices/contexts return distinct retained tokens. Tokens own no native
+core or renderer authority and are process-local metadata, not persistent IDs.
+Matching public metadata never substitutes for construction-proven registration
+and same-device/domain admission. Portable byte sources and compiler artifacts
+remain independent of a driver.
+
+The trusted host calls `IRenderHost::maintain` before GFX allocates frame geometry.
+It observes completion and reclaims safe storage without acquiring, clearing or
+presenting a target. This entry remains reachable when quota pressure would reject
+lowering before the normal renderer call. Actual in-flight owners remain charged;
+public release does not promise immediate refunds. Native transaction exits also
+maintain completed work on success and failure, including preparation without a
+target. This changes neither CPU-frame abort nor actual GPU-completion rules.
+
 Creation and update publish complete CPU logical resources/versions. Native
 allocation, driver compilation and upload remain fallible preparation work.
 Failure there rejects the frame and leaves the logical version retryable; it
@@ -43,7 +69,8 @@ or renderer capability. Imported images cannot be updated through the factory.
 At the Rust backend boundary, `TextureId` is a process-unique map key with checked
 immutable dimensions. It is not an authenticated COM resource or a certificate for
 later byte slices. Every safe `RendererBackend::create_texture` validates its actual
-RGBA input before ownership reservation or native work. Uploaded storage must have
+supplied RGBA input before ownership reservation or native work; absent data is
+initialized to zero independently of render-target usage. Uploaded storage must have
 exactly width × height × 4 bytes within the shared image budget; render-target
 allocation checks the same extent without pretending to upload an empty slice.
 

@@ -144,3 +144,9 @@ impl IRenderDiagnostics for Surface {
         Ok(NcString::from_utf8_str(&self.device.logical.diagnostic()))
     }
 }
+
+impl IRenderDriverBound for Surface {
+    fn driver_identity(&self) -> Result<ComPtr<IRenderDriverIdentityAbi>, NcStatus> {
+        Ok(self.device.logical.driver_identity())
+    }
+}

@@ -37,6 +37,10 @@ use neocogi_render_support::resource_guard::ResourceGuard;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests;
 
+/// One bounded read-only upload chunk shared by allocation-only buffers and images.
+/// Its fixed size is independent of descriptors; no per-resource CPU zero vector is created.
+static ZERO_BYTES: [u8; 64 * 1024] = [0; 64 * 1024];
+
 /// Target selection is private to the exclusively borrowed frame.
 #[derive(Clone, Copy)]
 enum DrawTarget {
@@ -275,12 +279,44 @@ impl GLRenderer {
                 gl.bind_texture(glow::TEXTURE_2D, None);
                 return Err(TextureError::backend(format!("OpenGL texture upload failed with error 0x{err:04x}")));
             }
+            if pixels.is_none() {
+                Self::upload_zero_pixels(gl, dimensions.width, dimensions.height).map_err(TextureError::backend)?;
+            }
             gl.bind_texture(glow::TEXTURE_2D, None);
             Ok(Rc::new(Image {
                 gl: gl.clone(),
                 raw: texture.into_inner(),
             }))
         }
+    }
+
+    /// Initializes zero pixels with bounded upload slices rather than a full CPU image.
+    fn upload_zero_pixels(gl: &glow::Context, width: i32, height: i32) -> Result<(), String> {
+        let zero = &ZERO_BYTES;
+        // SAFETY: Caller has allocated and bound the admitted complete image on the owning context.
+        unsafe {
+            for y in 0..height {
+                for x in (0..width).step_by(zero.len() / 4) {
+                    let count = (width - x).min((zero.len() / 4) as i32);
+                    gl.tex_sub_image_2d(
+                        glow::TEXTURE_2D,
+                        0,
+                        x,
+                        y,
+                        count,
+                        1,
+                        glow::RGBA,
+                        glow::UNSIGNED_BYTE,
+                        PixelUnpackData::Slice(Some(&zero[..count as usize * 4])),
+                    );
+                }
+            }
+            let error = gl.get_error();
+            if error != glow::NO_ERROR {
+                return Err(format!("zero texture initialization: 0x{error:04x}"));
+            }
+        }
+        Ok(())
     }
 
     /// Retires attachment residency independently of image sampling/completion owners.
@@ -384,9 +420,13 @@ impl RendererBackend for GLRenderer {
         self.begin(dimensions.width, dimensions.height, info.clear());
         Ok(GlFrame { backend: self, error: None })
     }
-    /// Upload exact validated immutable image bytes using the same native owner as UI imports.
-    fn create_texture(&mut self, id: TextureId, pixels: &[u8]) -> Result<(), TextureError> {
-        let image = self.create_image(id, Some(pixels))?;
+    /// Observes prior completion and releases safe native owners without touching a target.
+    fn maintain(&mut self) -> Result<(), FrameError> {
+        self.generic.collect().map_err(FrameError::new)
+    }
+    /// Creates an initialized immutable image independently of render-target selection.
+    fn create_texture(&mut self, id: TextureId, pixels: Option<&[u8]>) -> Result<(), TextureError> {
+        let image = self.create_image(id, pixels)?;
         self.textures.insert(id, ResidentImage { image, framebuffer: None });
         Ok(())
     }

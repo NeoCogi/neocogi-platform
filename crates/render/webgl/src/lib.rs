@@ -51,7 +51,12 @@ impl RendererBackend for WebGlCanvasRenderer {
         self.inner.texture_frame(info, output)
     }
 
-    fn create_texture(&mut self, id: TextureId, pixels: &[u8]) -> Result<(), TextureError> {
+    /// Observes prior completion and releases safe native owners without touching a target.
+    fn maintain(&mut self) -> Result<(), FrameError> {
+        self.inner.maintain()
+    }
+    /// Creates an initialized immutable image independently of render-target selection.
+    fn create_texture(&mut self, id: TextureId, pixels: Option<&[u8]>) -> Result<(), TextureError> {
         self.inner.create_texture(id, pixels)
     }
 

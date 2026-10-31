@@ -702,7 +702,9 @@ version = "0.0.0"
 dependencies = [
  "neocogi-com",
  "neocogi-idl",
+ "quote",
  "rs-math3d",
+ "syn 2.0.119",
 ]
 
 [[package]]

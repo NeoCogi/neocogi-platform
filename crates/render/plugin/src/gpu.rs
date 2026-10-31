@@ -179,6 +179,11 @@ impl Gpu {
         Ok(())
     }
 
+    /// Runs completion/retirement maintenance on the selected device before CPU quota admission.
+    pub(super) fn maintain(&mut self) -> Result<(), String> {
+        self.current()?;
+        self.renderer.maintain().map_err(|error| error.to_string())
+    }
     /// Atlas replacement uses the common immutable image realization before publishing UI metadata.
     pub(super) fn prepare_texture(&mut self, texture: std::rc::Rc<neocogi_render_gpu::resource::TextureVersion>) -> Result<(), String> {
         self.current()?;
@@ -264,7 +269,7 @@ impl Gpu {
         &self.last_pixels
     }
     /// Uploads into the native ownership map; the COM object is published only after success.
-    pub(super) fn create_texture(&mut self, id: TextureId, pixels: &[u8]) -> Result<(), String> {
+    pub(super) fn create_texture(&mut self, id: TextureId, pixels: Option<&[u8]>) -> Result<(), String> {
         self.current()?;
         self.renderer.create_texture(id, pixels).map_err(|e| e.to_string())
     }

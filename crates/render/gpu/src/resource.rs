@@ -39,6 +39,8 @@ pub(crate) struct Device {
     /// One bounded diagnostic shared with the native renderer. Interior mutability
     /// supports shareable COM methods, with no borrow across foreign calls.
     diagnostic: RefCell<String>,
+    /// Retained identity minted for this concrete driver instance.
+    identity: ComPtr<IRenderDriverIdentityAbi>,
     /// Exclusive buffer objects constructed by this device.
     pub(crate) buffers: RefCell<Registry<BufferObject>>,
     /// Exclusive texture objects constructed by this device.
@@ -138,6 +140,7 @@ impl GpuDevice {
             inner: Rc::new(Device {
                 compiler,
                 diagnostic: RefCell::new(String::new()),
+                identity: neocogi_render_core::source::new_driver_identity(),
                 buffers: RefCell::new(HashMap::new()),
                 textures: RefCell::new(HashMap::new()),
                 samplers: RefCell::new(HashMap::new()),
@@ -148,6 +151,11 @@ impl GpuDevice {
                 busy: Cell::new(false),
             }),
         }
+    }
+
+    /// Stable compatibility metadata; this getter grants no renderer or factory authority.
+    pub fn driver_identity(&self) -> ComPtr<IRenderDriverIdentityAbi> {
+        self.inner.identity.clone()
     }
 
     /// Copies current bounded detail for the native diagnostic facade.
@@ -313,6 +321,58 @@ snapshot_method!(sampler_snapshot, IGpuSamplerAbi, samplers, SamplerVersion);
 snapshot_method!(shader_snapshot, IGpuShaderAbi, shaders, ShaderVersion);
 snapshot_method!(pipeline_snapshot, IGpuPipelineAbi, pipelines, PipelineVersion);
 
+/// Immutable initialized contents with allocation-only zeros represented without a CPU payload.
+/// Logical bounds and quotas apply equally to both variants; native readers must initialize zeros.
+pub enum VersionBytes {
+    /// Descriptor-sized transparent/zero contents, without a full CPU zero vector.
+    Zeroed {
+        /// Admitted logical byte count.
+        len: usize,
+    },
+    /// Complete initialized bytes supplied or atomically materialized by an update.
+    Owned(Vec<u8>),
+}
+impl VersionBytes {
+    /// Admitted logical size independent of whether bytes were materialized.
+    pub fn len(&self) -> usize {
+        match self {
+            Self::Zeroed { len } => *len,
+            Self::Owned(bytes) => bytes.len(),
+        }
+    }
+    /// Whether the logical extent is empty.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+    /// Materialized bytes, or None when the complete logical extent is zero.
+    pub fn as_slice(&self) -> Option<&[u8]> {
+        match self {
+            Self::Zeroed { .. } => None,
+            Self::Owned(bytes) => Some(bytes),
+        }
+    }
+    /// Copies the complete defined contents into an already admitted output allocation.
+    pub fn copy_into(&self, output: &mut [u8]) -> Result<(), NcStatus> {
+        if output.len() != self.len() {
+            return Err(NC_E_INVALID_ARG);
+        }
+        match self {
+            Self::Zeroed { .. } => output.fill(0),
+            Self::Owned(bytes) => output.copy_from_slice(bytes),
+        }
+        Ok(())
+    }
+    /// Reads a small checked byte interval without materializing zero storage.
+    pub fn read(&self, offset: usize, output: &mut [u8]) -> Result<(), NcStatus> {
+        let end = offset.checked_add(output.len()).filter(|end| *end <= self.len()).ok_or(NC_E_OUT_OF_RANGE)?;
+        match self {
+            Self::Zeroed { .. } => output.fill(0),
+            Self::Owned(bytes) => output.copy_from_slice(&bytes[offset..end]),
+        }
+        Ok(())
+    }
+}
+
 /// Immutable logical vertex/index version; native caches may retain this device-free value.
 pub struct BufferVersion {
     /// Renderer-private cache identity.
@@ -320,7 +380,7 @@ pub struct BufferVersion {
     /// Immutable role/extent.
     pub(crate) desc: GpuBufferDesc,
     /// Explicit GPU bytes; no Rust semantic vertex layout is involved.
-    pub(crate) bytes: Vec<u8>,
+    pub(crate) bytes: VersionBytes,
     /// Persists through actual last backing ownership.
     _charge: ByteCharge,
 }
@@ -339,7 +399,7 @@ pub struct TextureVersion {
 /// An ordinary immutable image can be sampled privately without exposing a client conversion API.
 enum TextureContents {
     /// Complete initialized row-major bytes; updates publish a fresh complete version.
-    Pixels(Vec<u8>),
+    Pixels(VersionBytes),
     /// Authenticated host key and the immutable public lifetime needed during CPU preparation.
     Imported {
         /// Resolved by the same native device's private image map.
@@ -351,7 +411,7 @@ enum TextureContents {
 
 impl TextureVersion {
     /// Imported native images have no CPU pixel buffer and cannot be updated through the factory.
-    pub fn pixels(&self) -> Option<&[u8]> {
+    pub fn pixels(&self) -> Option<&VersionBytes> {
         match &self.contents {
             TextureContents::Pixels(bytes) => Some(bytes),
             TextureContents::Imported { .. } => None,
@@ -440,6 +500,11 @@ macro_rules! resource_object {
             _owner: ResourceCharge,
         }
         impl $interface for $name {}
+        impl IRenderDriverBound for $name {
+            fn driver_identity(&self) -> Result<ComPtr<IRenderDriverIdentityAbi>, NcStatus> {
+                Ok(self.domain.device.driver_identity())
+            }
+        }
     };
 }
 resource_object!(BufferObject, IGpuBuffer, BufferVersion);
@@ -576,19 +641,23 @@ fn sampler_desc(desc: GpuSamplerDesc) -> Result<(), NcStatus> {
     Ok(())
 }
 
+impl IRenderDriverBound for Factory {
+    fn driver_identity(&self) -> Result<ComPtr<IRenderDriverIdentityAbi>, NcStatus> {
+        Ok(self.domain.device.driver_identity())
+    }
+}
 impl IRenderResources for Factory {
     /// Whole-version quota admission precedes bulk reads; public owner is transferred last.
-    fn create_buffer(&self, desc: GpuBufferDesc, source: ComRef<'_, IGpuDataSourceAbi>) -> Result<ComBox<IGpuBufferAbi>, NcStatus> {
+    fn create_buffer(&self, desc: GpuBufferDesc, source: neocogi_com::NcValueRef<'_, InitialGpuData>) -> Result<ComBox<IGpuBufferAbi>, NcStatus> {
         let _operation = self.domain.device.operation()?;
         self.domain.open()?;
         let len = buffer_desc(desc)?;
-        if source.byte_count()? != len as u64 {
-            return Err(NC_E_INVALID_ARG);
-        }
         let owner = self.domain.account.resource()?;
         let charge = self.domain.account.bytes(len)?;
-        let mut bytes = zeroed(len)?;
-        read_bytes(source, len, |offset, chunk| bytes[offset..offset + chunk.len()].copy_from_slice(chunk))?;
+        let bytes = match neocogi_render_core::source::read_initial(source, len)? {
+            Some(bytes) => VersionBytes::Owned(bytes),
+            None => VersionBytes::Zeroed { len },
+        };
         self.domain.open()?;
         let current = Rc::new(BufferVersion {
             id: next_version_id()?,
@@ -607,17 +676,16 @@ impl IRenderResources for Factory {
     }
 
     /// Publishes immutable pixels independently from ordinary shared ITexture capabilities.
-    fn create_texture(&self, desc: GpuTextureDesc, source: ComRef<'_, IGpuDataSourceAbi>) -> Result<ComBox<IGpuTextureAbi>, NcStatus> {
+    fn create_texture(&self, desc: GpuTextureDesc, source: neocogi_com::NcValueRef<'_, InitialGpuData>) -> Result<ComBox<IGpuTextureAbi>, NcStatus> {
         let _operation = self.domain.device.operation()?;
         self.domain.open()?;
         let len = texture_desc(desc)?;
-        if source.byte_count()? != len as u64 {
-            return Err(NC_E_INVALID_ARG);
-        }
         let owner = self.domain.account.resource()?;
         let charge = self.domain.account.bytes(len)?;
-        let mut bytes = zeroed(len)?;
-        read_bytes(source, len, |offset, chunk| bytes[offset..offset + chunk.len()].copy_from_slice(chunk))?;
+        let bytes = match neocogi_render_core::source::read_initial(source, len)? {
+            Some(bytes) => VersionBytes::Owned(bytes),
+            None => VersionBytes::Zeroed { len },
+        };
         self.domain.open()?;
         let current = Rc::new(TextureVersion {
             id: next_version_id()?,
@@ -763,7 +831,7 @@ impl IRenderResources for Factory {
         let end = start.checked_add(count).filter(|end| *end <= previous.bytes.len()).ok_or(NC_E_OUT_OF_RANGE)?;
         let charge = self.domain.account.bytes(previous.bytes.len())?;
         let mut bytes = zeroed(previous.bytes.len())?;
-        bytes.copy_from_slice(&previous.bytes);
+        previous.bytes.copy_into(&mut bytes)?;
         read_bytes(source, count, |offset, chunk| {
             bytes[start + offset..start + offset + chunk.len()].copy_from_slice(chunk)
         })?;
@@ -771,7 +839,7 @@ impl IRenderResources for Factory {
         let current = Rc::new(BufferVersion {
             id: next_version_id()?,
             desc: previous.desc,
-            bytes,
+            bytes: VersionBytes::Owned(bytes),
             _charge: charge,
         });
         let retired = observer.with_mut(|buffer| {
@@ -810,7 +878,7 @@ impl IRenderResources for Factory {
         }
         let charge = self.domain.account.bytes(previous_bytes.len())?;
         let mut bytes = zeroed(previous_bytes.len())?;
-        bytes.copy_from_slice(previous_bytes);
+        previous_bytes.copy_into(&mut bytes)?;
         let row = rect.width as usize * 4;
         let stride = previous.desc.size.width as usize * 4;
         read_bytes(source, count, |offset, chunk| {
@@ -827,7 +895,7 @@ impl IRenderResources for Factory {
         let current = Rc::new(TextureVersion {
             id: next_version_id()?,
             desc: previous.desc,
-            contents: TextureContents::Pixels(bytes),
+            contents: TextureContents::Pixels(VersionBytes::Owned(bytes)),
             charge: Rc::new(charge),
         });
         let retired = observer.with_mut(|texture| {
@@ -872,7 +940,7 @@ impl BufferVersion {
         self.desc
     }
     /// Reads the admitted bytes without granting mutation authority.
-    pub fn bytes(&self) -> &[u8] {
+    pub fn bytes(&self) -> &VersionBytes {
         &self.bytes
     }
 }

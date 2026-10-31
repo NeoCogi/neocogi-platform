@@ -44,8 +44,13 @@ pub struct PlatformObject {
 
 impl PlatformObject {
     /// Explicit dependency injection; there is no implicit linked compiler fallback.
-    pub fn new(compiler:ComPtr<neocogi_shader_core::abi::ShaderCompilerAbi>)->Self {
-        Self {compiler,#[cfg(not(target_arch="wasm32"))] host:RefCell::new(None),diagnostic:RefCell::new(String::new())}
+    pub fn new(compiler: ComPtr<neocogi_shader_core::abi::ShaderCompilerAbi>) -> Self {
+        Self {
+            compiler,
+            #[cfg(not(target_arch = "wasm32"))]
+            host: RefCell::new(None),
+            diagnostic: RefCell::new(String::new()),
+        }
     }
 }
 
@@ -130,6 +135,9 @@ impl Drop for RenderAccess<'_> {
     fn drop(&mut self) {
         let mut state = self.state.take().expect("render transaction restored once");
         state.prepared.clear();
+        if let Err(error) = state.gpu.maintain() {
+            self.device.failure(error);
+        }
         if let Err(error) = state.gpu.retire(&mut self.device.retired.borrow_mut()) {
             self.device.failure(error);
         }
@@ -189,6 +197,11 @@ impl GraphicsHost {
     }
 }
 impl IRenderHost for GraphicsHost {
+    /// Reclamation is reachable before GFX lowers and allocates the next frame's resources.
+    fn maintain(&self) -> Result<(), NcStatus> {
+        let mut access = self.device.access()?;
+        access.state().gpu.maintain().map_err(|error| self.device.failure(error))
+    }
     /// The private native registry authenticates ordinary image identity before logical import.
     fn import_ui_texture(
         &self,
@@ -251,27 +264,51 @@ fn identity<I: ComInterface>(interface: &ComPtr<I>) -> Result<usize, NcStatus> {
 /// Acquires one owned root; object construction remains on its typed methods.
 #[neocogi_com::plugin(name = "neocogi.render.glow", dependencies = [neocogi_shader_core::SHADER_COMPILER_PLUGIN_ID])]
 fn acquire_root(runtime: ::neocogi_com::Runtime) -> Result<neocogi_com::ComPtr<neocogi_render_core::platform::PlatformAbi>, neocogi_com::NcStatus> {
-    PlatformObject::from_value(PlatformObject::new(runtime.acquire_plugin_root(neocogi_shader_core::SHADER_COMPILER_PLUGIN_ID)?)).query()
+    PlatformObject::from_value(PlatformObject::new(
+        runtime.acquire_plugin_root(neocogi_shader_core::SHADER_COMPILER_PLUGIN_ID)?,
+    ))
+    .query()
 }
 #[cfg(feature = "vulkan")]
 /// Acquires one owned root; object construction remains on its typed methods.
 #[neocogi_com::plugin(name = "neocogi.render.vulkan", dependencies = [neocogi_shader_core::SHADER_COMPILER_PLUGIN_ID])]
 fn acquire_root(runtime: ::neocogi_com::Runtime) -> Result<neocogi_com::ComPtr<neocogi_render_core::platform::PlatformAbi>, neocogi_com::NcStatus> {
-    PlatformObject::from_value(PlatformObject::new(runtime.acquire_plugin_root(neocogi_shader_core::SHADER_COMPILER_PLUGIN_ID)?)).query()
+    PlatformObject::from_value(PlatformObject::new(
+        runtime.acquire_plugin_root(neocogi_shader_core::SHADER_COMPILER_PLUGIN_ID)?,
+    ))
+    .query()
 }
 #[cfg(feature = "wgpu")]
 /// Acquires one owned root; object construction remains on its typed methods.
 #[neocogi_com::plugin(name = "neocogi.render.wgpu", dependencies = [neocogi_shader_core::SHADER_COMPILER_PLUGIN_ID])]
 fn acquire_root(runtime: ::neocogi_com::Runtime) -> Result<neocogi_com::ComPtr<neocogi_render_core::platform::PlatformAbi>, neocogi_com::NcStatus> {
-    PlatformObject::from_value(PlatformObject::new(runtime.acquire_plugin_root(neocogi_shader_core::SHADER_COMPILER_PLUGIN_ID)?)).query()
+    PlatformObject::from_value(PlatformObject::new(
+        runtime.acquire_plugin_root(neocogi_shader_core::SHADER_COMPILER_PLUGIN_ID)?,
+    ))
+    .query()
 }
 #[cfg(feature = "webgl")]
 /// Acquires one owned root; object construction remains on its typed methods.
 #[neocogi_com::plugin(name = "neocogi.render.webgl", dependencies = [neocogi_shader_core::SHADER_COMPILER_PLUGIN_ID])]
 fn acquire_root(runtime: ::neocogi_com::Runtime) -> Result<neocogi_com::ComPtr<neocogi_render_core::platform::PlatformAbi>, neocogi_com::NcStatus> {
-    PlatformObject::from_value(PlatformObject::new(runtime.acquire_plugin_root(neocogi_shader_core::SHADER_COMPILER_PLUGIN_ID)?)).query()
+    PlatformObject::from_value(PlatformObject::new(
+        runtime.acquire_plugin_root(neocogi_shader_core::SHADER_COMPILER_PLUGIN_ID)?,
+    ))
+    .query()
 }
 // Only the native assembly owns the dynamic entrypoint; browser assembly uses static descriptors.
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests;
+
+impl IRenderDriverBound for WindowObject {
+    fn driver_identity(&self) -> Result<ComPtr<IRenderDriverIdentityAbi>, NcStatus> {
+        Ok(self.device.logical.driver_identity())
+    }
+}
+
+impl IRenderDriverBound for GraphicsHost {
+    fn driver_identity(&self) -> Result<ComPtr<IRenderDriverIdentityAbi>, NcStatus> {
+        Ok(self.device.logical.driver_identity())
+    }
+}

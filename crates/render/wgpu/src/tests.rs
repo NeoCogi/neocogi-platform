@@ -12,18 +12,18 @@ fn texture_upload_failures_are_returned_without_poisoning_later_uploads() {
     // An outer scope catches any validation error the helper accidentally lets escape. A real
     // existing texture remains owned while each invalid replacement candidate is rejected.
     let outer = device.push_error_scope(wgpu::ErrorFilter::Validation);
-    let live = WgpuRenderer::create_gpu_texture(&device, &queue, 1, 1, Some(&[255; 4])).unwrap();
+    let live = WgpuRenderer::create_gpu_texture(&device, &queue, 1, 1, Some(&[255; 4]), false).unwrap();
     let too_wide = device.limits().max_texture_dimension_2d + 1;
-    let dimensions = WgpuRenderer::create_gpu_texture(&device, &queue, too_wide, 1, None);
+    let dimensions = WgpuRenderer::create_gpu_texture(&device, &queue, too_wide, 1, None, true);
     assert!(dimensions.err().unwrap().contains("dimension limit"));
-    let zero = WgpuRenderer::create_gpu_texture(&device, &queue, 0, 1, None);
+    let zero = WgpuRenderer::create_gpu_texture(&device, &queue, 0, 1, None, true);
     assert!(zero.err().unwrap().contains("non-zero"));
 
     // Deliberately undersized bytes exercise asynchronous-shaped WGPU error scopes rather than
     // just the helper's dimension precheck. This must return Err instead of reporting success.
-    let invalid = WgpuRenderer::create_gpu_texture(&device, &queue, 1, 1, Some(&[0; 3]));
+    let invalid = WgpuRenderer::create_gpu_texture(&device, &queue, 1, 1, Some(&[0; 3]), false);
     assert!(invalid.err().unwrap().contains("texture creation or upload failed"));
-    let replacement = WgpuRenderer::create_gpu_texture(&device, &queue, 1, 1, Some(&[17; 4])).unwrap();
+    let replacement = WgpuRenderer::create_gpu_texture(&device, &queue, 1, 1, Some(&[17; 4]), false).unwrap();
     assert!(pollster::block_on(outer.pop()).is_none(), "helper scopes must own their diagnostics");
     drop((replacement, live));
 }
@@ -90,12 +90,12 @@ fn independent_texture_frames_preserve_pixels_and_native_surface_configuration()
     let upload = TextureId::for_upload(1, 1, &[255; 4]).unwrap();
     // Admission must use this call's bytes, not the earlier slice that minted the key.
     for length in [0, 1, 3, 5] {
-        assert!(matches!(renderer.create_texture(upload, &vec![0; length]),
+        assert!(matches!(renderer.create_texture(upload, Some(&vec![0; length])),
             Err(TextureError::Image { source: neocogi_render_core::ImageValidationError::PixelLength { expected: 4, actual } }) if actual == length));
         assert!(!renderer.textures.contains_key(&upload));
     }
-    renderer.create_texture(upload, &[255; 4]).unwrap();
-    assert!(renderer.create_texture(upload, &[0; 4]).is_err());
+    renderer.create_texture(upload, Some(&[255; 4])).unwrap();
+    assert!(renderer.create_texture(upload, Some(&[0; 4])).is_err());
     assert!(renderer.create_render_texture(upload).is_err());
     renderer.destroy_texture(upload);
     let source = [255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 0, 255];
@@ -112,7 +112,7 @@ fn independent_texture_frames_preserve_pixels_and_native_surface_configuration()
     let first = TextureId::for_render_target(2, 2).unwrap();
     renderer.create_render_texture(first).unwrap();
     assert!(renderer.create_render_texture(first).is_err());
-    assert!(renderer.create_texture(first, &[0; 16]).is_err());
+    assert!(renderer.create_texture(first, Some(&[0; 16])).is_err());
     let info = FrameInfo::try_new(Dimensioni::new(2, 2), color(0, 0, 0, 255)).unwrap();
     let mut frame = renderer.texture_frame(info, first).unwrap();
     frame.execute_block(&prepared);

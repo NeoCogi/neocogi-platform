@@ -190,11 +190,11 @@ fn ui_draws_clears_and_uploads_survive_application_gl_state() {
     let image = TextureId::for_upload(1, 1, &[255; 4]).unwrap();
     // Admission must use this call's bytes, not the earlier slice that minted the key.
     for length in [0, 1, 3, 5] {
-        assert!(matches!(renderer.create_texture(image, &vec![0; length]),
+        assert!(matches!(renderer.create_texture(image, Some(&vec![0; length])),
             Err(TextureError::Image { source: neocogi_render_core::ImageValidationError::PixelLength { expected: 4, actual } }) if actual == length));
         assert!(!renderer.textures.contains_key(&image));
     }
-    renderer.create_texture(image, &[255; 4]).unwrap();
+    renderer.create_texture(image, Some(&[255; 4])).unwrap();
     renderer.destroy_texture(image);
     // Abandoning an unexecuted target never manufactures a draw or completion submission.
     drop(renderer.frame(info).unwrap());
@@ -560,7 +560,7 @@ fn resident_outputs_reject_collisions_and_release_framebuffers_before_shared_ima
     renderer.incomplete_output = true;
     assert!(renderer.create_render_texture(output).is_err());
     assert!(renderer.incomplete_output, "duplicate rejection precedes native attachment work");
-    assert!(renderer.create_texture(output, &[0; 16]).is_err());
+    assert!(renderer.create_texture(output, Some(&[0; 16])).is_err());
     assert_eq!(renderer.textures[&output].framebuffer, Some(framebuffer));
     let info = FrameInfo::try_new(Dimensioni::new(2, 2), color(7, 31, 63, 255)).unwrap();
     renderer.texture_frame(info, output).unwrap().finish().unwrap();
@@ -589,14 +589,82 @@ fn resident_outputs_reject_collisions_and_release_framebuffers_before_shared_ima
     renderer.create_render_texture(retry).unwrap();
     renderer.destroy_texture(retry);
     let upload = TextureId::for_upload(1, 1, &[255; 4]).unwrap();
-    renderer.create_texture(upload, &[255; 4]).unwrap();
+    renderer.create_texture(upload, Some(&[255; 4])).unwrap();
     let original = renderer.textures[&upload].image.raw;
-    assert!(renderer.create_texture(upload, &[0; 4]).is_err());
+    assert!(renderer.create_texture(upload, Some(&[0; 4])).is_err());
     assert!(renderer.create_render_texture(upload).is_err());
     assert_eq!(renderer.textures[&upload].image.raw, original);
     assert!(renderer.textures[&upload].framebuffer.is_none());
     renderer.destroy_texture(upload);
     unsafe {
+        assert_eq!(gl.get_error(), glow::NO_ERROR);
+    }
+}
+
+/// Actual texture sampling and ordinary-image readback observe defined zero RGBA contents.
+#[test]
+#[ignore = "requires native GL ES3; run with SDL_VIDEODRIVER=offscreen"]
+fn absent_initial_images_are_native_zero_without_a_cpu_zero_payload() {
+    use neocogi_render_gpu::{GpuDevice, abi::*};
+    let _session = NATIVE_SESSION.lock().unwrap_or_else(|error| error.into_inner());
+    let sdl = sdl2::init().unwrap();
+    let video = sdl.video().unwrap();
+    video.gl_attr().set_context_profile(sdl2::video::GLProfile::GLES);
+    video.gl_attr().set_context_version(3, 0);
+    video.gl_attr().set_depth_size(24);
+    let window = video.window("zero initialization", 4, 4).opengl().hidden().build().unwrap();
+    let _context = window.gl_create_context().unwrap();
+    // SAFETY: SDL selected the owned live context and its loader resolves functions for it.
+    let gl = Rc::new(unsafe { glow::Context::from_loader_function(|name| video.gl_get_proc_address(name) as *const _) });
+    let mut renderer = GLRenderer::new(gl.clone(), 4, 4).unwrap();
+    let device = GpuDevice::new(
+        nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
+            .query()
+            .unwrap(),
+    );
+    let owner = device.create_client(RenderClientLimits::default()).unwrap();
+    let resources = owner.resources().unwrap();
+    let block = sampled::block_initial(
+        &device,
+        &resources,
+        neocogi_render_gpu::abi::Rect { x: 0, y: 0, width: 4, height: 4 },
+        Size { width: 2, height: 2 },
+        None,
+    );
+    let snapshot = device.block_snapshot(block.as_com_ref()).unwrap();
+    let prepared = renderer.prepare_block(&snapshot, true).unwrap();
+    let output = TextureId::for_render_target(4, 4).unwrap();
+    renderer.create_render_texture(output).unwrap();
+    let info = FrameInfo::try_new(Dimensioni::new(4, 4), Color { r: 99, g: 77, b: 55, a: 255 }).unwrap();
+    let mut frame = renderer.texture_frame(info, output).unwrap();
+    frame.execute_block(&prepared);
+    frame.finish().unwrap();
+    let mut pixels = [19; 64];
+    // SAFETY: The complete RGBA8 output target is current and the complete writable RGBA output is initialized.
+    unsafe {
+        gl.bind_framebuffer(glow::READ_FRAMEBUFFER, renderer.textures[&output].framebuffer);
+        gl.read_pixels(0, 0, 4, 4, glow::RGBA, glow::UNSIGNED_BYTE, PixelPackData::Slice(Some(&mut pixels)));
+    }
+    assert_eq!(pixels, [0; 64]);
+    let id = TextureId::for_render_target(2, 2).unwrap();
+    renderer.create_texture(id, None).unwrap();
+    // SAFETY: This temporary FBO retains an installed native image and is deleted before its owner.
+    unsafe {
+        let framebuffer = gl.create_framebuffer().unwrap();
+        gl.bind_framebuffer(glow::FRAMEBUFFER, Some(framebuffer));
+        gl.framebuffer_texture_2d(
+            glow::FRAMEBUFFER,
+            glow::COLOR_ATTACHMENT0,
+            glow::TEXTURE_2D,
+            Some(renderer.textures[&id].image.raw),
+            0,
+        );
+        assert_eq!(gl.check_framebuffer_status(glow::FRAMEBUFFER), glow::FRAMEBUFFER_COMPLETE);
+        let mut output = [19; 16];
+        gl.read_pixels(0, 0, 2, 2, glow::RGBA, glow::UNSIGNED_BYTE, PixelPackData::Slice(Some(&mut output)));
+        assert_eq!(output, [0; 16]);
+        gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+        gl.delete_framebuffer(framebuffer);
         assert_eq!(gl.get_error(), glow::NO_ERROR);
     }
 }

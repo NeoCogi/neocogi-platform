@@ -7,6 +7,7 @@
 #![deny(missing_docs)]
 
 include!(env!("IDL_NEOCOGI_RENDERER"));
+include!(env!("IDL_INITIAL_GPU_DATA"));
 
 mod helpers;
 pub use helpers::*;

@@ -28,12 +28,12 @@ fn independent_texture_frames_preserve_pixels_and_native_surface_configuration()
     let upload = TextureId::for_upload(1, 1, &[255; 4]).unwrap();
     // Admission must use this call's bytes, not the earlier slice that minted the key.
     for length in [0, 1, 3, 5] {
-        assert!(matches!(renderer.create_texture(upload, &vec![0; length]),
+        assert!(matches!(renderer.create_texture(upload, Some(&vec![0; length])),
             Err(TextureError::Image { source: neocogi_render_core::ImageValidationError::PixelLength { expected: 4, actual } }) if actual == length));
         assert!(!renderer.textures.contains_key(&upload));
     }
-    renderer.create_texture(upload, &[255; 4]).unwrap();
-    assert!(renderer.create_texture(upload, &[0; 4]).is_err());
+    renderer.create_texture(upload, Some(&[255; 4])).unwrap();
+    assert!(renderer.create_texture(upload, Some(&[0; 4])).is_err());
     assert!(renderer.create_render_texture(upload).is_err());
     renderer.destroy_texture(upload);
     let source = [255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 0, 255];
@@ -56,7 +56,7 @@ fn independent_texture_frames_preserve_pixels_and_native_surface_configuration()
     let first = TextureId::for_render_target(2, 2).unwrap();
     renderer.create_render_texture(first).unwrap();
     assert!(renderer.create_render_texture(first).is_err());
-    assert!(renderer.create_texture(first, &[0; 16]).is_err());
+    assert!(renderer.create_texture(first, Some(&[0; 16])).is_err());
     let info = FrameInfo::try_new(Dimensioni::new(2, 2), color(0, 0, 0, 255)).unwrap();
     let mut frame = renderer.texture_frame(info, first).unwrap();
     frame.execute_block(&prepared);
@@ -167,7 +167,10 @@ fn reconstruction_failure_rejects_every_native_entry_and_preserves_finalizer_pha
                 format: GpuTextureFormat::Rgba8Unorm,
                 mip_count: 1,
             },
-            Bytes::source(vec![255; 4]).as_com_ref(),
+            neocogi_render_core::source::supplied(Bytes::source(vec![255; 4]).as_com_ref())
+                .unwrap()
+                .borrow()
+                .unwrap(),
         )
         .unwrap();
     let snapshot = gpu.texture_snapshot(resources.as_com_ref(), image.as_com_ref()).unwrap();
@@ -231,7 +234,11 @@ fn reconstruction_failure_rejects_every_native_entry_and_preserves_finalizer_pha
             // Same-size empty and client retries must reject before acquisition,
             // pipeline work, output creation or indexing incomplete command arrays.
             assert!(renderer.frame(info).is_err());
-            assert!(renderer.create_texture(TextureId::for_upload(1, 1, &[255; 4]).unwrap(), &[255; 4]).is_err());
+            assert!(
+                renderer
+                    .create_texture(TextureId::for_upload(1, 1, &[255; 4]).unwrap(), Some(&[255; 4]))
+                    .is_err()
+            );
             assert!(renderer.create_render_texture(TextureId::for_render_target(2, 2).unwrap()).is_err());
             assert!(
                 renderer

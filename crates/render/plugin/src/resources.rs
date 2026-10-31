@@ -39,16 +39,15 @@ impl Drop for TextureRecord {
 }
 impl ITextureFactory for WindowObject {
     /// Validates exact RGBA length through the common image policy, uploads, then publishes one capability.
-    fn create_texture(&self, size: Size, pixels: NcCopyFromBufferOffset<'_, u8>) -> Result<ComPtr<ITextureAbi>, NcStatus> {
-        if pixels.offset() != 0 {
-            return Err(NC_E_INVALID_ARG);
-        }
-        let id = TextureId::for_upload(size.width, size.height, pixels.as_slice()).map_err(|_| NC_E_INVALID_ARG)?;
+    fn create_texture(&self, size: Size, pixels: neocogi_com::NcValueRef<'_, InitialGpuData>) -> Result<ComPtr<ITextureAbi>, NcStatus> {
+        let len = rgba_bytes(size)?;
+        let pixels = neocogi_render_core::source::read_initial(pixels, len)?;
+        let id = TextureId::for_render_target(size.width, size.height).map_err(|_| NC_E_INVALID_ARG)?;
         let mut access = self.device.access()?;
         access
             .state()
             .gpu
-            .create_texture(id, pixels.as_slice())
+            .create_texture(id, pixels.as_deref())
             .map_err(|error| self.device.failure(error))?;
         Ok(publish_texture(retain_texture(self.device.clone(), id)))
     }
@@ -94,5 +93,11 @@ impl Device {
         let resolved = registry.get(&key).and_then(Weak::upgrade);
         drop(registry);
         resolved.ok_or(RENDER_E_OWNER)
+    }
+}
+
+impl IRenderDriverBound for Texture {
+    fn driver_identity(&self) -> Result<ComPtr<IRenderDriverIdentityAbi>, NcStatus> {
+        Ok(self.record.device.logical.driver_identity())
     }
 }

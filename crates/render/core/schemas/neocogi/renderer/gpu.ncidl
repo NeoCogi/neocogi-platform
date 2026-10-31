@@ -1,3 +1,14 @@
+#[version(1)]
+/// Opaque retained identity of one compatible native driver instance; grants no device authority.
+interface IRenderDriverIdentity {}
+
+#[version(1)]
+/// Read-only compatibility metadata. Providers still authenticate local resource provenance.
+interface IRenderDriverBound {
+    /// Stable process-local identity; independent devices/contexts return different tokens.
+    fn driver_identity(&self) -> Result<ComPtr<IRenderDriverIdentity>>;
+}
+
 // Generic graphics resources and bounded CPU recording. Native objects never cross this ABI.
 #[version(1)]
 /// The immutable native binding role of a byte buffer; WebGL forbids mixing these roles.
@@ -347,23 +358,23 @@ struct RenderClientLimits {
 
 #[version(1)]
 /// Exclusive logical byte buffer; renderer observers never promote ownership.
-interface IGpuBuffer {}
+interface IGpuBuffer: IRenderDriverBound {}
 
 #[version(1)]
 /// Exclusive sampled texture, deliberately distinct from ordinary immutable ITexture.
-interface IGpuTexture {}
+interface IGpuTexture: IRenderDriverBound {}
 
 #[version(1)]
 /// Exclusive immutable sampler state.
-interface IGpuSampler {}
+interface IGpuSampler: IRenderDriverBound {}
 
 #[version(1)]
 /// Exclusive validated portable shader; pipelines retain private artifact snapshots.
-interface IGpuShader {}
+interface IGpuShader: IRenderDriverBound {}
 
 #[version(1)]
 /// Exclusive logical graphics pipeline with private target-compatible native variants.
-interface IGpuPipeline {}
+interface IGpuPipeline: IRenderDriverBound {}
 
 #[version(1)]
 /// Immutable bounded CPU bytes copied synchronously before logical publication.
@@ -389,11 +400,11 @@ interface IGpuPipelineSource {
 
 #[version(1)]
 /// Restricted shareable factory; all created GPU resource owners are exclusive.
-interface IRenderResources {
+interface IRenderResources: IRenderDriverBound {
     /// Publish a complete logical buffer; native upload is later and fallible.
-    fn create_buffer(&self, desc: GpuBufferDesc, bytes: &IGpuDataSource) -> Result<ComBox<IGpuBuffer>>;
+    fn create_buffer(&self, desc: GpuBufferDesc, bytes: &Option<ComPtr<IGpuDataSource>>) -> Result<ComBox<IGpuBuffer>>;
     /// Publish tightly packed logical RGBA pixels, without exposing target attachments.
-    fn create_texture(&self, desc: GpuTextureDesc, pixels: &IGpuDataSource) -> Result<ComBox<IGpuTexture>>;
+    fn create_texture(&self, desc: GpuTextureDesc, pixels: &Option<ComPtr<IGpuDataSource>>) -> Result<ComBox<IGpuTexture>>;
     /// Create immutable portable filtering state.
     fn create_sampler(&self, desc: GpuSamplerDesc) -> Result<ComBox<IGpuSampler>>;
     /// Validate WGSL graphics profile and retain CPU artifacts for one UTF-8 entry point.
@@ -494,14 +505,17 @@ interface IRenderDeviceLease {}
 
 #[version(1)]
 /// Trusted renderer capability for allocating separately controlled client domains.
-interface IRenderClientFactory {
+interface IRenderClientFactory: IRenderDriverBound {
     /// Create independent domain limits and a host controller.
     fn create_client(&self, limits: RenderClientLimits) -> Result<ComBox<IRenderClientDomain>>;
 }
 
 #[version(1)]
 /// Trusted host-only assembly capability; never delegated to widgets.
-interface IRenderHost {
+interface IRenderHost: IRenderDriverBound {
+    /// Observe completed work and reclaim retired storage before quota-sensitive creation.
+    /// No target is acquired, cleared or presented; incomplete work remains owned and charged.
+    fn maintain(&self) -> Result<()>;
     /// Privately sample an authenticated immutable UI image in this device's compositor domain.
     /// Client factories reject this bridge; the result exposes no ITexture conversion or native key.
     fn import_ui_texture(&self, resources: &IRenderResources, image: &ITexture) -> Result<ComBox<IGpuTexture>>;

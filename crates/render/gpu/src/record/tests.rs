@@ -77,7 +77,10 @@ fn client(device: &GpuDevice, limits: RenderClientLimits) -> (ComBox<IRenderClie
 fn buffer(factory: &ComPtr<IRenderResourcesAbi>, role: GpuBufferRole, data: Vec<u8>) -> ComBox<IGpuBufferAbi> {
     let len = data.len();
     factory
-        .create_buffer(GpuBufferDesc { role, byte_len: len as u64 }, bytes(data).as_com_ref())
+        .create_buffer(
+            GpuBufferDesc { role, byte_len: len as u64 },
+            neocogi_render_core::source::supplied(bytes(data).as_com_ref()).unwrap().borrow().unwrap(),
+        )
         .unwrap()
 }
 /// Client-side explicit f32 layout; no generated struct is reinterpreted.
@@ -248,8 +251,8 @@ fn draws_snapshot_versions_in_order_and_finished_owner_drop_preserves_the_block(
         panic!("second generic draw")
     };
     assert_ne!(a.vertex_buffers[0].buffer.id, b.vertex_buffers[0].buffer.id);
-    assert_eq!(&a.vertex_buffers[0].buffer.bytes[..4], &0.0f32.to_le_bytes());
-    assert_eq!(&b.vertex_buffers[0].buffer.bytes[..4], &0.25f32.to_le_bytes());
+    assert_eq!(&a.vertex_buffers[0].buffer.bytes.as_slice().unwrap()[..4], &0.0f32.to_le_bytes());
+    assert_eq!(&b.vertex_buffers[0].buffer.bytes.as_slice().unwrap()[..4], &0.25f32.to_le_bytes());
     assert_eq!(a.viewport.x, 10);
     assert_eq!(a.viewport.width, 100);
 }
@@ -753,7 +756,10 @@ struct Out { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32> 
                 format: GpuTextureFormat::Rgba8Unorm,
                 mip_count: 1,
             },
-            bytes(vec![255; 4]).as_com_ref(),
+            neocogi_render_core::source::supplied(bytes(vec![255; 4]).as_com_ref())
+                .unwrap()
+                .borrow()
+                .unwrap(),
         )
         .unwrap();
     let sampler = factory.create_sampler(GpuSamplerDesc::default()).unwrap();
@@ -782,9 +788,9 @@ struct Out { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32> 
     let Command::Draw(second) = &block.commands[2] else {
         panic!("second sampled draw")
     };
-    assert_eq!(first.uniforms[0].data.bytes, a);
-    assert_eq!(second.uniforms[0].data.bytes, b);
-    assert_eq!(first.textures[0].texture.pixels().unwrap(), [255; 4]);
-    assert_eq!(second.textures[0].texture.pixels().unwrap(), [0; 4]);
+    assert_eq!(first.uniforms[0].data.bytes.as_slice(), a);
+    assert_eq!(second.uniforms[0].data.bytes.as_slice(), b);
+    assert_eq!(first.textures[0].texture.pixels().unwrap().as_slice().unwrap(), [255; 4]);
+    assert_eq!(second.textures[0].texture.pixels().unwrap().as_slice().unwrap(), [0; 4]);
     frame.finish().unwrap();
 }

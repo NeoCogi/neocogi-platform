@@ -302,7 +302,15 @@ impl Executor {
         } else {
             wgpu::BufferUsages::VERTEX
         };
-        let raw = self.upload_buffer(source.bytes(), usage, "neocogi.gpu.bytes");
+        let raw = match source.bytes().as_slice() {
+            Some(bytes) => self.upload_buffer(bytes, usage, "neocogi.gpu.bytes"),
+            None => self.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("neocogi.gpu.zeroed"),
+                size: source.bytes().len().div_ceil(4) as u64 * 4,
+                usage: usage | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }), // WGPU initializes newly allocated buffers before any read can observe them.
+        };
         let id = source.id();
         let value = Rc::new(Buffer { raw, source });
         self.uploads.push(Upload::Buffer { _resource: value.clone() });
@@ -349,21 +357,24 @@ impl Executor {
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
-        self.queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &raw,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            source.pixels().ok_or("missing texture pixel storage")?,
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(size.width * 4),
-                rows_per_image: Some(size.height),
-            },
-            size,
-        );
+        // WGPU guarantees zero initialization before first observation for absent contents.
+        if let Some(pixels) = source.pixels().and_then(VersionBytes::as_slice) {
+            self.queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &raw,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                pixels,
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(size.width * 4),
+                    rows_per_image: Some(size.height),
+                },
+                size,
+            );
+        }
         let view = raw.create_view(&wgpu::TextureViewDescriptor::default());
         let value = Rc::new(Texture {
             source: source.receipt(),

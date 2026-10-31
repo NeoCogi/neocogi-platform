@@ -52,7 +52,10 @@ fn uncertain_upload_status_retains_owners_until_idle_and_rejects_reuse() {
                     format: GpuTextureFormat::Rgba8Unorm,
                     mip_count: 1,
                 },
-                Bytes::source(vec![255; 4]).as_com_ref(),
+                neocogi_render_core::source::supplied(Bytes::source(vec![255; 4]).as_com_ref())
+                    .unwrap()
+                    .borrow()
+                    .unwrap(),
             )
             .unwrap();
         let source = gpu.texture_snapshot(resources.as_com_ref(), image.as_com_ref()).unwrap();
@@ -60,7 +63,7 @@ fn uncertain_upload_status_retains_owners_until_idle_and_rejects_reuse() {
         let error = match executor.upload_image(
             source.desc().size,
             vk::Format::R8G8B8A8_UNORM,
-            source.pixels().unwrap(),
+            source.pixels().unwrap().as_slice(),
             Some(Rc::new(source.receipt())),
         ) {
             Ok(_) => panic!("injected observation failure must reject the upload"),
@@ -74,7 +77,7 @@ fn uncertain_upload_status_retains_owners_until_idle_and_rejects_reuse() {
         assert_eq!(core.memory_count.get(), baseline + 2);
         assert!(
             executor
-                .upload_image(Size { width: 1, height: 1 }, vk::Format::R8G8B8A8_UNORM, &[0; 4], None)
+                .upload_image(Size { width: 1, height: 1 }, vk::Format::R8G8B8A8_UNORM, Some(&[0; 4]), None)
                 .is_err()
         );
         executor.collect().unwrap();
@@ -210,8 +213,8 @@ impl Target {
             vk::ImageAspectFlags::DEPTH,
             extent,
         );
-        let pixels = Allocation::new(&core, &vec![0; (width * height * 4) as usize], vk::BufferUsageFlags::TRANSFER_DST).unwrap();
-        let depths = Allocation::new(&core, &vec![0; (width * height * 4) as usize], vk::BufferUsageFlags::TRANSFER_DST).unwrap();
+        let pixels = Allocation::new(&core, (width * height * 4) as usize, None, vk::BufferUsageFlags::TRANSFER_DST).unwrap();
+        let depths = Allocation::new(&core, (width * height * 4) as usize, None, vk::BufferUsageFlags::TRANSFER_DST).unwrap();
         unsafe {
             let pass = crate::pass::create(
                 &core.device,
@@ -731,12 +734,15 @@ fn indexed_texture_case(operation: GpuBlendOp, imported: bool) {
                 role: GpuBufferRole::Vertex,
                 byte_len: 48,
             },
-            source.as_com_ref(),
+            neocogi_render_core::source::supplied(source.as_com_ref()).unwrap().borrow().unwrap(),
         )
         .unwrap();
     let source = Bytes::source([0u16, 1, 2, 0, 2, 3].into_iter().flat_map(u16::to_le_bytes).collect());
     let indices = resources
-        .create_buffer(GpuBufferDesc { role: GpuBufferRole::Index, byte_len: 12 }, source.as_com_ref())
+        .create_buffer(
+            GpuBufferDesc { role: GpuBufferRole::Index, byte_len: 12 },
+            neocogi_render_core::source::supplied(source.as_com_ref()).unwrap().borrow().unwrap(),
+        )
         .unwrap();
     let source = Bytes::source(vec![255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 0, 255]);
     let image = resources
@@ -746,7 +752,7 @@ fn indexed_texture_case(operation: GpuBlendOp, imported: bool) {
                 format: GpuTextureFormat::Rgba8Unorm,
                 mip_count: 1,
             },
-            source.as_com_ref(),
+            neocogi_render_core::source::supplied(source.as_com_ref()).unwrap().borrow().unwrap(),
         )
         .unwrap();
     let image = if imported {
@@ -779,7 +785,10 @@ fn indexed_texture_case(operation: GpuBlendOp, imported: bool) {
                     format: GpuTextureFormat::Rgba8Unorm,
                     mip_count: 1,
                 },
-                Bytes::source(vec![255; 16]).as_com_ref(),
+                neocogi_render_core::source::supplied(Bytes::source(vec![255; 16]).as_com_ref())
+                    .unwrap()
+                    .borrow()
+                    .unwrap(),
             )
             .unwrap();
         let image_b = import_native_image(&gpu, &resources, &mut executor, &mut images, pixel);
@@ -912,15 +921,15 @@ fn native_allocation_and_sampler_counts_refund_only_on_physical_release() {
     let limits = &mut Rc::get_mut(&mut core).unwrap().limits;
     limits.max_memory_allocation_count = 2;
     limits.max_sampler_allocation_count = 1;
-    let first = Allocation::new(&core, &[0; 16], vk::BufferUsageFlags::VERTEX_BUFFER).unwrap();
-    let second = Allocation::new(&core, &[0; 16], vk::BufferUsageFlags::UNIFORM_BUFFER).unwrap();
+    let first = Allocation::new(&core, 16, None, vk::BufferUsageFlags::VERTEX_BUFFER).unwrap();
+    let second = Allocation::new(&core, 16, None, vk::BufferUsageFlags::UNIFORM_BUFFER).unwrap();
     assert_eq!(core.memory_count.get(), 2);
-    let error = Allocation::new(&core, &[0; 16], vk::BufferUsageFlags::TRANSFER_SRC).err().unwrap();
+    let error = Allocation::new(&core, 16, None, vk::BufferUsageFlags::TRANSFER_SRC).err().unwrap();
     assert!(error.contains("allocation count exhausted"));
     assert_eq!(core.memory_count.get(), 2);
     drop(first);
     assert_eq!(core.memory_count.get(), 1);
-    let retry = Allocation::new(&core, &[0; 16], vk::BufferUsageFlags::TRANSFER_SRC).unwrap();
+    let retry = Allocation::new(&core, 16, None, vk::BufferUsageFlags::TRANSFER_SRC).unwrap();
     drop((retry, second));
     assert_eq!(core.memory_count.get(), 0);
 
@@ -966,7 +975,7 @@ fn logical_images_exceeding_native_dimensions_reject_before_native_allocation() 
                 format: GpuTextureFormat::Rgba8Unorm,
                 mip_count: 1,
             },
-            bytes.as_com_ref(),
+            neocogi_render_core::source::supplied(bytes.as_com_ref()).unwrap().borrow().unwrap(),
         )
         .unwrap();
     let snapshot = gpu.texture_snapshot(resources.as_com_ref(), image.as_com_ref()).unwrap();
@@ -981,7 +990,10 @@ fn logical_images_exceeding_native_dimensions_reject_before_native_allocation() 
                 format: GpuTextureFormat::Rgba8Unorm,
                 mip_count: 1,
             },
-            Bytes::source(vec![255; 4]).as_com_ref(),
+            neocogi_render_core::source::supplied(Bytes::source(vec![255; 4]).as_com_ref())
+                .unwrap()
+                .borrow()
+                .unwrap(),
         )
         .unwrap();
     let native = executor
@@ -996,6 +1008,11 @@ fn logical_images_exceeding_native_dimensions_reject_before_native_allocation() 
 /// Trusted test image lease stands in for the host's separately authenticated immutable capability.
 #[neocogi_com::com_object(interfaces(ITexture))]
 struct ImportedImage;
+impl neocogi_render_core::abi::IRenderDriverBound for ImportedImage {
+    fn driver_identity(&self) -> Result<neocogi_com::ComPtr<neocogi_render_core::abi::IRenderDriverIdentityAbi>, neocogi_com::NcStatus> {
+        Err(neocogi_com::NC_E_NOINTERFACE)
+    }
+}
 impl ITexture for ImportedImage {
     /// The native metadata is fixed; no pixel or device getter is exposed.
     fn size(&self) -> Result<Size, neocogi_com::NcStatus> {

@@ -339,14 +339,19 @@ impl VulkanRenderer {
     }
 
     /// Creates a backend-owned sampled texture and tracks it by `TextureId`.
-    fn create_texture(&mut self, id: TextureId, pixels: &[u8]) -> std::result::Result<(), TextureError> {
+    /// Creates an initialized immutable image independently of render-target selection.
+    fn create_texture(&mut self, id: TextureId, pixels: Option<&[u8]>) -> std::result::Result<(), TextureError> {
         // Reject malformed storage before map reservation, native allocation or submission.
-        ImageSource {
-            width: id.width(),
-            height: id.height(),
-            pixels,
+        if let Some(pixels) = pixels {
+            ImageSource {
+                width: id.width(),
+                height: id.height(),
+                pixels,
+            }
+            .validate()?;
+        } else {
+            neocogi_render_core::checked_rgba_len(id.width(), id.height())?;
         }
-        .validate()?;
         if self.textures.contains_key(&id) {
             return Err(TextureError::backend("native image key is already resident"));
         }
@@ -513,7 +518,12 @@ impl RendererBackend for VulkanRenderer {
         })
     }
 
-    fn create_texture(&mut self, id: TextureId, pixels: &[u8]) -> std::result::Result<(), TextureError> {
+    /// Observes prior completion and releases safe native owners without touching a target.
+    fn maintain(&mut self) -> std::result::Result<(), FrameError> {
+        self.generic.collect().map_err(FrameError::new)
+    }
+    /// Creates an initialized immutable image independently of render-target selection.
+    fn create_texture(&mut self, id: TextureId, pixels: Option<&[u8]>) -> std::result::Result<(), TextureError> {
         // Preserve the typed texture failure returned by the inherent native upload helper.
         self.create_texture(id, pixels)
     }

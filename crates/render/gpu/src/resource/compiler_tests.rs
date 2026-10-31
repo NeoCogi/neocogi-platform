@@ -12,21 +12,31 @@ mod admission;
 /// A rejected module publishes no GPU resource and leaves quota and operation admission usable.
 #[test]
 fn inactive_profile_violations_reject_through_the_resource_factory() {
-    let compiler = nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject).query().unwrap();
+    let compiler = nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
+        .query()
+        .unwrap();
     let gpu = crate::GpuDevice::new(compiler);
     let controller = gpu.create_client(RenderClientLimits::default()).unwrap();
     let factory = controller.resources().unwrap();
     for case in admission::cases() {
         let source = crate::source::Bytes::source(case.source.into_bytes());
         for (stage, entry) in [(GpuShaderStage::Vertex, "selected"), (case.stage, "outside")] {
-            assert_eq!(factory.create_shader(stage, source.as_com_ref(), NcCopyFromBufferOffset::new(0, entry.as_bytes())).unwrap_err(),
-                NC_E_INVALID_ARG, "{} / {entry}", case.name);
+            assert_eq!(
+                factory
+                    .create_shader(stage, source.as_com_ref(), NcCopyFromBufferOffset::new(0, entry.as_bytes()))
+                    .unwrap_err(),
+                NC_E_INVALID_ARG,
+                "{} / {entry}",
+                case.name
+            );
             assert_eq!(gpu.live_bytes(factory.as_com_ref()).unwrap(), 0);
         }
     }
     let source = crate::source::Bytes::source(admission::valid_mixed_module().into_bytes());
     for (stage, entry) in [(GpuShaderStage::Vertex, "selected"), (GpuShaderStage::Fragment, "outside")] {
-        let shader = factory.create_shader(stage, source.as_com_ref(), NcCopyFromBufferOffset::new(0, entry.as_bytes())).unwrap();
+        let shader = factory
+            .create_shader(stage, source.as_com_ref(), NcCopyFromBufferOffset::new(0, entry.as_bytes()))
+            .unwrap();
         assert!(gpu.live_bytes(factory.as_com_ref()).unwrap() > 0);
         drop(shader);
         assert_eq!(gpu.live_bytes(factory.as_com_ref()).unwrap(), 0);
@@ -88,7 +98,10 @@ impl Probe {
                 let bytes = crate::source::Bytes::source(vec![0; 4]);
                 assert_eq!(
                     factory
-                        .create_buffer(GpuBufferDesc { role: GpuBufferRole::Vertex, byte_len: 4 }, bytes.as_com_ref())
+                        .create_buffer(
+                            GpuBufferDesc { role: GpuBufferRole::Vertex, byte_len: 4 },
+                            neocogi_render_core::source::supplied(bytes.as_com_ref()).unwrap().borrow().unwrap()
+                        )
                         .err(),
                     Some(RENDER_E_BUSY)
                 );

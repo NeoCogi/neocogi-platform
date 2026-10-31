@@ -317,7 +317,17 @@ impl Executor {
                 glow::ARRAY_BUFFER
             };
             self.gl.bind_buffer(target, Some(raw));
-            self.gl.buffer_data_u8_slice(target, buffer.source.bytes(), glow::STATIC_DRAW);
+            if let Some(bytes) = buffer.source.bytes().as_slice() {
+                self.gl.buffer_data_u8_slice(target, bytes, glow::STATIC_DRAW);
+            } else {
+                self.gl.buffer_data_size(target, buffer.source.bytes().len() as i32, glow::STATIC_DRAW);
+                self.check()?;
+                let zero = &super::ZERO_BYTES;
+                for offset in (0..buffer.source.bytes().len()).step_by(zero.len()) {
+                    let count = (buffer.source.bytes().len() - offset).min(zero.len());
+                    self.gl.buffer_sub_data_u8_slice(target, offset as i32, &zero[..count]);
+                }
+            }
             self.gl.bind_vertex_array(None);
             self.check()?;
             buffer
@@ -352,13 +362,15 @@ impl Executor {
         // Validate the actual slice at the native pointer boundary, before any upload owner
         // or GL allocation is installed. Descriptor privacy is not a substitute for this check.
         let size = source.desc().size;
-        neocogi_render_core::ImageSource {
-            width: size.width,
-            height: size.height,
-            pixels,
+        if let Some(pixels) = pixels.as_slice() {
+            neocogi_render_core::ImageSource {
+                width: size.width,
+                height: size.height,
+                pixels,
+            }
+            .validate()
+            .map_err(|error| error.to_string())?;
         }
-        .validate()
-        .map_err(|error| error.to_string())?;
         self.uploads.try_reserve(1).map_err(|error| error.to_string())?;
         self.uploads.push(Upload::Texture { _source: source.clone() });
         // SAFETY: Source dimensions and complete tightly packed RGBA bytes were admitted before capture.
@@ -385,8 +397,12 @@ impl Executor {
                 0,
                 glow::RGBA,
                 glow::UNSIGNED_BYTE,
-                glow::PixelUnpackData::Slice(Some(pixels)),
+                glow::PixelUnpackData::Slice(pixels.as_slice()),
             );
+            self.check()?;
+            if pixels.as_slice().is_none() {
+                super::GLRenderer::upload_zero_pixels(&self.gl, desc.size.width, desc.size.height)?;
+            }
             self.gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_BASE_LEVEL, 0);
             self.gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAX_LEVEL, 0);
             self.check()?;

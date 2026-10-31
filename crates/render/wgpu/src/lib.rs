@@ -152,7 +152,14 @@ impl WgpuRenderer {
         DepthTarget { _texture: texture, view }
     }
 
-    fn create_gpu_texture(device: &wgpu::Device, queue: &wgpu::Queue, width: u32, height: u32, pixels: Option<&[u8]>) -> Result<GpuTexture, String> {
+    fn create_gpu_texture(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        width: u32,
+        height: u32,
+        pixels: Option<&[u8]>,
+        target: bool,
+    ) -> Result<GpuTexture, String> {
         if width == 0 || height == 0 {
             return Err("texture dimensions must be non-zero".into());
         }
@@ -178,9 +185,11 @@ impl WgpuRenderer {
             dimension: wgpu::TextureDimension::D2,
             format: wgpu::TextureFormat::Rgba8Unorm,
             usage: wgpu::TextureUsages::TEXTURE_BINDING
-                | match pixels {
-                    Some(_) => wgpu::TextureUsages::COPY_DST,
-                    None => wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+                | wgpu::TextureUsages::COPY_DST
+                | if target {
+                    wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC
+                } else {
+                    wgpu::TextureUsages::empty()
                 },
             view_formats: &[],
         });
@@ -435,14 +444,19 @@ impl WgpuRenderer {
         Ok(())
     }
     /// Creates a backend-owned sampled texture and its bind group.
-    fn create_texture(&mut self, id: TextureId, pixels: &[u8]) -> Result<(), TextureError> {
+    /// Creates an initialized immutable image independently of render-target selection.
+    fn create_texture(&mut self, id: TextureId, pixels: Option<&[u8]>) -> Result<(), TextureError> {
         // Validate the actual slice before ownership reservation or native queue work.
-        ImageSource {
-            width: id.width(),
-            height: id.height(),
-            pixels,
+        if let Some(pixels) = pixels {
+            ImageSource {
+                width: id.width(),
+                height: id.height(),
+                pixels,
+            }
+            .validate()?;
+        } else {
+            neocogi_render_core::checked_rgba_len(id.width(), id.height())?;
         }
-        .validate()?;
         if self.textures.contains_key(&id) {
             return Err(TextureError::backend("native image key is already resident"));
         }
@@ -454,7 +468,7 @@ impl WgpuRenderer {
         let dimensions = id.size();
         // Keep the WGPU helper's useful string diagnostics local, then translate them at the
         // backend boundary so callers receive the crate-wide typed texture error.
-        let texture = Self::create_gpu_texture(&self.device, &self.queue, dimensions.width as u32, dimensions.height as u32, Some(pixels))
+        let texture = Self::create_gpu_texture(&self.device, &self.queue, dimensions.width as u32, dimensions.height as u32, pixels, false)
             .map_err(TextureError::backend)?;
         self.textures.insert(id, texture);
         Ok(())
@@ -514,7 +528,7 @@ impl RendererBackend for WgpuRenderer {
         }
         self.textures.try_reserve(1).map_err(|error| TextureError::backend(error.to_string()))?;
         let size = id.size();
-        let texture = Self::create_gpu_texture(&self.device, &self.queue, size.width as u32, size.height as u32, None).map_err(TextureError::backend)?;
+        let texture = Self::create_gpu_texture(&self.device, &self.queue, size.width as u32, size.height as u32, None, true).map_err(TextureError::backend)?;
         self.textures.insert(id, texture);
         Ok(())
     }
@@ -537,7 +551,12 @@ impl RendererBackend for WgpuRenderer {
         })
     }
     /// Upload validated ordinary image pixels on this device.
-    fn create_texture(&mut self, id: TextureId, pixels: &[u8]) -> Result<(), TextureError> {
+    /// Observes prior completion and releases safe native owners without touching a target.
+    fn maintain(&mut self) -> Result<(), FrameError> {
+        self.generic.collect().map_err(FrameError::new)
+    }
+    /// Creates an initialized immutable image independently of render-target selection.
+    fn create_texture(&mut self, id: TextureId, pixels: Option<&[u8]>) -> Result<(), TextureError> {
         self.create_texture(id, pixels)
     }
     /// Native clones and completion receipts own any remaining sampled backing.

@@ -489,7 +489,9 @@ impl Recorder {
                     .filter(|end| *end <= buffer.bytes.len() as u64)
                     .ok_or(NC_E_OUT_OF_RANGE)?;
                 let mut max = 0u64;
-                for bytes in buffer.bytes[start as usize..end as usize].chunks_exact(size as usize) {
+                for offset in (start as usize..end as usize).step_by(size as usize) {
+                    let mut bytes = [0; 4];
+                    buffer.bytes.read(offset, &mut bytes[..size as usize])?;
                     let value = if size == 2 {
                         u32::from(u16::from_le_bytes([bytes[0], bytes[1]]))
                     } else {

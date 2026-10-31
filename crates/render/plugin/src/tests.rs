@@ -63,7 +63,10 @@ impl IRenderStream for Stream {
         let factory: ComPtr<ITextureFactoryAbi> = self.input.renderer.query()?;
         assert_eq!(
             factory
-                .create_texture(Size { width: 1, height: 1 }, NcCopyFromBufferOffset::new(0, &[0; 4]))
+                .create_texture(
+                    Size { width: 1, height: 1 },
+                    neocogi_render_core::source::initial_bytes(vec![0; 4]).borrow().unwrap()
+                )
                 .unwrap_err(),
             RENDER_E_BUSY
         );
@@ -72,7 +75,7 @@ impl IRenderStream for Stream {
                 .editing
                 .create_buffer(
                     GpuBufferDesc { role: GpuBufferRole::Vertex, byte_len: 4 },
-                    Bytes::source(vec![0; 4]).as_com_ref()
+                    neocogi_render_core::source::initial_bytes(vec![0; 4]).borrow().unwrap()
                 )
                 .err(),
             Some(RENDER_E_BUSY)
@@ -134,7 +137,11 @@ fn graphics(resources: &ComPtr<IRenderResourcesAbi>, broker: &ComPtr<IRenderView
 #[ignore = "requires a native SDL display; use SDL_VIDEODRIVER=offscreen for Glow or a native display for Vulkan/WGPU"]
 fn native_order_ownership_reentry_and_final_release() {
     let _session = native_session();
-    let platform = PlatformObject::new(nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject).query().unwrap());
+    let platform = PlatformObject::new(
+        nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
+            .query()
+            .unwrap(),
+    );
     let native = platform.window("COM GPU acceptance", SIZE).unwrap();
     let device = Rc::downgrade(&native.device);
     let unknown = WindowObject::from_value(native);
@@ -165,6 +172,17 @@ fn native_order_ownership_reentry_and_final_release() {
     let clients: ComPtr<IRenderClientFactoryAbi> = unknown.query().unwrap();
     let controller = clients.create_client(RenderClientLimits::default()).unwrap();
     let resources = controller.resources().unwrap();
+    let driver = renderer.driver_identity().unwrap();
+    assert_eq!(identity(&driver).unwrap(), identity(&factory.driver_identity().unwrap()).unwrap());
+    assert_eq!(identity(&driver).unwrap(), identity(&clients.driver_identity().unwrap()).unwrap());
+    assert_eq!(identity(&driver).unwrap(), identity(&resources.driver_identity().unwrap()).unwrap());
+    let zero = neocogi_render_core::source::initial(None);
+    let initialized = factory.create_texture(Size { width: 1, height: 1 }, zero.borrow().unwrap()).unwrap();
+    assert_eq!(initialized.size().unwrap(), Size { width: 1, height: 1 });
+    assert_eq!(identity(&driver).unwrap(), identity(&initialized.driver_identity().unwrap()).unwrap());
+    assert!(driver.query::<IRendererAbi>().is_err());
+    assert!(driver.query::<IRenderHostAbi>().is_err());
+    drop(initialized);
     let broker = unknown
         .query::<IPlatformWindowAbi>()
         .unwrap()
@@ -175,10 +193,20 @@ fn native_order_ownership_reentry_and_final_release() {
     let root = Rect { x: 0, y: 0, width: 64, height: 64 };
     let block = graphics(&resources, &broker, RenderViewRoot { client: root, target: root });
     let background = factory
-        .create_texture(Size { width: 1, height: 1 }, NcCopyFromBufferOffset::new(0, &[0, 255, 0, 255]))
+        .create_texture(
+            Size { width: 1, height: 1 },
+            neocogi_render_core::source::initial_bytes((NcCopyFromBufferOffset::new(0, &[0, 255, 0, 255])).as_slice().to_vec())
+                .borrow()
+                .unwrap(),
+        )
         .unwrap();
     let spare = factory
-        .create_texture(Size { width: 1, height: 1 }, NcCopyFromBufferOffset::new(0, &[0; 4]))
+        .create_texture(
+            Size { width: 1, height: 1 },
+            neocogi_render_core::source::initial_bytes((NcCopyFromBufferOffset::new(0, &[0; 4])).as_slice().to_vec())
+                .borrow()
+                .unwrap(),
+        )
         .unwrap();
     let spare_key = identity(&spare).unwrap();
     let input = Rc::new(Input {
@@ -223,7 +251,12 @@ fn native_order_ownership_reentry_and_final_release() {
     let foreign_block = graphics(&foreign_resources, &foreign_broker, RenderViewRoot { client: root, target: root });
     let foreign_factory: ComPtr<ITextureFactoryAbi> = foreign.query().unwrap();
     let foreign_texture = foreign_factory
-        .create_texture(Size { width: 1, height: 1 }, NcCopyFromBufferOffset::new(0, &[0; 4]))
+        .create_texture(
+            Size { width: 1, height: 1 },
+            neocogi_render_core::source::initial_bytes((NcCopyFromBufferOffset::new(0, &[0; 4])).as_slice().to_vec())
+                .borrow()
+                .unwrap(),
+        )
         .unwrap();
     let graphics_host = unknown.query::<IPlatformWindowAbi>().unwrap().graphics_host().unwrap();
     let ui_domain = graphics_host.create_ui_client(Default::default()).unwrap();
