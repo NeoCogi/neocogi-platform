@@ -1,0 +1,20 @@
+{
+  "repository": "git@github.com:NeoCogi/neocogi-ui.git",
+  "commit": "3f865c0819473257ca06a852d85a509f9de3b314",
+  "related_commits": [
+    "1fac9d8f23d06665f4df7b07f7c46b80a9a2a4ce",
+    "476fb556b63108396941d4827b0fba0177435082",
+    "60093e1bdecc3b1232c0ae1749db5ede2a6a0610",
+    "63d09d32cff9e38ad9b92548c8d1fc54f5b82b25",
+    "698b3fff662ce0e3c592d874f6b9a54ec79a0b84",
+    "9dfa970d5f9ba4d420623bc2f059ea8c8178089d",
+    "b4478b089790a239ccf4397b08df745bf7c273df",
+    "b52bcd5ec66461c8fdfda434138a48689ed6c0a6",
+    "bf7a83b920c6040ff24c4a85f8bed6af0b11b75d",
+    "cca71aa53a62874b21a1028781e6f34e0c2baf9a",
+    "d667ad3a4efb0a05f7ffdd0e9f083bddb329b18b",
+    "d87970acc03ecb579a27695b598408462308b9ba",
+    "e03fdb8ffba626517aa8646588b038302dca7395",
+    "ea8774b51ee0b92a70b3504ba9f1e64dd63bdb46"
+  ]
+}

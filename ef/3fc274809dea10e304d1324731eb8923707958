@@ -1,0 +1,24 @@
+{
+  "repository": "git@github.com:NeoCogi/neocogi-ui.git",
+  "commit": "39308dd6db55a2d967b74a3a3b826c7854655d6f",
+  "related_commits": [
+    "0b124e392ff1cc4b6db61d6f4e9ab49676814880",
+    "54740da2d07e8db865c776ec52d1487cda2b556f",
+    "764f243accfcbbd2be3faf25864332eac46af6de",
+    "7d18ad03709aedb2ac1b89afeec05b53b7964f9f",
+    "98f82da9e3b69e899d60999a2f5b438b4658f1b7",
+    "a979e136b81331b90a2bfdcbccad343eee437f95",
+    "b2c01de7cf8ab2c20eb2c1dbc56416053c69d1a0",
+    "b4fcb2fcd4e22f9dd2d1ba2832aea936c2c1232e",
+    "c49a6bfdafb671414d954514ece81a778f50922a",
+    "cbc49d0337927e1e9c442c008cc6f743af530e78",
+    "ce2f81a40b216e344e5f585f2ea6bfec0a6bec02",
+    "db6ed0260c6e22e18b70929b5bc75d8662949666",
+    "e196ad0575d004136aa8d0b630f39026545316e1",
+    "ebbd0b6bdd2c452e8d16dbd97b916237ee160364",
+    "ed425a9b8561bf115431cc3bc79c3a2c578856b4",
+    "f608af02234712078b8985bacd5fd20851d193c2",
+    "fb6e3617cbbd33a38e6fdee13c8a7ee8ab23a125",
+    "fe5a20a985ab844c22ddad0200e12f18041c0ac1"
+  ]
+}
