@@ -18,6 +18,8 @@ jobs:
         run: sudo apt-get update -qq && sudo apt-get install -y libsdl2-dev libvulkan-dev mesa-vulkan-drivers libgl1-mesa-dri xvfb
       - name: Platform contracts and compiler
         run: cargo test --locked -p neocogi-render-core -p neocogi-render-gpu -p neocogi-render-support -p neocogi-shader-core -p neocogi-shader-compiler -p neocogi-native-layout
+      - name: Backend-owned native regressions
+        run: xvfb-run -a cargo test --locked -p neocogi-render-${{ matrix.backend }} --lib -- --include-ignored --test-threads=1
       - name: Backend acceptance
         run: xvfb-run -a cargo test --locked -p neocogi-render-plugin --lib --test compiler_activation --no-default-features --features ${{ matrix.backend }} -- --include-ignored --test-threads=1
       - name: Standalone graphics application
