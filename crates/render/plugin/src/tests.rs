@@ -6,8 +6,6 @@ use neocogi_com::ComBox;
 use neocogi_render_gpu::source::{Bytes, PipelineDesc};
 
 #[cfg(feature = "glow")]
-pub(super) mod costs;
-#[cfg(feature = "glow")]
 mod view_geometry;
 mod window_lifetime;
 
@@ -100,7 +98,6 @@ fn info() -> RenderInfo {
         block_count: 1,
     }
 }
-
 /// Captures a generic procedural triangle; all client shader semantics live in this fixture.
 fn graphics(resources: &ComPtr<IRenderResourcesAbi>, broker: &ComPtr<IRenderViewBrokerAbi>, root: RenderViewRoot) -> ComBox<IRenderViewBlockAbi> {
     let code = Bytes::source(

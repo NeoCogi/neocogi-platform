@@ -293,3 +293,7 @@ impl IRenderDriverBound for GraphicsHost {
         Ok(self.device.logical.driver_identity())
     }
 }
+
+/// Owned acceptance observations, enabled explicitly and absent from normal deployment builds.
+#[cfg(any(test, feature = "test-support"))]
+pub mod testing;

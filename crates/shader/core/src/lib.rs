@@ -94,5 +94,5 @@ impl Shader {
 mod read;
 pub use read::PreparedShader;
 
-/// Authored NCIDL sources owned by this Cargo contract package.
+/// Authored NCIDL source root shipped with this contract package for build-time consumers.
 pub const SCHEMA_ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/schemas");

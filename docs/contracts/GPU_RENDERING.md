@@ -6,10 +6,10 @@ materials belong to clients. GPU payloads use explicit bytes, vertex formats and
 uniform layouts; Rust or generated ncidl record layout never defines GPU layout.
 Rust clients can publish initialized bytes with `source::Bytes` and typed pipeline
 arrays with `source::PipelineDesc`; these helpers define no semantic geometry.
-The [Suzanne widget](../../examples/full/src/mesh.rs) defines its own 32-byte
+The [Suzanne widget](https://github.com/NeoCogi/neocogi-ui/blob/master/examples/full/src/mesh.rs) defines its own 32-byte
 position/normal/UV layout, programmable lighting and two explicitly encoded
 camera matrices. Its application retains the domain controller and grants the
-widget only a resource factory. The [smoke widget](../../examples/smoke/src/gpu.rs)
+widget only a resource factory. The [smoke widget](https://github.com/NeoCogi/neocogi-ui/blob/master/examples/smoke/src/gpu.rs)
 uses a separate color-interpolation pipeline. Both consume the same scoped
 binding, uniform and primitive-draw operations.
 

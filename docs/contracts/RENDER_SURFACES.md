@@ -47,10 +47,10 @@ uses the generic executor's completion-owned upload path.
 Native acceptance can be run with:
 
 ```sh
-SDL_VIDEODRIVER=offscreen cargo test -p neocogi-render-plugin --features neocogi-com/runtime --lib -- --ignored --test-threads=1
+SDL_VIDEODRIVER=offscreen cargo test -p neocogi-ui-platform-tests -- --include-ignored --test-threads=1
 ```
 
-The surface test checks asymmetric source orientation, old snapshot pixels after
+The UI/GFX surface integration command runs in the [UI workspace](https://github.com/NeoCogi/neocogi-ui/tree/master/tests/platform). The surface test checks asymmetric source orientation, old snapshot pixels after
 later frames, independent compositor atlas identity, native allocation failure,
 suspended/resized output, surface release, and final device retirement. WebGL
 compilation is checked separately; compilation does not establish browser runtime

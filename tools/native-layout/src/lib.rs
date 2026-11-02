@@ -19,7 +19,7 @@ use syn::{
     LitStr, Token,
 };
 
-mod profile;
+use neocogi_render_core::platform::deployment as profile;
 
 /// Converts one build/staging failure into a focused compiler error.
 fn diagnostic(error: impl std::fmt::Display) -> TokenStream {

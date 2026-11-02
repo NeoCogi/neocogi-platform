@@ -1,11 +1,9 @@
 //! Browser-executed DOM regressions exported from the wasm library test artifact.
 //!
 //! Generate web bindings for `cargo test --lib --no-run --target wasm32-unknown-unknown
-//! --features webgl`, then call `run_browser_input_tests()` after the generated module initializes.
+//! --features webgl`, then call `run_platform_input_tests()` after the generated module initializes.
 
 use super::*;
-// Provider activation imports the generated contracts directly, not implementation re-exports.
-use neocogi_render_core::abi::IRendererAbi;
 use wasm_bindgen::prelude::*;
 
 #[path = "../../gpu/tests/support/derivatives.rs"]
@@ -151,7 +149,7 @@ extern "C" {
 
 /// Runs DOM composition, paste, keyboard, wheel, pointer, and teardown assertions in a browser.
 #[wasm_bindgen]
-pub fn run_browser_input_tests() {
+pub fn run_platform_input_tests() {
     std::panic::set_hook(Box::new(|info| record_panic(&info.to_string())));
     canonical_browser_derivatives();
     let document = web_sys::window().unwrap().document().unwrap();

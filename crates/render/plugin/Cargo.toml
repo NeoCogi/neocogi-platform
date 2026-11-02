@@ -15,12 +15,15 @@ crate-type = ["rlib"]
 [features]
 # Cargo adds feature flags to defaults; alternate backends require --no-default-features.
 default = ["glow"]
+# Native acceptance readback and owned diagnostic probes; absent from deployed builds.
+test-support = ["dep:neocogi-shader-compiler"]
 webgl = ["dep:glow", "dep:neocogi-render-webgl"]
 glow = ["dep:glow", "dep:neocogi-render-glow"]
 vulkan = ["dep:neocogi-render-vulkan"]
 wgpu = ["dep:neocogi-render-wgpu"]
 
 [dependencies]
+neocogi-shader-compiler = { workspace = true, optional = true }
 neocogi-render-gpu.workspace = true
 neocogi-shader-core.workspace = true
 neocogi-render-core.workspace = true

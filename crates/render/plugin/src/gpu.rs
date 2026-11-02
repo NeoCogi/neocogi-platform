@@ -29,7 +29,7 @@ pub(super) struct Gpu {
     #[cfg(any(feature = "glow", feature = "webgl"))]
     gl: std::rc::Rc<glow::Context>,
     /// Test-only readback captures completed GPU output before the window swap.
-    #[cfg(all(test, feature = "glow"))]
+    #[cfg(all(any(test, feature = "test-support"), feature = "glow"))]
     last_pixels: Vec<u8>,
     /// Surface outlives both backend resources and the optional GL context.
     window: Window,
@@ -38,11 +38,11 @@ pub(super) struct Gpu {
 impl Gpu {
     /// Test-only cost sample separates native preparation from completed execution;
     /// it bypasses acceptance readback and presentation and adds no deployed telemetry.
-    #[cfg(all(test, feature = "glow", not(target_arch = "wasm32")))]
-    pub(super) fn measure(&mut self, blocks: &[std::rc::Rc<neocogi_render_gpu::record::Block<Backend>>], sample: super::tests::costs::Sample) {
+    #[cfg(all(any(test, feature = "test-support"), feature = "glow", not(target_arch = "wasm32")))]
+    pub(super) fn measure(&mut self, blocks: &[std::rc::Rc<neocogi_render_gpu::record::Block<Backend>>], sample: super::testing::Sample) {
         use glow::HasContext;
         use std::time::Instant;
-        let super::tests::costs::Sample {
+        let super::testing::Sample {
             setup_ns,
             record_ns,
             mixed,
@@ -55,9 +55,9 @@ impl Gpu {
         self.current().unwrap();
         // SAFETY: The live owning GL context is selected throughout this measurement.
         let adapter = unsafe { self.gl.get_parameter_string(glow::RENDERER) };
-        let setup_calls = super::tests::costs::calls::take();
+        let setup_calls = super::testing::calls::take();
         let mut cold = (0, 0);
-        let mut cold_calls = super::tests::costs::calls::Calls::default();
+        let mut cold_calls = super::testing::calls::Calls::default();
         let mut warm = (0, 0);
         for frame in 0..=100 {
             let start = Instant::now();
@@ -82,13 +82,13 @@ impl Gpu {
             let execution = start.elapsed().as_nanos();
             if frame == 0 {
                 cold = (preparation, execution);
-                cold_calls = super::tests::costs::calls::take();
+                cold_calls = super::testing::calls::take();
             } else {
                 warm.0 += preparation;
                 warm.1 += execution;
             }
         }
-        let warm_calls = super::tests::costs::calls::take();
+        let warm_calls = super::testing::calls::take();
         println!("native_calls setup={setup_calls:?} cold={cold_calls:?} warm_total={warm_calls:?}");
         println!(
             "native_cost workload={} adapter={adapter:?} size=64x64 setup_ns={setup_ns} ui_record_ns={record_ns} commands={commands} draws={draws} buffer_versions={buffers} texture_versions={textures} pipeline_versions={pipelines} cold_prepare_ns={} cold_completed_execute_ns={} warm_frames=100 warm_prepare_ns={} warm_completed_execute_ns={} reused_immutable_versions=true",
@@ -128,8 +128,8 @@ impl Gpu {
             let gl = std::rc::Rc::new(unsafe {
                 glow::Context::from_loader_function(|name| {
                     let pointer = video.gl_get_proc_address(name) as *const _;
-                    #[cfg(test)]
-                    let pointer = super::tests::costs::calls::load(name, pointer);
+                    #[cfg(any(test, feature = "test-support"))]
+                    let pointer = super::testing::calls::load(name, pointer);
                     pointer
                 })
             });
@@ -140,7 +140,7 @@ impl Gpu {
                 renderer,
                 gl,
                 window,
-                #[cfg(test)]
+                #[cfg(any(test, feature = "test-support"))]
                 last_pixels: Vec::new(),
             })
         }
@@ -240,7 +240,7 @@ impl Gpu {
             if error != glow::NO_ERROR {
                 return Err(format!("OpenGL frame failed with error 0x{error:04x}"));
             }
-            #[cfg(all(test, feature = "glow"))]
+            #[cfg(all(any(test, feature = "test-support"), feature = "glow"))]
             if !offscreen {
                 self.last_pixels.resize(info.size.width as usize * info.size.height as usize * 4, 0);
                 // SAFETY: The complete RGBA output is allocated, and the live native context remains current.
@@ -264,7 +264,7 @@ impl Gpu {
         Ok(completed)
     }
     /// Completed GPU output is available only to native acceptance tests, never through a production ABI.
-    #[cfg(all(test, feature = "glow"))]
+    #[cfg(all(any(test, feature = "test-support"), feature = "glow"))]
     pub(super) fn last_pixels(&self) -> &[u8] {
         &self.last_pixels
     }

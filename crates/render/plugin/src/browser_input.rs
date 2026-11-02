@@ -308,7 +308,7 @@ impl BrowserInputHost {
     }
 
     /// Test observations consume the same ordered queue used by COM polling.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     fn drain(&self) -> Vec<PendingInput> {
         self.queue.borrow_mut().events.drain(..).collect()
     }
@@ -353,9 +353,9 @@ fn js_error(error: wasm_bindgen::JsValue) -> String {
     error.as_string().unwrap_or_else(|| format!("{error:?}"))
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 #[path = "browser_input_tests.rs"]
-mod tests;
+pub(crate) mod tests;
 
 /// Maps logical commands without deriving committed text from key events.
 fn map_key(key: &str) -> Option<(KeyCode, u32)> {

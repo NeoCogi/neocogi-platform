@@ -15,3 +15,6 @@ mod helpers;
 pub use helpers::*;
 
 pub mod path;
+
+/// Build-time destination policy for native application artifacts and resources.
+pub mod deployment;

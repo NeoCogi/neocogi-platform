@@ -16,3 +16,6 @@ rs-math3d.workspace = true
 neocogi-idl.workspace = true
 syn.workspace = true
 quote.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

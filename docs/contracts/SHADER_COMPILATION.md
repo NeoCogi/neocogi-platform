@@ -7,7 +7,7 @@ renderer; monolith and WebGL assemblies register the same provider statically.
 Missing dependencies or incompatible roots fail activation. The renderer has no
 linked compiler fallback, widget-facing compiler getter or per-draw lookup.
 
-The namespace lives in `crates/shader/schemas/neocogi/shader`. Shader-core supplies
+The namespace lives in `crates/shader/core/schemas/neocogi/shader`. Shader-core supplies
 the generated ABI, plain reflection and bounded readers without Naga. The
 provider's private implementation owns Naga. It uses render-core's existing
 `GpuShaderStage`, preserving the one-way contract dependency.

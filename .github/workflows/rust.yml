@@ -1,0 +1,31 @@
+name: Rust
+on:
+  push:
+    branches: ["master"]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  native:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        backend: [glow, vulkan, wgpu]
+    steps:
+      - uses: actions/checkout@v6
+      - name: Native libraries and software graphics
+        run: sudo apt-get update -qq && sudo apt-get install -y libsdl2-dev libvulkan-dev mesa-vulkan-drivers libgl1-mesa-dri xvfb
+      - name: Platform contracts and compiler
+        run: cargo test --locked -p neocogi-render-core -p neocogi-render-gpu -p neocogi-render-support -p neocogi-shader-core -p neocogi-shader-compiler -p neocogi-native-layout
+      - name: Backend acceptance
+        run: xvfb-run -a cargo test --locked -p neocogi-render-plugin --lib --test compiler_activation --no-default-features --features ${{ matrix.backend }} -- --include-ignored --test-threads=1
+      - name: Standalone graphics application
+        run: xvfb-run -a cargo run --locked -p neocogi-render-plugin --example triangle --no-default-features --features ${{ matrix.backend }} -- 3
+      - name: Backend warnings
+        run: cargo clippy --locked -p neocogi-render-plugin --all-targets --no-default-features --features ${{ matrix.backend }} -- -D warnings
+  browser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - run: cargo check --locked -p neocogi-render-plugin --target wasm32-unknown-unknown --no-default-features --features webgl,test-support
