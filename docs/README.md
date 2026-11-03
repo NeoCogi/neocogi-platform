@@ -8,7 +8,8 @@
 - [Offscreen render surfaces](contracts/RENDER_SURFACES.md)
 - [Companion revision references](project/HISTORY.md)
 - [GPU and platform plugin migration](project/PLATFORM_PLUGIN_MIGRATION.md)
-- [Native glTF examples and arcball controls](../crates/platform/plugin/examples/gltf/README.md)
+- [Native example static/dynamic assembly](../examples/native/README.md)
+- [Native glTF examples and arcball controls](../examples/native/gltf/README.md)
 
 The [COM SDK and IDL specification](https://github.com/NeoCogi/neocogi-com)
 define the shared object, ownership and declaration mechanisms. UI-specific

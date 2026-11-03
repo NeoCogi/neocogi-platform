@@ -15,7 +15,7 @@ use environment::Environment;
 use material::{MaterialAtlas, Tile};
 use neocogi_com::{ComBox, ComPtr, INcStringComPtrExt, NcCopyFromBufferOffset, NcStatus, com_object};
 use neocogi_render_core::{abi::*, platform::*};
-use neocogi_render_gpu::source::{Bytes, PipelineDesc, initial_bytes};
+use neocogi_render_core::source::{Bytes, PipelineDesc, initial_bytes};
 use scene::{MAX_JOINTS, Scene, VERTEX_STRIDE, floats, matrix_bytes};
 use std::{
     cell::RefCell,
@@ -438,9 +438,10 @@ struct Options {
 impl Options {
     /// Parses the small native-only command line; malformed options never start graphics.
     fn parse(model: &str, args: impl Iterator<Item = String>) -> scene::Result<Option<Self>> {
+        let assets = neocogi_platform_examples::assets_directory().map_err(|error| error.to_string())?;
         let mut options = Self {
-            asset: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!("examples/gltf/assets/{model}.glb")),
-            environment: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/gltf/assets/Cannon_Exterior.hdr"),
+            asset: assets.join(format!("{model}.glb")),
+            environment: assets.join("Cannon_Exterior.hdr"),
             exposure: 1.0,
             background: Background::Environment,
             frames: None,
@@ -499,10 +500,7 @@ pub fn run(model: &str) -> scene::Result<()> {
         intensity: 1.0,
         background: options.background,
     };
-    // SAFETY: This executable links and owns the immutable process-lived COM host.
-    let _runtime = unsafe { neocogi_com::Runtime::__from_host_api(neocogi_com_host::initialize_process()) }.map_err(|e| format!("COM host: {e:?}"))?;
-    let compiler = check(nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject).query())?;
-    let platform: ComPtr<PlatformAbi> = check(nc_platform::PlatformObject::from_value(nc_platform::PlatformObject::new(compiler)).query())?;
+    let platform = check(neocogi_platform_examples::acquire_platform())?;
     let title = format!("NeoCogi glTF — {model}");
     let result = (|| -> Result<(), NcStatus> {
         let window = platform.create_window(NcCopyFromBufferOffset::new(0, title.as_bytes()), SIZE)?;

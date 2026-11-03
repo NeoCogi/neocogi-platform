@@ -55,3 +55,11 @@ depending on the UI implementations.
 The explicit renderer `test-support` feature provides typed factory-created
 weak observations and native acceptance readback. It is absent from ordinary
 provider builds and exposes no raw native API handle or COM downcast mechanism.
+
+Native executable examples belong to neocogi-platform-examples rather than the
+provider package. Its static mode registers linked shader/platform descriptors;
+dynamic mode uses the artifact-only neocogi-example-plugins composition. Both
+own one SDK host and acquire the same typed root. Upload producers come from
+render-core, so dynamic executables have no normal GPU/provider implementation
+dependency. Assets and libraries are executable-relative; scene semantics stay
+in the application.

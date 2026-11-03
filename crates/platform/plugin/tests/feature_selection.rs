@@ -38,7 +38,7 @@ fn invalid_features_report_selection_errors_without_implementation_errors() {
         if mask == 3 {
             assert!(errors.contains("--no-default-features --features vulkan"), "{errors}");
             assert!(
-                errors.contains("cargo run --locked -p neocogi-platform-plugin --example gltf_damaged_helmet --no-default-features --features vulkan"),
+                errors.contains("cargo run --locked -p neocogi-platform-examples --bin gltf_damaged_helmet --no-default-features --features static,vulkan"),
                 "{errors}"
             );
             assert_eq!(errors.matches("error: renderer features").count(), 1, "{errors}");

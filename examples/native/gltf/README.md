@@ -10,8 +10,8 @@ Khronos PBR Neutral tone mapping.
 
 ```sh
 python3 scripts/fetch_gltf_examples.py
-cargo run --locked -p neocogi-platform-plugin --example gltf_damaged_helmet
-cargo run --locked -p neocogi-platform-plugin --example gltf_brainstem
+cargo run --locked -p neocogi-platform-examples --bin gltf_damaged_helmet
+cargo run --locked -p neocogi-platform-examples --bin gltf_brainstem
 ```
 
 | Input | Action |
@@ -24,6 +24,9 @@ cargo run --locked -p neocogi-platform-plugin --example gltf_brainstem
 | B | Show/hide the skybox while retaining environment lighting |
 | Escape or window close | Exit |
 
+For shared-library loading use the [native assembly guide](../README.md). Both
+models use the same scene/render loop in static and dynamic mode.
+
 Both cameras initially fit the model's world-space bounds. Resize updates the
 projection without resetting orientation or pan. Focus loss and resize end active
 drags, so returning to a window cannot continue an old gesture. Each viewer stays
@@ -35,11 +38,11 @@ sets a positive linear exposure factor (default 1); `--no-skybox` hides the
 background while retaining HDR reflections and material illumination.
 
 GL is the default. To select Vulkan or WGPU, add
-`--no-default-features --features vulkan` or `wgpu` **before** the `--` separator:
+`--no-default-features --features static,vulkan` or `static,wgpu` **before** the `--` separator:
 
 ```sh
-cargo run --locked -p neocogi-platform-plugin --example gltf_brainstem --no-default-features --features vulkan -- --frames 3 --time 1
-SDL_VIDEODRIVER=offscreen cargo run --locked -p neocogi-platform-plugin --example gltf_damaged_helmet -- --frames 3
+cargo run --locked -p neocogi-platform-examples --bin gltf_brainstem --no-default-features --features static,vulkan -- --frames 3 --time 1
+SDL_VIDEODRIVER=offscreen cargo run --locked -p neocogi-platform-examples --bin gltf_damaged_helmet -- --frames 3
 ```
 
 Vulkan and WGPU need a window-system display; Linux CI uses Xvfb and Mesa drivers. The
@@ -115,11 +118,12 @@ precision. No renderer material/mesh/environment API is introduced.
 Offline import/animation tests and optional downloaded-asset acceptance:
 
 ```sh
-cargo test --locked -p neocogi-platform-plugin --test gltf_scene
-cargo test --locked -p neocogi-platform-plugin --test gltf_scene -- --include-ignored
-cargo test --locked -p neocogi-platform-plugin --test gltf_camera --test gltf_viewer
-cargo test --locked -p neocogi-platform-plugin --test gltf_environment --test gltf_material
-SDL_VIDEODRIVER=offscreen cargo test --locked -p neocogi-platform-plugin --test gltf_viewer --features test-support -- --include-ignored --test-threads=1
+cargo test --locked -p neocogi-platform-examples --test gltf_scene
+cargo test --locked -p neocogi-platform-examples --test gltf_scene -- --include-ignored
+cargo test --locked -p neocogi-platform-examples --test gltf_camera
+cargo test --locked -p neocogi-platform-examples --test gltf_viewer --features test-support
+cargo test --locked -p neocogi-platform-examples --test gltf_environment --test gltf_material
+SDL_VIDEODRIVER=offscreen cargo test --locked -p neocogi-platform-examples --test gltf_viewer --features static,test-support -- --include-ignored --test-threads=1
 ```
 
 The optional GL acceptance test checks visible pixels for both models, visible

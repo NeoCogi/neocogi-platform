@@ -13,7 +13,7 @@ widget only a resource factory. The [smoke widget](https://github.com/NeoCogi/ne
 uses a separate color-interpolation pipeline. Both consume the same scoped
 binding, uniform and primitive-draw operations.
 
-The standalone [glTF examples](../../crates/platform/plugin/examples/gltf/README.md)
+The standalone [glTF examples](../../examples/native/gltf/README.md)
 similarly own their scene import, arcball camera, materials and animation. Their
 64-byte vertex streams and 64-matrix uniform palettes exercise indexed, textured,
 depth-tested drawing and GPU skinning through these same generic contracts.

@@ -168,7 +168,7 @@ fn decodes_hdr_as_floating_point_and_rejects_bad_sources() {
 #[test]
 #[ignore = "requires python3 scripts/fetch_gltf_examples.py"]
 fn cannon_exterior_prepares_and_reuses_cache() {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/gltf/assets/Cannon_Exterior.hdr");
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("gltf/assets/Cannon_Exterior.hdr");
     let atlas = Environment::load(&path).unwrap();
     assert_eq!(atlas.regions[0].width, 1024);
     assert_eq!(atlas.regions[0].height, 512);

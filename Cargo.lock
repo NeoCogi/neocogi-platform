@@ -873,6 +873,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "neocogi-example-plugins"
+version = "0.0.0"
+dependencies = [
+ "neocogi-com",
+ "neocogi-native-layout",
+ "neocogi-platform-plugin-dylib",
+ "neocogi-render-core",
+ "neocogi-shader-compiler-dylib",
+]
+
+[[package]]
 name = "neocogi-idl"
 version = "0.1.0-alpha.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -909,12 +920,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "neocogi-platform-examples"
+version = "0.0.0"
+dependencies = [
+ "gltf",
+ "image",
+ "neocogi-com",
+ "neocogi-com-host",
+ "neocogi-example-plugins",
+ "neocogi-native-layout",
+ "neocogi-native-layout-core",
+ "neocogi-platform-plugin",
+ "neocogi-render-core",
+ "neocogi-shader-compiler",
+ "rs-math3d",
+ "serde_json",
+ "sha2",
+ "tempfile",
+]
+
+[[package]]
 name = "neocogi-platform-plugin"
 version = "0.0.0"
 dependencies = [
  "glow 0.18.0",
- "gltf",
- "image",
  "js-sys",
  "neocogi-com",
  "neocogi-com-host",
@@ -925,8 +954,6 @@ dependencies = [
  "neocogi-shader-core",
  "rs-math3d",
  "sdl2",
- "serde_json",
- "sha2",
  "tempfile",
  "wasm-bindgen",
  "wasm-bindgen-futures",

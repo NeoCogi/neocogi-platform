@@ -2,7 +2,7 @@
 #[cfg(not(target_arch = "wasm32"))]
 use neocogi_com::{ComBox, ComPtr, NcCopyFromBufferOffset, NcStatus, com_object};
 #[cfg(not(target_arch = "wasm32"))]
-use neocogi_render_core::{abi::*, platform::*};
+use neocogi_render_core::abi::*;
 
 #[cfg(not(target_arch = "wasm32"))]
 #[com_object(interfaces(IRenderStream))]
@@ -24,11 +24,8 @@ impl IRenderStream for Stream {
 
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> Result<(), NcStatus> {
-    use neocogi_render_gpu::source::{Bytes, PipelineDesc};
-    // SAFETY: This executable explicitly links and owns the immutable process-lived host.
-    let _runtime = unsafe { neocogi_com::Runtime::__from_host_api(neocogi_com_host::initialize_process()) }.expect("compatible process host");
-    let compiler = nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject).query()?;
-    let platform: ComPtr<PlatformAbi> = nc_platform::PlatformObject::from_value(nc_platform::PlatformObject::new(compiler)).query()?;
+    use neocogi_render_core::source::{Bytes, PipelineDesc};
+    let platform = neocogi_platform_examples::acquire_platform()?;
     let size = Size { width: 320, height: 240 };
     let window = platform.create_window(NcCopyFromBufferOffset::new(0, b"NeoCogi Platform triangle"), size)?;
     let renderer: ComPtr<IRendererAbi> = window.query()?;

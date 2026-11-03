@@ -143,7 +143,7 @@ fn explicit_gpu_encoding() {
 #[test]
 #[ignore = "requires python3 scripts/fetch_gltf_examples.py"]
 fn pinned_assets_import_and_brainstem_deforms() {
-    let directory = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/gltf/assets");
+    let directory = Path::new(env!("CARGO_MANIFEST_DIR")).join("gltf/assets");
     let helmet = Scene::load(&directory.join("DamagedHelmet.glb")).unwrap();
     assert_eq!(helmet.primitives.len(), 1);
     assert_eq!(helmet.duration, 0.0);

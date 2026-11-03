@@ -91,3 +91,15 @@ Resource mappings now own exact nonoverlapping destination subtrees. Use a clean
 staging directory when migrating from additive copying; unclaimed existing output
 rejects instead of being deleted. Removed members are pruned only inside an owned
 slot. See [native layout contracts](../contracts/NATIVE_LAYOUT.md).
+
+## Native example applications
+
+The provider no longer owns executable examples or glTF import dependencies.
+Use neocogi-platform-examples with --bin triangle, gltf_damaged_helmet or
+gltf_brainstem. Default features select static,glow. Alternate builds use
+--no-default-features --features static,vulkan or dynamic,vulkan (and similarly
+glow/wgpu). No old example forwarding entry points are retained.
+
+The dynamic composition uses normal Cargo cdylib artifacts and executable-relative
+loading; it does not add provider Rust implementation dependencies to the executable.
+See [native assembly](../../examples/native/README.md) for qualification and relocation.

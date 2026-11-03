@@ -39,13 +39,13 @@ fn models_render_animate_and_respond_to_arcball_pan_zoom() {
     // Keep all native probes in this one test so SDL's event/context owner is never concurrent.
     hdr_interpolation_probe();
     let mut lighting = Lighting {
-        environment: Environment::load(&PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/gltf/assets/Cannon_Exterior.hdr")).unwrap(),
+        environment: Environment::load(&PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("gltf/assets/Cannon_Exterior.hdr")).unwrap(),
         exposure: 1.0,
         intensity: 1.0,
         background: Background::Hidden,
     };
     for model in ["DamagedHelmet", "BrainStem"] {
-        let scene = Scene::load(&PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!("examples/gltf/assets/{model}.glb"))).unwrap();
+        let scene = Scene::load(&PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!("gltf/assets/{model}.glb"))).unwrap();
         let compiler = nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
             .query()
             .unwrap();

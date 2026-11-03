@@ -13,6 +13,8 @@ members = [
     "tools/native-layout",
     "tools/native-layout/core",
     "tests/browser",
+    "examples/native",
+    "examples/native/plugins",
 ]
 default-members = ["crates/render/core"]
 
