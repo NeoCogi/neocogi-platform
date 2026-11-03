@@ -171,6 +171,15 @@ impl Camera {
         let offset = Quatf::conjugate(&self.rotation).mat4() * Vec4f::new(-self.pan[0], -self.pan[1], self.distance, 0.);
         [self.center.x + offset.x, self.center.y + offset.y, self.center.z + offset.z]
     }
+
+    /// Perspective ray basis for an infinitely distant skybox. Only camera rotation and
+    /// aspect ratio apply: panning and distance changes cannot translate the environment.
+    pub fn sky_matrix(&self) -> Mat4f {
+        let tangent = (FOV * 0.5).tan();
+        let aspect = self.size.width.max(1) as f32 / self.size.height.max(1) as f32;
+        let rays = Mat4f::new(tangent * aspect, 0., 0., 0., 0., tangent, 0., 0., 0., 0., -1., 0., 0., 0., 0., 0.);
+        Quatf::conjugate(&self.rotation).mat4() * rays
+    }
 }
 
 #[cfg(test)]
@@ -256,5 +265,31 @@ mod tests {
         });
         c.input(UiInput::Pointer(Point { x: 800, y: 300 }));
         assert!(c.eye().iter().all(|v| v.is_finite()));
+    }
+
+    /// A skybox moves under orbit rotation, remains fixed under pan/zoom, and follows aspect.
+    #[test]
+    fn sky_rays_follow_rotation_without_camera_translation() {
+        let mut c = camera();
+        let ray = |c: &Camera| c.sky_matrix() * Vec4f::new(0.5, 0.3, 1., 0.);
+        let initial = ray(&c);
+        c.input(UiInput::Down {
+            position: Point { x: 400, y: 300 },
+            buttons: 2,
+        });
+        c.input(UiInput::Pointer(Point { x: 500, y: 400 }));
+        c.input(UiInput::Scroll(Point { x: 0, y: -120 }));
+        let same = ray(&c);
+        assert_eq!([initial.x, initial.y, initial.z], [same.x, same.y, same.z]);
+        c.input(UiInput::Down {
+            position: Point { x: 400, y: 300 },
+            buttons: 1,
+        });
+        c.input(UiInput::Pointer(Point { x: 500, y: 400 }));
+        let rotated = ray(&c);
+        assert_ne!([same.x, same.y, same.z], [rotated.x, rotated.y, rotated.z]);
+        c.reset();
+        c.resize(Size { width: 300, height: 800 });
+        assert_ne!(initial.x, ray(&c).x);
     }
 }

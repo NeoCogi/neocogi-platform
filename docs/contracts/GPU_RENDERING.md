@@ -18,6 +18,10 @@ similarly own their scene import, arcball camera, materials and animation. Their
 64-byte vertex streams and 64-matrix uniform palettes exercise indexed, textured,
 depth-tested drawing and GPU skinning through these same generic contracts.
 Scene/node/skin semantics remain outside the renderer.
+Their image-based lighting similarly packs RGBE radiance, filtered environment
+levels and BRDF data into ordinary 2D images; the example owns HDR decoding,
+material atlases and skybox semantics. This does not extend the portable texture
+formats, mip count or sampled-slot limits.
 
 Each public GPU resource has one `ComBox` owner. Renderers observe its lifetime
 through construction-proven `WeakLocalBox` and typed `WeakComBox` registrations.

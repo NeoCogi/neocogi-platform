@@ -3,6 +3,10 @@
 These examples run through the public platform, shader compiler and graphics COM
 contracts. `gltf_damaged_helmet` displays a textured rigid mesh;
 `gltf_brainstem` loops the model's first animation and skins its vertices on the GPU.
+Both use the reference viewer's **Cannon Exterior HDR environment** for diffuse
+lighting, roughness-dependent metal reflections and a blurred skybox. Exposure and
+environment intensity default to one, with the reference +Z orientation and
+Khronos PBR Neutral tone mapping.
 
 ```sh
 python3 scripts/fetch_gltf_examples.py
@@ -17,6 +21,7 @@ cargo run --locked -p neocogi-render-plugin --example gltf_brainstem
 | Mouse wheel | Zoom, bounded relative to the model size |
 | R | Reset orientation, pan and fitted distance |
 | Space | Pause/resume animation |
+| B | Show/hide the skybox while retaining environment lighting |
 | Escape or window close | Exit |
 
 Both cameras initially fit the model's world-space bounds. Resize updates the
@@ -25,6 +30,9 @@ drags, so returning to a window cannot continue an old gesture. Each viewer stay
 open by default; `--frames N` exits after a positive number of rendered frames.
 `--time SECONDS` fixes the animation pose for repeatable inspection. `--asset PATH`
 loads a local compatible asset, and `--help` lists options without creating a window.
+`--environment PATH.hdr` selects another Radiance panorama. `--exposure MULTIPLIER`
+sets a positive linear exposure factor (default 1); `--no-skybox` hides the
+background while retaining HDR reflections and material illumination.
 
 GL is the default. To select Vulkan or WGPU, add
 `--no-default-features --features vulkan` or `wgpu` **before** the `--` separator:
@@ -48,6 +56,10 @@ The script pins Khronos glTF-Sample-Assets revision
 `8f492390ddc7a2ae221a1369ef560589cf8c70fb`, checks SHA-256 before installing each
 GLB, and reuses verified local files. Downloads go into the ignored `assets/`
 directory beside this document. Builds and ordinary tests do not access the network.
+The same command also fetches the separately pinned Cannon Exterior HDR. The
+first start prepares its lighting atlas; subsequent starts reuse a source-keyed
+local cache. See [HDR data and cache contracts](ENVIRONMENT.md) for the environment
+revision, license, numerical filtering and cache validation.
 
 DamagedHelmet is by theblueturtle_ (original) and ctxwing (rebuild/conversion).
 See its [upstream model](https://github.com/KhronosGroup/glTF-Sample-Assets/tree/8f492390ddc7a2ae221a1369ef560589cf8c70fb/Models/DamagedHelmet)
@@ -80,12 +92,25 @@ never defines a GPU payload.
 The viewer owns the domain controller and immutable GPU buffers/textures for the
 entire loop. Per-frame draws copy only camera, material and palette uniforms.
 The shader applies inverse-transpose normals, base color, metallic/roughness,
-derivative-based normal maps and emissive maps. Color maps use sRGB decoding;
-data maps remain linear. GGX directional lights and hemisphere fill provide an
-approximate environment; image-based lighting, occlusion maps and glTF sampler
-variations are not implemented. All sampled images use linear/repeat filtering
-and one mip, within the renderer's portable profile. These are documented sample
-constraints; no renderer material/mesh API is introduced.
+derivative-based normal maps, occlusion and emissive maps. Materials retain full
+image resolution in a four-tile atlas; occlusion occupies metallic/roughness's
+unused red channel. Color texels are decoded from sRGB before interpolation;
+data maps remain linear. HDR diffuse convolution and GGX prefiltering supply
+illumination and reflections, with split-sum BRDF integration and compensation
+for multiple scattering. Radiance remains HDR until exposure and PBR Neutral tone
+mapping are applied once. The same atlas and orientation supply the skybox, which
+follows arcball rotation and ignores camera pan/distance.
+
+This supersedes the original directional-light/hemisphere approximation. The
+portable renderer still receives only single-mip RGBA8 2D images: RGBE preserves
+HDR radiance, with decoding before manual bilinear interpolation. Materials repeat
+within each tile, preventing neighboring maps from bleeding into each other;
+environment longitude repeats and polar rows clamp. The native sampler uses
+nearest texel reads because interpolating RGBE exponent bytes is invalid. These
+semantics stay inside the examples. glTF sampler variations, native mipmapping,
+and exact pixel matching to the reference viewer's GPU integration remain outside
+the sample contract; its 128-sample finite CPU convolutions have lower filtering
+precision. No renderer material/mesh/environment API is introduced.
 
 Offline import/animation tests and optional downloaded-asset acceptance:
 
@@ -93,10 +118,17 @@ Offline import/animation tests and optional downloaded-asset acceptance:
 cargo test --locked -p neocogi-render-plugin --test gltf_scene
 cargo test --locked -p neocogi-render-plugin --test gltf_scene -- --include-ignored
 cargo test --locked -p neocogi-render-plugin --test gltf_camera --test gltf_viewer
+cargo test --locked -p neocogi-render-plugin --test gltf_environment --test gltf_material
 SDL_VIDEODRIVER=offscreen cargo test --locked -p neocogi-render-plugin --test gltf_viewer --features test-support -- --include-ignored --test-threads=1
 ```
 
 The optional GL acceptance test checks visible pixels for both models, visible
 BrainStem deformation, changed pixels after rotate/pan/zoom, and exact reset.
+It also verifies HDR illumination independently of skybox visibility, exposure
+changes, skybox rotation and invariance under pan/zoom. Numerical regressions
+cover HDR encoding, convolution energy, BRDF bounds, material packing/AO and
+source-keyed cache corruption/bounds handling.
+An actual fragment probe checks that the midpoint of RGBE-encoded radiance 1 and
+8 is 4.5, catching incorrect interpolation of the encoded exponent bytes.
 Set `NEOCOGI_GLTF_CAPTURE=/tmp/gltf-captures` to retain initial-view PPM images.
 CI also runs both standalone executables on GL, Vulkan and WGPU.

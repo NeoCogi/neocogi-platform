@@ -64,6 +64,10 @@ pub struct Material {
     pub normal_scale: f32,
     /// Base color, metallic/roughness, normal and emissive image indices.
     pub images: [Option<usize>; 4],
+    /// Optional linear occlusion image; its red channel is packed with metallic/roughness.
+    pub occlusion: Option<usize>,
+    /// Amount of authored occlusion, mixed with one before packing the material atlas.
+    pub occlusion_strength: f32,
 }
 
 /// Immutable tightly packed RGBA8 image with glTF row ordering (no vertical flip).
@@ -236,10 +240,12 @@ impl Scene {
                 let mr = pbr.metallic_roughness_texture();
                 let normal = material.normal_texture();
                 let emissive = material.emissive_texture();
+                let occlusion = material.occlusion_texture();
                 if base.as_ref().is_some_and(|t| t.tex_coord() != 0)
                     || mr.as_ref().is_some_and(|t| t.tex_coord() != 0)
                     || normal.as_ref().is_some_and(|t| t.tex_coord() != 0)
                     || emissive.as_ref().is_some_and(|t| t.tex_coord() != 0)
+                    || occlusion.as_ref().is_some_and(|t| t.tex_coord() != 0)
                 {
                     return Err("only TEXCOORD_0 is supported".into());
                 }
@@ -248,6 +254,8 @@ impl Scene {
                     emissive: material.emissive_factor(),
                     metal_rough: [pbr.metallic_factor(), pbr.roughness_factor()],
                     normal_scale: normal.as_ref().map_or(1.0, |t| t.scale()),
+                    occlusion: occlusion.as_ref().map(|t| t.texture().source().index()),
+                    occlusion_strength: occlusion.as_ref().map_or(1.0, |t| t.strength()),
                     images: [
                         base.map(|t| t.texture().source().index()),
                         mr.map(|t| t.texture().source().index()),
@@ -263,6 +271,8 @@ impl Scene {
             metal_rough: [1.0; 2],
             normal_scale: 1.0,
             images: [None; 4],
+            occlusion: None,
+            occlusion_strength: 1.0,
         });
         let scene = document.default_scene().or_else(|| document.scenes().next()).ok_or("glTF has no scene")?;
         let mut stack: Vec<_> = scene.nodes().collect();

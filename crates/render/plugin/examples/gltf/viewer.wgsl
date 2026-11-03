@@ -45,51 +45,40 @@ struct Material {
     // Metallic, roughness, normal XY scale, reserved.
     parameters: vec4<f32>,
     eye: vec4<f32>,
+    // Base, ORM, normal and emissive rectangles; explicit pixel coordinates and extents.
+    tiles: array<vec4<f32>, 4>,
 }
 @group(3) @binding(0) var<uniform> material: Material;
-@group(2) @binding(0) var base_map: texture_2d<f32>;
-@group(2) @binding(1) var base_sampler: sampler;
-@group(2) @binding(2) var mr_map: texture_2d<f32>;
-@group(2) @binding(3) var mr_sampler: sampler;
-@group(2) @binding(4) var normal_map: texture_2d<f32>;
-@group(2) @binding(5) var normal_sampler: sampler;
-@group(2) @binding(6) var emissive_map: texture_2d<f32>;
-@group(2) @binding(7) var emissive_sampler: sampler;
+@group(2) @binding(0) var material_map: texture_2d<f32>;
+@group(2) @binding(1) var material_sampler: sampler;
 
-// Images are uploaded as UNORM. Color maps alone use the sRGB transfer function.
-fn linear(color: vec3<f32>) -> vec3<f32> {
-    return select(pow((color + vec3(0.055)) / 1.055, vec3(2.4)), color / 12.92, color <= vec3(0.04045));
+// Nearest samples at exact pixel centers allow repeat interpolation within a tile, without
+// bleeding into a neighboring material map. Decode sRGB before interpolating color texels.
+fn material_texel(tile: vec4<f32>, coordinate: vec2<f32>, color: bool) -> vec3<f32> {
+    let pixel = coordinate - floor(coordinate / tile.zw) * tile.zw;
+    let value = textureSampleLevel(material_map, material_sampler,
+        (tile.xy + pixel + vec2(0.5)) / vec2<f32>(textureDimensions(material_map)), 0.0).rgb;
+    if color { return linear(value); }
+    return value;
 }
-fn srgb(color: vec3<f32>) -> vec3<f32> {
-    return select(1.055 * pow(color, vec3(1.0 / 2.4)) - vec3(0.055), color * 12.92, color <= vec3(0.0031308));
-}
-
-// Direct GGX lighting plus a simple hemisphere fill; this example does not supply an IBL map.
-fn light(n: vec3<f32>, v: vec3<f32>, l: vec3<f32>, base: vec3<f32>, metallic: f32, roughness: f32) -> vec3<f32> {
-    let h = normalize(v + l);
-    let nl = max(dot(n, l), 0.0);
-    let nv = max(dot(n, v), 0.001);
-    let nh = max(dot(n, h), 0.0);
-    let vh = max(dot(v, h), 0.0);
-    let alpha = roughness * roughness;
-    let alpha2 = alpha * alpha;
-    let denom = nh * nh * (alpha2 - 1.0) + 1.0;
-    let distribution = alpha2 / max(3.14159265 * denom * denom, 0.00001);
-    let k = (roughness + 1.0) * (roughness + 1.0) / 8.0;
-    let geometry = nv / (nv * (1.0 - k) + k) * nl / (nl * (1.0 - k) + k);
-    let f0 = mix(vec3(0.04), base, vec3(metallic));
-    let fresnel = f0 + (vec3(1.0) - f0) * pow(1.0 - vh, 5.0);
-    let specular = distribution * geometry * fresnel / max(4.0 * nv * nl, 0.001);
-    let diffuse = (vec3(1.0) - fresnel) * (1.0 - metallic) * base / 3.14159265;
-    return (diffuse + specular) * nl;
+fn material_sample(index: u32, uv: vec2<f32>, color: bool) -> vec3<f32> {
+    let tile = material.tiles[index];
+    let pixel = fract(uv) * tile.zw - vec2(0.5);
+    let first = floor(pixel);
+    let weight = pixel - first;
+    let a = material_texel(tile, first, color);
+    let b = material_texel(tile, first + vec2(1.0, 0.0), color);
+    let c = material_texel(tile, first + vec2(0.0, 1.0), color);
+    let d = material_texel(tile, first + vec2(1.0, 1.0), color);
+    return mix(mix(a, b, vec3(weight.x)), mix(c, d, vec3(weight.x)), vec3(weight.y));
 }
 
 @fragment fn fs(surface: Surface) -> @location(0) vec4<f32> {
-    let base = linear(textureSample(base_map, base_sampler, surface.uv).rgb) * material.base.rgb;
-    let mr = textureSample(mr_map, mr_sampler, surface.uv);
+    let base = material_sample(0u, surface.uv, true) * material.base.rgb;
+    let mr = material_sample(1u, surface.uv, false);
     let metallic = clamp(mr.b * material.parameters.x, 0.0, 1.0);
     let roughness = clamp(mr.g * material.parameters.y, 0.045, 1.0);
-    let sample_normal = textureSample(normal_map, normal_sampler, surface.uv).xyz * 2.0 - vec3(1.0);
+    let sample_normal = material_sample(2u, surface.uv, false) * 2.0 - vec3(1.0);
     var n = normalize(surface.normal);
     // Derive the tangent frame from UV0; missing/degenerate UVs preserve the vertex normal.
     let px = dpdx(surface.position);
@@ -103,10 +92,19 @@ fn light(n: vec3<f32>, v: vec3<f32>, l: vec3<f32>, base: vec3<f32>, metallic: f3
         n = normalize(t * sample_normal.x * material.parameters.z + b * sample_normal.y * material.parameters.z + n * sample_normal.z);
     }
     let v = normalize(material.eye.xyz - surface.position);
-    let key = light(n, v, normalize(vec3(0.5, 0.8, 1.0)), base, metallic, roughness) * vec3(3.8, 3.6, 3.3);
-    let fill = light(n, v, normalize(vec3(-0.8, 0.3, -0.5)), base, metallic, roughness) * vec3(1.4, 1.7, 2.2);
-    let ambient = base * mix(vec3(0.12, 0.13, 0.16), vec3(0.48, 0.52, 0.60), vec3(n.y * 0.5 + 0.5));
-    let emissive = linear(textureSample(emissive_map, emissive_sampler, surface.uv).rgb) * material.emissive.rgb;
-    let color = key + fill + ambient + emissive;
-    return vec4(srgb(color / (vec3(1.0) + color)), 1.0);
+    let nv = max(dot(n, v), 0.001);
+    let response = brdf_response(nv, roughness);
+    let f0 = mix(vec3(0.04), base, vec3(metallic));
+    let fresnel = f0 + (max(vec3(1.0 - roughness), f0) - f0) * pow(1.0 - nv, 5.0);
+    let single = fresnel * response.x + vec3(response.y);
+    // Compensate energy lost to multiple GGX scattering, including rough metallic surfaces.
+    let missing = max(1.0 - response.x - response.y, 0.0);
+    let average = f0 + (vec3(1.0) - f0) / 21.0;
+    let multiple = missing * single * average / max(vec3(1.0) - average * missing, vec3(0.001));
+    let reflected = single + multiple;
+    let diffuse = diffuse_radiance(n) * base * (1.0 - metallic) * max(vec3(1.0) - reflected, vec3(0.0));
+    let specular = specular_radiance(reflect(-v, n), roughness) * reflected;
+    let emissive = material_sample(3u, surface.uv, true) * material.emissive.rgb;
+    let color = (diffuse + specular) * mr.r * environment.settings.y + emissive;
+    return vec4(display_color(color), 1.0);
 }

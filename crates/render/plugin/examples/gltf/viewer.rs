@@ -3,10 +3,16 @@
 
 #[path = "camera.rs"]
 mod camera;
+#[path = "environment.rs"]
+mod environment;
+#[path = "material.rs"]
+mod material;
 #[path = "scene.rs"]
 mod scene;
 
 use camera::Camera;
+use environment::Environment;
+use material::{MaterialAtlas, Tile};
 use neocogi_com::{ComBox, ComPtr, INcStringComPtrExt, NcCopyFromBufferOffset, NcStatus, com_object};
 use neocogi_render_core::{abi::*, platform::*};
 use neocogi_render_gpu::source::{Bytes, PipelineDesc, initial_bytes};
@@ -21,7 +27,7 @@ use std::{
 /// Initial physical viewport. Subsequent frames always query the current drawable extent.
 const SIZE: Size = Size { width: 960, height: 720 };
 /// Canonical WGSL remains an example asset, compiled through the normal shader provider.
-const SHADER: &[u8] = include_bytes!("viewer.wgsl");
+const SHADER: &str = include_str!("viewer.wgsl");
 
 #[com_object(interfaces(IRenderStream))]
 /// One immutable owned block, retained through synchronous render and captured GPU work.
@@ -65,22 +71,73 @@ struct Mesh {
     count: u32,
 }
 
+/// Background display is independent of the environment used for material lighting.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Background {
+    /// Clear to a solid color while retaining image-based material illumination.
+    Hidden,
+    /// Draw the HDR environment at infinity with the camera's current orientation.
+    Environment,
+}
+
+/// Application-owned environment and view settings, shared by mesh and skybox programs.
+struct Lighting {
+    /// Validated CPU atlas and its authoritative region/uniform layout.
+    environment: Environment,
+    /// Linear exposure multiplier; one matches the reference viewer's default.
+    exposure: f32,
+    /// HDR radiance multiplier; one matches the reference viewer's default.
+    intensity: f32,
+    /// Optional skybox visibility, independent of the material illumination.
+    background: Background,
+}
+
+/// Immutable texture and region metadata for one imported material.
+struct GpuMaterial {
+    /// Exclusive owner of its four full-resolution map tiles (including packed AO).
+    texture: ComBox<IGpuTextureAbi>,
+    /// Explicit pixel rectangles, copied with each primitive's material parameters.
+    tiles: [Tile; 4],
+}
+
 /// Rendering state separate from imported scene semantics and camera interaction.
 struct Graphics {
-    /// Shared shader/layout state for rigid and skinned geometry.
+    /// Shared mesh shader/layout state for rigid and skinned geometry.
     pipeline: ComBox<IGpuPipelineAbi>,
+    /// Procedural full-screen triangle; never writes depth or translates the environment.
+    sky_pipeline: ComBox<IGpuPipelineAbi>,
     /// Immutable buffers in the same order as Scene::primitives.
     meshes: Vec<Mesh>,
-    /// Authored image owners followed by four single-texel fallback maps.
-    textures: Vec<ComBox<IGpuTextureAbi>>,
-    /// Repeat/linear sampling with one mip, as supported by the portable profile.
+    /// One exclusive atlas per imported material, including the default material.
+    materials: Vec<GpuMaterial>,
+    /// RGBE radiance tiles and the linear BRDF lookup share a single sampled image.
+    environment: ComBox<IGpuTextureAbi>,
+    /// Nearest sampling is required before shader-side decode and bilinear interpolation.
     sampler: ComBox<IGpuSamplerAbi>,
+}
+
+/// Resolves all scene material references before entering native resource creation.
+fn prepare_materials(scene: &Scene) -> scene::Result<Vec<MaterialAtlas>> {
+    scene.materials.iter().map(|material| MaterialAtlas::prepare(material, &scene.images)).collect()
+}
+
+/// Builds both programs from one lighting implementation and authoritative Rust region counts.
+fn shader_source(body: &str) -> Vec<u8> {
+    let shared = include_str!("lighting.wgsl")
+        .replace("@REGION_COUNT@", &environment::REGION_COUNT.to_string())
+        .replace("@LAST_SPECULAR@", &(environment::SPECULAR_LEVELS - 1).to_string())
+        .replace("@DIFFUSE_REGION@", &environment::DIFFUSE_REGION.to_string())
+        .replace("@BRDF_REGION@", &environment::BRDF_REGION.to_string());
+    (shared + body).into_bytes()
 }
 
 impl Graphics {
     /// Uploads all immutable scene data once and validates the shader's exact byte contract.
-    fn new(scene: &Scene, resources: &ComPtr<IRenderResourcesAbi>) -> Result<Self, NcStatus> {
-        let code = Bytes::source(SHADER.to_vec());
+    fn new(scene: &Scene, materials: Vec<MaterialAtlas>, environment: &Environment, resources: &ComPtr<IRenderResourcesAbi>) -> Result<Self, NcStatus> {
+        if materials.len() != scene.materials.len() {
+            return Err(neocogi_com::NC_E_INVALID_ARG);
+        }
+        let code = Bytes::source(shader_source(SHADER));
         let vs = resources.create_shader(GpuShaderStage::Vertex, code.as_com_ref(), NcCopyFromBufferOffset::new(0, b"vs"))?;
         let fs = resources.create_shader(GpuShaderStage::Fragment, code.as_com_ref(), NcCopyFromBufferOffset::new(0, b"fs"))?;
         let mut bindings = vec![
@@ -100,10 +157,16 @@ impl Graphics {
                 stage: GpuShaderStage::Fragment,
                 slot: 0,
                 kind: GpuBindingKind::Uniform,
-                byte_len: 64,
+                byte_len: material::UNIFORM_BYTES,
+            },
+            GpuShaderBinding {
+                stage: GpuShaderStage::Fragment,
+                slot: 1,
+                kind: GpuBindingKind::Uniform,
+                byte_len: environment::UNIFORM_BYTES,
             },
         ];
-        bindings.extend((0..4).map(|slot| GpuShaderBinding {
+        bindings.extend((0..2).map(|slot| GpuShaderBinding {
             stage: GpuShaderStage::Fragment,
             slot,
             kind: GpuBindingKind::SampledTexture,
@@ -152,34 +215,75 @@ impl Graphics {
                 count: primitive.indices.len().try_into().map_err(|_| neocogi_com::NC_E_OUT_OF_RANGE)?,
             });
         }
-        let mut textures = Vec::new();
-        for image in &scene.images {
-            textures.push(texture(
-                resources,
-                Size {
-                    width: image.width as i32,
-                    height: image.height as i32,
+        let mut gpu_materials = Vec::with_capacity(materials.len());
+        for atlas in materials {
+            gpu_materials.push(GpuMaterial {
+                texture: texture(
+                    resources,
+                    Size {
+                        width: atlas.width as i32,
+                        height: atlas.height as i32,
+                    },
+                    atlas.pixels,
+                )?,
+                tiles: atlas.tiles,
+            });
+        }
+        let environment_texture = texture(
+            resources,
+            Size {
+                width: environment.width as i32,
+                height: environment.height as i32,
+            },
+            environment.pixels.clone(),
+        )?;
+        let sampler = resources.create_sampler(GpuSamplerDesc::default())?;
+        let sky_code = Bytes::source(shader_source(include_str!("skybox.wgsl")));
+        let sky_vs = resources.create_shader(GpuShaderStage::Vertex, sky_code.as_com_ref(), NcCopyFromBufferOffset::new(0, b"vs"))?;
+        let sky_fs = resources.create_shader(GpuShaderStage::Fragment, sky_code.as_com_ref(), NcCopyFromBufferOffset::new(0, b"fs"))?;
+        let sky_description = PipelineDesc {
+            bindings: vec![
+                GpuShaderBinding {
+                    stage: GpuShaderStage::Vertex,
+                    slot: 0,
+                    kind: GpuBindingKind::Uniform,
+                    byte_len: 64,
                 },
-                image.pixels.clone(),
-            )?);
+                GpuShaderBinding {
+                    stage: GpuShaderStage::Fragment,
+                    slot: 1,
+                    kind: GpuBindingKind::Uniform,
+                    byte_len: environment::UNIFORM_BYTES,
+                },
+                GpuShaderBinding {
+                    stage: GpuShaderStage::Fragment,
+                    slot: 1,
+                    kind: GpuBindingKind::SampledTexture,
+                    byte_len: 0,
+                },
+            ],
+            ..PipelineDesc::default()
         }
-        // Base/MR white, flat tangent normal, and black emissive retain ordinary owned textures.
-        for pixel in [[255, 255, 255, 255], [255, 255, 255, 255], [128, 128, 255, 255], [0, 0, 0, 255]] {
-            textures.push(texture(resources, Size { width: 1, height: 1 }, pixel.to_vec())?);
-        }
-        let sampler = resources.create_sampler(GpuSamplerDesc {
-            min_filter: GpuFilter::Linear,
-            mag_filter: GpuFilter::Linear,
-            address_u: GpuAddressMode::Repeat,
-            address_v: GpuAddressMode::Repeat,
-        })?;
-        Ok(Self { pipeline, meshes, textures, sampler })
+        .source()?;
+        let sky_pipeline = resources.create_pipeline(sky_description.as_com_ref(), sky_vs.as_com_ref(), sky_fs.as_com_ref())?;
+        Ok(Self {
+            pipeline,
+            sky_pipeline,
+            meshes,
+            materials: gpu_materials,
+            environment: environment_texture,
+            sampler,
+        })
     }
 
     /// Copies this frame's camera/material/palette uniforms and records indexed depth-tested draws.
-    fn record(&self, scene: &Scene, camera: &Camera, seconds: f32, view: &mut ComBox<IRenderViewAbi>) -> Result<(), NcStatus> {
+    fn record(&self, scene: &Scene, camera: &Camera, seconds: f32, lighting: &Lighting, view: &mut ComBox<IRenderViewAbi>) -> Result<(), NcStatus> {
+        if lighting.background == Background::Environment {
+            self.record_sky(camera, lighting, view)?;
+        }
         let pose = scene.pose(seconds);
         view.bind_pipeline(self.pipeline.as_com_ref())?;
+        self.bind_environment(lighting, view)?;
         let mut frame = Vec::with_capacity(64);
         matrix_bytes(&mut frame, camera.view_projection());
         view.push_uniforms(GpuShaderStage::Vertex, 0, NcCopyFromBufferOffset::new(0, &frame))?;
@@ -191,26 +295,49 @@ impl Graphics {
             }
             view.push_uniforms(GpuShaderStage::Vertex, 1, NcCopyFromBufferOffset::new(0, &skin))?;
             let material = &scene.materials[primitive.material];
-            let mut parameters = Vec::with_capacity(64);
+            let mut parameters = Vec::with_capacity(material::UNIFORM_BYTES as usize);
             floats(&mut parameters, material.base);
             floats(&mut parameters, material.emissive.into_iter().chain([0.]));
-            floats(&mut parameters, [material.metal_rough[0], material.metal_rough[1], material.normal_scale, 0.]);
+            floats(
+                &mut parameters,
+                [
+                    material.metal_rough[0],
+                    material.metal_rough[1],
+                    if material.images[2].is_some() { material.normal_scale } else { 0. },
+                    0.,
+                ],
+            );
             floats(&mut parameters, camera.eye().into_iter().chain([0.]));
-            view.push_uniforms(GpuShaderStage::Fragment, 0, NcCopyFromBufferOffset::new(0, &parameters))?;
-            for (slot, image) in material.images.iter().enumerate() {
-                let index = image.unwrap_or(scene.images.len() + slot);
-                view.bind_texture(
-                    GpuShaderStage::Fragment,
-                    slot as u32,
-                    self.textures[index].as_com_ref(),
-                    self.sampler.as_com_ref(),
-                )?;
+            let gpu_material = &self.materials[primitive.material];
+            for tile in gpu_material.tiles {
+                floats(&mut parameters, [tile.x as f32, tile.y as f32, tile.width as f32, tile.height as f32]);
             }
+            view.push_uniforms(GpuShaderStage::Fragment, 0, NcCopyFromBufferOffset::new(0, &parameters))?;
+            view.bind_texture(GpuShaderStage::Fragment, 0, gpu_material.texture.as_com_ref(), self.sampler.as_com_ref())?;
             view.bind_vertex_buffer(0, mesh.vertices.as_com_ref(), 0)?;
             view.bind_index_buffer(mesh.indices.as_com_ref(), GpuIndexFormat::U32, 0)?;
             view.draw_indexed(mesh.count, 1, 0)?;
         }
         Ok(())
+    }
+}
+
+impl Graphics {
+    /// Binds the same environment and uniform settings for mesh and background rendering.
+    fn bind_environment(&self, lighting: &Lighting, view: &mut ComBox<IRenderViewAbi>) -> Result<(), NcStatus> {
+        let bytes = lighting.environment.uniforms(lighting.exposure, lighting.intensity);
+        view.push_uniforms(GpuShaderStage::Fragment, 1, NcCopyFromBufferOffset::new(0, &bytes))?;
+        view.bind_texture(GpuShaderStage::Fragment, 1, self.environment.as_com_ref(), self.sampler.as_com_ref())
+    }
+
+    /// Draws a depth-preserving full-screen environment at infinity, before mesh geometry.
+    fn record_sky(&self, camera: &Camera, lighting: &Lighting, view: &mut ComBox<IRenderViewAbi>) -> Result<(), NcStatus> {
+        view.bind_pipeline(self.sky_pipeline.as_com_ref())?;
+        self.bind_environment(lighting, view)?;
+        let mut rays = Vec::with_capacity(64);
+        matrix_bytes(&mut rays, camera.sky_matrix());
+        view.push_uniforms(GpuShaderStage::Vertex, 0, NcCopyFromBufferOffset::new(0, &rays))?;
+        view.draw(3, 1, 0)
     }
 }
 
@@ -259,7 +386,12 @@ impl Target {
     }
 
     /// Records one complete contribution and synchronously submits through public contracts.
-    fn render(&self, scene: &Scene, graphics: &Graphics, camera: &Camera, seconds: f32, invocation: u64) -> Result<(), NcStatus> {
+    fn render(&self, scene: &Scene, graphics: &Graphics, camera: &Camera, seconds: f32, lighting: &Lighting, invocation: u64) -> Result<(), NcStatus> {
+        self.submit(invocation, |view| graphics.record(scene, camera, seconds, lighting, view))
+    }
+
+    /// Owns the complete recording/sealing boundary for either a scene or a sky-only probe.
+    fn submit(&self, invocation: u64, record: impl FnOnce(&mut ComBox<IRenderViewAbi>) -> Result<(), NcStatus>) -> Result<(), NcStatus> {
         self.host.maintain()?;
         let size = self.window.size()?;
         let broker = self.host.recording_broker()?;
@@ -272,7 +404,7 @@ impl Target {
         };
         let mut session = frame.begin_view(RenderViewRoot { client: bounds, target: bounds }, self.resources.as_com_ref())?;
         let mut view = session.view()?;
-        graphics.record(scene, camera, seconds, &mut view)?;
+        record(&mut view)?;
         view.finish()?;
         let stream: ComPtr<IRenderStreamAbi> = Stream::from_value(Stream { block: session.take_block()? }).query()?;
         frame.finish()?;
@@ -292,6 +424,12 @@ impl Target {
 struct Options {
     /// Default pinned model path, or an explicitly supplied local compatible glTF/GLB.
     asset: PathBuf,
+    /// External floating-point HDR panorama; these sample model files contain no environment.
+    environment: PathBuf,
+    /// Positive linear exposure multiplier, applied after summing HDR radiance.
+    exposure: f32,
+    /// Background visibility; hiding it leaves material lighting enabled.
+    background: Background,
     /// Optional bounded run for acceptance; absent keeps the interactive viewer open.
     frames: Option<u64>,
     /// Explicit fixed animation sample for reproducible inspection; absent uses elapsed seconds.
@@ -302,6 +440,9 @@ impl Options {
     fn parse(model: &str, args: impl Iterator<Item = String>) -> scene::Result<Option<Self>> {
         let mut options = Self {
             asset: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!("examples/gltf/assets/{model}.glb")),
+            environment: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/gltf/assets/Cannon_Exterior.hdr"),
+            exposure: 1.0,
+            background: Background::Environment,
             frames: None,
             time: None,
         };
@@ -309,13 +450,25 @@ impl Options {
         while let Some(option) = args.next() {
             if option == "--help" {
                 println!(
-                    "{model}: [--asset PATH] [--frames N] [--time SECONDS]\nLeft drag: arcball rotation. Right/middle drag: pan. Wheel: zoom. R: reset. Space: pause. Escape: close."
+                    "{model}: [--asset PATH] [--environment HDR] [--exposure MULTIPLIER] [--no-skybox] [--frames N] [--time SECONDS]\nLeft drag: arcball rotation. Right/middle drag: pan. Wheel: zoom. R: reset. B: skybox. Space: pause. Escape: close."
                 );
                 return Ok(None);
+            }
+            if option == "--no-skybox" {
+                options.background = Background::Hidden;
+                continue;
             }
             let value = args.next().ok_or_else(|| format!("missing value for {option}"))?;
             match option.as_str() {
                 "--asset" => options.asset = PathBuf::from(value),
+                "--environment" => options.environment = PathBuf::from(value),
+                "--exposure" => {
+                    options.exposure = value
+                        .parse::<f32>()
+                        .ok()
+                        .filter(|v| v.is_finite() && *v > 0.0)
+                        .ok_or("--exposure requires a positive finite multiplier")?
+                }
                 "--frames" => options.frames = Some(value.parse().ok().filter(|v| *v > 0).ok_or("--frames requires a positive integer")?),
                 "--time" => {
                     options.time = Some(
@@ -339,6 +492,13 @@ pub fn run(model: &str) -> scene::Result<()> {
         return Ok(());
     };
     let scene = Scene::load(&options.asset)?;
+    let materials = prepare_materials(&scene)?;
+    let mut lighting = Lighting {
+        environment: Environment::load(&options.environment)?,
+        exposure: options.exposure,
+        intensity: 1.0,
+        background: options.background,
+    };
     // SAFETY: This executable links and owns the immutable process-lived COM host.
     let _runtime = unsafe { neocogi_com::Runtime::__from_host_api(neocogi_com_host::initialize_process()) }.map_err(|e| format!("COM host: {e:?}"))?;
     let compiler = check(nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject).query())?;
@@ -348,7 +508,7 @@ pub fn run(model: &str) -> scene::Result<()> {
         let window = platform.create_window(NcCopyFromBufferOffset::new(0, title.as_bytes()), SIZE)?;
         let target = Target::new(window)?;
         let window = &target.window;
-        let graphics = Graphics::new(&scene, &target.resources)?;
+        let graphics = Graphics::new(&scene, materials, &lighting.environment, &target.resources)?;
         let (center, radius) = scene.bounds();
         let mut camera = Camera::new(center, radius, window.size()?);
         let events = Rc::new(RefCell::new(Vec::new()));
@@ -376,6 +536,12 @@ pub fn run(model: &str) -> scene::Result<()> {
                         match key.key {
                             KeyCode::Escape => break 'frames,
                             KeyCode::Space => paused = !paused,
+                            KeyCode::Character if key.value == u32::from('b') || key.value == u32::from('B') => {
+                                lighting.background = match lighting.background {
+                                    Background::Hidden => Background::Environment,
+                                    Background::Environment => Background::Hidden,
+                                }
+                            }
                             KeyCode::Character if key.value == u32::from('r') || key.value == u32::from('R') => camera.reset(),
                             _ => {}
                         }
@@ -392,7 +558,7 @@ pub fn run(model: &str) -> scene::Result<()> {
             let size = window.size()?;
             camera.resize(size);
             if size.width > 0 && size.height > 0 {
-                target.render(&scene, &graphics, &camera, options.time.unwrap_or(seconds), rendered + 1)?;
+                target.render(&scene, &graphics, &camera, options.time.unwrap_or(seconds), &lighting, rendered + 1)?;
                 rendered += 1;
                 if options.frames.is_some_and(|limit| rendered >= limit) {
                     break;

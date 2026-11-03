@@ -51,7 +51,8 @@ their ordinary Rust implementations. The application owns the COM host and
 compiler/profile selection for the complete build graph.
 
 The native glTF examples include a textured DamagedHelmet and animated GPU-skinned
-BrainStem, both with arcball rotation, pan and zoom:
+BrainStem, both with arcball rotation, pan and zoom.
+Both use Cannon Exterior HDR lighting, filtered reflections and a skybox.
 
 ```sh
 python3 scripts/fetch_gltf_examples.py
@@ -60,7 +61,7 @@ cargo run --locked -p neocogi-render-plugin --example gltf_brainstem
 ```
 
 Left-drag rotates, right/middle-drag pans, and the wheel zooms. Press R to reset,
-Space to pause animation, or Escape to close. See the [example guide](crates/render/plugin/examples/gltf/README.md)
+Space to pause animation, B to toggle the skybox, or Escape to close. See the [example guide](crates/render/plugin/examples/gltf/README.md)
 for backend selection, bounded headless runs, supported glTF features and asset licenses.
 
 Both companion workspaces pin the published COM, host and IDL packages to exact
