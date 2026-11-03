@@ -1,13 +1,17 @@
 //! Browser-executed DOM regressions exported from the wasm library test artifact.
 //!
-//! Generate web bindings for `cargo test --lib --no-run --target wasm32-unknown-unknown
-//! --features webgl`, then call `run_platform_input_tests()` after the generated module initializes.
+//! The final neocogi-browser-tests cdylib owns the public JavaScript export and
+//! single host. scripts/test_browser.py builds it, generates matching bindings,
+//! serves the checked-in page and requires actual browser PASS.
 
 use super::*;
 use wasm_bindgen::prelude::*;
 
 #[path = "../../../render/gpu/tests/support/derivatives.rs"]
 mod derivatives;
+
+#[path = "../../../render/gpu/tests/support/sampled.rs"]
+mod sampled;
 
 /// Exercises actual browser WebGL target adaptation and the delegated safe upload boundary.
 fn canonical_browser_derivatives() {
@@ -76,6 +80,62 @@ fn canonical_browser_derivatives() {
                 "{} offscreen={offscreen}: {pixel:?}",
                 case.name
             );
+        }
+    }
+    // Real ES300 image reads exercise the same guarded compiler artifacts as native GL.
+    for case in sampled::load_cases() {
+        let owner = sampled::load_block(&gpu, &resources, &case);
+        let snapshot = gpu.block_snapshot(owner.as_com_ref()).unwrap();
+        let prepared = renderer.prepare_block(&snapshot, true).unwrap();
+        let output = renderer.create_render_texture(Size { width: 8, height: 8 }).unwrap();
+        let mut frame = renderer
+            .texture_frame(FrameInfo::try_new(Dimensioni::new(8, 8), color(0, 0, 0, 255)).unwrap(), output)
+            .unwrap();
+        frame.execute_block(&prepared);
+        let mut actual = [0; 4];
+        // SAFETY: The current WebGL framebuffer and initialized RGBA output remain live.
+        unsafe {
+            let target = gl.get_parameter_framebuffer(glow::DRAW_FRAMEBUFFER_BINDING);
+            gl.bind_framebuffer(glow::READ_FRAMEBUFFER, target);
+            gl.read_pixels(4, 4, 1, 1, glow::RGBA, glow::UNSIGNED_BYTE, glow::PixelPackData::Slice(Some(&mut actual)));
+            assert_eq!(gl.get_error(), glow::NO_ERROR);
+        }
+        frame.finish().unwrap();
+        let expected: [u8; 4] = if case.outside { [0; 4] } else { [191, 63, 127, 255] };
+        assert!(
+            actual.into_iter().zip(expected).all(|(a, b)| (i32::from(a) - i32::from(b)).abs() <= 1),
+            "{}: {actual:?}",
+            case.name
+        );
+    }
+    // Upload and defined-zero storage cross the same actual WebGL fetch boundary.
+    let white = sampled::block(
+        &gpu,
+        &resources,
+        Rect { x: 0, y: 0, width: 8, height: 8 },
+        Size { width: 1, height: 1 },
+        &[255; 4],
+    );
+    let zero = sampled::zero_storage_block(&gpu, &resources);
+    for (owner, expected) in [(white, Some([255u8; 4])), (zero, None)] {
+        let prepared = renderer.prepare_block(&gpu.block_snapshot(owner.as_com_ref()).unwrap(), true).unwrap();
+        let output = renderer.create_render_texture(Size { width: 8, height: 8 }).unwrap();
+        let mut frame = renderer
+            .texture_frame(FrameInfo::try_new(Dimensioni::new(8, 8), color(0, 255, 0, 255)).unwrap(), output)
+            .unwrap();
+        frame.execute_block(&prepared);
+        let mut pixels = [0; 8 * 8 * 4];
+        // SAFETY: The selected 8x8 RGBA target and initialized destination remain live.
+        unsafe {
+            let target = gl.get_parameter_framebuffer(glow::DRAW_FRAMEBUFFER_BINDING);
+            gl.bind_framebuffer(glow::READ_FRAMEBUFFER, target);
+            gl.read_pixels(0, 0, 8, 8, glow::RGBA, glow::UNSIGNED_BYTE, glow::PixelPackData::Slice(Some(&mut pixels)));
+            assert_eq!(gl.get_error(), glow::NO_ERROR);
+        }
+        frame.finish().unwrap();
+        match expected {
+            Some(pixel) => assert!(pixels.as_chunks::<4>().0.iter().all(|value| *value == pixel)),
+            None => sampled::assert_zero_storage_pixels(&pixels),
         }
     }
     let image = resources
@@ -148,7 +208,6 @@ extern "C" {
 }
 
 /// Runs DOM composition, paste, keyboard, wheel, pointer, and teardown assertions in a browser.
-#[wasm_bindgen]
 pub fn run_platform_input_tests() {
     std::panic::set_hook(Box::new(|info| record_panic(&info.to_string())));
     canonical_browser_derivatives();

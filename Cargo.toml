@@ -12,6 +12,7 @@ members = [
     "crates/render/support",
     "tools/native-layout",
     "tools/native-layout/core",
+    "tests/browser",
 ]
 default-members = ["crates/render/core"]
 

@@ -1,15 +1,19 @@
 <!doctype html>
 <meta charset="utf-8">
-<title>Browser input regression</title>
+<title>Browser platform regression</title>
 <pre id="result">RUNNING</pre>
 <script type="module">
-// The test export exercises the installed Rust DOM listeners and throws on an assertion failure.
-import init, { run_browser_input_tests } from './input-test.js';
+const result = document.getElementById('result');
+const fail = error => { result.textContent = 'FAIL ' + String(error?.stack || error); };
+window.addEventListener('error', event => fail(event.error || event.message));
+window.addEventListener('unhandledrejection', event => fail(event.reason));
 try {
+    // Import inside the try so missing files, bindings, or exports become FAIL.
+    const { default: init, run_platform_input_tests } = await import('./input-test.js');
     await init();
-    run_browser_input_tests();
-    document.getElementById('result').textContent = 'PASS';
+    run_platform_input_tests();
+    result.textContent = 'PASS';
 } catch (error) {
-    document.getElementById('result').textContent = `FAIL ${error.stack}`;
+    fail(error);
 }
 </script>

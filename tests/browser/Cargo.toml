@@ -1,0 +1,17 @@
+[package]
+name = "neocogi-browser-tests"
+version = "0.0.0"
+publish = false
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Final browser-only artifact for real platform DOM and WebGL regressions"
+
+[lib]
+crate-type = ["cdylib"]
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+neocogi-platform-plugin = { path = "../../crates/platform/plugin", default-features = false, features = ["webgl", "test-support"] }
+neocogi-com = { workspace = true, features = ["runtime"] }
+neocogi-com-host.workspace = true
+wasm-bindgen.workspace = true

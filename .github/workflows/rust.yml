@@ -15,29 +15,49 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: Native libraries and software graphics
-        run: sudo apt-get update -qq && sudo apt-get install -y libsdl2-dev libvulkan-dev mesa-vulkan-drivers libgl1-mesa-dri xvfb
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y libsdl2-dev libvulkan-dev mesa-vulkan-drivers libgl1-mesa-dri xvfb
       - name: Platform contracts and compiler
-        run: cargo test --locked -p neocogi-render-core -p neocogi-render-gpu -p neocogi-render-support -p neocogi-shader-core -p neocogi-shader-compiler -p neocogi-native-layout
+        run: |
+          cargo test --locked -p neocogi-render-core -p neocogi-render-gpu -p neocogi-render-support -p neocogi-shader-core -p neocogi-shader-compiler -p neocogi-native-layout
       - name: Backend-owned native regressions
-        run: xvfb-run -a cargo test --locked -p neocogi-render-gpu --features ${{ matrix.backend }},test-support --lib backends::${{ matrix.backend }}:: -- --include-ignored --test-threads=1
+        run: |
+          xvfb-run -a cargo test --locked -p neocogi-render-gpu --features ${{ matrix.backend }},test-support --lib backends::${{ matrix.backend }}:: -- --include-ignored --test-threads=1
       - name: Backend acceptance
-        run: xvfb-run -a cargo test --locked -p neocogi-platform-plugin --lib --test compiler_activation --no-default-features --features ${{ matrix.backend }} -- --include-ignored --test-threads=1
+        run: |
+          xvfb-run -a cargo test --locked -p neocogi-platform-plugin --lib --test compiler_activation --no-default-features --features ${{ matrix.backend }} -- --include-ignored --test-threads=1
       - name: Standalone graphics application
-        run: xvfb-run -a cargo run --locked -p neocogi-platform-plugin --example triangle --no-default-features --features ${{ matrix.backend }} -- 3
+        run: |
+          xvfb-run -a cargo run --locked -p neocogi-platform-plugin --example triangle --no-default-features --features ${{ matrix.backend }} -- 3
       - name: Pinned glTF example assets
         run: |
           python3 -m unittest discover -s scripts -p test_fetch_gltf_examples.py
           python3 scripts/fetch_gltf_examples.py
       - name: glTF import, arcball and native pixel regressions
-        run: xvfb-run -a cargo test --locked -p neocogi-platform-plugin --test gltf_scene --test gltf_environment --test gltf_material --test gltf_camera --test gltf_viewer --no-default-features --features ${{ matrix.backend }},test-support -- --include-ignored --test-threads=1
+        run: |
+          xvfb-run -a cargo test --locked -p neocogi-platform-plugin --test gltf_scene --test gltf_environment --test gltf_material --test gltf_camera --test gltf_viewer --no-default-features --features ${{ matrix.backend }},test-support -- --include-ignored --test-threads=1
       - name: Standalone glTF applications
         run: |
           xvfb-run -a cargo run --locked -p neocogi-platform-plugin --example gltf_damaged_helmet --no-default-features --features ${{ matrix.backend }} -- --frames 3
           xvfb-run -a cargo run --locked -p neocogi-platform-plugin --example gltf_brainstem --no-default-features --features ${{ matrix.backend }} -- --frames 3 --time 1
       - name: Backend warnings
-        run: cargo clippy --locked -p neocogi-platform-plugin --all-targets --no-default-features --features ${{ matrix.backend }} -- -D warnings
+        run: |
+          cargo clippy --locked -p neocogi-platform-plugin --all-targets --no-default-features --features ${{ matrix.backend }} -- -D warnings
   browser:
     runs-on: ubuntu-latest
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target
     steps:
       - uses: actions/checkout@v6
       - run: cargo check --locked -p neocogi-platform-plugin --target wasm32-unknown-unknown --no-default-features --features webgl,test-support
+      - uses: browser-actions/setup-chrome@v2
+        id: chrome
+      - name: Matching Wasm bindings tool
+        run: |
+          python3 -c 'import subprocess,tomllib; v=tomllib.load(open("Cargo.toml","rb"))["workspace"]["dependencies"]["wasm-bindgen"].lstrip("="); subprocess.run(["cargo","install","wasm-bindgen-cli","--version",v,"--locked"],check=True)'
+      - name: Browser harness failure detection
+        run: |
+          python3 -B -m unittest discover -s scripts -p 'test_*.py'
+      - name: Real DOM and WebGL execution
+        run: |
+          python3 scripts/test_browser.py --browser '${{ steps.chrome.outputs.chrome-path }}'

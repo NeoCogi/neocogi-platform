@@ -1,5 +1,6 @@
 # NeoCogi Platform documentation
 
+- [Browser regression execution](../tests/browser/README.md)
 - [Native artifact and resource staging](contracts/NATIVE_LAYOUT.md)
 - [Component ownership](architecture/COMPONENTS.md)
 - [GPU resources, commands and execution](contracts/GPU_RENDERING.md)
