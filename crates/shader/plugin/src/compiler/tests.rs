@@ -32,14 +32,41 @@ const PROCEDURAL: &str = r#"
 }
 "#;
 
-/// Image loads do not erase a real pair. Emission may separately reject unsupported ES300 queries.
+/// Paired mip-zero loads complete both native emitters, not only profile admission.
 #[test]
-fn paired_image_loads_remain_admitted_by_the_module_profile() {
-    let source = TEXTURED.replace("textureSample(image, image_sampler, input.uv) * tint.value",
-        "textureSample(image, image_sampler, input.uv) + textureLoad(image, vec2<i32>(0), 0)");
-    let module = naga::front::wgsl::parse_str(&source).unwrap();
-    let info = naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::empty()).validate(&module).unwrap();
-    validate_module(&module, &info).unwrap();
+fn paired_image_loads_emit_complete_guarded_artifacts() {
+    for level in ["0", "0u", "LEVEL"] {
+        let source = format!("const LEVEL:i32=0; {}", TEXTURED.replace(
+            "textureSample(image, image_sampler, input.uv) * tint.value",
+            &format!("textureSample(image, image_sampler, input.uv) + textureLoad(image, vec2<i32>(0), {level})")));
+        let shader = Compiler::compile(GpuShaderStage::Fragment, &source, "fragment_main").unwrap();
+        assert_eq!(shader.wgsl, source);
+        assert!(!shader.spirv.is_empty());
+        assert!(shader.glsl.contains("texelFetch"));
+        assert!(!shader.glsl.contains("textureQueryLevels"));
+    }
+}
+
+/// Count-query specialization must preserve scopes inside helper functions and nested control flow.
+#[test]
+fn exact_reads_in_nested_helper_control_flow_emit_both_targets() {
+    let source = r#"
+        @group(2) @binding(0) var t:texture_2d<f32>;
+        @group(2) @binding(1) var s:sampler;
+        fn fetch(p:vec2<i32>)->vec4<f32>{
+            var value=vec4(0.);
+            for(var i=0;i<1;i++){
+                switch i { default: { if p.x>=0 {value=textureLoad(t,p,0);} else {value=textureLoad(t,p,0);} } }
+            }
+            return value;
+        }
+        @fragment fn fs(@builtin(position) p:vec4<f32>)->@location(0) vec4<f32>{
+            return fetch(vec2<i32>(p.xy))+textureSample(t,s,vec2(.5))*0.001;
+        }"#;
+    let shader=Compiler::compile(GpuShaderStage::Fragment,source,"fs").unwrap();
+    assert_eq!(shader.wgsl,source);
+    assert!(!shader.spirv.is_empty());
+    assert!(shader.glsl.contains("texelFetch"));
 }
 
 /// Float syntax and stage-distinct native block names are executable data in every Cargo profile.

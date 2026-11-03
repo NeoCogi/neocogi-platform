@@ -832,3 +832,51 @@ fn unsubmitted_target_variants_release_the_source_and_all_charges() {
     let image = frame.finish().unwrap().unwrap();
     sampled::assert_zero_storage_pixels(&read_image(&renderer.gl, &image, 8, 8));
 }
+
+/// Exact mip-zero texel reads retain explicit coordinate guards on windows and FBOs.
+#[test]
+#[ignore = "requires native GL ES3; run with SDL_VIDEODRIVER=offscreen"]
+fn exact_texel_reads_keep_coordinate_bounds_on_both_targets() {
+    let _session = NATIVE_SESSION.lock().unwrap_or_else(|error| error.into_inner());
+    let sdl = sdl2::init().unwrap();
+    let video = sdl.video().unwrap();
+    video.gl_attr().set_context_profile(sdl2::video::GLProfile::GLES);
+    video.gl_attr().set_context_version(3, 0);
+    let window = video.window("guarded texel reads", 8, 8).opengl().hidden().build().unwrap();
+    let context = window.gl_create_context().unwrap();
+    // SAFETY: This current live context owns the loaded dispatch and moves into Core.
+    let gl = Rc::new(unsafe { glow::Context::from_loader_function(|name| video.gl_get_proc_address(name).cast()) });
+    let mut renderer = GLRenderer::new(
+        // SAFETY: Transfer the unique context with its matching SDL window and loader.
+        unsafe { Core::from_sdl(gl.clone(), window.clone(), context) }.unwrap(), 8, 8).unwrap();
+    let gpu = crate::GpuDevice::new(renderer.core(),
+        nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject).query().unwrap());
+    let domain = gpu.create_ui_client(Default::default()).unwrap();
+    let resources = domain.resources().unwrap();
+    for case in sampled::load_cases() {
+        let owner = sampled::load_block(&gpu, &resources, &case);
+        let snapshot = gpu.block_snapshot(owner.as_com_ref()).unwrap();
+        for offscreen in [false,true] {
+            let prepared = renderer.prepare_block(&snapshot, offscreen).unwrap();
+            let info = FrameInfo::try_new(Dimensioni::new(8,8), color(0,0,0,255)).unwrap();
+            let mut frame = if offscreen {
+                let output=renderer.create_render_texture(Size{width:8,height:8}).unwrap();
+                renderer.texture_frame(info,output).unwrap()
+            } else { renderer.frame(info).unwrap() };
+            frame.execute_block(&prepared);
+            let mut actual=[0;4];
+            // SAFETY: The owning context/target is current and actual is initialized RGBA storage.
+            unsafe {
+                let target=gl.get_parameter_framebuffer(glow::DRAW_FRAMEBUFFER_BINDING);
+                gl.bind_framebuffer(glow::READ_FRAMEBUFFER,target);
+                gl.read_pixels(4,4,1,1,glow::RGBA,glow::UNSIGNED_BYTE,PixelPackData::Slice(Some(&mut actual)));
+                assert_eq!(gl.get_error(),glow::NO_ERROR);
+            }
+            frame.finish().unwrap();
+            // The SDL default framebuffer is opaque; only the RGBA texture target stores alpha.
+            let expected: [u8;4]=if case.outside {[0,0,0,if offscreen {0} else {255}]} else {[191,63,127,255]};
+            assert!(actual.into_iter().zip(expected).all(|(a,b)|(i32::from(a)-i32::from(b)).abs()<=1),
+                "{} offscreen={offscreen}: {actual:?}",case.name);
+        }
+    }
+}

@@ -7,6 +7,8 @@
 
 use neocogi_render_core::abi::GpuShaderStage;
 use neocogi_shader_core::{Shader, IoLocation, IoShape, Uniform, SampledTexture, ShaderScalar, ShaderInterpolation, ShaderSampling};
+mod images;
+
 use naga::{AddressSpace, Binding, Handle, ScalarKind, ShaderStage, Type, TypeInner};
 
 use neocogi_shader_core::{MAX_SHADER_BYTES, MAX_SHADER_ARTIFACT_BYTES};
@@ -145,7 +147,7 @@ impl Compiler {
         // buffer index policies. Reimport its guarded SPIR-V so those explicit branches become
         // ordinary IR before GLSL emission. The importer restores canonical vertex coordinates;
         // the final GLSL writer then performs its usual target conversion exactly once.
-        let gl_module = naga::front::spv::Frontend::new(
+        let mut gl_module = naga::front::spv::Frontend::new(
             spirv.iter().copied(),
             &naga::front::spv::Options {
                 adjust_coordinate_space: true,
@@ -154,6 +156,7 @@ impl Compiler {
         )
         .parse()
         .map_err(|error| error.to_string())?;
+        images::specialize_gl(&mut gl_module);
         let gl_info = naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::empty())
             .validate(&gl_module)
             .map_err(|error| error.to_string())?;
@@ -173,7 +176,13 @@ impl Compiler {
             failure: None,
         };
         let emission =
-            naga::back::glsl::Writer::new(&mut output, &gl_module, &gl_info, &options, &pipeline, bounds_checks()).and_then(|mut writer| writer.write());
+            naga::back::glsl::Writer::new(&mut output, &gl_module, &gl_info, &options, &pipeline,
+                naga::proc::BoundsCheckPolicies {
+                    // Coordinate/level checks are explicit branches imported from guarded
+                    // SPIR-V; another writer guard would require unavailable ES300 queries.
+                    image_load: naga::proc::BoundsCheckPolicy::Unchecked,
+                    ..bounds_checks()
+                }).and_then(|mut writer| writer.write());
         let reflection = emission.map_err(|error| match output.failure {
             Some(WriteFailure::Limit) => CompileError::Limit,
             Some(WriteFailure::Allocation) => CompileError::Allocation,
@@ -256,6 +265,7 @@ pub fn groups(stage: GpuShaderStage) -> Result<(u32, u32), String> {
 
 /// Rejects forbidden effects even in unused globals/entry points; native artifacts cannot bypass it.
 fn validate_module(module: &naga::Module, info: &naga::valid::ModuleInfo) -> Result<(), String> {
+    images::validate(module)?;
     for (_, ty) in module.types.iter() {
         if matches!(ty.inner, TypeInner::Atomic(_) | TypeInner::BindingArray { .. }) {
             return Err("graphics profile rejects atomic and bindless types".into());

@@ -116,19 +116,7 @@ pub const fn color(r: u8, g: u8, b: u8, a: u8) -> Color {
 
 /// Returns the exact RGBA storage required by positive image dimensions.
 pub fn rgba_bytes(size: Size) -> Result<usize, NcStatus> {
-    // Validate signs before conversion, then check both multiplication steps so
-    // malformed foreign dimensions cannot wrap into a small allocation.
-    if size.width <= 0 || size.height <= 0 {
-        return Err(NC_E_INVALID_ARG);
-    }
-    let bytes = (size.width as usize)
-        .checked_mul(size.height as usize)
-        .and_then(|pixels| pixels.checked_mul(4))
-        .ok_or(NC_E_INVALID_ARG)?;
-    if bytes > MAX_IMAGE_BYTES {
-        return Err(NC_E_INVALID_ARG);
-    }
-    Ok(bytes)
+    crate::checked_rgba_len(size.width, size.height).map_err(|_| NC_E_INVALID_ARG)
 }
 
 impl TextureRegion {

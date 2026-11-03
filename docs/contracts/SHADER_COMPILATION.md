@@ -29,9 +29,14 @@ Portable admission uses the complete Naga-validated module: every entry's IO,
 stage-local resource use and image/sampler combinations must satisfy the profile.
 Every declared uniform has a named structure root with portable layout and at most
 16 KiB, including unused blocks. A used image must participate in its entry's valid
-sampled pair; load/query-only use does not invent that pair. Loads and queries on
-an image also sampled with its matching sampler remain legal. Only the requested
-entry is emitted and reflected; inactive entries cannot alter selected collections.
+sampled pair; load/query-only use does not invent that pair. Paired textureLoad
+reads at constant mip level 0 and textureDimensions with omitted/constant level 0
+produce complete native artifacts. Signed and unsigned integer coordinates are
+accepted. Other levels, dynamic level selection, mip-count, layer-count and
+sample-count queries reject, including operations in unused functions/entries.
+This is the common single-mip 2D image contract, not admission-only support.
+Only the requested entry is emitted/reflected; inactive entries cannot alter its
+selected collections.
 
 The returned WGSL is the exact source validated by Naga. A native emission failure
 rejects the whole result; it cannot return WGSL-only success. Outer COM transport
@@ -108,6 +113,15 @@ Vulkan consumes returned aligned guarded SPIR-V and entry. WGPU consumes returne
 validated WGSL and entry through `ShaderSource::Wgsl`, preserving checked native
 translation; it never falls back to request source on an export failure. Glow and
 WebGL consume returned ES300 and reflected native names.
+
+Exact texel reads retain the guarded SPIR-V coordinate/level branches in native
+GLSL. The GL IR specializes compiler-generated mip-count checks to one, matching
+every admitted texture allocation. Its writer does not add a redundant image
+guard requiring unavailable ES300 texture-level queries. Explicit source count
+queries are rejected before this specialization; Vulkan retains complete guarded
+SPIR-V and WGPU uses its checked WGSL translation. Out-of-bounds results remain
+backend-dependent as documented in the GPU contract; clients must not rely on
+a particular value.
 
 ES300 has standard `main`. For canonical vertex output `(x,y,z,w)` its completion
 produces `(x,-y,2*z-w,w)`. Coordinate writer/importer options are explicit, applying

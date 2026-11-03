@@ -25,8 +25,19 @@ pub fn block_initial<B: neocogi_render_gpu::native::NativeResources>(
     size: Size,
     pixels: Option<&[u8]>,
 ) -> ComBox<IRenderViewBlockAbi> {
-    let code = Bytes::source(
-        br#"
+    block_fragment(gpu, resources, root, size, pixels, "textureSample(image,image_sampler,v.uv)")
+}
+
+/// Builds the same real resource path with an explicit fragment result.
+fn block_fragment<B: neocogi_render_gpu::native::NativeResources>(
+    gpu: &GpuDevice<B>,
+    resources: &ComPtr<IRenderResourcesAbi>,
+    root: Rect,
+    size: Size,
+    pixels: Option<&[u8]>,
+    expression: &str,
+) -> ComBox<IRenderViewBlockAbi> {
+    let source = r#"
         @group(2) @binding(0) var image:texture_2d<f32>;
         @group(2) @binding(1) var image_sampler:sampler;
         struct V { @builtin(position) p:vec4<f32>, @location(0) uv:vec2<f32> }
@@ -34,10 +45,10 @@ pub fn block_initial<B: neocogi_render_gpu::native::NativeResources>(
             let p=array<vec2<f32>,3>(vec2(-1.,-1.),vec2(3.,-1.),vec2(-1.,3.));
             return V(vec4(p[i],0.0,1.0),p[i]*vec2(0.5,-0.5)+vec2(0.5));
         }
-        @fragment fn fs(v:V) -> @location(0) vec4<f32> { return textureSample(image,image_sampler,v.uv); }
+        @fragment fn fs(v:V) -> @location(0) vec4<f32> { return REPLACEMENT; }
     "#
-        .to_vec(),
-    );
+    .replace("REPLACEMENT", expression);
+    let code = Bytes::source(source.into_bytes());
     let vs = resources
         .create_shader(GpuShaderStage::Vertex, code.as_com_ref(), NcCopyFromBufferOffset::new(0, b"vs"))
         .unwrap();
@@ -80,6 +91,47 @@ pub fn block_initial<B: neocogi_render_gpu::native::NativeResources>(
     let block = session.take_block().unwrap();
     frame.finish().unwrap();
     block
+}
+
+/// Exact mip-zero read with one in-range result and adversarial signed/unsigned coordinates.
+pub(super) struct LoadCase {
+    /// Coordinate scenario for diagnostics.
+    pub name: &'static str,
+    /// WGSL integer-vector coordinate expression.
+    coordinate: &'static str,
+    /// Whether portable WGPU may choose a clamped result instead of zero.
+    pub outside: bool,
+}
+/// Tests both coordinate edges and very large signed/unsigned values through actual shaders.
+pub(super) fn load_cases() -> Vec<LoadCase> {
+    [
+        ("signed origin", "vec2<i32>(0)", false),
+        ("unsigned origin", "vec2<u32>(0u)", false),
+        ("negative x", "vec2<i32>(-1,0)", true),
+        ("negative y", "vec2<i32>(0,-1)", true),
+        ("upper x", "vec2<i32>(1,0)", true),
+        ("upper y", "vec2<i32>(0,1)", true),
+        ("maximum signed", "vec2<i32>(2147483647,0)", true),
+        ("maximum unsigned", "vec2<u32>(4294967295u,0u)", true),
+    ]
+    .into_iter()
+    .map(|(name, coordinate, outside)| LoadCase { name, coordinate, outside })
+    .collect()
+}
+/// Keeps an actual sampled pair in the same entry; its tiny contribution cannot change RGBA8.
+pub(super) fn load_block<B: neocogi_render_gpu::native::NativeResources>(
+    gpu: &GpuDevice<B>,
+    resources: &ComPtr<IRenderResourcesAbi>,
+    case: &LoadCase,
+) -> ComBox<IRenderViewBlockAbi> {
+    block_fragment(
+        gpu,
+        resources,
+        Rect { x: 0, y: 0, width: 8, height: 8 },
+        Size { width: 1, height: 1 },
+        Some(&[191, 63, 127, 255]),
+        &format!("textureLoad(image,{},0)+textureSample(image,image_sampler,v.uv)*0.000001", case.coordinate),
+    )
 }
 
 /// Actual None-created vertex/index storage and its later initialized versions share one captured block.

@@ -125,7 +125,12 @@ private array writes. SPIR-V contains these guards. GLSL is emitted from the
 guarded SPIR-V imported back into compiler IR, because the GLSL writer does not
 itself lower array/buffer bounds policies. WGPU applies its checked translation
 to canonical WGSL; that translation may clamp an invalid index instead. Clients
-must not depend on a particular out-of-bounds result. Native robustness extensions
+must not depend on a particular out-of-bounds result. Exact texel reads support
+only constant mip 0, and dimension queries accept omitted/constant mip 0. Paired
+image operations traverse complete native emission, not only source admission.
+Dynamic/nonzero levels and mip/layer/sample-count queries reject throughout the
+module. GL specializes generated level-count guards to the known one-mip binding
+while preserving coordinate bounds; Vulkan consumes the original guarded SPIR-V. Native robustness extensions
 are not required by the GL/Vulkan guards. Fragment-coordinate adaptation recognizes
 complete built-in identifier tokens and preserves ordinary identifiers containing
 the same text.

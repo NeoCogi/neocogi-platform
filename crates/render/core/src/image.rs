@@ -120,6 +120,34 @@ impl Error for ImageValidationError {}
 mod tests {
     use super::*;
 
+    /// COM maps every structured extent failure to InvalidArg without a second policy body.
+    #[test]
+    fn contract_extent_statuses_preserve_native_acceptance_boundaries() {
+        use crate::abi::{Size, rgba_bytes};
+        for (width, height, expected) in [
+            (1, 1, Some(4)),
+            (8192, 2048, Some(64 * 1024 * 1024)),
+            (8193, 2048, None),
+            (0, 1, None),
+            (1, -1, None),
+            (i32::MAX, i32::MAX, None),
+            (i32::MAX, 1, None),
+        ] {
+            let native = checked_rgba_len(width, height);
+            let contract = rgba_bytes(Size { width, height });
+            match expected {
+                Some(bytes) => {
+                    assert_eq!(native.unwrap(), bytes);
+                    assert_eq!(contract.unwrap(), bytes);
+                }
+                None => {
+                    assert!(native.is_err());
+                    assert_eq!(contract, Err(neocogi_com::NC_E_INVALID_ARG));
+                }
+            }
+        }
+    }
+
     /// Extent-only allocation and pixel admission share arithmetic, but only uploads require bytes.
     #[test]
     fn extent_and_actual_pixel_admission_have_explicit_boundaries() {

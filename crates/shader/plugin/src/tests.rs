@@ -38,6 +38,26 @@ fn complete_module_profile_admission_precedes_selected_exports() {
         assert_eq!(report.sampled_textures().unwrap().len().unwrap(), texture_count);
     }
 }
+/// Independent generated callers receive complete native artifacts for exact mip-zero reads.
+#[test]
+fn exact_texel_reads_export_complete_owned_code() {
+    let root: ComPtr<client::ShaderCompilerAbi> = CompilerObject::from_value(CompilerObject).query().unwrap();
+    for coordinate in ["vec2<i32>(0)", "vec2<i32>(-1,0)", "vec2<u32>(0u)"] {
+        let source = format!("@group(2) @binding(0) var t:texture_2d<f32>; @group(2) @binding(1) var s:sampler; @fragment fn fs()->@location(0) vec4<f32>{{return textureLoad(t,{coordinate},0)+textureSample(t,s,vec2(.5));}}");
+        let report = root.compile(client::ShaderCompileRequest { stage: GpuShaderStage::Fragment, max_output_bytes:4194304 },
+            NcCopyFromBufferOffset::new(0,source.as_bytes()), NcCopyFromBufferOffset::new(0,b"fs")).unwrap();
+        assert_eq!(report.status().unwrap(), NC_OK.code(), "{}", report.diagnostic().unwrap().to_string().unwrap());
+        assert_eq!(report.wgsl().unwrap().to_string().unwrap(), source);
+        assert_eq!(report.sampled_textures().unwrap().len().unwrap(), 1);
+        let glsl = report.glsl().unwrap();
+        let spirv = report.spirv().unwrap();
+        drop(report);
+        assert!(glsl.to_string().unwrap().contains("texelFetch"));
+        assert!(!glsl.to_string().unwrap().contains("textureQueryLevels"));
+        assert_eq!(&spirv.to_vec().unwrap()[..4], &0x07230203u32.to_le_bytes());
+    }
+}
+
 /// Real COM getters do not require summary lookup, and item/name/code owners are independent.
 #[test]
 fn independent_owned_exports_and_items() {
