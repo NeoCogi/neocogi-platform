@@ -1,14 +1,14 @@
 [package]
-name = "neocogi-render-plugin-dylib"
+name = "neocogi-platform-plugin-dylib"
 version = "0.0.0"
 publish = false
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Final dynamic entrypoint for neocogi-render-plugin"
+description = "Final dynamic entrypoint for neocogi-platform-plugin"
 
 [lib]
-name = "nc_render"
+name = "nc_platform"
 crate-type = ["cdylib"]
 
 [features]
@@ -19,5 +19,5 @@ vulkan = ["provider/vulkan"]
 wgpu = ["provider/wgpu"]
 
 [dependencies]
-provider = { package = "neocogi-render-plugin", path = "..", default-features = false }
+provider = { package = "neocogi-platform-plugin", path = "..", default-features = false }
 neocogi-com = { workspace = true, default-features = false, features = ["std"] }

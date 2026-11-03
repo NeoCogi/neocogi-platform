@@ -18,7 +18,7 @@ fn invalid_features_report_selection_errors_without_implementation_errors() {
             continue; // Exactly one native backend is legal on this native test host.
         }
         let mut compiler = Command::new(std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into()));
-        compiler.args(["--edition=2024", "--crate-type=rlib", "--emit=metadata", "--crate-name=renderer_feature_probe"]);
+        compiler.args(["--edition=2024", "--crate-type=rlib", "--emit=metadata", "--crate-name=platform_feature_probe"]);
         compiler.arg(&source).arg("--out-dir").arg(output.path());
         for (index, feature) in features.iter().enumerate() {
             if mask & (1 << index) != 0 {
@@ -30,7 +30,7 @@ fn invalid_features_report_selection_errors_without_implementation_errors() {
         assert!(!result.status.success(), "illegal feature mask {mask:04b} compiled");
         let expected = match mask {
             0 => "select exactly one renderer feature",
-            8 => "the webgl renderer plugin requires wasm32",
+            8 => "the webgl platform plugin requires wasm32",
             _ => "renderer features are mutually exclusive",
         };
         assert!(errors.contains(expected), "mask {mask:04b}: {errors}");
@@ -38,7 +38,7 @@ fn invalid_features_report_selection_errors_without_implementation_errors() {
         if mask == 3 {
             assert!(errors.contains("--no-default-features --features vulkan"), "{errors}");
             assert!(
-                errors.contains("cargo run -p neocogi-demo-full --release --no-default-features --features dynamic,vulkan"),
+                errors.contains("cargo run --locked -p neocogi-platform-plugin --example gltf_damaged_helmet --no-default-features --features vulkan"),
                 "{errors}"
             );
             assert_eq!(errors.matches("error: renderer features").count(), 1, "{errors}");

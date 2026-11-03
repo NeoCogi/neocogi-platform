@@ -10,8 +10,8 @@ Khronos PBR Neutral tone mapping.
 
 ```sh
 python3 scripts/fetch_gltf_examples.py
-cargo run --locked -p neocogi-render-plugin --example gltf_damaged_helmet
-cargo run --locked -p neocogi-render-plugin --example gltf_brainstem
+cargo run --locked -p neocogi-platform-plugin --example gltf_damaged_helmet
+cargo run --locked -p neocogi-platform-plugin --example gltf_brainstem
 ```
 
 | Input | Action |
@@ -38,8 +38,8 @@ GL is the default. To select Vulkan or WGPU, add
 `--no-default-features --features vulkan` or `wgpu` **before** the `--` separator:
 
 ```sh
-cargo run --locked -p neocogi-render-plugin --example gltf_brainstem --no-default-features --features vulkan -- --frames 3 --time 1
-SDL_VIDEODRIVER=offscreen cargo run --locked -p neocogi-render-plugin --example gltf_damaged_helmet -- --frames 3
+cargo run --locked -p neocogi-platform-plugin --example gltf_brainstem --no-default-features --features vulkan -- --frames 3 --time 1
+SDL_VIDEODRIVER=offscreen cargo run --locked -p neocogi-platform-plugin --example gltf_damaged_helmet -- --frames 3
 ```
 
 Vulkan and WGPU need a window-system display; Linux CI uses Xvfb and Mesa drivers. The
@@ -115,11 +115,11 @@ precision. No renderer material/mesh/environment API is introduced.
 Offline import/animation tests and optional downloaded-asset acceptance:
 
 ```sh
-cargo test --locked -p neocogi-render-plugin --test gltf_scene
-cargo test --locked -p neocogi-render-plugin --test gltf_scene -- --include-ignored
-cargo test --locked -p neocogi-render-plugin --test gltf_camera --test gltf_viewer
-cargo test --locked -p neocogi-render-plugin --test gltf_environment --test gltf_material
-SDL_VIDEODRIVER=offscreen cargo test --locked -p neocogi-render-plugin --test gltf_viewer --features test-support -- --include-ignored --test-threads=1
+cargo test --locked -p neocogi-platform-plugin --test gltf_scene
+cargo test --locked -p neocogi-platform-plugin --test gltf_scene -- --include-ignored
+cargo test --locked -p neocogi-platform-plugin --test gltf_camera --test gltf_viewer
+cargo test --locked -p neocogi-platform-plugin --test gltf_environment --test gltf_material
+SDL_VIDEODRIVER=offscreen cargo test --locked -p neocogi-platform-plugin --test gltf_viewer --features test-support -- --include-ignored --test-threads=1
 ```
 
 The optional GL acceptance test checks visible pixels for both models, visible

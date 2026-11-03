@@ -1,4 +1,4 @@
-// The validated renderer implementation expands at crate root from lib.rs.
+// The validated platform implementation expands at crate root from lib.rs.
 // Its public surface and native owners are identical for each legal backend selection.
 use neocogi_render_core::platform::*;
 use neocogi_render_core::abi::*;
@@ -243,7 +243,7 @@ fn identity<I: ComInterface>(interface: &ComPtr<I>) -> Result<usize, NcStatus> {
 
 #[cfg(feature = "glow")]
 /// Acquires one owned root; object construction remains on its typed methods.
-#[neocogi_com::plugin(name = "neocogi.render.glow", dependencies = [neocogi_shader_core::SHADER_COMPILER_PLUGIN_ID])]
+#[neocogi_com::plugin(name = "neocogi.platform.glow", dependencies = [neocogi_shader_core::SHADER_COMPILER_PLUGIN_ID])]
 fn acquire_root(runtime: ::neocogi_com::Runtime) -> Result<neocogi_com::ComPtr<neocogi_render_core::platform::PlatformAbi>, neocogi_com::NcStatus> {
     PlatformObject::from_value(PlatformObject::new(
         runtime.acquire_plugin_root(neocogi_shader_core::SHADER_COMPILER_PLUGIN_ID)?,
@@ -252,7 +252,7 @@ fn acquire_root(runtime: ::neocogi_com::Runtime) -> Result<neocogi_com::ComPtr<n
 }
 #[cfg(feature = "vulkan")]
 /// Acquires one owned root; object construction remains on its typed methods.
-#[neocogi_com::plugin(name = "neocogi.render.vulkan", dependencies = [neocogi_shader_core::SHADER_COMPILER_PLUGIN_ID])]
+#[neocogi_com::plugin(name = "neocogi.platform.vulkan", dependencies = [neocogi_shader_core::SHADER_COMPILER_PLUGIN_ID])]
 fn acquire_root(runtime: ::neocogi_com::Runtime) -> Result<neocogi_com::ComPtr<neocogi_render_core::platform::PlatformAbi>, neocogi_com::NcStatus> {
     PlatformObject::from_value(PlatformObject::new(
         runtime.acquire_plugin_root(neocogi_shader_core::SHADER_COMPILER_PLUGIN_ID)?,
@@ -261,7 +261,7 @@ fn acquire_root(runtime: ::neocogi_com::Runtime) -> Result<neocogi_com::ComPtr<n
 }
 #[cfg(feature = "wgpu")]
 /// Acquires one owned root; object construction remains on its typed methods.
-#[neocogi_com::plugin(name = "neocogi.render.wgpu", dependencies = [neocogi_shader_core::SHADER_COMPILER_PLUGIN_ID])]
+#[neocogi_com::plugin(name = "neocogi.platform.wgpu", dependencies = [neocogi_shader_core::SHADER_COMPILER_PLUGIN_ID])]
 fn acquire_root(runtime: ::neocogi_com::Runtime) -> Result<neocogi_com::ComPtr<neocogi_render_core::platform::PlatformAbi>, neocogi_com::NcStatus> {
     PlatformObject::from_value(PlatformObject::new(
         runtime.acquire_plugin_root(neocogi_shader_core::SHADER_COMPILER_PLUGIN_ID)?,
@@ -270,7 +270,7 @@ fn acquire_root(runtime: ::neocogi_com::Runtime) -> Result<neocogi_com::ComPtr<n
 }
 #[cfg(feature = "webgl")]
 /// Acquires one owned root; object construction remains on its typed methods.
-#[neocogi_com::plugin(name = "neocogi.render.webgl", dependencies = [neocogi_shader_core::SHADER_COMPILER_PLUGIN_ID])]
+#[neocogi_com::plugin(name = "neocogi.platform.webgl", dependencies = [neocogi_shader_core::SHADER_COMPILER_PLUGIN_ID])]
 fn acquire_root(runtime: ::neocogi_com::Runtime) -> Result<neocogi_com::ComPtr<neocogi_render_core::platform::PlatformAbi>, neocogi_com::NcStatus> {
     PlatformObject::from_value(PlatformObject::new(
         runtime.acquire_plugin_root(neocogi_shader_core::SHADER_COMPILER_PLUGIN_ID)?,

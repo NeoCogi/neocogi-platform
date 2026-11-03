@@ -889,6 +889,39 @@ dependencies = [
 ]
 
 [[package]]
+name = "neocogi-platform-plugin"
+version = "0.0.0"
+dependencies = [
+ "glow 0.18.0",
+ "gltf",
+ "image",
+ "js-sys",
+ "neocogi-com",
+ "neocogi-com-host",
+ "neocogi-render-core",
+ "neocogi-render-gpu",
+ "neocogi-render-support",
+ "neocogi-shader-compiler",
+ "neocogi-shader-core",
+ "rs-math3d",
+ "sdl2",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+]
+
+[[package]]
+name = "neocogi-platform-plugin-dylib"
+version = "0.0.0"
+dependencies = [
+ "neocogi-com",
+ "neocogi-platform-plugin",
+]
+
+[[package]]
 name = "neocogi-render-core"
 version = "0.0.0"
 dependencies = [
@@ -918,39 +951,6 @@ dependencies = [
  "tempfile",
  "web-sys",
  "wgpu",
-]
-
-[[package]]
-name = "neocogi-render-plugin"
-version = "0.0.0"
-dependencies = [
- "glow 0.18.0",
- "gltf",
- "image",
- "js-sys",
- "neocogi-com",
- "neocogi-com-host",
- "neocogi-render-core",
- "neocogi-render-gpu",
- "neocogi-render-support",
- "neocogi-shader-compiler",
- "neocogi-shader-core",
- "rs-math3d",
- "sdl2",
- "serde_json",
- "sha2",
- "tempfile",
- "wasm-bindgen",
- "wasm-bindgen-futures",
- "web-sys",
-]
-
-[[package]]
-name = "neocogi-render-plugin-dylib"
-version = "0.0.0"
-dependencies = [
- "neocogi-com",
- "neocogi-render-plugin",
 ]
 
 [[package]]

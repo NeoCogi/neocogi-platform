@@ -28,7 +28,7 @@ fn main() -> Result<(), NcStatus> {
     // SAFETY: This executable explicitly links and owns the immutable process-lived host.
     let _runtime = unsafe { neocogi_com::Runtime::__from_host_api(neocogi_com_host::initialize_process()) }.expect("compatible process host");
     let compiler = nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject).query()?;
-    let platform: ComPtr<PlatformAbi> = nc_render::PlatformObject::from_value(nc_render::PlatformObject::new(compiler)).query()?;
+    let platform: ComPtr<PlatformAbi> = nc_platform::PlatformObject::from_value(nc_platform::PlatformObject::new(compiler)).query()?;
     let size = Size { width: 320, height: 240 };
     let window = platform.create_window(NcCopyFromBufferOffset::new(0, b"NeoCogi Platform triangle"), size)?;
     let renderer: ComPtr<IRendererAbi> = window.query()?;

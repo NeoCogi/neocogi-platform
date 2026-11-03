@@ -1,4 +1,4 @@
-//! Deployable rendering plugin with build-selected Glow, Vulkan, WGPU, or WebGL execution.
+//! Platform assembly with SDL/browser hosting and build-selected graphics execution.
 //!
 //! Each backend build has its own plugin identity. The native window, input pump, GPU resources,
 //! and renderer deliberately remain in that same artifact: splitting those owners would expose
@@ -15,10 +15,10 @@ compile_error!("select exactly one renderer feature: glow, vulkan, wgpu, or webg
 compile_error!(
     "renderer features are mutually exclusive: Cargo adds --features to the default Glow selection.\n\
      Disable defaults when selecting another backend, e.g. --no-default-features --features vulkan.\n\
-     For a Vulkan demo run: cargo run -p neocogi-demo-full --release --no-default-features --features dynamic,vulkan"
+     For the Vulkan platform example: cargo run --locked -p neocogi-platform-plugin --example gltf_damaged_helmet --no-default-features --features vulkan"
 );
 #[cfg(all(feature = "webgl", not(target_arch = "wasm32")))]
-compile_error!("the webgl renderer plugin requires wasm32");
+compile_error!("the webgl platform plugin requires wasm32");
 #[cfg(all(target_arch = "wasm32", not(feature = "webgl")))]
 compile_error!("wasm32 rendering requires the webgl feature");
 

@@ -12,7 +12,7 @@ with [NeoCogi UI](https://github.com/NeoCogi/neocogi-ui).
 | `crates/render/core` | Renderer/platform contracts, upload producers and packaged authored NCIDL sources |
 | `crates/render/gpu` | Typed resources, command recording, lifetime accounting and optional graphics backends |
 | `crates/render/support` | Shared frame preparation and platform algorithms |
-| `crates/render/plugin` | Selected platform/backend assembly; windows, input, clipboard and surfaces |
+| `crates/platform/plugin` | Selected platform/backend assembly; windows, input, clipboard and surfaces |
 | `crates/shader/core`, `plugin` | Portable compiler contracts, reflection and Naga-backed compiler provider |
 | `tools/native-layout` | Compile-time staging of Cargo artifacts and application resources |
 
@@ -32,14 +32,14 @@ for execution.
 ```sh
 cargo check --locked --workspace --all-targets
 cargo test --locked --workspace
-cargo run --locked -p neocogi-render-plugin --example triangle -- 3
+cargo run --locked -p neocogi-platform-plugin --example triangle -- 3
 ```
 
 For headless native GL qualification:
 
 ```sh
-SDL_VIDEODRIVER=offscreen cargo run --locked -p neocogi-render-plugin --example triangle -- 3
-SDL_VIDEODRIVER=offscreen cargo test --locked -p neocogi-render-plugin --lib -- --include-ignored --test-threads=1
+SDL_VIDEODRIVER=offscreen cargo run --locked -p neocogi-platform-plugin --example triangle -- 3
+SDL_VIDEODRIVER=offscreen cargo test --locked -p neocogi-platform-plugin --lib -- --include-ignored --test-threads=1
 ```
 
 Select exactly one backend. Cargo adds feature selections to defaults, so use
@@ -60,12 +60,12 @@ Both use Cannon Exterior HDR lighting, filtered reflections and a skybox.
 
 ```sh
 python3 scripts/fetch_gltf_examples.py
-cargo run --locked -p neocogi-render-plugin --example gltf_damaged_helmet
-cargo run --locked -p neocogi-render-plugin --example gltf_brainstem
+cargo run --locked -p neocogi-platform-plugin --example gltf_damaged_helmet
+cargo run --locked -p neocogi-platform-plugin --example gltf_brainstem
 ```
 
 Left-drag rotates, right/middle-drag pans, and the wheel zooms. Press R to reset,
-Space to pause animation, B to toggle the skybox, or Escape to close. See the [example guide](crates/render/plugin/examples/gltf/README.md)
+Space to pause animation, B to toggle the skybox, or Escape to close. See the [example guide](crates/platform/plugin/examples/gltf/README.md)
 for backend selection, bounded headless runs, supported glTF features and asset licenses.
 
 Both companion workspaces pin the published COM, host and IDL packages to exact

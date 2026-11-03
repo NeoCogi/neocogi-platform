@@ -39,8 +39,8 @@ the prepared in-memory atlas. Source decode/preparation failures remain explicit
 application errors; the viewer must not silently substitute approximate lights.
 
 ```sh
-cargo test --locked -p neocogi-render-plugin --test gltf_environment
-cargo test --locked -p neocogi-render-plugin --test gltf_environment -- --include-ignored
+cargo test --locked -p neocogi-platform-plugin --test gltf_environment
+cargo test --locked -p neocogi-platform-plugin --test gltf_environment -- --include-ignored
 ```
 
 Offline regressions cover real HDR decoding, RGBE dynamic range, longitude seams,

@@ -6,7 +6,7 @@
 use super::*;
 use wasm_bindgen::prelude::*;
 
-#[path = "../../gpu/tests/support/derivatives.rs"]
+#[path = "../../../render/gpu/tests/support/derivatives.rs"]
 mod derivatives;
 
 /// Exercises actual browser WebGL target adaptation and the delegated safe upload boundary.

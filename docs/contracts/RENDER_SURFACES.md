@@ -75,7 +75,7 @@ working SDL native display for the surface test:
 
 ```sh
 cargo test -p neocogi-render-gpu --features wgpu,test-support --lib backends::wgpu:: -- --include-ignored --test-threads=1
-cargo test -p neocogi-render-plugin --lib --no-default-features --features wgpu -- --include-ignored --test-threads=1
+cargo test -p neocogi-platform-plugin --lib --no-default-features --features wgpu -- --include-ignored --test-threads=1
 ```
 
 The WGPU test reads actual rendered pixels, verifies top-left source orientation
@@ -88,7 +88,7 @@ Vulkan checks exercise actual readback and recovery with a native display:
 
 ```sh
 VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation cargo test -p neocogi-render-gpu --features vulkan --lib backends::vulkan:: -- --include-ignored --test-threads=1
-cargo test -p neocogi-render-plugin --lib --no-default-features --features vulkan -- --include-ignored --test-threads=1
+cargo test -p neocogi-platform-plugin --lib --no-default-features --features vulkan -- --include-ignored --test-threads=1
 ```
 
 The Khronos validation layer is optional and must be installed to enable it.

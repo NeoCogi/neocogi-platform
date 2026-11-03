@@ -502,7 +502,7 @@ pub fn run(model: &str) -> scene::Result<()> {
     // SAFETY: This executable links and owns the immutable process-lived COM host.
     let _runtime = unsafe { neocogi_com::Runtime::__from_host_api(neocogi_com_host::initialize_process()) }.map_err(|e| format!("COM host: {e:?}"))?;
     let compiler = check(nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject).query())?;
-    let platform: ComPtr<PlatformAbi> = check(nc_render::PlatformObject::from_value(nc_render::PlatformObject::new(compiler)).query())?;
+    let platform: ComPtr<PlatformAbi> = check(nc_platform::PlatformObject::from_value(nc_platform::PlatformObject::new(compiler)).query())?;
     let title = format!("NeoCogi glTF — {model}");
     let result = (|| -> Result<(), NcStatus> {
         let window = platform.create_window(NcCopyFromBufferOffset::new(0, title.as_bytes()), SIZE)?;

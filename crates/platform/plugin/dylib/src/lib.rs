@@ -1,4 +1,4 @@
-//! Final dynamic link root for neocogi-render-plugin; reusable code has no loader export.
+//! Final dynamic link root for neocogi-platform-plugin; reusable code has no loader export.
 //! The descriptor, acquisition policy and COM objects remain owned by the implementation.
 #![deny(missing_docs)]
 

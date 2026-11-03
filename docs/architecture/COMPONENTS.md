@@ -25,11 +25,18 @@ to that crate, avoiding a dependency back to `render-support`, whose authenticat
 frame preparation already depends on GPU records. The former four backend crates
 and support-layer cleanup path are superseded, with no compatibility reexports.
 
-The selected renderer plugin owns SDL/DOM windows, event normalization, text
+`neocogi-platform-plugin` owns SDL/DOM windows, event normalization, text
 input, clipboard, native devices and offscreen surfaces. Keeping native owners
 together makes construction, destruction and recovery explicit without passing
 raw window/context handles across COM. Generic commands contain application
 geometry and uniforms; clients own mesh, material and camera meaning.
+
+Its reusable Rust library is `nc_platform`; `neocogi-platform-plugin-dylib`
+produces the final native `nc_platform` shared library. Backend-specific catalog
+names are `neocogi.platform.{glow,vulkan,wgpu,webgl}`. These supersede the former
+renderer-package, artifact and catalog names without compatibility aliases.
+Public authored platform/renderer contracts and their interface IDs remain in
+`neocogi-render-core`. See the [consumer migration](../project/PLATFORM_PLUGIN_MIGRATION.md).
 
 Applications own their COM runtime and choose dynamic, static or browser
 assembly. Final `*-dylib` packages alone own loader exports; reusable libraries

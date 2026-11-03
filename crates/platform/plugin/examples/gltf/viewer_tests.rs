@@ -49,7 +49,7 @@ fn models_render_animate_and_respond_to_arcball_pan_zoom() {
         let compiler = nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
             .query()
             .unwrap();
-        let native = nc_render::testing::window(compiler, model, SIZE).unwrap();
+        let native = nc_platform::testing::window(compiler, model, SIZE).unwrap();
         let target = Target::new(native.window).unwrap();
         let window = &target.window;
         let graphics = Graphics::new(&scene, prepare_materials(&scene).unwrap(), &lighting.environment, &target.resources).expect("validated sample pipeline");
@@ -164,7 +164,7 @@ fn hdr_interpolation_probe() {
     let compiler = nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
         .query()
         .unwrap();
-    let native = nc_render::testing::window(compiler, "RGBE interpolation", SIZE).unwrap();
+    let native = nc_platform::testing::window(compiler, "RGBE interpolation", SIZE).unwrap();
     let target = Target::new(native.window).unwrap();
     let region = environment::Region { x: 0, y: 0, width: 2, height: 1 };
     let data = Environment {
