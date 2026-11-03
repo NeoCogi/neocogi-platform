@@ -79,3 +79,15 @@ discovery export, checks its catalog identity and verifies host/plugin registry
 sharing after relocation. The dynamic smoke application then acquires the actual
 platform root, creates a window and exercises GPU/UI/resource behavior through
 COM. A static host test alone does not qualify the dynamic boundary.
+
+## Build-only output policy and resource ownership
+
+Use neocogi-native-layout-core::output_root(Some(anchor), explicit) in build
+scripts or test tooling. Add that build-only package directly instead of importing
+the removed neocogi_render_core::platform::deployment module. Absolute explicit
+output needs no anchor/build.rs; default inference requires the consumer OUT_DIR.
+
+Resource mappings now own exact nonoverlapping destination subtrees. Use a clean
+staging directory when migrating from additive copying; unclaimed existing output
+rejects instead of being deleted. Removed members are pruned only inside an owned
+slot. See [native layout contracts](../contracts/NATIVE_LAYOUT.md).

@@ -881,10 +881,20 @@ dependencies = [
 name = "neocogi-native-layout"
 version = "0.0.0"
 dependencies = [
- "neocogi-render-core",
+ "neocogi-native-layout-core",
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+ "tempfile",
+]
+
+[[package]]
+name = "neocogi-native-layout-core"
+version = "0.0.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sha2",
  "tempfile",
 ]
 

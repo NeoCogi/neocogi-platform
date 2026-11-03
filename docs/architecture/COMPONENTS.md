@@ -42,7 +42,9 @@ Applications own their COM runtime and choose dynamic, static or browser
 assembly. Final `*-dylib` packages alone own loader exports; reusable libraries
 have no discovery symbol. The final application selects target profiles and
 its native artifact set. `neocogi-native-layout` stages Cargo-selected outputs
-without starting a nested Cargo build.
+without starting a nested Cargo build. Its build-only companion,
+neocogi-native-layout-core, owns output policy and exclusive resource snapshots
+without a renderer/COM/IDL dependency. See [native staging](../contracts/NATIVE_LAYOUT.md).
 
 NeoCogi UI owns retained trees, bounded fixed UI geometry, input routing,
 logical windows/popups, widgets, text/icon/nine-patch composition, assets and

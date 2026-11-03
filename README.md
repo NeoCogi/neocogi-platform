@@ -14,7 +14,7 @@ with [NeoCogi UI](https://github.com/NeoCogi/neocogi-ui).
 | `crates/render/support` | Shared frame preparation and platform algorithms |
 | `crates/platform/plugin` | Selected platform/backend assembly; windows, input, clipboard and surfaces |
 | `crates/shader/core`, `plugin` | Portable compiler contracts, reflection and Naga-backed compiler provider |
-| `tools/native-layout` | Compile-time staging of Cargo artifacts and application resources |
+| `tools/native-layout` | Build-only output policy and compile-time staging of Cargo artifacts and exact resource snapshots |
 
 Platform and graphics implementations share native lifetime ownership. Native
 windows, SDL/DOM objects and API handles remain private; callers receive typed

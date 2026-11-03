@@ -1,5 +1,6 @@
 # NeoCogi Platform documentation
 
+- [Native artifact and resource staging](contracts/NATIVE_LAYOUT.md)
 - [Component ownership](architecture/COMPONENTS.md)
 - [GPU resources, commands and execution](contracts/GPU_RENDERING.md)
 - [Shader compilation and reflection](contracts/SHADER_COMPILATION.md)
