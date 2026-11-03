@@ -17,8 +17,9 @@ They retain separate ownership, quotas, permissions and closure state; sharing a
 target does not share resources.
 
 The generated COM boundary rejects unknown enum tags with `NC_E_INVALID_TAG`.
-Known target kinds with invalid dimensions return `NC_E_INVALID_ARG`; oversized
-image allocations return `NC_E_OUT_OF_RANGE` before publication.
+Known target kinds with invalid or over-budget image dimensions return
+`NC_E_INVALID_ARG` before publication. This is the shared descriptor-size policy;
+group quota admission and native allocation failures belong to their own operations.
 
 | Surface kind | Descriptor size | Submission | Depth |
 | --- | --- | --- | --- |

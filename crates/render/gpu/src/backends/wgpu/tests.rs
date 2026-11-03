@@ -2,6 +2,24 @@
 
 use super::*;
 
+/// Ordered capability lists must never manufacture an unadvertised presentation format.
+#[test]
+fn presentation_format_chooses_an_advertised_non_srgb_format() {
+    use wgpu::TextureFormat::{Bgra8Unorm, Bgra8UnormSrgb, Rgba8Unorm, Rgba8UnormSrgb};
+    for (formats, expected) in [
+        (vec![Bgra8UnormSrgb, Rgba8Unorm], Rgba8Unorm),
+        (vec![Bgra8UnormSrgb, Rgba8Unorm, Bgra8Unorm], Bgra8Unorm),
+        (vec![Rgba8Unorm, Bgra8UnormSrgb], Rgba8Unorm),
+        (vec![Rgba8UnormSrgb, Bgra8Unorm], Bgra8Unorm),
+    ] {
+        let selected = surface_format(&formats).unwrap();
+        assert_eq!(selected, expected);
+        assert!(formats.contains(&selected) && !selected.is_srgb());
+    }
+    assert!(surface_format(&[]).unwrap_err().contains("no color formats"));
+    assert!(surface_format(&[Bgra8UnormSrgb, Rgba8UnormSrgb]).unwrap_err().contains("non-sRGB"));
+}
+
 /// Runs the actual WGPU validation layer; requires any native adapter, including a software one.
 #[test]
 #[ignore = "requires a native WGPU adapter; run cargo test -p neocogi-render-gpu --features wgpu,test-support -- --ignored"]

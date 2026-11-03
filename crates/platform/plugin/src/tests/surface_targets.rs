@@ -224,6 +224,22 @@ fn framebuffer_views_and_image_targets_select_actual_surfaces_without_ui_roles()
         )
         .unwrap();
     let old = image.completed_image().unwrap();
+    // Descriptor rejection uses the shared InvalidArg mapping before any output allocation.
+    // A failed resize must preserve both committed dimensions and the last immutable image.
+    let oversized = Size { width: 8193, height: 2048 };
+    assert_eq!(
+        surfaces
+            .create_surface(RenderSurfaceDesc {
+                kind: RenderSurfaceKind::Image,
+                size: oversized
+            })
+            .err(),
+        Some(NC_E_INVALID_ARG)
+    );
+    assert_eq!(image.resize(oversized), Err(NC_E_INVALID_ARG));
+    assert_eq!(image.size().unwrap(), extent);
+    assert_eq!(identity(&image.completed_image().unwrap()).unwrap(), identity(&old).unwrap());
+
     let old_identity = identity(&old).unwrap();
     // A group cannot substitute another image merely because its size and device match.
     let other = surfaces

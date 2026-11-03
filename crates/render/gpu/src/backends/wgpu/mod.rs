@@ -231,6 +231,19 @@ pub struct WgpuRenderer {
     /// Keep last: SDL native handles outlive surfaces and every native resource on success and failure.
     _window: Window,
 }
+/// Selects only advertised formats while preserving the existing non-sRGB attachment policy.
+/// A naming-compatible partner is not necessarily supported by the actual surface.
+fn surface_format(formats: &[wgpu::TextureFormat]) -> Result<wgpu::TextureFormat, String> {
+    let preferred = formats.first().copied().ok_or("surface advertises no color formats")?;
+    let partner = preferred.remove_srgb_suffix();
+    formats
+        .iter()
+        .copied()
+        .find(|format| *format == partner)
+        .or_else(|| formats.iter().copied().find(|format| !format.is_srgb()))
+        .ok_or_else(|| "surface advertises no format compatible with non-sRGB output".to_owned())
+}
+
 impl WgpuRenderer {
     /// Every acquisition owns its diagnostics, including an unexpected native NotConfigured result.
     fn acquire_surface_frame(&mut self) -> Result<wgpu::SurfaceTexture, FrameError> {
@@ -356,7 +369,7 @@ impl WgpuRenderer {
         .map_err(|err| format!("failed to request wgpu adapter: {err}"))?;
 
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            label: Some("neocogi.ui.wgpu.device"),
+            label: Some("neocogi.wgpu.device"),
             required_features: wgpu::Features::empty(),
             required_limits: wgpu::Limits::default(),
             experimental_features: wgpu::ExperimentalFeatures::disabled(),
@@ -371,10 +384,8 @@ impl WgpuRenderer {
         let mut config = surface
             .get_default_config(&adapter, width.max(1), height.max(1))
             .ok_or_else(|| "surface is not supported by adapter".to_string())?;
-        if config.format.is_srgb() {
-            // Shader already outputs linearized UI colors; keep swapchain format non-sRGB.
-            config.format = config.format.remove_srgb_suffix();
-        }
+        // Retain the output transfer policy using a format the surface actually offers.
+        config.format = surface_format(&surface.get_capabilities(&adapter).formats)?;
         let depth_target = Self::configure_target(&core, &surface, &config)?;
         let generic = generic::Executor::new(core.clone());
         let renderer = Self {

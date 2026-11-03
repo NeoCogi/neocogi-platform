@@ -379,3 +379,9 @@ error is not itself proof of terminal presentation failure. Device loss, generic
 upload completion and offscreen submission keep their separate owners/states.
 Renderer usability derives from them instead of caching another disabled flag.
 Retirement and teardown still observe native completion before releasing resources.
+
+WGPU window construction preserves the non-sRGB output policy by choosing an
+actually advertised surface format. A preferred sRGB format's non-sRGB partner
+is used only if advertised; otherwise another advertised non-sRGB format is
+selected. A surface with no compatible format rejects explicitly. Format-name
+similarity alone grants no native capability; this policy changes no shader colors.
