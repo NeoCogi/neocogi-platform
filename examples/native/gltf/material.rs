@@ -33,6 +33,8 @@ pub struct MaterialAtlas {
 
 impl MaterialAtlas {
     /// Resolves image references and constructs all regions before GPU publication.
+    /// Missing emissive images use white so the shader can apply the authored factor unchanged.
+    /// Factors remain separate uniforms; invalid references, extents and atlas sizes reject before upload.
     pub fn prepare(material: &Material, images: &[Image]) -> Result<Self, String> {
         let lookup = |index: Option<usize>| match index {
             Some(index) => images.get(index).map(Some).ok_or("material image index is out of range"),
@@ -74,7 +76,9 @@ impl MaterialAtlas {
             pixels: vec![0; byte_len as usize],
             tiles,
         };
-        let defaults = [[255; 4], [255; 4], [128, 128, 255, 255], [0, 0, 0, 255]];
+        // A missing color map contributes the multiplicative identity. In particular, white
+        // preserves an authored emissive factor; glTF's default factor of zero still emits nothing.
+        let defaults = [[255; 4], [255; 4], [128, 128, 255, 255], [255; 4]];
         for (index, tile) in tiles.into_iter().enumerate() {
             for y in 0..tile.height {
                 for x in 0..tile.width {
@@ -182,7 +186,7 @@ mod tests {
         let mut material = material();
         assert_eq!(
             MaterialAtlas::prepare(&material, &[]).unwrap().pixels,
-            [255, 255, 255, 255, 255, 255, 255, 255, 128, 128, 255, 255, 0, 0, 0, 255]
+            [255, 255, 255, 255, 255, 255, 255, 255, 128, 128, 255, 255, 255, 255, 255, 255]
         );
         material.images[0] = Some(1);
         assert!(MaterialAtlas::prepare(&material, &[]).is_err());

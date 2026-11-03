@@ -96,7 +96,10 @@ The viewer owns the domain controller and immutable GPU buffers/textures for the
 entire loop. Per-frame draws copy only camera, material and palette uniforms.
 The shader applies inverse-transpose normals, base color, metallic/roughness,
 derivative-based normal maps, occlusion and emissive maps. Materials retain full
-image resolution in a four-tile atlas; occlusion occupies metallic/roughness's
+image resolution. A missing emissive image contributes white, preserving an
+authored emissive factor; an absent factor remains black and produces no emission.
+An authored emissive image is decoded from sRGB and multiplied by its linear factor.
+Materials use a four-tile atlas; occlusion occupies metallic/roughness's
 unused red channel. Color texels are decoded from sRGB before interpolation;
 data maps remain linear. HDR diffuse convolution and GGX prefiltering supply
 illumination and reflections, with split-sum BRDF integration and compensation

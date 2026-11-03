@@ -1,6 +1,129 @@
 //! Viewer command-line and optional real software-GPU qualification.
 use super::*;
 
+/// SDL permits one event-pump owner per process. Native cases hold this permit until
+/// every window/context/resource drops, while CPU-only scene tests remain independent.
+#[cfg(all(feature = "test-support", feature = "glow"))]
+static NATIVE_SESSION: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Writes and loads an actual tiny glTF with external mesh bytes and an optional PNG.
+/// The returned scene owns every imported byte, so temporary files can retire before atlas/GPU use.
+fn emissive_scene(factor: Option<[f32; 3]>, pixel: Option<[u8; 4]>) -> Scene {
+    use serde_json::json;
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    let mut bytes = Vec::new();
+    floats(&mut bytes, [-1., -1., 0., 1., -1., 0., 0., 1., 0.]);
+    floats(&mut bytes, [0., 0., 1., 0., 0., 1., 0., 0., 1.]);
+    bytes.extend([0u16, 1, 2].into_iter().flat_map(u16::to_le_bytes));
+    std::fs::write(root.join("mesh.bin"), &bytes).unwrap();
+    let mut document = json!({
+        "asset":{"version":"2.0"}, "scene":0, "scenes":[{"nodes":[0]}], "nodes":[{"mesh":0}],
+        "meshes":[{"primitives":[{"attributes":{"POSITION":0,"NORMAL":1},"indices":2,"material":0}]}],
+        "materials":[{}], "buffers":[{"uri":"mesh.bin","byteLength":bytes.len()}],
+        "bufferViews":[{"buffer":0,"byteOffset":0,"byteLength":36}, {"buffer":0,"byteOffset":36,"byteLength":36}, {"buffer":0,"byteOffset":72,"byteLength":6}],
+        "accessors":[
+            {"bufferView":0,"componentType":5126,"count":3,"type":"VEC3","min":[-1,-1,0],"max":[1,1,0]},
+            {"bufferView":1,"componentType":5126,"count":3,"type":"VEC3"},
+            {"bufferView":2,"componentType":5123,"count":3,"type":"SCALAR"}
+        ]
+    });
+    if let Some(factor) = factor {
+        document["materials"][0]["emissiveFactor"] = json!(factor);
+    }
+    if let Some(pixel) = pixel {
+        image::RgbaImage::from_pixel(1, 1, image::Rgba(pixel)).save(root.join("emissive.png")).unwrap();
+        document["images"] = json!([{"uri":"emissive.png"}]);
+        document["textures"] = json!([{"source":0}]);
+        document["materials"][0]["emissiveTexture"] = json!({"index":0});
+    }
+    let path = root.join("scene.gltf");
+    std::fs::write(&path, serde_json::to_vec(&document).unwrap()).unwrap();
+    Scene::load(&path).unwrap()
+}
+
+/// Actual glTF defaults and image decoding must reach the atlas without erasing an authored emissive factor.
+#[test]
+fn emissive_factors_and_optional_images_survive_loading_and_atlas_preparation() {
+    for (factor, pixel) in [
+        (None, None),
+        (Some([1., 0., 0.]), None),
+        (None, Some([255, 0, 0, 255])),
+        (Some([0.25, 0., 0.]), Some([128, 0, 0, 255])),
+    ] {
+        let scene = emissive_scene(factor, pixel);
+        let material = &scene.materials[scene.primitives[0].material];
+        assert_eq!(material.emissive, factor.unwrap_or([0.; 3]));
+        let atlas = MaterialAtlas::prepare(material, &scene.images).unwrap();
+        let tile = atlas.tiles[3];
+        let offset = ((tile.y * atlas.width + tile.x) * 4) as usize;
+        assert_eq!(&atlas.pixels[offset..offset + 4], &pixel.unwrap_or([255; 4]));
+    }
+}
+
+/// With environment illumination disabled, visible model pixels come only from emissive texture × factor.
+/// Uses the production loader, atlas, shader and native COM renderer without downloaded model/HDR files.
+#[cfg(all(feature = "test-support", feature = "glow"))]
+#[test]
+#[ignore = "requires a native SDL GL driver; SDL_VIDEODRIVER=offscreen is sufficient"]
+fn emissive_materials_render_their_factor_and_texture_independently_of_environment_light() {
+    let _native = NATIVE_SESSION.lock().expect("previous native viewer case panicked");
+    // SAFETY: This final test executable retains the statically linked process host for every COM call.
+    let _runtime = unsafe { neocogi_com::Runtime::__from_host_api(neocogi_com_host::initialize_process()) }.unwrap();
+    let region = environment::Region { x: 0, y: 0, width: 1, height: 1 };
+    let lighting = Lighting {
+        environment: Environment {
+            width: 1,
+            height: 1,
+            pixels: vec![128, 0, 0, 129],
+            regions: [region; environment::REGION_COUNT],
+        },
+        exposure: 1.,
+        intensity: 0.,
+        background: Background::Hidden,
+    };
+    let size = Size { width: 64, height: 64 };
+    let mut results = Vec::new();
+    for (factor, pixel) in [
+        (Some([1., 0., 0.]), None),
+        (None, None),
+        (None, Some([255; 4])),
+        (Some([1., 0., 0.]), Some([255; 4])),
+        (Some([1., 0., 0.]), Some([0, 255, 0, 255])),
+        (Some([0.25, 0., 0.]), Some([255; 4])),
+    ] {
+        let scene = emissive_scene(factor, pixel);
+        let compiler = nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
+            .query()
+            .unwrap();
+        let native = nc_platform::testing::window(compiler, "emissive material regression", size).unwrap();
+        let target = Target::new(native.window).unwrap();
+        let graphics = Graphics::new(&scene, prepare_materials(&scene).unwrap(), &lighting.environment, &target.resources).unwrap();
+        let (center, radius) = scene.bounds();
+        let camera = Camera::new(center, radius, size);
+        target.render(&scene, &graphics, &camera, 0., &lighting, 1).unwrap();
+        let pixels = native.probe.pixels().unwrap();
+        let offset = ((size.height / 2 * size.width + size.width / 2) * 4) as usize;
+        results.push(<[u8; 4]>::try_from(&pixels[offset..offset + 4]).unwrap());
+    }
+    // PBR Neutral tone mapping can desaturate bright red; compare dominance and relative output
+    // rather than requiring zero green/blue after the production display transform.
+    assert!(
+        results[0][0] > 150 && u16::from(results[0][0]) > u16::from(results[0][1]) * 4 && results[0][1] == results[0][2] && results[0][3] == 255,
+        "factor-only red emission: {:?}",
+        results[0]
+    );
+    assert_eq!(results[1], [0, 0, 0, 255], "an absent factor defaults to no emission");
+    assert_eq!(results[2], results[1], "an authored image does not enable emission without a factor");
+    assert_eq!(results[3], results[0], "an authored white image has the same effect as no image");
+    assert_eq!(results[4], results[1], "green texture times red factor is black");
+    assert!(
+        results[5][0] > results[5][1] && results[5][0] < results[0][0] && results[5][1] == results[5][2] && results[5][3] == 255,
+        "the factor scales authored texture emission: {:?}",
+        results[5]
+    );
+}
+
 /// Options reject malformed values before any display/host interaction.
 #[test]
 fn command_line_is_checked_before_window_creation() {
@@ -34,6 +157,7 @@ fn command_line_is_checked_before_window_creation() {
 #[test]
 #[ignore = "requires downloaded GLBs and a native SDL GL driver (offscreen is sufficient)"]
 fn models_render_animate_and_respond_to_arcball_pan_zoom() {
+    let _native = NATIVE_SESSION.lock().expect("previous native viewer case panicked");
     // SAFETY: This test executable owns the statically linked immutable process host.
     let _runtime = unsafe { neocogi_com::Runtime::__from_host_api(neocogi_com_host::initialize_process()) }.expect("COM host");
     // Keep all native probes in this one test so SDL's event/context owner is never concurrent.
