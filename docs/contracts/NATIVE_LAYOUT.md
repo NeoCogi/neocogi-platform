@@ -58,3 +58,13 @@ Unchanged snapshots preserve deployed file timestamps. Compiler dep-info tracks
 source and output files/directories: removing an output or changing its membership
 invalidates cached expansion. Removing a mapping entirely requires clean packaging;
 a macro that no longer runs cannot retire its old slot automatically.
+
+## Compiler-facing test artifacts
+
+Real macro-consumer tests use the exact library recorded in their own executable's
+rustc dependency information. The development workspace enables Cargo's
+`binary-dep-depinfo` option and explicitly loads the macro dependency for that
+record. Missing, ambiguous or deleted recorded artifacts fail with a rebuild
+diagnostic. Directory scans and modification dates never select a substitute.
+The fixture invokes the pinned rustc directly; it does not start a nested Cargo
+build or retain another Cargo target directory.

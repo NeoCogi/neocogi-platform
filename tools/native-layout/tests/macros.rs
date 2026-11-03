@@ -1,4 +1,8 @@
 //! Compile actual proc-macro consumers without nested Cargo or another target directory.
+// Load this integration test's actual macro dependency so rustc records its library in dep-info.
+use neocogi_native_layout as _;
+#[path = "support/artifact.rs"]
+mod artifact;
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -15,27 +19,13 @@ struct Consumer {
     dependencies: PathBuf,
 }
 impl Consumer {
-    /// Finds the compiler-selected host profile rather than reconstructing its hash.
+    /// Uses this test's actual compiler-recorded dependency; no alternative library may substitute.
     fn new() -> Self {
         let executable = std::env::current_exe().unwrap();
-        let profile = neocogi_native_layout_core::output_root(Some(&executable), None).unwrap();
-        let prefix = format!("{}neocogi_native_layout-", std::env::consts::DLL_PREFIX);
-        let mut pending = vec![profile];
-        let mut candidates = Vec::new();
-        while let Some(directory) = pending.pop() {
-            for entry in fs::read_dir(directory).unwrap().filter_map(Result::ok) {
-                let path = entry.path();
-                if path.is_dir() {
-                    pending.push(path);
-                } else if path.file_name().unwrap().to_string_lossy().starts_with(&prefix) && path.to_string_lossy().ends_with(std::env::consts::DLL_SUFFIX) {
-                    candidates.push(path);
-                }
-            }
-        }
-        let macros = candidates
-            .into_iter()
-            .max_by_key(|path| fs::metadata(path).unwrap().modified().unwrap())
-            .expect("Cargo built the proc macro before this integration test");
+        Self::from_artifact(artifact::selected_macro(&executable).expect("compiler-selected macro dependency"))
+    }
+    /// Creates isolated input/output storage for an explicitly selected artifact, also used by negative controls.
+    fn from_artifact(macros: PathBuf) -> Self {
         let dependencies = macros.parent().unwrap().to_owned();
         let directory = tempfile::tempdir().unwrap();
         fs::create_dir(directory.path().join("assets")).unwrap();
@@ -70,6 +60,60 @@ impl Consumer {
         }
         command.output().unwrap()
     }
+}
+
+/// A newer, genuinely different macro must not replace the library named by compiler dependency data.
+/// The negative control loads that other library deliberately, proving its failure is distinguishable.
+#[test]
+fn newer_unselected_macro_cannot_replace_the_compiler_selected_dependency() {
+    let selected = artifact::selected_macro(&std::env::current_exe().unwrap()).unwrap();
+    let fixture = tempfile::tempdir().unwrap();
+    let root = fixture.path();
+    let source = root.join("wrong.rs");
+    fs::write(
+        &source,
+        r#"extern crate proc_macro;
+        #[proc_macro] pub fn stage_resources(_: proc_macro::TokenStream) -> proc_macro::TokenStream {
+            "compile_error!(\"unselected macro was loaded\");".parse().unwrap()
+        }"#,
+    )
+    .unwrap();
+    let wrong = root.join(format!(
+        "{}neocogi_native_layout-newer{}",
+        std::env::consts::DLL_PREFIX,
+        std::env::consts::DLL_SUFFIX
+    ));
+    let result = Command::new(std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into()))
+        .args(["--edition=2024", "--crate-name=neocogi_native_layout", "--crate-type=proc-macro"])
+        .arg(&source)
+        .arg("-o")
+        .arg(&wrong)
+        .output()
+        .unwrap();
+    assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+    let newer = fs::metadata(&selected).unwrap().modified().unwrap() + std::time::Duration::from_secs(3600);
+    fs::File::options()
+        .write(true)
+        .open(&wrong)
+        .unwrap()
+        .set_times(fs::FileTimes::new().set_modified(newer))
+        .unwrap();
+    assert!(fs::metadata(&wrong).unwrap().modified().unwrap() > fs::metadata(&selected).unwrap().modified().unwrap());
+    // Copy the compiler's actual record beside the distractor, simulating a profile containing several builds.
+    let executable = root.join("consumer");
+    fs::copy(std::env::current_exe().unwrap().with_extension("d"), executable.with_extension("d")).unwrap();
+    let chosen = artifact::selected_macro(&executable).unwrap();
+    assert_eq!(chosen, selected);
+    let code = "fn main(){neocogi_native_layout::stage_resources!(\"assets\"=>\"data\");}";
+    let rejected = Consumer::from_artifact(wrong);
+    let result = rejected.compile(code, Some(&rejected.directory.path().join("out")), None, None);
+    assert!(!result.status.success());
+    assert!(String::from_utf8_lossy(&result.stderr).contains("unselected macro was loaded"));
+    let accepted = Consumer::from_artifact(chosen);
+    let output = accepted.directory.path().join("out");
+    let result = accepted.compile(code, Some(&output), None, None);
+    assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+    assert_eq!(fs::read(output.join("data/keep")).unwrap(), b"keep");
 }
 
 /// Explicit resource output works without OUT_DIR and source removal reaches actual expansion.
