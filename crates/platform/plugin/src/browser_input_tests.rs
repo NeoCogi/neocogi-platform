@@ -10,11 +10,7 @@ use neocogi_com::{ComPtr, NC_E_INVALID_ARG, com_object};
 use neocogi_render_core::abi::*;
 use wasm_bindgen::prelude::*;
 
-#[path = "../../../render/gpu/tests/support/derivatives.rs"]
-mod derivatives;
-
-#[path = "../../../render/gpu/tests/support/sampled.rs"]
-mod sampled;
+use neocogi_render_gpu::testing::{derivatives, sampled};
 
 #[com_object(interfaces(IRenderStream))]
 /// Browser-owned sealed contributions exercise the same generated COM path as native applications.

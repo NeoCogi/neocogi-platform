@@ -94,7 +94,7 @@ fn block_fragment<B: neocogi_render_gpu::native::NativeResources>(
 }
 
 /// Exact mip-zero read with one in-range result and adversarial signed/unsigned coordinates.
-pub(super) struct LoadCase {
+pub struct LoadCase {
     /// Coordinate scenario for diagnostics.
     pub name: &'static str,
     /// WGSL integer-vector coordinate expression.
@@ -103,7 +103,7 @@ pub(super) struct LoadCase {
     pub outside: bool,
 }
 /// Tests both coordinate edges and very large signed/unsigned values through actual shaders.
-pub(super) fn load_cases() -> Vec<LoadCase> {
+pub fn load_cases() -> Vec<LoadCase> {
     [
         ("signed origin", "vec2<i32>(0)", false),
         ("unsigned origin", "vec2<u32>(0u)", false),
@@ -119,7 +119,7 @@ pub(super) fn load_cases() -> Vec<LoadCase> {
     .collect()
 }
 /// Keeps an actual sampled pair in the same entry; its tiny contribution cannot change RGBA8.
-pub(super) fn load_block<B: neocogi_render_gpu::native::NativeResources>(
+pub fn load_block<B: neocogi_render_gpu::native::NativeResources>(
     gpu: &GpuDevice<B>,
     resources: &ComPtr<IRenderResourcesAbi>,
     case: &LoadCase,
@@ -137,7 +137,7 @@ pub(super) fn load_block<B: neocogi_render_gpu::native::NativeResources>(
 /// Actual None-created vertex/index storage and its later initialized versions share one captured block.
 /// Left reads zero vertex bytes, middle uses three zero indices (a degenerate primitive), right
 /// consumes the updated red vertices and [0,1,2] indices. Earlier captures must remain unchanged.
-pub(super) fn zero_storage_block<B: neocogi_render_gpu::native::NativeResources>(
+pub fn zero_storage_block<B: neocogi_render_gpu::native::NativeResources>(
     gpu: &GpuDevice<B>,
     resources: &ComPtr<IRenderResourcesAbi>,
 ) -> ComBox<IRenderViewBlockAbi> {
@@ -216,7 +216,7 @@ pub(super) fn zero_storage_block<B: neocogi_render_gpu::native::NativeResources>
 }
 
 /// Exact native RGBA rows prove zero initialization and A/B capture, including the degenerate zero index draw.
-pub(super) fn assert_zero_storage_pixels(pixels: &[u8]) {
+pub fn assert_zero_storage_pixels(pixels: &[u8]) {
     assert_eq!(pixels.len(), 8 * 8 * 4);
     for row in pixels.as_chunks::<32>().0 {
         for (x, pixel) in row.as_chunks::<4>().0.iter().enumerate() {

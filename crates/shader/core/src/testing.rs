@@ -2,7 +2,7 @@
 use neocogi_render_core::abi::GpuShaderStage;
 
 /// Naga-valid module containing one ordinary selected vertex and an invalid portable entry/declaration.
-pub(super) struct Case {
+pub struct Case {
     /// Identifies the independently exercised rule in assertion output.
     pub name: &'static str,
     /// Complete original module; both selection attempts must reject it.
@@ -15,7 +15,7 @@ pub(super) struct Case {
 const SELECTED: &str = "@vertex fn selected()->@builtin(position) vec4<f32>{return vec4<f32>(0.,0.,0.,1.);}";
 
 /// Isolated inactive-entry and whole-declaration profile violations.
-pub(super) fn cases() -> Vec<Case> {
+pub fn cases() -> Vec<Case> {
     [
         ("location sixteen", "@vertex fn outside(@location(16) p:vec4<f32>)->@builtin(position) vec4<f32>{return p;}", GpuShaderStage::Vertex),
         ("signed input", "@vertex fn outside(@location(0) p:vec4<i32>)->@builtin(position) vec4<f32>{return vec4<f32>(p);}", GpuShaderStage::Vertex),
@@ -37,6 +37,8 @@ pub(super) fn cases() -> Vec<Case> {
 }
 
 /// Query use is legal when the entry also samples the same correctly paired image.
-pub(super) fn valid_mixed_module() -> String {
-    format!("{SELECTED} @group(2) @binding(0) var t:texture_2d<f32>; @group(2) @binding(1) var s:sampler; @fragment fn outside()->@location(0) vec4<f32>{{let size=vec2<f32>(textureDimensions(t,0)); return textureSample(t,s,vec2(.5))/size.x;}}")
+pub fn valid_mixed_module() -> String {
+    format!(
+        "{SELECTED} @group(2) @binding(0) var t:texture_2d<f32>; @group(2) @binding(1) var s:sampler; @fragment fn outside()->@location(0) vec4<f32>{{let size=vec2<f32>(textureDimensions(t,0)); return textureSample(t,s,vec2(.5))/size.x;}}"
+    )
 }

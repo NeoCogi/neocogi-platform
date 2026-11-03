@@ -17,3 +17,7 @@ neocogi-render-core.workspace = true
 
 [build-dependencies]
 neocogi-platform-build.workspace = true
+
+[features]
+# Shared acceptance inputs only; ordinary consumers do not compile the fixtures.
+test-support = []

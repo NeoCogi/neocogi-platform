@@ -2,7 +2,10 @@
 
 `neocogi-platform-build` owns the authored renderer, platform and shader NCIDL
 files and the shared generation helper. Consumers declare it as a build dependency
-and generate into their own `OUT_DIR` from its packaged source tree. They use
+and generate into their own `OUT_DIR` from its embedded canonical source bytes.
+Derived input files are reconstructed in that same consumer-owned output area;
+a cached helper never relies on its previous source checkout remaining present.
+They use
 `neocogi_platform_build::sources` with explicit `Module` selections, then `build`.
 Consumers adding their own namespaces extend the returned request with their own
 source roots and module locations. Imported Rust helper types use the bindings of
@@ -77,3 +80,9 @@ own one SDK host and acquire the same typed root. Upload producers come from
 render-core, so dynamic executables have no normal GPU/provider implementation
 dependency. Assets and libraries are executable-relative; scene semantics stay
 in the application.
+
+Shared acceptance fixtures are optional library APIs, not sibling source includes.
+`neocogi-shader-core/test-support` owns portable-profile inputs used by compiler
+and GPU tests. `neocogi-render-gpu::testing` owns the derivative and sampled-image
+COM fixtures used by native and browser tests. Platform's `test-support` enables
+the GPU fixtures explicitly. Ordinary builds do not compile these fixtures.

@@ -3,5 +3,5 @@ use neocogi_platform_build::{Module, build, sources};
 
 /// Generate independent shader bindings from the packaged source owner.
 fn main() {
-    build(sources(&[Module::Shader])).expect("generate shader bindings");
+    sources(&[Module::Shader]).and_then(build).expect("generate shader bindings");
 }

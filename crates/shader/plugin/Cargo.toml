@@ -26,3 +26,6 @@ naga.workspace = true
 
 [build-dependencies]
 neocogi-platform-build.workspace = true
+
+[dev-dependencies]
+neocogi-shader-core = { workspace = true, features = ["test-support"] }

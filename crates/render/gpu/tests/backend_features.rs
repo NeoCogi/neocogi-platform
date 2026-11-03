@@ -28,7 +28,15 @@ impl Graph {
             "[workspace]\n[package]\nname='gpu-feature-probe'\nversion='0.0.0'\nedition='2024'\n[dependencies]\nneocogi-render-gpu={{path={dependency_path},default-features=false,features={features}}}\n"
         );
         std::fs::write(directory.path().join("Cargo.toml"), manifest).unwrap();
-        std::fs::copy(package.join("../../../Cargo.lock"), directory.path().join("Cargo.lock")).unwrap();
+        // A published package carries its own lockfile; a checkout uses its
+        // enclosing workspace lockfile. Neither case requires a fixed number
+        // of repository parent directories.
+        let lockfile = package
+            .ancestors()
+            .map(|parent| parent.join("Cargo.lock"))
+            .find(|path| path.is_file())
+            .expect("package or workspace Cargo.lock");
+        std::fs::copy(lockfile, directory.path().join("Cargo.lock")).unwrap();
         let output = Command::new(env!("CARGO"))
             .current_dir(directory.path())
             .args([

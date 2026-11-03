@@ -13,3 +13,6 @@ include = ["Cargo.toml", "README.md", "LICENSE", "src/**", "build.rs", "tests/**
 
 [dependencies]
 neocogi-idl.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

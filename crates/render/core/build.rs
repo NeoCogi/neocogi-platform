@@ -3,7 +3,9 @@ use neocogi_platform_build::{Module, build, sources};
 
 /// Generate this package's namespaces from its declared build dependency.
 fn main() {
-    let modules = build(sources(&[Module::Renderer, Module::Platform])).expect("generate renderer/platform bindings");
+    let modules = sources(&[Module::Renderer, Module::Platform])
+        .and_then(build)
+        .expect("generate renderer/platform bindings");
     let renderer = modules.iter().find(|module| module.module_name == "neocogi.renderer").expect("renderer module");
     let syntax = syn::parse_file(&std::fs::read_to_string(&renderer.bindings).expect("renderer bindings")).expect("generated Rust");
     let source = syntax

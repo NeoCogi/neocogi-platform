@@ -8,8 +8,7 @@ use neocogi_com::{INcStringAbi, INcBytesAbi, NcBytes};
 /// Valid source with a small deterministic artifact.
 const SOURCE: &str = "@vertex fn vs()->@builtin(position) vec4<f32>{return vec4<f32>(0.,0.,0.,1.);}";
 
-#[path = "../../../../shader/plugin/tests/support/admission.rs"]
-mod admission;
+use neocogi_shader_core::testing as admission;
 
 /// A rejected module publishes no GPU resource and leaves quota and operation admission usable.
 #[test]

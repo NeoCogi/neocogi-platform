@@ -924,6 +924,7 @@ name = "neocogi-platform-build"
 version = "0.1.0-alpha.1"
 dependencies = [
  "neocogi-idl",
+ "tempfile",
 ]
 
 [[package]]

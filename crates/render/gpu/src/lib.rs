@@ -4,19 +4,11 @@
 //! resources have exclusive COM owners; commands retain immutable private data.
 #![deny(missing_docs)]
 
-// Shared fixture sources also compile in the platform's browser tests. This test-only self name
-// lets the same real COM producer code address this library from inside its native unit tests.
-#[cfg(test)]
+// Opt-in acceptance fixtures use this same typed library API from native and browser callers.
 extern crate self as neocogi_render_gpu;
 
-// One fixture module per native test executable, shared by every enabled backend. The browser
-// platform tests compile the same sources in their own executable through the external crate API.
 #[cfg(all(test, not(target_arch = "wasm32"), any(feature = "glow", feature = "vulkan", feature = "wgpu")))]
-#[path = "../tests/support/derivatives.rs"]
-mod derivative_fixture;
-#[cfg(all(test, not(target_arch = "wasm32"), any(feature = "glow", feature = "vulkan", feature = "wgpu")))]
-#[path = "../tests/support/sampled.rs"]
-mod sampled_fixture;
+use crate::testing::{derivatives as derivative_fixture, sampled as sampled_fixture};
 
 pub mod backends;
 

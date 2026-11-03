@@ -93,3 +93,7 @@ impl Shader {
 
 mod read;
 pub use read::PreparedShader;
+
+/// Opt-in portable-profile inputs shared by compiler and GPU acceptance tests.
+#[cfg(feature = "test-support")]
+pub mod testing;

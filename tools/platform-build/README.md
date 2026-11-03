@@ -10,13 +10,15 @@ neocogi-platform-build = "=0.1.0-alpha.1"
 ```rust
 use neocogi_platform_build::{Module, build, sources};
 fn main() {
-    build(sources(&[Module::Shader])).expect("generate shader bindings");
+    sources(&[Module::Shader]).and_then(build).expect("generate shader bindings");
 }
 ```
 
 Renderer and platform callers select `Module::Renderer` and `Module::Platform`.
 Unselected reachable modules use their ordinary Rust library bindings. Extend
-`sources(&[])` with your own source roots/modules when defining new interfaces.
+`sources(&[])?` with your own source roots/modules when defining new interfaces.
+The helper embeds its canonical sources and reconstructs derived inputs in each
+consumer's OUT_DIR, so cached builds need no previous source-folder path.
 This build-only dependency owns all shared authored sources; runtime contract
 libraries expose generated bindings and do not provide `SCHEMA_ROOT` aliases.
 

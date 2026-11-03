@@ -9,8 +9,7 @@ mod client {
 }
 const SOURCE: &str = "struct U { value:vec4<f32> } @group(1) @binding(0) var<uniform> u:U; @vertex fn vs(@location(0) p:vec2<f32>)->@builtin(position) vec4<f32> {return vec4<f32>(p,0.25,1.0)+u.value;}";
 
-#[path = "../tests/support/admission.rs"]
-mod admission;
+use neocogi_shader_core::testing as admission;
 
 /// Inactive entries cannot change admission when a caller selects an otherwise valid entry.
 #[test]

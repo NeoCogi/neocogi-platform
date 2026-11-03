@@ -12,7 +12,11 @@ local qualification and review.
 interface files and their shared generation helper. Each contract/compiler build
 script declares it as a build dependency, generates into its own OUT_DIR and
 imports ordinary Rust values from the appropriate contract library. No generation
-step searches sibling repository folders. Source declarations stay version 1.
+step searches sibling repository folders. The helper embeds its canonical source
+bytes and reconstructs derived inputs in each caller's OUT_DIR, preserving
+unchanged files and pruning obsolete declarations. A cached helper therefore
+keeps working after its original source directory moves or disappears. Source
+declarations stay version 1.
 
 Internal package dependencies specify an exact `=0.1.0-alpha.1` requirement in
 addition to their development path. Cargo removes development paths from the
@@ -56,6 +60,37 @@ Do not publish a package merely because `--list` or `--no-verify` succeeded.
 Inspect the actual archives and build their contents using declared dependencies.
 Run the normal suites and relevant native/browser checks for runtime changes.
 Keep review notes and OPEN_ITEMS.md ignored and uncommitted.
+
+The repeatable external check is:
+
+```sh
+python3 -B -m unittest discover -s scripts -p 'test_*.py'
+python3 -B scripts/check_packages.py --offline --stable-toolchain stable
+```
+
+Omit `--offline` when dependencies need downloading; the optional stable check
+requires an installed stable toolchain. Use `--allow-dirty` while developing.
+The checker assembles real archives, validates their normalized manifests and
+contents, and extracts them into a temporary workspace outside this checkout.
+Registry patches point unpublished internal dependencies only at those extracted
+contents, never at source directories in the checkout. External dependencies keep
+their declared registry requirements. This verifies package construction before
+upload; actual registry availability is established by publication.
+
+All extracted packages and test targets are compiled with the checked-in nightly,
+without the repository's `.cargo/config.toml`. Focused extracted-library tests run,
+then an independent application generates shader bindings, acquires the packaged
+compiler through COM and checks retained WGSL/GLSL/SPIR-V exports. A nightly feature
+also expands the packaged staging macro and checks the copied file. The optional
+stable run checks the ordinary CPU consumer without the nightly macro. It does
+not qualify all native/browser execution or every archived test on stable Rust.
+
+Commands reuse one sequential target directory. Before compiling, the checker
+cleans this release's package artifacts so normalized archive mtimes cannot make
+stale code from an earlier extraction appear current. Third-party dependency
+artifacts can be reused. Temporary extracted sources are removed when the check
+finishes; `cargo clean` removes its build output. CI runs
+this check in addition to the existing backend/browser jobs.
 
 ## Publication order
 

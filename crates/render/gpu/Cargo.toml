@@ -29,6 +29,7 @@ pollster = { workspace = true, optional = true }
 web-sys = { workspace = true, optional = true, features = ["HtmlCanvasElement", "WebGl2RenderingContext"] }
 
 [dev-dependencies]
+neocogi-shader-core = { workspace = true, features = ["test-support"] }
 neocogi-shader-compiler.workspace = true
 neocogi-com = { workspace = true, features = ["runtime"] }
 tempfile.workspace = true

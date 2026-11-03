@@ -200,3 +200,8 @@ impl NativeResources for Backend {
 pub fn device(compiler: neocogi_com::ComPtr<neocogi_shader_core::abi::ShaderCompilerAbi>) -> GpuDevice<Backend> {
     GpuDevice::new(Core::new(), compiler)
 }
+
+/// Real COM shader/image fixtures shared by native and browser acceptance.
+pub mod sampled;
+/// Canonical derivative inputs and recorders shared by native and browser acceptance.
+pub mod derivatives;

@@ -7,7 +7,10 @@
 //! this crate is necessary.
 #![deny(missing_docs)]
 
-use std::path::PathBuf;
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 /// Generation request and results from the pinned IDL toolchain.
 pub use neocogi_idl::cargo::{BuildError, BuildOutput, SharedSources};
@@ -43,14 +46,63 @@ impl Module {
     }
 }
 
-/// Returns this build dependency's own packaged source directory.
-///
-/// Cargo supplies this crate's manifest directory when compiling the helper, so
-/// the path follows the actual downloaded/extracted dependency rather than the
-/// caller's current directory. These files must remain available while Cargo
-/// builds consumers, as ordinary dependency source files do.
-pub fn schema_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("schemas")
+/// Canonical files embedded from the one authored tree. Embedding lets a cached
+/// helper survive Cargo relocating or removing the dependency's source directory.
+const SOURCES: &[(&str, &[u8])] = &[
+    (
+        "neocogi/platform/dependencies.ncidl",
+        include_bytes!("../schemas/neocogi/platform/dependencies.ncidl"),
+    ),
+    ("neocogi/platform/input.ncidl", include_bytes!("../schemas/neocogi/platform/input.ncidl")),
+    ("neocogi/platform/path.ncidl", include_bytes!("../schemas/neocogi/platform/path.ncidl")),
+    ("neocogi/platform/window.ncidl", include_bytes!("../schemas/neocogi/platform/window.ncidl")),
+    ("neocogi/renderer/frames.ncidl", include_bytes!("../schemas/neocogi/renderer/frames.ncidl")),
+    ("neocogi/renderer/geometry.ncidl", include_bytes!("../schemas/neocogi/renderer/geometry.ncidl")),
+    ("neocogi/renderer/gpu.ncidl", include_bytes!("../schemas/neocogi/renderer/gpu.ncidl")),
+    (
+        "neocogi/renderer/resources.ncidl",
+        include_bytes!("../schemas/neocogi/renderer/resources.ncidl"),
+    ),
+    ("neocogi/shader/compiler.ncidl", include_bytes!("../schemas/neocogi/shader/compiler.ncidl")),
+];
+
+/// Adds concrete operation/path context to failures before any binding generation starts.
+fn io_error(operation: &'static str, path: &Path, source: std::io::Error) -> BuildError {
+    BuildError::Io { operation, path: path.to_owned(), source }
+}
+
+/// Removes stale generated inputs only inside the helper-owned OUT_DIR subtree.
+/// Expected files keep their timestamps; no caller-authored source tree is touched.
+fn prune(root: &Path, directory: &Path) -> Result<(), BuildError> {
+    let entries = fs::read_dir(directory).map_err(|error| io_error("read generated sources", directory, error))?;
+    for entry in entries {
+        let entry = entry.map_err(|error| io_error("read generated source entry", directory, error))?;
+        let path = entry.path();
+        let kind = entry.file_type().map_err(|error| io_error("inspect generated source", &path, error))?;
+        if kind.is_dir() {
+            prune(root, &path)?;
+        } else if !SOURCES.iter().any(|(name, _)| root.join(name) == path) || !kind.is_file() {
+            fs::remove_file(&path).map_err(|error| io_error("remove obsolete generated source", &path, error))?;
+        }
+    }
+    Ok(())
+}
+
+/// Materializes derived inputs in this consumer's own output, preserving unchanged
+/// mtimes and pruning removed declarations so old files cannot reenter resolution.
+fn materialize(output: &Path) -> Result<PathBuf, BuildError> {
+    let root = output.join("neocogi-shared-sources");
+    fs::create_dir_all(&root).map_err(|error| io_error("create generated sources", &root, error))?;
+    prune(&root, &root)?;
+    for (name, contents) in SOURCES {
+        let path = root.join(name);
+        let parent = path.parent().expect("fixed source name has a parent");
+        fs::create_dir_all(parent).map_err(|error| io_error("create generated namespace", parent, error))?;
+        if fs::read(&path).ok().as_deref() != Some(*contents) {
+            fs::write(&path, contents).map_err(|error| io_error("write generated source", &path, error))?;
+        }
+    }
+    Ok(root)
 }
 
 /// Configures local generation and imports for the three shared namespaces.
@@ -61,8 +113,12 @@ pub fn schema_root() -> PathBuf {
 /// selected module is harmless. An empty selection is useful when extending the
 /// request with a consumer-owned namespace using [`SharedSources::module`].
 /// Every reachable external namespace still needs an explicit Rust location.
-pub fn sources(local: &[Module]) -> SharedSources {
-    let mut request = SharedSources::new(schema_root());
+/// Embedded inputs are materialized under the calling build script's OUT_DIR;
+/// missing environment or filesystem failures return before generation. Cached
+/// helpers never depend on their original downloaded source path remaining live.
+pub fn sources(local: &[Module]) -> Result<SharedSources, BuildError> {
+    let output = std::env::var_os("OUT_DIR").ok_or(BuildError::MissingEnvironment("OUT_DIR"))?;
+    let mut request = SharedSources::new(materialize(Path::new(&output))?);
     for module in [Module::Renderer, Module::Platform, Module::Shader] {
         request = if local.contains(&module) {
             request.module(module.name(), module.rust_path())
@@ -70,7 +126,7 @@ pub fn sources(local: &[Module]) -> SharedSources {
             request.import(module.name(), module.rust_path())
         };
     }
-    request
+    Ok(request)
 }
 
 /// Generates requested bindings, then publishes their paths to this consumer.
@@ -96,19 +152,35 @@ pub fn build(request: SharedSources) -> Result<Vec<BuildOutput>, BuildError> {
 mod tests {
     use super::*;
 
-    /// Every shared namespace resolves inside this one package, including multipart sources.
+    /// Warm reuse restores changed bytes, removes obsolete inputs and keeps unchanged mtimes.
     #[test]
-    fn every_namespace_has_one_packaged_source_owner() {
-        let root = schema_root();
-        assert!(root.is_dir());
-        for module in [Module::Renderer, Module::Platform, Module::Shader] {
-            let path = root.join(module.name().replace('.', "/"));
-            assert!(path.is_dir(), "{}", path.display());
-            assert!(
-                std::fs::read_dir(path)
-                    .unwrap()
-                    .any(|entry| entry.unwrap().path().extension().is_some_and(|ext| ext == "ncidl"))
-            );
+    fn materialized_sources_are_complete_owned_and_reusable() {
+        let output = tempfile::tempdir().unwrap();
+        let root = materialize(output.path()).unwrap();
+        for (name, contents) in SOURCES {
+            assert_eq!(fs::read(root.join(name)).unwrap(), *contents);
         }
+        let keep = root.join(SOURCES[0].0);
+        let unchanged = fs::metadata(&keep).unwrap().modified().unwrap();
+        let changed = root.join(SOURCES[1].0);
+        fs::write(&changed, b"corrupt").unwrap();
+        let stale = root.join("neocogi/shader/obsolete.ncidl");
+        fs::write(&stale, b"obsolete declaration").unwrap();
+        assert_eq!(materialize(output.path()).unwrap(), root);
+        assert!(!stale.exists());
+        assert_eq!(fs::metadata(keep).unwrap().modified().unwrap(), unchanged);
+        assert_eq!(fs::read(changed).unwrap(), SOURCES[1].1);
+    }
+
+    /// A second consumer gets its own inputs without depending on the first consumer's files.
+    #[test]
+    fn separate_consumers_reconstruct_inputs_after_the_first_is_removed() {
+        let first = tempfile::tempdir().unwrap();
+        let root = materialize(first.path()).unwrap();
+        first.close().unwrap();
+        assert!(!root.exists());
+        let second = tempfile::tempdir().unwrap();
+        let root = materialize(second.path()).unwrap();
+        assert!(SOURCES.iter().all(|(name, _)| root.join(name).is_file()));
     }
 }

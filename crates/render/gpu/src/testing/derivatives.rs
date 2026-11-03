@@ -7,7 +7,7 @@ use neocogi_render_gpu::{
 };
 
 /// One uniform red result independent of which physical row is read.
-pub(super) struct Case {
+pub struct Case {
     /// Names the operation and overload for diagnostic output.
     pub name: &'static str,
     /// Original WGSL containing both legal graphics entries.
@@ -17,7 +17,7 @@ pub(super) struct Case {
 }
 
 /// Positive/negative gradients, every float/vector overload, fine/coarse and unchanged controls.
-pub(super) fn cases() -> Vec<Case> {
+pub fn cases() -> Vec<Case> {
     let vertex = "@vertex fn vs(@builtin(vertex_index) i:u32)->@builtin(position) vec4<f32>{let p=array<vec2<f32>,3>(vec2(-1.,-1.),vec2(3.,-1.),vec2(-1.,3.));return vec4(p[i],0.5,1.);}";
     let mut cases: Vec<_> = [
         ("positive scalar", "dpdy(p.y)", 191),
@@ -47,7 +47,7 @@ pub(super) fn cases() -> Vec<Case> {
 }
 
 /// Records a real sealed block without a mesh, test renderer or native callback.
-pub(super) fn block<B: neocogi_render_gpu::native::NativeResources>(
+pub fn block<B: neocogi_render_gpu::native::NativeResources>(
     gpu: &GpuDevice<B>,
     resources: &ComPtr<IRenderResourcesAbi>,
     source: &str,

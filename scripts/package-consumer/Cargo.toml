@@ -1,0 +1,22 @@
+[package]
+name = "neocogi-package-consumer"
+version = "0.1.0-alpha.1"
+edition = "2024"
+publish = false
+
+[features]
+# The ordinary CPU consumer is also checked with stable Rust.
+staging = ["dep:neocogi-native-layout"]
+
+[dependencies]
+neocogi-com = { version = "=0.1.0-alpha.1", features = ["std", "macros", "runtime"] }
+neocogi-com-host = "=0.1.0-alpha.1"
+neocogi-render-core = "=0.1.0-alpha.1"
+neocogi-shader-core = "=0.1.0-alpha.1"
+compiler = { package = "neocogi-shader-compiler", version = "=0.1.0-alpha.1" }
+neocogi-render-gpu = "=0.1.0-alpha.1"
+neocogi-render-support = "=0.1.0-alpha.1"
+neocogi-native-layout = { version = "=0.1.0-alpha.1", optional = true }
+
+[build-dependencies]
+neocogi-platform-build = "=0.1.0-alpha.1"

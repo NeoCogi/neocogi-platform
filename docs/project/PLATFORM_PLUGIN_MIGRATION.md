@@ -143,11 +143,11 @@ For example, shader binding generation uses:
 use neocogi_platform_build::{Module, build, sources};
 
 fn main() {
-    build(sources(&[Module::Shader])).expect("generate shader bindings");
+    sources(&[Module::Shader]).and_then(build).expect("generate shader bindings");
 }
 ```
 
 `Module::Renderer` and `Module::Platform` select the other namespaces. Unselected
 reachable namespaces import their ordinary Rust library types. Consumers with
-additional interfaces can extend `sources(&[])` with their own root and modules.
+additional interfaces can extend `sources(&[])?` with their own root and modules.
 Each build owns its generated files, and authored declarations retain version 1.
