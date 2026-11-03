@@ -18,3 +18,8 @@ SDL2.*
 /.aws/
 /tmp/
 /examples/native/gltf/assets/
+
+# Adversarial review reports and open-item registers are local working notes.
+/docs/reviews/
+ADVERSARIAL_REVIEW*.md
+OPEN_ITEMS.md
