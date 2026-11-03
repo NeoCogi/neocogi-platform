@@ -1,158 +1,142 @@
-# Independent UI render surfaces
+# Drawing targets and resource groups
 
-`IRenderSurfaceFactory` creates a two-dimensional offscreen session on the
-factory's existing GPU device. Query the returned `IRenderSurface` for
-`IRenderer` and pass that projection to the preview UI's render calls. Bind the
-window's separate graphics host to each preview runtime before painting. Each
-runtime's GFX compositor owns its prepared atlas; asset installation takes only the
-candidate bundle. Creating windows and surfaces needs no initial image.
+`IRenderSurface` selects where a resource group's commands draw: a view of the
+window's existing framebuffer or an independently rendered image. Creating either
+kind acquires no frame, clears no pixels and presents nothing. Both the window
+and its separate graphics host expose the surface and group factories. All
+authored declarations retain `#[version(1)]`; this pre-release change replaces
+the old constructors without compatibility aliases.
 
-The surface size is in physical pixels. Negative or oversized values fail;
-a zero component suspends frame submission. Resize changes the next requested
-extent and does not modify completed images. Rendering requires an exact,
-positive size and opaque clear color. Surfaces accept only sealed blocks from a
-construction-authenticated private UI domain. Public client-domain work is rejected
-before output allocation, even when it uses the same generic command vocabulary.
+## Select the target before creating a group
 
-`completed_image` returns `NC_E_NOT_FOUND` before the first successful frame.
-After success it returns a normal immutable `ITexture`, with the same top-left
-UV convention and nearest filtering as uploaded UI textures. Draw it using the
-existing painter texture operation. It is accepted only by its owning device.
-Every retained output remains unchanged after later frames, resize, or surface
-release. A failed frame leaves the previous completed image available.
+Call `IRenderSurfaceFactory::create_surface(RenderSurfaceDesc)`, then
+`IRenderClientFactory::create_client(limits, surface, permissions)`. The returned
+`IRenderClientDomain` exclusively controls one group; delegate its restricted
+`resources()` factory to drawing code. Several groups may select the same surface.
+They retain separate ownership, quotas, permissions and closure state; sharing a
+target does not share resources.
 
-Surface rendering never presents, acquires a native swapchain image, or clears
-the native backbuffer. A window frame separately presents the editor and draws
-the completed preview texture. GPU allocations retire through the existing
-device ownership path after all public images and active submissions release
-them. Stream reads and resource authentication finish before GPU execution.
+| Surface kind | Descriptor size | Submission | Depth |
+| --- | --- | --- | --- |
+| `Framebuffer` | Zero; `size()` follows the window's physical pixel size | Submit recorded blocks in the window renderer's ordered frame | Uses the window's depth attachment |
+| `Image` | Bounded nonnegative physical pixel size | Query the surface for `IRenderer` and submit an independent image frame | Color only; depth permissions reject at group creation |
 
-Glow and WebGL use framebuffer-backed textures and their common generic executor.
-WGPU uses RGBA8 render attachments without depth and its ordinary generic executor.
-Every backend allocates a fresh output for each completed frame, so later frames
-cannot overwrite published snapshots. Texture passes never acquire or reconfigure a
-native surface. Window passes retain their own target format and depth attachment.
-WGPU error scopes finish before publication and queue completion retains native owners.
+A framebuffer view exposes no independent `IRenderer`. The window renderer owns
+frame acquisition, the initial whole-frame clear and presentation. View commands
+join its normal order; regional clears affect only the recorded view rectangle.
+`resize()` rejects, and `completed_image()` returns `NC_E_NOT_FOUND`. Releasing
+the public view does not invalidate groups already created for it.
 
-Vulkan uses a private RGBA8 render pass, framebuffer, command pool, command buffer
-and completion fence, with the same generic pipeline/binding executor as window work.
-The shared native pass builder transitions completed pixels to shader-readable layout.
-The first implementation waits for that submission on the CPU before publication;
-this makes ownership explicit with a synchronization cost. Native acquisition and
-presentation semaphores do not participate. Submitted owners are installed before
-queue submission and retained if submission or waiting leaves completion uncertain.
-Dropping a frame before submission is recoverable. Native image initialization also
-uses the generic executor's completion-owned upload path.
+An image surface accepts blocks from any group bound to that exact surface.
+Matching size or device identity does not authorize another image surface to use
+them. The window rejects image-target blocks; an image renderer rejects
+framebuffer-target blocks. Both check closed groups and selected targets after
+foreign stream/resource calls and before native execution or output allocation.
+Surface identity is authenticated through the creating device's local registration;
+an external implementation cannot substitute matching public metadata.
 
-Native acceptance can be run with:
+## Grant operations independently
 
-```sh
-SDL_VIDEODRIVER=offscreen cargo test -p neocogi-ui-platform-tests -- --include-ignored --test-threads=1
+`RenderClientPermissions` describes operations without assigning a UI or
+application role. Disabled operations return `RENDER_E_PERMISSION`.
+
+| Field | Operation permitted |
+| --- | --- |
+| `clear_color` | Explicit regional color clears |
+| `clear_depth` | Explicit regional depth clears |
+| `write_color` | Pipelines with a nonzero color write mask |
+| `write_depth` | Pipelines that write depth |
+| `read_depth` | Pipelines with a depth comparison other than `Always` |
+| `write_resources` | Buffer and texture updates; initial creation remains allowed without it |
+| `import_images` | The trusted host may import an authenticated immutable image into this group |
+| `initialize_depth` | Insert a depth-one clear at the start of each recorded view, within its root rectangle |
+
+`initialize_depth` requires `clear_depth`. All four depth fields require a depth
+attachment. Inconsistent permissions return `NC_E_INVALID_ARG` at construction.
+Clear and draw-write permissions are independent: allowing a clear does not allow
+a pipeline to write that attachment, or conversely.
+
+A UI compositor normally enables color writes, resource updates and image imports,
+leaving depth tests, depth writes, depth clears and initialization off:
+
+```rust
+let permissions = RenderClientPermissions {
+    write_color: true,
+    write_resources: true,
+    import_images: true,
+    ..RenderClientPermissions::none()
+};
 ```
 
-The UI/GFX surface integration command runs in the [UI workspace](https://github.com/NeoCogi/neocogi-ui/tree/master/tests/platform). The surface test checks asymmetric source orientation, old snapshot pixels after
-later frames, independent compositor atlas identity, native allocation failure,
-suspended/resized output, surface release, and final device retirement. WebGL
-compilation is checked separately; compilation does not establish browser runtime
-coverage.
+Enable `clear_color` as well if that compositor needs regional clears. These
+permissions work for either target kind. A 3D widget can use a separate group on
+the same framebuffer with depth enabled. A following UI overlay then leaves the
+widget's depth values intact. Permissions allow operations; pipeline settings
+still determine which operations a particular draw uses.
 
-An embedded preview leaf declares keyboard bits `focus | Tab stop | embedded
-scope` (`1 | 2 | 512`). While focused, ordinary Tab and menu/window navigation
-keys reach the leaf instead of the outer manager. Ctrl+Tab, with optional Shift,
-leaves the scope through the editor's normal focus traversal. Outer menus and
-modal eligibility still take priority. `WidgetProperties` uses the pre-release v1 baseline;
-hosts and UI plugins must be rebuilt together.
+The Rust `Default` permission set supports framebuffer drawing, resource updates
+and initial regional depth clearing, with imports disabled. Image clients must
+choose color-only permissions explicitly. `none()` disables all optional operations.
 
-The shared application host supplies `AppState::after_update` after all editor
-event callbacks return and before rendering. Preview compilation, resource
-installation, input delivery, and offscreen rendering belong at that boundary.
-`AppState::text_input_area` selects the single native IME placement after both
-UIs have updated; an embedded host translates preview coordinates into its
-pane's committed screen rectangle. Neither operation belongs inside painting.
+## Independent image lifetime
 
-WGPU GPU checks require a native adapter (software Vulkan is sufficient) and a
-working SDL native display for the surface test:
+Image sizes are physical pixels. Negative or oversized dimensions reject; a zero
+component suspends rendering. Resize changes the next requested extent without
+modifying completed images. Rendering requires an exact positive size and opaque
+frame clear color. The initial whole-image clear is a host operation; a group's
+regional-clear permission does not control it.
 
-```sh
-cargo test -p neocogi-render-gpu --features wgpu,test-support --lib backends::wgpu:: -- --include-ignored --test-threads=1
-cargo test -p neocogi-platform-plugin --lib --no-default-features --features wgpu -- --include-ignored --test-threads=1
-```
+`completed_image()` returns `NC_E_NOT_FOUND` before the first successful frame.
+After success it returns an ordinary immutable `ITexture`, with top-left UVs and
+nearest filtering. Retained outputs remain unchanged after later frames, resize
+or surface release. Failed rendering preserves the previous completed image.
+Sampling an output requires a same-device import into a group with `import_images`
+enabled; importing grants no permission to render back into that immutable image.
 
-The WGPU test reads actual rendered pixels, verifies top-left source orientation
-and retained-output immutability across different-size frames and allocation
-failure, then submits an ordinary native frame. Unsupported SDL dummy/offscreen
-video drivers return a construction diagnostic instead of reaching SDL's
-panicking raw-window-handle adapter.
+Image rendering never acquires a native swapchain image, presents or clears the
+window backbuffer. Every backend allocates a fresh output per completed frame.
+Glow/WebGL use framebuffer-backed RGBA8 textures. WGPU uses color-only RGBA8
+attachments and the generic executor, completing error scopes before publication.
+Window passes retain their own format and depth attachment.
 
-Vulkan checks exercise actual readback and recovery with a native display:
-
-```sh
-VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation cargo test -p neocogi-render-gpu --features vulkan --lib backends::vulkan:: -- --include-ignored --test-threads=1
-cargo test -p neocogi-platform-plugin --lib --no-default-features --features vulkan -- --include-ignored --test-threads=1
-```
-
-The Khronos validation layer is optional and must be installed to enable it.
-The tests cover sampled-image orientation, immutable retained outputs, changed
-output extents, rejected allocation, pre-submission abandonment, and subsequent
-ordinary window rendering. All three native backends now expose surfaces;
-WebGL execution is validated separately from native Glow.
-
-Appearance publication retains the immutable `IAssetBundle::image()` identity.
-Each GFX session therefore keeps its own atlas allocation through color,
-metric, tint, and slicing edits. A resource rebuild supplies a new image and causes
-one upload per affected session. The surface regression counts actual source reads
-through repeated preparation, rendering, failed frames, and resizing.
-
-The demo host polls input even when the drawable size is zero. Its native loop waits
-16 milliseconds between suspended iterations because this path does not present a
-frame and therefore receives no swapchain pacing. Resize and close requests are
-checked on the next iteration. Browser hosts use animation callbacks for both
-active and suspended iterations. `NEOCOGI_DEMO_FRAMES` counts only successfully
-rendered frames; suspension does not consume the limit.
-
-Foreign UI painting and GFX compositor intake have independent frame budgets: at
-most 65,536 calls, 64 MiB of input bytes, and 16 Mi units of primitive work. Calls
-that clip away still count. Checks precede retained copies and text/vertex scans;
-polygon recording accepts at most 4,096 points and charges the square of its point
-count to bound ear-clipping work. These budgets reset with the frame, not with
-individual widget paint scopes. Exceeding a limit returns `NC_E_OUT_OF_RANGE`.
-Final clipped vertex/batch limits remain separate.
-
-Within an active frame, GFX draw errors preserve complete vertex/batch coverage
-and keep that frame active. A caller can continue recording or submit earlier
-completed work, subject to the remaining frame budget, or call `cancel()`. Multi-primitive draws
-can retain complete earlier primitives if a later primitive fails; this does
-not promise whole-operation rollback. Attempted calls retain their budget charges.
-`begin()` returns `NC_E_BUSY` until the active frame ends through `submit()` or
-`cancel()`. Both ending operations release retained resources; the next valid
-`begin()` resets frame contents and budget while reusing buffer capacity.
-
-For a texture quad, CPU vertex and batch capacity are reserved before either
-recorded length changes. Failure returns `NC_E_OUT_OF_MEMORY`, appends neither
-the quad nor its batch, and releases the temporary texture reference. A successful
-capacity increase can survive the other reservation's failure. The texture already
-exists; these reservations do not allocate GPU storage. Ordinary UI replay cancels
-on every draw or submission error and propagates the original status.
-
-Solid replay stages at most 256 triangles on the UI stack and converts one
-triangle at a time in GFX, replacing full-range retained conversion buffers.
-These intake checks cover the COM drawing boundaries; internal manager chrome
-recording still uses its existing infallible helper API.
-
+Vulkan uses a color-only RGBA8 render pass, framebuffer, command pool, command
+buffer and completion fence with the same generic executor as window work.
+Completed pixels transition to shader-readable layout. Publication currently
+waits on the CPU; native acquisition/presentation semaphores do not participate.
+Submitted owners are installed before submission and retained if submission or
+waiting leaves completion uncertain. Abandoning an unsubmitted frame is recoverable.
 
 ## Native image ownership
 
-Ordinary uploads return owned initialized native images. Private output creation
-returns a single-use destination consumed by its frame; only successful finish
-publishes an immutable image. There are no resident keys, numeric collision rules,
-renderer-global image entries or explicit destruction calls. Failed creation
-publishes nothing and permits a fresh corrected attempt.
+Uploads return owned initialized images. Output creation returns a single-use
+destination consumed by its frame; only successful finish publishes an immutable
+image. Failure publishes nothing and permits a fresh attempt. There are no
+caller-selected native image keys or explicit destruction calls.
 
 GL/Vulkan output aggregates own their framebuffer and exact image. In-flight or
-uncertain work retains that aggregate even for a host clear with no UI blocks.
-Final native backing release transfers an owned retirement packet to the existing
-driver; the framebuffer packet retains the raw image until attachment destruction.
-Sampled images and per-import receipts have their own actual owners. A retained
-completed image therefore survives framebuffer retirement and later surface work
-without retaining the renderer facade. See [GPU rendering](GPU_RENDERING.md) for
-compatible physical cores, completion, maintenance and disconnected-send cleanup.
+uncertain work retains that aggregate even for a frame containing only the host's
+clear. Final release transfers an owned retirement packet to the driver; its
+framebuffer retains its image until attachment destruction. Sampled images and
+per-import accounting have their own owners. A retained completed image survives
+later surface work without retaining the renderer facade. See
+[GPU rendering](GPU_RENDERING.md) for completion and device lifetime rules.
+
+## Acceptance checks
+
+Platform acceptance exercises generated COM calls, several groups sharing each
+target kind, regional clears, target rejection, immutable outputs and surface
+release. Glow also reads native pixels in the platform test. Backend suites read
+native image pixels for Glow, WGPU and Vulkan.
+
+```sh
+SDL_VIDEODRIVER=offscreen cargo test --locked -p neocogi-platform-plugin --lib --features test-support -- --include-ignored --test-threads=1
+cargo test --locked -p neocogi-render-gpu --features glow,vulkan,wgpu,test-support --lib backends:: -- --include-ignored --test-threads=1
+```
+
+The combined backend command needs a working display and adapters; software
+Vulkan is sufficient. Run platform acceptance separately with
+`--no-default-features --features vulkan,test-support` or `wgpu,test-support` for
+those providers. SDL dummy/offscreen drivers cannot create WGPU windows. The
+optional Khronos validation layer can be enabled with
+`VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation`. Browser execution is checked
+separately by `scripts/test_browser.py`.

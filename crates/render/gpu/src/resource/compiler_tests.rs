@@ -18,7 +18,13 @@ fn inactive_profile_violations_reject_through_the_resource_factory() {
         .query()
         .unwrap();
     let gpu = new_device(compiler);
-    let controller = gpu.create_client(RenderClientLimits::default()).unwrap();
+    let controller = gpu
+        .create_client(
+            RenderClientLimits::default(),
+            gpu.surface_target(neocogi_render_core::abi::RenderSurfaceKind::Framebuffer).unwrap(),
+            neocogi_render_core::abi::RenderClientPermissions::default(),
+        )
+        .unwrap();
     let factory = controller.resources().unwrap();
     for case in admission::cases() {
         let source = crate::source::Bytes::source(case.source.into_bytes());
@@ -237,7 +243,13 @@ fn fixture(fault: Fault, limit: u64) -> (GpuDevice, ComBox<IRenderClientDomainAb
         .unwrap();
     let root = CompilerProxy::from_value(CompilerProxy { inner, probe: probe.clone() }).query().unwrap();
     let device = new_device(root);
-    let domain = device.create_client(RenderClientLimits { live_bytes: limit, ..Default::default() }).unwrap();
+    let domain = device
+        .create_client(
+            RenderClientLimits { live_bytes: limit, ..Default::default() },
+            device.surface_target(neocogi_render_core::abi::RenderSurfaceKind::Framebuffer).unwrap(),
+            neocogi_render_core::abi::RenderClientPermissions::default(),
+        )
+        .unwrap();
     let factory = domain.resources().unwrap();
     *probe.factory.borrow_mut() = Some(factory.downgrade().unwrap());
     *probe.domain.borrow_mut() = device.inner.factories.borrow().get(&(factory.as_raw().object as usize)).unwrap().domain.clone();

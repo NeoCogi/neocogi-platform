@@ -72,9 +72,9 @@ cannot silently roll version B back to A or rewrite previously captured A draws.
 
 Ordinary immutable `ITexture` images remain separate from exclusive `IGpuTexture`
 resources. The trusted graphics host may import an authenticated ordinary image
-only into its private compositor domain. Client factories reject this bridge,
-and the imported resource exposes no conversion back to `ITexture`, native key,
-or renderer capability. Imported images cannot be updated through the factory.
+into a group created with `import_images` enabled. The restricted resource factory
+alone does not expose imports. The imported resource exposes no conversion back to
+`ITexture`, native key or renderer capability, and cannot be updated through the factory.
 
 At the Rust backend boundary, native images are opaque owned values. Every safe
 `RendererBackend::create_texture(size, pixels)` validates the actual RGBA slice
@@ -96,7 +96,7 @@ ordinary image owns native pixels and physical device/context lifetime without
 retaining the driver facade, event pump, UI runtime, or provenance registry. Each
 import's logical reservation follows that import and its prepared/in-flight use;
 an unrelated long-lived alias does not retain that import's charge.
-`IRenderHost::prepare_ui_texture` completes fallible native preparation before a
+`IRenderHost::prepare_texture` completes fallible native preparation before a
 compositor publishes a candidate asset revision.
 
 ## Portable shader profile, version 1
@@ -182,20 +182,30 @@ abort retires pending storage even without a GPU submission; successful finish
 preserves transferred immutable blocks. Invocation-bound painter and view objects
 cannot regain authority through a later widget's valid public token.
 
-Trusted host assembly may create a private compositor domain. Its factory stays
-inside GFX and shares the ordinary graphics vocabulary. Construction establishes
-UI provenance; public client creation cannot select or report it. UI blocks do
-not initialize or clear depth, and their pipelines cannot test or write depth.
-This permits UI-only surfaces to authenticate compositor work while preserving
-depth between UI overlays and neighboring client draws.
+Application setup creates every resource group through the same
+`IRenderClientFactory::create_client(limits, surface, permissions)` call. The
+surface selects an existing framebuffer view or an independently rendered image.
+Permissions separately control regional color/depth clears, color/depth writes,
+depth comparisons, resource updates, image imports and initial depth clearing.
+Several groups can share a target while retaining separate resources and quotas.
+See [drawing targets and resource groups](RENDER_SURFACES.md) for the fields,
+target authentication and errors. There is no UI role test or alternate UI constructor.
+
+A UI compositor normally enables color writes, resource updates and image imports,
+and disables all depth operations, including initial depth clearing. Its pipeline
+uses `Always` comparison and disables depth writes. A separate 3D group on the same
+framebuffer can enable depth. This preserves depth when a UI overlay follows it.
 
 Hosts obtain a separate `IRenderHost` allocation through
 `IPlatformWindow::graphics_host()`. Retaining it keeps the graphics device alive
 without retaining the window COM object or its input registrations. QueryInterface
-cannot recover the window, renderer or factories from it. Hosts install it through
-`UiRuntime::set_render_host`. GFX prepares its private UI domain, pipeline and atlas
-before the runtime publishes the matching client recording broker. A failed binding
-preserves the previous complete assembly. The runtime owns one recording frame around the
+cannot recover the window, window renderer, input or ordinary image-upload factory
+from it. It does expose the resource-group and surface factories for trusted
+graphics assembly; creating an image surface grants its separate image renderer,
+never window presentation. The application supplies the chosen target when binding
+its compositor. GFX prepares its color-only resource group, pipeline and atlas
+before the runtime publishes the matching recording broker. A failed binding
+preserves the previous complete assembly. A UI runtime owns one recording frame around the
 entire paint traversal. Widgets receive only `IPainter::begin_render_view` and
 their restricted resource factory. Begin reserves the contribution's display-list
 position immediately. Finish seals it; the runtime transfers the block at that
@@ -234,12 +244,12 @@ GFX owns the UI shader, packed vertex layout and geometry expansion. It records
 UI triangles and ordinary immutable images through the same generic command
 vocabulary as clients. Shared triangle-aligned vertex buffers span UI operations;
 client contributions seal the preceding UI block and retain their original painter
-positions. The private UI domain permits neither depth writes nor depth clears, so
-the following UI overlay cannot disturb a client's depth state. Offscreen surfaces
-accept only blocks authenticated as private UI work, and recheck domain admission
-after every foreign preparation call before allocating or clearing an output.
-The renderer authenticates them before native frame acquisition and rechecks all
-domain gates after the final foreign stream/image callback.
+positions. Its chosen permissions disable depth tests, writes and clears, so the
+following UI overlay cannot disturb a client's depth state. Image surfaces accept
+blocks bound to that exact image target, regardless of the group's purpose.
+Renderers authenticate blocks before native frame acquisition and recheck group
+closure and selected targets after the final foreign stream/image callback,
+before allocating or clearing an output.
 
 Normalized graphics positions use positive Y upward and depth in `[0,1]`.
 Sampled texture row zero and fragment-position Y use the top-left convention.

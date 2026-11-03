@@ -1,4 +1,4 @@
-//! Depth-free private UI output shares the common executor and owns its submission lifetime.
+//! Color-only image output shares the common executor and owns its submission lifetime.
 use super::*;
 
 /// Only completed command storage may be reused; uncertainty is terminal until native teardown.
@@ -16,7 +16,7 @@ enum Submission {
 pub(super) struct Offscreen {
     /// Cache-free native device ownership outlives all commands and attachment handles.
     core: Rc<generic::Core>,
-    /// RGBA8 attachment contract is compatible with generic private UI pipelines.
+    /// RGBA8 attachment contract is compatible with generic color-only pipelines.
     pub(super) render_pass: vk::RenderPass,
     /// Resettable command storage is independent of all presentation frame slots.
     command_pool: vk::CommandPool,

@@ -174,16 +174,22 @@ fn independent_texture_frames_preserve_pixels_and_native_surface_configuration()
             .query()
             .unwrap(),
     );
-    let domain = gpu.create_ui_client(Default::default()).unwrap();
+    let domain = gpu
+        .create_client(
+            Default::default(),
+            gpu.surface_target(neocogi_render_core::abi::RenderSurfaceKind::Framebuffer).unwrap(),
+            neocogi_render_core::abi::RenderClientPermissions {
+                clear_color: true,
+                write_color: true,
+                write_resources: true,
+                import_images: true,
+                ..neocogi_render_core::abi::RenderClientPermissions::none()
+            },
+        )
+        .unwrap();
     let resources = domain.resources().unwrap();
     let size = crate::abi::Size { width: 2, height: 2 };
-    let owner = sampled::block(
-        &gpu,
-        &resources,
-        crate::abi::Rect { x: 0, y: 0, width: 2, height: 2 },
-        size,
-        &source,
-    );
+    let owner = sampled::block(&gpu, &resources, crate::abi::Rect { x: 0, y: 0, width: 2, height: 2 }, size, &source);
     let prepared = renderer.prepare_block(&gpu.block_snapshot(owner.as_com_ref()).unwrap(), true).unwrap();
     let output = renderer.create_render_texture(Size { width: 2, height: 2 }).unwrap();
     let info = FrameInfo::try_new(Dimensioni::new(2, 2), color(0, 0, 0, 255)).unwrap();
@@ -236,14 +242,22 @@ fn independent_texture_frames_preserve_pixels_and_native_surface_configuration()
         let owner = sampled::load_block(&gpu, &resources, &case);
         let prepared = renderer.prepare_block(&gpu.block_snapshot(owner.as_com_ref()).unwrap(), true).unwrap();
         let output = renderer.create_render_texture(Size { width: 8, height: 8 }).unwrap();
-        let mut frame = renderer.texture_frame(
-            FrameInfo::try_new(Dimensioni::new(8, 8), color(0, 0, 0, 255)).unwrap(), output).unwrap();
+        let mut frame = renderer
+            .texture_frame(FrameInfo::try_new(Dimensioni::new(8, 8), color(0, 0, 0, 255)).unwrap(), output)
+            .unwrap();
         frame.execute_block(&prepared);
         let image = frame.finish().unwrap().unwrap();
         let actual = pixels(&renderer, &image);
-        let expected: [u8;4] = if case.outside { [0,0,0,0] } else { [191,63,127,255] };
-        assert!(actual[(4*8+4)*4..(4*8+4)*4+4].iter().zip(expected)
-            .all(|(&a,b)| (i32::from(a)-i32::from(b)).abs()<=1), "{}: {:?}", case.name,actual);
+        let expected: [u8; 4] = if case.outside { [0, 0, 0, 0] } else { [191, 63, 127, 255] };
+        assert!(
+            actual[(4 * 8 + 4) * 4..(4 * 8 + 4) * 4 + 4]
+                .iter()
+                .zip(expected)
+                .all(|(&a, b)| (i32::from(a) - i32::from(b)).abs() <= 1),
+            "{}: {:?}",
+            case.name,
+            actual
+        );
     }
     // Defined None contents and later updates are observed through real vertex/index fetches.
     let owner = sampled::zero_storage_block(&gpu, &resources);
@@ -350,7 +364,19 @@ fn reconstruction_failure_rejects_every_native_entry_and_preserves_finalizer_pha
                     .query()
                     .unwrap(),
             );
-            let domain = gpu.create_ui_client(Default::default()).unwrap();
+            let domain = gpu
+                .create_client(
+                    Default::default(),
+                    gpu.surface_target(neocogi_render_core::abi::RenderSurfaceKind::Framebuffer).unwrap(),
+                    neocogi_render_core::abi::RenderClientPermissions {
+                        clear_color: true,
+                        write_color: true,
+                        write_resources: true,
+                        import_images: true,
+                        ..neocogi_render_core::abi::RenderClientPermissions::none()
+                    },
+                )
+                .unwrap();
             let resources = domain.resources().unwrap();
             let root = Rect { x: 0, y: 0, width: 64, height: 64 };
             let owner = sampled::block(&gpu, &resources, root, Size { width: 1, height: 1 }, &[255; 4]);

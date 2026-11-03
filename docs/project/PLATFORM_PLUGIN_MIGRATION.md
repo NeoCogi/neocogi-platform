@@ -81,6 +81,32 @@ sharing after relocation. The dynamic smoke application then acquires the actual
 platform root, creates a window and exercises GPU/UI/resource behavior through
 COM. A static host test alone does not qualify the dynamic boundary.
 
+## Select surfaces and group permissions
+
+Group creation now takes `create_client(limits, surface, permissions)` for every
+caller. Remove `create_ui_client`, `is_ui` assumptions and role-specific block
+admission. Create the target first with
+`create_surface(RenderSurfaceDesc { kind, size })`. A framebuffer view requires
+zero descriptor size and joins the window's frame; an image uses its requested
+pixel size and exposes its own renderer. Bind a compositor to the actual surface
+it will submit to, including when it renders into an image.
+
+UI compositors should enable `write_color`, `write_resources` and `import_images`,
+while disabling `read_depth`, `write_depth`, `clear_depth` and `initialize_depth`.
+Enable `clear_color` only when regional clears are needed. Keep these settings
+explicit; a group's purpose does not imply permissions. Image surfaces currently
+have color only and reject depth permissions. Three-dimensional window drawing
+can use `RenderClientPermissions::default()` or choose a narrower explicit set.
+
+Rename host calls to `import_texture` and `prepare_texture`. Query the graphics
+host for `IRenderClientFactory` and `IRenderSurfaceFactory` when assembling GFX;
+these factories do not expose the window renderer or OS interfaces. Delegate only
+the resulting restricted resources to drawing code. Mocks must implement the
+same interfaces and enforce selected-target ownership. Rebuild generated
+consumers: all authored declarations remain `#[version(1)]`, with no old-method
+aliases. The [target contract](../contracts/RENDER_SURFACES.md) specifies errors,
+lifetime and independent controls.
+
 ## Build-only output policy and resource ownership
 
 Use neocogi-native-layout-core::output_root(Some(anchor), explicit) in build

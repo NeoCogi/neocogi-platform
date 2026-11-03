@@ -183,7 +183,7 @@ enum RebuildPoint {
 pub struct VulkanRenderer {
     /// Generic caches and completion owners drop before context-owned fences and presentation.
     generic: generic::Executor,
-    /// Private UI-only submission state is destroyed before its logical device.
+    /// Independent image submission state is destroyed before its logical device.
     offscreen: Option<offscreen::Offscreen>,
     /// Native Vulkan state owned exclusively by the backend.
     context: VulkanContext,
@@ -248,9 +248,6 @@ impl VulkanRenderer {
     pub fn prepare_block(&mut self, block: &crate::record::Block<Backend>, offscreen: bool) -> Result<PreparedBlock> {
         self.ensure_usable()?;
         if offscreen {
-            if !block.is_ui() {
-                return Err("offscreen Vulkan surfaces accept private UI commands only".into());
-            }
             if self.offscreen.is_none() {
                 self.offscreen = Some(offscreen::Offscreen::new(&self.context.core)?);
             }
@@ -466,10 +463,8 @@ impl RendererBackend for VulkanRenderer {
         self.ensure_usable().map_err(FrameError::new)?;
         let size = info.dimensions();
         let actual = <Backend as crate::native::NativeResources>::image_size(&output.state.image);
-        if !Rc::ptr_eq(
-            &self.context.core,
-            <Backend as crate::native::NativeResources>::image_core(&output.state.image),
-        ) || (size.width, size.height) != (actual.width, actual.height)
+        if !Rc::ptr_eq(&self.context.core, <Backend as crate::native::NativeResources>::image_core(&output.state.image))
+            || (size.width, size.height) != (actual.width, actual.height)
             || info.clear().a != 255
         {
             return Err(FrameError::new("invalid Vulkan output, extent, or clear"));

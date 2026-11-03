@@ -375,7 +375,11 @@ impl Target {
     /// Establishes one independent client domain before allocating its scene's GPU resources.
     fn new(window: ComPtr<IPlatformWindowAbi>) -> Result<Self, NcStatus> {
         let clients: ComPtr<IRenderClientFactoryAbi> = window.query()?;
-        let domain = clients.create_client(RenderClientLimits::default())?;
+        let surface = window.query::<IRenderSurfaceFactoryAbi>()?.create_surface(RenderSurfaceDesc {
+            kind: RenderSurfaceKind::Framebuffer,
+            size: Size::default(),
+        })?;
+        let domain = clients.create_client(RenderClientLimits::default(), surface.as_com_ref(), RenderClientPermissions::default())?;
         Ok(Self {
             renderer: window.query()?,
             host: window.graphics_host()?,

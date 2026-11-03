@@ -26,10 +26,17 @@ frame preparation already depends on GPU records. The former four backend crates
 and support-layer cleanup path are superseded, with no compatibility reexports.
 
 `neocogi-platform-plugin` owns SDL/DOM windows, event normalization, text
-input, clipboard, native devices and offscreen surfaces. Keeping native owners
+input, clipboard, native devices, framebuffer views and independent image surfaces. Keeping native owners
 together makes construction, destruction and recovery explicit without passing
 raw window/context handles across COM. Generic commands contain application
 geometry and uniforms; clients own mesh, material and camera meaning.
+
+Each resource group selects a real surface and explicit operation permissions at
+creation. There is one group constructor; a UI compositor uses ordinary groups
+with depth operations disabled. Several independently owned groups can draw into
+one surface. Framebuffer views join the window's ordered frame without acquiring
+or presenting another frame; image surfaces expose their own renderer and publish
+immutable color images. See [drawing targets](../contracts/RENDER_SURFACES.md).
 
 Its reusable Rust library is `nc_platform`; `neocogi-platform-plugin-dylib`
 produces the final native `nc_platform` shared library. Backend-specific catalog

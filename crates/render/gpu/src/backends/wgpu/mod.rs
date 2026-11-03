@@ -411,7 +411,7 @@ impl WgpuRenderer {
         self.generic.prepare(block, format, !offscreen)
     }
 
-    /// Trusted private UI uploads complete their native error transaction before asset publication.
+    /// Imported images complete their native error transaction before resource publication.
     pub fn prepare_texture(&mut self, texture: std::rc::Rc<crate::resource::TextureVersion<Backend>>) -> Result<(), String> {
         self.generic.prepare_texture(texture)
     }

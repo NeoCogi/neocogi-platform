@@ -158,7 +158,13 @@ fn healthy_cancel_is_idempotent_and_finish_survives_facade_drop() {
 }
 /// Retains the host controller while clients share a restricted factory.
 fn client(device: &GpuDevice, limits: RenderClientLimits) -> (ComBox<IRenderClientDomainAbi>, ComPtr<IRenderResourcesAbi>) {
-    let controller = device.create_client(limits).unwrap();
+    let controller = device
+        .create_client(
+            limits,
+            device.surface_target(neocogi_render_core::abi::RenderSurfaceKind::Framebuffer).unwrap(),
+            neocogi_render_core::abi::RenderClientPermissions::default(),
+        )
+        .unwrap();
     let factory = controller.resources().unwrap();
     (controller, factory)
 }
@@ -196,8 +202,26 @@ fn host_ui_domains_seal_without_depth_initialization_and_cannot_clear_depth() {
             .query()
             .unwrap(),
     );
-    let ui = device.create_ui_client(RenderClientLimits::default()).unwrap();
-    let client = device.create_client(RenderClientLimits::default()).unwrap();
+    let ui = device
+        .create_client(
+            RenderClientLimits::default(),
+            device.surface_target(neocogi_render_core::abi::RenderSurfaceKind::Framebuffer).unwrap(),
+            neocogi_render_core::abi::RenderClientPermissions {
+                clear_color: true,
+                write_color: true,
+                write_resources: true,
+                import_images: true,
+                ..neocogi_render_core::abi::RenderClientPermissions::none()
+            },
+        )
+        .unwrap();
+    let client = device
+        .create_client(
+            RenderClientLimits::default(),
+            device.surface_target(neocogi_render_core::abi::RenderSurfaceKind::Framebuffer).unwrap(),
+            neocogi_render_core::abi::RenderClientPermissions::default(),
+        )
+        .unwrap();
     for (controller, is_ui) in [(&ui, true), (&client, false)] {
         let resources = controller.resources().unwrap();
         assert!(resources.query::<IRenderHostAbi>().is_err());
@@ -206,7 +230,7 @@ fn host_ui_domains_seal_without_depth_initialization_and_cannot_clear_depth() {
         session.view().unwrap().finish().unwrap();
         let owner = session.take_block().unwrap();
         let block = device.block_snapshot(owner.as_com_ref()).unwrap();
-        assert_eq!(block.is_ui(), is_ui);
+        assert_eq!(block.domain.permissions.initialize_depth, !is_ui);
         if is_ui {
             assert!(block.commands.is_empty());
         } else {
@@ -217,7 +241,7 @@ fn host_ui_domains_seal_without_depth_initialization_and_cannot_clear_depth() {
     let resources = ui.resources().unwrap();
     let mut frame = device.broker().begin_frame().unwrap();
     let mut session = frame.begin_view(root(), resources.as_com_ref()).unwrap();
-    assert_eq!(session.view().unwrap().clear_depth(1.0), Err(NC_E_INVALID_ARG));
+    assert_eq!(session.view().unwrap().clear_depth(1.0), Err(RENDER_E_PERMISSION));
     assert!(session.take_block().is_err());
 }
 
@@ -229,7 +253,19 @@ fn host_ui_pipeline_admission_excludes_depth_state() {
             .query()
             .unwrap(),
     );
-    let controller = device.create_ui_client(RenderClientLimits::default()).unwrap();
+    let controller = device
+        .create_client(
+            RenderClientLimits::default(),
+            device.surface_target(neocogi_render_core::abi::RenderSurfaceKind::Framebuffer).unwrap(),
+            neocogi_render_core::abi::RenderClientPermissions {
+                clear_color: true,
+                write_color: true,
+                write_resources: true,
+                import_images: true,
+                ..neocogi_render_core::abi::RenderClientPermissions::none()
+            },
+        )
+        .unwrap();
     let resources = controller.resources().unwrap();
     let source = crate::source::Bytes::source(PROCEDURAL.as_bytes().to_vec());
     let vs = resources
@@ -248,7 +284,7 @@ fn host_ui_pipeline_admission_excludes_depth_state() {
         let desc = crate::source::PipelineDesc { state, ..Default::default() }.source().unwrap();
         assert!(matches!(
             resources.create_pipeline(desc.as_com_ref(), vs.as_com_ref(), fs.as_com_ref()),
-            Err(NC_E_INVALID_ARG)
+            Err(RENDER_E_PERMISSION)
         ));
     }
     let desc = crate::source::PipelineDesc::default().source().unwrap();

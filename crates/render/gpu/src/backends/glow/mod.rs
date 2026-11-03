@@ -188,7 +188,7 @@ impl GLRenderer {
     pub fn prepare_block(&mut self, block: &crate::record::Block<Backend>, offscreen: bool) -> Result<PreparedBlock, String> {
         self.generic.prepare(block, offscreen)
     }
-    /// Initializes an owned private UI image without acquiring or clearing any target.
+    /// Prepares an owned imported image without acquiring or clearing any target.
     pub fn prepare_texture(&mut self, source: Rc<crate::resource::TextureVersion<Backend>>) -> Result<(), String> {
         self.generic.prepare_texture(source)
     }

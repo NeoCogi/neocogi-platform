@@ -33,7 +33,6 @@ pub struct Sample {
     pub pipelines: usize,
 }
 
-
 /// Factory-created platform window paired with non-owning acceptance observations.
 pub struct NativeWindow {
     /// Actual production window capability; dropping it ends input ownership normally.
@@ -54,14 +53,24 @@ pub struct NativeProbe {
 /// Constructs the production selected backend with an explicitly supplied shader compiler.
 pub fn window(compiler: ComPtr<neocogi_shader_core::abi::ShaderCompilerAbi>, title: &str, size: Size) -> Result<NativeWindow, NcStatus> {
     let native = PlatformObject::new(compiler).window(title, size)?;
-    let probe = NativeProbe { device: Rc::downgrade(&native.device), core: Rc::downgrade(&native.device.access()?.state().gpu.core()) };
-    Ok(NativeWindow { window: WindowObject::from_value(native).query()?, probe })
+    let probe = NativeProbe {
+        device: Rc::downgrade(&native.device),
+        core: Rc::downgrade(&native.device.access()?.state().gpu.core()),
+    };
+    Ok(NativeWindow {
+        window: WindowObject::from_value(native).query()?,
+        probe,
+    })
 }
 impl NativeProbe {
     /// Whether public windows, hosts or active renderer calls still retain the device facade.
-    pub fn is_alive(&self) -> bool { self.device.strong_count() != 0 }
+    pub fn is_alive(&self) -> bool {
+        self.device.strong_count() != 0
+    }
     /// Whether immutable native allocations still retain their physical context.
-    pub fn native_alive(&self) -> bool { self.core.strong_count() != 0 }
+    pub fn native_alive(&self) -> bool {
+        self.core.strong_count() != 0
+    }
     /// Captures ordinary owned logical recording access without extending facade/input ownership.
     pub fn logical(&self) -> Result<neocogi_render_gpu::GpuDevice<NativeBackend>, NcStatus> {
         Ok(self.device.upgrade().ok_or(RENDER_E_EXPIRED)?.logical.clone())
@@ -73,19 +82,25 @@ impl NativeProbe {
     /// Returns a copy of completed native GL pixels; acceptance capture is compiled out by default.
     #[cfg(feature = "glow")]
     pub fn pixels(&self) -> Result<Vec<u8>, NcStatus> {
-        let device=self.device.upgrade().ok_or(RENDER_E_EXPIRED)?;
-        let access=device.access()?;
+        let device = self.device.upgrade().ok_or(RENDER_E_EXPIRED)?;
+        let access = device.access()?;
         Ok(access.state.as_ref().expect("admitted access owns native state").gpu.last_pixels().to_vec())
+    }
+    /// Observe canonical surface identity without retaining the public surface or its target metadata.
+    pub fn contains_surface(&self, key: usize) -> bool {
+        self.device.upgrade().is_some_and(|device| device.surfaces.borrow().contains_key(&key))
     }
     /// Waits for already issued native commands before an exact retirement-quota assertion.
     #[cfg(feature = "glow")]
     pub fn finish(&self) -> Result<(), NcStatus> {
         use glow::HasContext;
-        let device=self.device.upgrade().ok_or(RENDER_E_EXPIRED)?;
-        let core=device.access()?.state().gpu.core();
-        core.current().map_err(|message|device.failure(message))?;
+        let device = self.device.upgrade().ok_or(RENDER_E_EXPIRED)?;
+        let core = device.access()?.state().gpu.core();
+        core.current().map_err(|message| device.failure(message))?;
         // SAFETY: The owned core selected its live context; no foreign handle or memory is accepted.
-        unsafe { core.dispatch().finish(); }
+        unsafe {
+            core.dispatch().finish();
+        }
         Ok(())
     }
     /// Measures preparation/execution of owned authenticated snapshots without presentation/readback.

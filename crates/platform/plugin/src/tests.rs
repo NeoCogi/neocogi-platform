@@ -5,6 +5,7 @@ use neocogi_com::INcStringComPtrExt;
 use neocogi_com::ComBox;
 use neocogi_render_gpu::source::{Bytes, PipelineDesc};
 
+mod surface_targets;
 #[cfg(feature = "glow")]
 mod view_geometry;
 mod window_lifetime;
@@ -128,6 +129,23 @@ fn graphics(resources: &ComPtr<IRenderResourcesAbi>, broker: &ComPtr<IRenderView
     frame.finish().unwrap();
     block
 }
+/// Construct an explicit framebuffer-view target and independently controlled group through COM.
+fn framebuffer_group(
+    factory: &ComPtr<IRenderClientFactoryAbi>,
+    limits: RenderClientLimits,
+    permissions: RenderClientPermissions,
+) -> neocogi_com::ComBox<IRenderClientDomainAbi> {
+    let surface = factory
+        .query::<IRenderSurfaceFactoryAbi>()
+        .unwrap()
+        .create_surface(RenderSurfaceDesc {
+            kind: RenderSurfaceKind::Framebuffer,
+            size: Size::default(),
+        })
+        .unwrap();
+    factory.create_client(limits, surface.as_com_ref(), permissions).unwrap()
+}
+
 /// Real native resources survive reentry, owner rejection, retries and public-window release with exact cleanup.
 #[test]
 #[ignore = "requires a native SDL display; use SDL_VIDEODRIVER=offscreen for Glow or a native display for Vulkan/WGPU"]
@@ -148,10 +166,20 @@ fn native_order_ownership_reentry_and_final_release() {
         assert!(graphics.query::<IPlatformWindowAbi>().is_err());
         assert!(graphics.query::<IRendererAbi>().is_err());
         assert!(graphics.query::<ITextureFactoryAbi>().is_err());
-        assert!(graphics.query::<IRenderClientFactoryAbi>().is_err());
-        assert!(graphics.query::<IRenderSurfaceFactoryAbi>().is_err());
+        assert!(graphics.query::<IRenderClientFactoryAbi>().is_ok());
+        assert!(graphics.query::<IRenderSurfaceFactoryAbi>().is_ok());
         assert!(graphics.query::<ITextClipboardAbi>().is_err());
-        let private_ui = graphics.create_ui_client(RenderClientLimits::default()).unwrap();
+        let private_ui = framebuffer_group(
+            &graphics.query().unwrap(),
+            RenderClientLimits::default(),
+            RenderClientPermissions {
+                clear_color: true,
+                write_color: true,
+                write_resources: true,
+                import_images: true,
+                ..RenderClientPermissions::none()
+            },
+        );
         assert!(private_ui.resources().unwrap().query::<IRenderHostAbi>().is_err());
         assert!(unknown.query::<ITextClipboardAbi>().is_err());
         let clipboard = window.clipboard().unwrap();
@@ -166,7 +194,7 @@ fn native_order_ownership_reentry_and_final_release() {
     let renderer: ComPtr<IRendererAbi> = unknown.query().unwrap();
     let factory: ComPtr<ITextureFactoryAbi> = unknown.query().unwrap();
     let clients: ComPtr<IRenderClientFactoryAbi> = unknown.query().unwrap();
-    let controller = clients.create_client(RenderClientLimits::default()).unwrap();
+    let controller = framebuffer_group(&clients, RenderClientLimits::default(), RenderClientPermissions::default());
     let resources = controller.resources().unwrap();
     let driver = renderer.driver_identity().unwrap();
     assert_eq!(identity(&driver).unwrap(), identity(&factory.driver_identity().unwrap()).unwrap());
@@ -234,7 +262,7 @@ fn native_order_ownership_reentry_and_final_release() {
     let foreign_device = Rc::downgrade(&foreign.device);
     let foreign = WindowObject::from_value(foreign);
     let foreign_clients: ComPtr<IRenderClientFactoryAbi> = foreign.query().unwrap();
-    let foreign_controller = foreign_clients.create_client(RenderClientLimits::default()).unwrap();
+    let foreign_controller = framebuffer_group(&foreign_clients, RenderClientLimits::default(), RenderClientPermissions::default());
     let foreign_resources = foreign_controller.resources().unwrap();
     let foreign_broker = foreign
         .query::<IPlatformWindowAbi>()
@@ -254,9 +282,16 @@ fn native_order_ownership_reentry_and_final_release() {
         )
         .unwrap();
     let graphics_host = unknown.query::<IPlatformWindowAbi>().unwrap().graphics_host().unwrap();
-    let ui_domain = graphics_host.create_ui_client(Default::default()).unwrap();
+    let ui_domain = framebuffer_group(
+        &graphics_host.query().unwrap(),
+        RenderClientLimits::default(),
+        RenderClientPermissions {
+            import_images: true,
+            ..RenderClientPermissions::none()
+        },
+    );
     assert!(matches!(
-        graphics_host.import_ui_texture(ui_domain.resources().unwrap().as_com_ref(), foreign_texture.as_com_ref()),
+        graphics_host.import_texture(ui_domain.resources().unwrap().as_com_ref(), foreign_texture.as_com_ref()),
         Err(RENDER_E_OWNER)
     ));
     drop((ui_domain, graphics_host, foreign_texture));

@@ -83,7 +83,13 @@ fn prepared_blocks_preserve_order_and_release_resources_on_clear() {
             .query()
             .unwrap(),
     );
-    let domain = device.create_client(Default::default()).unwrap();
+    let domain = device
+        .create_client(
+            Default::default(),
+            device.surface_target(neocogi_render_core::abi::RenderSurfaceKind::Framebuffer).unwrap(),
+            neocogi_render_core::abi::RenderClientPermissions::default(),
+        )
+        .unwrap();
     let resources = domain.resources().unwrap();
     let first = block(&device, &resources, ROOT);
     let observer = first.downgrade();
@@ -139,8 +145,20 @@ fn short_foreign_and_outside_blocks_clear_the_entire_preparation() {
             .query()
             .unwrap(),
     );
-    let domain = device.create_client(Default::default()).unwrap();
-    let alien = other.create_client(Default::default()).unwrap();
+    let domain = device
+        .create_client(
+            Default::default(),
+            device.surface_target(neocogi_render_core::abi::RenderSurfaceKind::Framebuffer).unwrap(),
+            neocogi_render_core::abi::RenderClientPermissions::default(),
+        )
+        .unwrap();
+    let alien = other
+        .create_client(
+            Default::default(),
+            other.surface_target(neocogi_render_core::abi::RenderSurfaceKind::Framebuffer).unwrap(),
+            neocogi_render_core::abi::RenderClientPermissions::default(),
+        )
+        .unwrap();
     let resources = domain.resources().unwrap();
     let mut frame = PreparedFrame::default();
     let (short, _) = source(vec![block(&device, &resources, ROOT)], None);
@@ -165,8 +183,20 @@ fn all_domains_are_rechecked_after_the_last_foreign_call() {
             .query()
             .unwrap(),
     );
-    let first = device.create_client(Default::default()).unwrap();
-    let second = device.create_client(Default::default()).unwrap();
+    let first = device
+        .create_client(
+            Default::default(),
+            device.surface_target(neocogi_render_core::abi::RenderSurfaceKind::Framebuffer).unwrap(),
+            neocogi_render_core::abi::RenderClientPermissions::default(),
+        )
+        .unwrap();
+    let second = device
+        .create_client(
+            Default::default(),
+            device.surface_target(neocogi_render_core::abi::RenderSurfaceKind::Framebuffer).unwrap(),
+            neocogi_render_core::abi::RenderClientPermissions::default(),
+        )
+        .unwrap();
     let a = block(&device, &first.resources().unwrap(), ROOT);
     let b = block(&device, &second.resources().unwrap(), ROOT);
     let (stream, calls) = source(vec![a, b], Some(first));

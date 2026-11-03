@@ -357,6 +357,28 @@ struct RenderClientLimits {
 }
 
 #[version(1)]
+/// Immutable permissions selected by application setup for one resource group.
+/// These describe operations, not a widget/compositor/application role.
+struct RenderClientPermissions {
+    /// Permit explicit regional color clears; this does not clear the whole framebuffer on creation.
+    clear_color: bool,
+    /// Permit explicit regional depth clears when the selected surface has depth.
+    clear_depth: bool,
+    /// Permit draw pipelines with nonzero color write masks.
+    write_color: bool,
+    /// Permit draw pipelines that write depth when the selected surface has depth.
+    write_depth: bool,
+    /// Permit depth comparisons other than Always when the selected surface has depth.
+    read_depth: bool,
+    /// Permit update_buffer and update_texture; initialized creation remains allowed without this permission.
+    write_resources: bool,
+    /// Permit the host to import an authenticated existing image into this group's resource factory.
+    import_images: bool,
+    /// Clear this group's recorded view rectangle to depth one before its first command; requires clear_depth.
+    initialize_depth: bool,
+}
+
+#[version(1)]
 /// Exclusive logical byte buffer; renderer observers never promote ownership.
 interface IGpuBuffer: IRenderDriverBound {}
 
@@ -502,10 +524,16 @@ interface IRenderClientDomain {
 }
 
 #[version(1)]
-/// Trusted renderer capability for allocating separately controlled client domains.
+/// Application-owned factory for independently limited resource groups bound to an authenticated drawing target.
 interface IRenderClientFactory: IRenderDriverBound {
-    /// Create independent domain limits and a host controller.
-    fn create_client(&self, limits: RenderClientLimits) -> Result<ComBox<IRenderClientDomain>>;
+    /// Bind a new group to this device's surface with explicit drawing, update and import permissions.
+    /// Only application setup receives this factory; clients receive the resulting restricted resources.
+    fn create_client(
+        &self,
+        limits: RenderClientLimits,
+        surface: &IRenderSurface,
+        permissions: RenderClientPermissions,
+    ) -> Result<ComBox<IRenderClientDomain>>;
 }
 
 #[version(1)]
@@ -514,15 +542,12 @@ interface IRenderHost: IRenderDriverBound {
     /// Observe completed work and reclaim retired storage before quota-sensitive creation.
     /// No target is acquired, cleared or presented; incomplete work remains owned and charged.
     fn maintain(&self) -> Result<()>;
-    /// Privately sample an authenticated immutable UI image in this device's compositor domain.
-    /// Client factories reject this bridge; the result exposes no ITexture conversion or native key.
-    fn import_ui_texture(&self, resources: &IRenderResources, image: &ITexture) -> Result<ComBox<IGpuTexture>>;
-    /// Complete fallible native image preparation before publishing a new UI asset revision.
+    /// Import an authenticated immutable image when this group's creation permissions allow it.
+    /// Same-device and exact-group ownership remain mandatory; no native handle or image editing is exposed.
+    fn import_texture(&self, resources: &IRenderResources, image: &ITexture) -> Result<ComBox<IGpuTexture>>;
+    /// Complete fallible preparation of a permitted imported image before the caller publishes its resource revision.
     /// This never acquires a target or invokes a client during native execution.
-    fn prepare_ui_texture(&self, resources: &IRenderResources, texture: &IGpuTexture) -> Result<()>;
-    /// Creates private GFX provenance on this device. Keep the resulting controller/factory
-    /// inside the compositor; public client construction cannot obtain this authority.
-    fn create_ui_client(&self, limits: RenderClientLimits) -> Result<ComBox<IRenderClientDomain>>;
+    fn prepare_texture(&self, resources: &IRenderResources, texture: &IGpuTexture) -> Result<()>;
     /// Creates a narrow CPU recording broker for installation into one UI runtime.
     fn recording_broker(&self) -> Result<ComPtr<IRenderViewBroker>>;
 }

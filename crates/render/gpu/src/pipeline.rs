@@ -18,8 +18,12 @@ pub(crate) fn create<B: crate::native::NativeResources>(
     domain.open()?;
     let info = source.info()?;
     validate_state(info)?;
-    if domain.kind == resource::DomainKind::Ui && (info.depth_write || info.depth_compare != GpuCompare::Always) {
-        return Err(NC_E_INVALID_ARG);
+    let permissions = domain.permissions;
+    if (info.color_write != 0 && !permissions.write_color)
+        || (info.depth_write && !permissions.write_depth)
+        || (info.depth_compare != GpuCompare::Always && !permissions.read_depth)
+    {
+        return Err(RENDER_E_PERMISSION);
     }
     let owner = domain.account.resource()?;
     let byte_len = std::mem::size_of::<GpuPipelineInfo>()

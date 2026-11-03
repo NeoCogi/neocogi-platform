@@ -30,7 +30,11 @@ fn main() -> Result<(), NcStatus> {
     let window = platform.create_window(NcCopyFromBufferOffset::new(0, b"NeoCogi Platform triangle"), size)?;
     let renderer: ComPtr<IRendererAbi> = window.query()?;
     let clients: ComPtr<IRenderClientFactoryAbi> = window.query()?;
-    let domain = clients.create_client(RenderClientLimits::default())?;
+    let surface = window.query::<IRenderSurfaceFactoryAbi>()?.create_surface(RenderSurfaceDesc {
+        kind: RenderSurfaceKind::Framebuffer,
+        size: Size::default(),
+    })?;
+    let domain = clients.create_client(RenderClientLimits::default(), surface.as_com_ref(), RenderClientPermissions::default())?;
     let resources = domain.resources()?;
     let host = window.graphics_host()?;
     let broker = host.recording_broker()?;

@@ -109,7 +109,19 @@ fn canonical_signed_derivatives_match_window_and_texture_pixels() {
             .query()
             .unwrap(),
     );
-    let domain = gpu.create_ui_client(Default::default()).unwrap();
+    let domain = gpu
+        .create_client(
+            Default::default(),
+            gpu.surface_target(neocogi_render_core::abi::RenderSurfaceKind::Framebuffer).unwrap(),
+            neocogi_render_core::abi::RenderClientPermissions {
+                clear_color: true,
+                write_color: true,
+                write_resources: true,
+                import_images: true,
+                ..neocogi_render_core::abi::RenderClientPermissions::none()
+            },
+        )
+        .unwrap();
     let resources = domain.resources().unwrap();
     for case in derivatives::cases() {
         let owner = derivatives::block(&gpu, &resources, &case.source);
@@ -180,7 +192,19 @@ fn ui_draws_clears_and_uploads_survive_application_gl_state() {
             .query()
             .unwrap(),
     );
-    let domain = gpu.create_ui_client(Default::default()).unwrap();
+    let domain = gpu
+        .create_client(
+            Default::default(),
+            gpu.surface_target(neocogi_render_core::abi::RenderSurfaceKind::Framebuffer).unwrap(),
+            neocogi_render_core::abi::RenderClientPermissions {
+                clear_color: true,
+                write_color: true,
+                write_resources: true,
+                import_images: true,
+                ..neocogi_render_core::abi::RenderClientPermissions::none()
+            },
+        )
+        .unwrap();
     let resources = domain.resources().unwrap();
     let root = crate::abi::Rect { x: 1, y: 1, width: 6, height: 6 };
     let block = sampled::block(&gpu, &resources, root, crate::abi::Size { width: 1, height: 1 }, &[255, 0, 0, 255]);
@@ -247,7 +271,13 @@ fn native_completion_owns_resource_and_command_charges() {
                 .query()
                 .unwrap(),
         );
-        let controller = device.create_client(RenderClientLimits::default()).unwrap();
+        let controller = device
+            .create_client(
+                RenderClientLimits::default(),
+                device.surface_target(neocogi_render_core::abi::RenderSurfaceKind::Framebuffer).unwrap(),
+                neocogi_render_core::abi::RenderClientPermissions::default(),
+            )
+            .unwrap();
         let resources = controller.resources().unwrap();
         let source = Bytes::source(
             br#"
@@ -353,7 +383,13 @@ fn dynamic_shader_indices_cannot_escape_uniform_or_private_storage() {
             .query()
             .unwrap(),
     );
-    let controller = gpu.create_client(RenderClientLimits::default()).unwrap();
+    let controller = gpu
+        .create_client(
+            RenderClientLimits::default(),
+            gpu.surface_target(neocogi_render_core::abi::RenderSurfaceKind::Framebuffer).unwrap(),
+            neocogi_render_core::abi::RenderClientPermissions::default(),
+        )
+        .unwrap();
     let resources = controller.resources().unwrap();
     let source = Bytes::source(
         br#"
@@ -444,7 +480,13 @@ fn fragment_identifiers_containing_builtin_names_compile_and_render() {
             .query()
             .unwrap(),
     );
-    let controller = gpu.create_client(RenderClientLimits::default()).unwrap();
+    let controller = gpu
+        .create_client(
+            RenderClientLimits::default(),
+            gpu.surface_target(neocogi_render_core::abi::RenderSurfaceKind::Framebuffer).unwrap(),
+            neocogi_render_core::abi::RenderClientPermissions::default(),
+        )
+        .unwrap();
     let resources = controller.resources().unwrap();
     let source = Bytes::source(
         br#"
@@ -561,7 +603,13 @@ fn independent_logical_devices_keep_distinct_native_resources() {
                 .query()
                 .unwrap(),
         );
-        let domain = gpu.create_client(Default::default()).unwrap();
+        let domain = gpu
+            .create_client(
+                Default::default(),
+                gpu.surface_target(neocogi_render_core::abi::RenderSurfaceKind::Framebuffer).unwrap(),
+                neocogi_render_core::abi::RenderClientPermissions::default(),
+            )
+            .unwrap();
         let resources = domain.resources().unwrap();
         let owner = sampled::block(&gpu, &resources, root, crate::abi::Size { width: 1, height: 1 }, &rgba);
         snapshots.push(gpu.block_snapshot(owner.as_com_ref()).unwrap());
@@ -667,7 +715,13 @@ fn absent_initial_images_are_native_zero_without_a_cpu_zero_payload() {
             .query()
             .unwrap(),
     );
-    let owner = device.create_client(RenderClientLimits::default()).unwrap();
+    let owner = device
+        .create_client(
+            RenderClientLimits::default(),
+            device.surface_target(neocogi_render_core::abi::RenderSurfaceKind::Framebuffer).unwrap(),
+            neocogi_render_core::abi::RenderClientPermissions::default(),
+        )
+        .unwrap();
     let resources = owner.resources().unwrap();
     let block = sampled::block_initial(
         &device,
@@ -726,7 +780,13 @@ fn late_native_owners_preserve_their_context_and_next_driver_reselects_its_own()
             .query()
             .unwrap(),
     );
-    let domain_a = gpu_a.create_client(Default::default()).unwrap();
+    let domain_a = gpu_a
+        .create_client(
+            Default::default(),
+            gpu_a.surface_target(neocogi_render_core::abi::RenderSurfaceKind::Framebuffer).unwrap(),
+            neocogi_render_core::abi::RenderClientPermissions::default(),
+        )
+        .unwrap();
     let resources_a = domain_a.resources().unwrap();
     let root = crate::abi::Rect { x: 0, y: 0, width: 4, height: 4 };
     let size = crate::abi::Size { width: 1, height: 1 };
@@ -750,7 +810,13 @@ fn late_native_owners_preserve_their_context_and_next_driver_reselects_its_own()
             .query()
             .unwrap(),
     );
-    let domain_b = gpu_b.create_client(Default::default()).unwrap();
+    let domain_b = gpu_b
+        .create_client(
+            Default::default(),
+            gpu_b.surface_target(neocogi_render_core::abi::RenderSurfaceKind::Framebuffer).unwrap(),
+            neocogi_render_core::abi::RenderClientPermissions::default(),
+        )
+        .unwrap();
     let resources_b = domain_b.resources().unwrap();
     let block_b = sampled::block(&gpu_b, &resources_b, root, size, &[0, 255, 0, 255]);
     let snapshot_b = gpu_b.block_snapshot(block_b.as_com_ref()).unwrap();
@@ -795,7 +861,19 @@ fn unsubmitted_target_variants_release_the_source_and_all_charges() {
             .query()
             .unwrap(),
     );
-    let domain = gpu.create_ui_client(Default::default()).unwrap();
+    let domain = gpu
+        .create_client(
+            Default::default(),
+            gpu.surface_target(neocogi_render_core::abi::RenderSurfaceKind::Framebuffer).unwrap(),
+            neocogi_render_core::abi::RenderClientPermissions {
+                clear_color: true,
+                write_color: true,
+                write_resources: true,
+                import_images: true,
+                ..neocogi_render_core::abi::RenderClientPermissions::none()
+            },
+        )
+        .unwrap();
     let resources = domain.resources().unwrap();
     let shader = &derivatives::cases()[0].source;
     for _ in 0..8 {
@@ -848,35 +926,64 @@ fn exact_texel_reads_keep_coordinate_bounds_on_both_targets() {
     let gl = Rc::new(unsafe { glow::Context::from_loader_function(|name| video.gl_get_proc_address(name).cast()) });
     let mut renderer = GLRenderer::new(
         // SAFETY: Transfer the unique context with its matching SDL window and loader.
-        unsafe { Core::from_sdl(gl.clone(), window.clone(), context) }.unwrap(), 8, 8).unwrap();
-    let gpu = crate::GpuDevice::new(renderer.core(),
-        nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject).query().unwrap());
-    let domain = gpu.create_ui_client(Default::default()).unwrap();
+        unsafe { Core::from_sdl(gl.clone(), window.clone(), context) }.unwrap(),
+        8,
+        8,
+    )
+    .unwrap();
+    let gpu = crate::GpuDevice::new(
+        renderer.core(),
+        nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
+            .query()
+            .unwrap(),
+    );
+    let domain = gpu
+        .create_client(
+            Default::default(),
+            gpu.surface_target(neocogi_render_core::abi::RenderSurfaceKind::Framebuffer).unwrap(),
+            neocogi_render_core::abi::RenderClientPermissions {
+                clear_color: true,
+                write_color: true,
+                write_resources: true,
+                import_images: true,
+                ..neocogi_render_core::abi::RenderClientPermissions::none()
+            },
+        )
+        .unwrap();
     let resources = domain.resources().unwrap();
     for case in sampled::load_cases() {
         let owner = sampled::load_block(&gpu, &resources, &case);
         let snapshot = gpu.block_snapshot(owner.as_com_ref()).unwrap();
-        for offscreen in [false,true] {
+        for offscreen in [false, true] {
             let prepared = renderer.prepare_block(&snapshot, offscreen).unwrap();
-            let info = FrameInfo::try_new(Dimensioni::new(8,8), color(0,0,0,255)).unwrap();
+            let info = FrameInfo::try_new(Dimensioni::new(8, 8), color(0, 0, 0, 255)).unwrap();
             let mut frame = if offscreen {
-                let output=renderer.create_render_texture(Size{width:8,height:8}).unwrap();
-                renderer.texture_frame(info,output).unwrap()
-            } else { renderer.frame(info).unwrap() };
+                let output = renderer.create_render_texture(Size { width: 8, height: 8 }).unwrap();
+                renderer.texture_frame(info, output).unwrap()
+            } else {
+                renderer.frame(info).unwrap()
+            };
             frame.execute_block(&prepared);
-            let mut actual=[0;4];
+            let mut actual = [0; 4];
             // SAFETY: The owning context/target is current and actual is initialized RGBA storage.
             unsafe {
-                let target=gl.get_parameter_framebuffer(glow::DRAW_FRAMEBUFFER_BINDING);
-                gl.bind_framebuffer(glow::READ_FRAMEBUFFER,target);
-                gl.read_pixels(4,4,1,1,glow::RGBA,glow::UNSIGNED_BYTE,PixelPackData::Slice(Some(&mut actual)));
-                assert_eq!(gl.get_error(),glow::NO_ERROR);
+                let target = gl.get_parameter_framebuffer(glow::DRAW_FRAMEBUFFER_BINDING);
+                gl.bind_framebuffer(glow::READ_FRAMEBUFFER, target);
+                gl.read_pixels(4, 4, 1, 1, glow::RGBA, glow::UNSIGNED_BYTE, PixelPackData::Slice(Some(&mut actual)));
+                assert_eq!(gl.get_error(), glow::NO_ERROR);
             }
             frame.finish().unwrap();
             // The SDL default framebuffer is opaque; only the RGBA texture target stores alpha.
-            let expected: [u8;4]=if case.outside {[0,0,0,if offscreen {0} else {255}]} else {[191,63,127,255]};
-            assert!(actual.into_iter().zip(expected).all(|(a,b)|(i32::from(a)-i32::from(b)).abs()<=1),
-                "{} offscreen={offscreen}: {actual:?}",case.name);
+            let expected: [u8; 4] = if case.outside {
+                [0, 0, 0, if offscreen { 0 } else { 255 }]
+            } else {
+                [191, 63, 127, 255]
+            };
+            assert!(
+                actual.into_iter().zip(expected).all(|(a, b)| (i32::from(a) - i32::from(b)).abs() <= 1),
+                "{} offscreen={offscreen}: {actual:?}",
+                case.name
+            );
         }
     }
 }

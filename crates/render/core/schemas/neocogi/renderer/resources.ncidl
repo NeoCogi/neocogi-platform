@@ -26,27 +26,44 @@ interface ITextureFactory: IRenderDriverBound {
 }
 
 #[version(1)]
-/// Independent two-dimensional rendering session on its creating renderer's device.
-/// Query IRenderer to submit private UI blocks at the selected size.
+/// Selects an existing framebuffer view or a separately rendered immutable image.
+enum RenderSurfaceKind: u8 {
+    /// Commands join the creating window's ordered frame; this view never clears or presents it.
+    Framebuffer,
+    /// Each successful independent submission publishes a fresh immutable color image.
+    Image,
+}
+
+#[version(1)]
+/// Surface construction on the factory's device; no native attachment is exposed.
+struct RenderSurfaceDesc {
+    /// Framebuffer view or independent image target.
+    kind: RenderSurfaceKind,
+    /// Image dimensions, including zero for suspension; framebuffer views require zero and follow the window.
+    size: Size,
+}
+
+#[version(1)]
+/// Selected drawing target shared by independently owned resource groups.
+/// Framebuffer views are recorded through IRenderRecordingFrame and submitted by the window's renderer.
+/// Image surfaces additionally expose IRenderer for independent image submission.
 interface IRenderSurface: IRenderDriverBound {
-    /// Returns the requested physical size; a zero component suspends rendering.
+    /// Returns the immutable target kind established by its trusted factory.
+    fn kind(&self) -> Result<RenderSurfaceKind>;
+    /// Framebuffer views report the window's current physical pixel size; images report their requested size.
     fn size(&self) -> Result<Size>;
-    /// Changes the next frame's size without mutating any completed image.
-    /// Negative or oversized extents fail without changing the current size.
+    /// Changes future image dimensions without mutating completed images; framebuffer views reject resizing.
     fn resize(&self, size: Size) -> Result<()>;
-    /// Retains the last successfully completed immutable image; NC_E_NOT_FOUND precedes the first frame.
-    /// A retained image remains unchanged after later renders, resize, or surface release.
+    /// Last successfully completed image; framebuffer views and never-rendered image surfaces return NC_E_NOT_FOUND.
     fn completed_image(&self) -> Result<ComPtr<ITexture>>;
 }
 
 #[version(1)]
-/// Creates independent opaque preview surfaces without exposing native GPU handles.
+/// Creates image targets and views of this window's framebuffer without acquiring a frame.
 interface IRenderSurfaceFactory: IRenderDriverBound {
-    /// Creates a surface on the same device as the factory; GFX owns its private UI resources.
-    /// Rendering never presents or clears the window. Output uses top-left texture coordinates
-    /// and an opaque clear color; client graphics blocks are unsupported.
-    /// Backends without this capability report an explicit failure.
-    fn create_surface(&self, size: Size) -> Result<ComPtr<IRenderSurface>>;
+    /// Framebuffer views expose no independent renderer and never allocate, clear or present a replacement target.
+    /// Image surfaces preserve completed images across subsequent rendering, resize and failed submissions.
+    fn create_surface(&self, desc: RenderSurfaceDesc) -> Result<ComPtr<IRenderSurface>>;
 }
 
 #[version(1)]

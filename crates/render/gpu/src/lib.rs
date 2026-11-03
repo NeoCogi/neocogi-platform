@@ -12,11 +12,11 @@ extern crate self as neocogi_render_gpu;
 // One fixture module per native test executable, shared by every enabled backend. The browser
 // platform tests compile the same sources in their own executable through the external crate API.
 #[cfg(all(test, not(target_arch = "wasm32"), any(feature = "glow", feature = "vulkan", feature = "wgpu")))]
-#[path = "../tests/support/sampled.rs"]
-mod sampled_fixture;
-#[cfg(all(test, not(target_arch = "wasm32"), any(feature = "glow", feature = "vulkan", feature = "wgpu")))]
 #[path = "../tests/support/derivatives.rs"]
 mod derivative_fixture;
+#[cfg(all(test, not(target_arch = "wasm32"), any(feature = "glow", feature = "vulkan", feature = "wgpu")))]
+#[path = "../tests/support/sampled.rs"]
+mod sampled_fixture;
 
 pub mod backends;
 
@@ -25,12 +25,13 @@ pub mod command;
 pub mod native;
 mod pipeline;
 // Native construction cleanup is crate-private; callers receive concrete completed resources.
-#[cfg(any(test, feature = "glow", feature = "vulkan"))]
-mod resource_guard;
 pub mod record;
 pub mod resource;
+#[cfg(any(test, feature = "glow", feature = "vulkan"))]
+mod resource_guard;
 pub mod scope;
 pub mod shader;
+pub mod target;
 /// Opt-in concrete probe family for CPU ownership tests; never selected by production activation.
 #[cfg(any(test, feature = "test-support"))]
 pub mod testing;

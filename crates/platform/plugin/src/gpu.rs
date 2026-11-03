@@ -195,11 +195,6 @@ impl Gpu {
         self.render_target(info, prepared, None).map(|_| ())
     }
 
-    /// Reports surface availability before accepting an independent rendering session.
-    pub(super) fn supports_surfaces(&self) -> bool {
-        cfg!(any(feature = "glow", feature = "webgl", feature = "wgpu", feature = "vulkan"))
-    }
-
     /// A fresh destination is consumed before a completed immutable image can be published.
     pub(super) fn render_surface(&mut self, info: RenderInfo, prepared: &Prepared) -> Result<Image, String> {
         self.current()?;

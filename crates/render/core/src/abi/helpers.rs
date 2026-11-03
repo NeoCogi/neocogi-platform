@@ -27,6 +27,9 @@ pub const RENDER_E_STATE: NcStatus = NcStatus::from_code(-1004);
 /// A renderer backend failed; its diagnostics capability retains concrete detail.
 pub const RENDER_E_BACKEND: NcStatus = NcStatus::from_code(-1005);
 
+/// The resource group's immutable creation permissions forbid this operation.
+pub const RENDER_E_PERMISSION: NcStatus = NcStatus::from_code(-1006);
+
 impl Default for RenderClientLimits {
     /// Finite domain defaults; related widgets sharing a factory share these quotas.
     fn default() -> Self {
@@ -38,6 +41,39 @@ impl Default for RenderClientLimits {
             frame_indices: 64 * 1024 * 1024,
             live_views: 256,
             stack_depth: 64,
+        }
+    }
+}
+
+impl RenderClientPermissions {
+    /// Deny every optional operation; callers explicitly enable the operations they delegate.
+    pub const fn none() -> Self {
+        Self {
+            clear_color: false,
+            clear_depth: false,
+            write_color: false,
+            write_depth: false,
+            read_depth: false,
+            write_resources: false,
+            import_images: false,
+            initialize_depth: false,
+        }
+    }
+}
+
+impl Default for RenderClientPermissions {
+    /// Ordinary programmable framebuffer drawing, including regional depth initialization.
+    /// Image import is an independent permission and is denied unless explicitly requested.
+    fn default() -> Self {
+        Self {
+            clear_color: true,
+            clear_depth: true,
+            write_color: true,
+            write_depth: true,
+            read_depth: true,
+            write_resources: true,
+            import_images: false,
+            initialize_depth: true,
         }
     }
 }

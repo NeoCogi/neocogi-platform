@@ -88,6 +88,8 @@ struct Device {
     logical: neocogi_render_gpu::GpuDevice<gpu::Backend>,
     /// Canonical COM identity maps contain weak native records and never own their COM objects.
     textures: Rc<RefCell<HashMap<usize, Weak<TextureRecord>>>>,
+    /// Weak construction records authenticate surface parameters without querying caller metadata.
+    surfaces: RefCell<HashMap<usize, Weak<surface::SurfaceRecord>>>,
     /// Polling can access a live SDL owner even while renderer state is detached.
     window: gpu::Window,
     /// SDL subsystems outlive the backend and every native window clone.
@@ -157,13 +159,40 @@ impl Drop for Polling<'_> {
     }
 }
 
-impl IRenderClientFactory for WindowObject {
-    /// Publishes only a narrow domain controller, then clients receive its separate factory.
-    fn create_client(&self, limits: RenderClientLimits) -> Result<neocogi_com::ComBox<IRenderClientDomainAbi>, NcStatus> {
-        self.device.logical.create_client(limits)
+impl Device {
+    /// Resolve the selected surface before constructing its independently controlled resource group.
+    fn create_client(
+        &self,
+        limits: RenderClientLimits,
+        surface: ComRef<'_, IRenderSurfaceAbi>,
+        permissions: RenderClientPermissions,
+    ) -> Result<neocogi_com::ComBox<IRenderClientDomainAbi>, NcStatus> {
+        let _access = self.access()?;
+        let record = self.surface(surface.try_add_ref()?)?;
+        self.logical.create_client(limits, record.target.clone(), permissions)
     }
 }
-#[com_object(interfaces(IRenderHost))]
+impl IRenderClientFactory for WindowObject {
+    fn create_client(
+        &self,
+        limits: RenderClientLimits,
+        surface: ComRef<'_, IRenderSurfaceAbi>,
+        permissions: RenderClientPermissions,
+    ) -> Result<neocogi_com::ComBox<IRenderClientDomainAbi>, NcStatus> {
+        self.device.create_client(limits, surface, permissions)
+    }
+}
+impl IRenderClientFactory for GraphicsHost {
+    fn create_client(
+        &self,
+        limits: RenderClientLimits,
+        surface: ComRef<'_, IRenderSurfaceAbi>,
+        permissions: RenderClientPermissions,
+    ) -> Result<neocogi_com::ComBox<IRenderClientDomainAbi>, NcStatus> {
+        self.device.create_client(limits, surface, permissions)
+    }
+}
+#[com_object(interfaces(IRenderHost, IRenderClientFactory, IRenderSurfaceFactory))]
 /// Trusted graphics assembly retains no window COM object, input registration or UI runtime.
 struct GraphicsHost {
     /// Native resources survive public window release without retaining UI/event authority.
@@ -182,7 +211,7 @@ impl IRenderHost for GraphicsHost {
         access.state().gpu.maintain().map_err(|error| self.device.failure(error))
     }
     /// The private native registry authenticates ordinary image identity before logical import.
-    fn import_ui_texture(
+    fn import_texture(
         &self,
         resources: ComRef<'_, IRenderResourcesAbi>,
         image: ComRef<'_, ITextureAbi>,
@@ -193,20 +222,16 @@ impl IRenderHost for GraphicsHost {
             let image = image.try_add_ref()?;
             self.device.texture(image)?
         };
-        self.device.logical.import_ui_texture(resources, record.image.clone())
+        self.device.logical.import_texture(resources, record.image.clone())
     }
 
     /// Logical provenance is checked while native state is detached; driver calls consume owned data.
-    fn prepare_ui_texture(&self, resources: ComRef<'_, IRenderResourcesAbi>, texture: ComRef<'_, IGpuTextureAbi>) -> Result<(), NcStatus> {
+    fn prepare_texture(&self, resources: ComRef<'_, IRenderResourcesAbi>, texture: ComRef<'_, IGpuTextureAbi>) -> Result<(), NcStatus> {
         let mut access = self.device.access()?;
-        let version = self.device.logical.ui_texture_snapshot(resources, texture)?;
+        let version = self.device.logical.imported_texture_snapshot(resources, texture)?;
         access.state().gpu.prepare_texture(version).map_err(|error| self.device.failure(error))
     }
 
-    /// Private compositor domains share the physical core without retaining this driver facade.
-    fn create_ui_client(&self, limits: RenderClientLimits) -> Result<neocogi_com::ComBox<IRenderClientDomainAbi>, NcStatus> {
-        self.device.logical.create_ui_client(limits)
-    }
     /// Separate broker identity prevents indirect QueryInterface access to the window.
     fn recording_broker(&self) -> Result<ComPtr<IRenderViewBrokerAbi>, NcStatus> {
         Ok(self.device.logical.broker())
@@ -225,6 +250,9 @@ impl IRenderer for WindowObject {
         state.prepared.read(info, stream, self).inspect_err(|error| {
             self.device.logical.set_diagnostic(format!("frame preparation failed: {error}"));
         })?;
+        for block in state.prepared.blocks() {
+            block.admit_framebuffer()?;
+        }
         state.gpu.render(info, &state.prepared).map_err(|error| self.device.failure(error))
     }
 }

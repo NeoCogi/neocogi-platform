@@ -21,12 +21,18 @@ impl IRenderStream for ViewStream {
 fn wide_view_edges_draw_and_recover_through_generated_com() {
     let _session = native_session();
     let size = Size { width: 32, height: 32 };
-    let native = PlatformObject::new(nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject).query().unwrap()).window("wide graphics arithmetic", size).unwrap();
+    let native = PlatformObject::new(
+        nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
+            .query()
+            .unwrap(),
+    )
+    .window("wide graphics arithmetic", size)
+    .unwrap();
     let device = Rc::downgrade(&native.device);
     let window = WindowObject::from_value(native);
     let renderer: ComPtr<IRendererAbi> = window.query().unwrap();
     let clients: ComPtr<IRenderClientFactoryAbi> = window.query().unwrap();
-    let controller = clients.create_client(RenderClientLimits::default()).unwrap();
+    let controller = framebuffer_group(&clients, RenderClientLimits::default(), RenderClientPermissions::default());
     let resources = controller.resources().unwrap();
     let broker = window
         .query::<IPlatformWindowAbi>()

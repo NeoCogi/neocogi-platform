@@ -46,7 +46,13 @@ fn uncertain_upload_status_retains_owners_until_idle_and_rejects_reuse() {
                 .query()
                 .unwrap(),
         );
-        let controller = gpu.create_client(RenderClientLimits::default()).unwrap();
+        let controller = gpu
+            .create_client(
+                RenderClientLimits::default(),
+                gpu.surface_target(neocogi_render_core::abi::RenderSurfaceKind::Framebuffer).unwrap(),
+                neocogi_render_core::abi::RenderClientPermissions::default(),
+            )
+            .unwrap();
         let resources = controller.resources().unwrap();
         let image = resources
             .create_texture(
@@ -463,7 +469,13 @@ fn regional_depth_and_copied_uniforms_preserve_surrounding_targets() {
             .query()
             .unwrap(),
     );
-    let controller = gpu.create_client(RenderClientLimits::default()).unwrap();
+    let controller = gpu
+        .create_client(
+            RenderClientLimits::default(),
+            gpu.surface_target(neocogi_render_core::abi::RenderSurfaceKind::Framebuffer).unwrap(),
+            neocogi_render_core::abi::RenderClientPermissions::default(),
+        )
+        .unwrap();
     let resources = controller.resources().unwrap();
     let pipeline = pipeline(&resources, 15);
     let hidden = self::pipeline(&resources, 0);
@@ -566,7 +578,13 @@ fn generated_bounds_guards_execute_on_the_native_driver() {
             .query()
             .unwrap(),
     );
-    let controller = gpu.create_client(RenderClientLimits::default()).unwrap();
+    let controller = gpu
+        .create_client(
+            RenderClientLimits::default(),
+            gpu.surface_target(neocogi_render_core::abi::RenderSurfaceKind::Framebuffer).unwrap(),
+            neocogi_render_core::abi::RenderClientPermissions::default(),
+        )
+        .unwrap();
     let resources = controller.resources().unwrap();
     let source = Bytes::source(
         br#"
@@ -648,9 +666,23 @@ fn indexed_texture_case(operation: GpuBlendOp, imported: bool) {
             .unwrap(),
     );
     let controller = if imported {
-        gpu.create_ui_client(RenderClientLimits::default())
+        gpu.create_client(
+            RenderClientLimits::default(),
+            gpu.surface_target(neocogi_render_core::abi::RenderSurfaceKind::Framebuffer).unwrap(),
+            neocogi_render_core::abi::RenderClientPermissions {
+                clear_color: true,
+                write_color: true,
+                write_resources: true,
+                import_images: true,
+                ..neocogi_render_core::abi::RenderClientPermissions::none()
+            },
+        )
     } else {
-        gpu.create_client(RenderClientLimits::default())
+        gpu.create_client(
+            RenderClientLimits::default(),
+            gpu.surface_target(neocogi_render_core::abi::RenderSurfaceKind::Framebuffer).unwrap(),
+            neocogi_render_core::abi::RenderClientPermissions::default(),
+        )
     }
     .unwrap();
     let resources = controller.resources().unwrap();
@@ -852,7 +884,13 @@ fn front_face_and_culling_match_canonical_winding() {
             .query()
             .unwrap(),
     );
-    let controller = gpu.create_client(RenderClientLimits::default()).unwrap();
+    let controller = gpu
+        .create_client(
+            RenderClientLimits::default(),
+            gpu.surface_target(neocogi_render_core::abi::RenderSurfaceKind::Framebuffer).unwrap(),
+            neocogi_render_core::abi::RenderClientPermissions::default(),
+        )
+        .unwrap();
     let resources = controller.resources().unwrap();
     for (front_face, cull, visible) in [
         (GpuFrontFace::Ccw, GpuCullMode::Back, true),
@@ -896,7 +934,13 @@ fn escaped_prepared_block_keeps_only_its_cache_free_native_core_alive() {
             .query()
             .unwrap(),
     );
-    let controller = gpu.create_client(RenderClientLimits::default()).unwrap();
+    let controller = gpu
+        .create_client(
+            RenderClientLimits::default(),
+            gpu.surface_target(neocogi_render_core::abi::RenderSurfaceKind::Framebuffer).unwrap(),
+            neocogi_render_core::abi::RenderClientPermissions::default(),
+        )
+        .unwrap();
     let resources = controller.resources().unwrap();
     let pipeline = pipeline(&resources, 15);
     let mut frame = gpu.broker().begin_frame().unwrap();
@@ -972,7 +1016,13 @@ fn logical_images_exceeding_native_dimensions_reject_before_native_allocation() 
             .query()
             .unwrap(),
     );
-    let controller = gpu.create_client(RenderClientLimits::default()).unwrap();
+    let controller = gpu
+        .create_client(
+            RenderClientLimits::default(),
+            gpu.surface_target(neocogi_render_core::abi::RenderSurfaceKind::Framebuffer).unwrap(),
+            neocogi_render_core::abi::RenderClientPermissions::default(),
+        )
+        .unwrap();
     let resources = controller.resources().unwrap();
     let bytes = Bytes::source(vec![255; width as usize * 4]);
     let image = resources
@@ -1035,7 +1085,7 @@ fn import_native_image(
     let native = executor
         .create_image(source.desc().size, vk::Format::R8G8B8A8_UNORM, source.pixels().unwrap().as_slice(), None)
         .unwrap();
-    gpu.import_ui_texture(resources.as_com_ref(), native).unwrap()
+    gpu.import_texture(resources.as_com_ref(), native).unwrap()
 }
 
 /// Production private-output pass and fence submission render initialized generic UI pixels.
@@ -1082,7 +1132,19 @@ fn private_output_uses_production_pass_upload_and_completion_paths() {
             .query()
             .unwrap(),
     );
-    let domain = gpu.create_ui_client(Default::default()).unwrap();
+    let domain = gpu
+        .create_client(
+            Default::default(),
+            gpu.surface_target(neocogi_render_core::abi::RenderSurfaceKind::Framebuffer).unwrap(),
+            neocogi_render_core::abi::RenderClientPermissions {
+                clear_color: true,
+                write_color: true,
+                write_resources: true,
+                import_images: true,
+                ..neocogi_render_core::abi::RenderClientPermissions::none()
+            },
+        )
+        .unwrap();
     let resources = domain.resources().unwrap();
     let colors = [255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 0, 255];
     let owner = sampled::block(&gpu, &resources, Rect { x: 0, y: 0, width: 2, height: 2 }, size, &colors);
@@ -1207,7 +1269,19 @@ fn unsubmitted_variants_reuse_native_objects_and_reject_other_cores() {
             .query()
             .unwrap(),
     );
-    let domain = gpu.create_ui_client(Default::default()).unwrap();
+    let domain = gpu
+        .create_client(
+            Default::default(),
+            gpu.surface_target(neocogi_render_core::abi::RenderSurfaceKind::Framebuffer).unwrap(),
+            neocogi_render_core::abi::RenderClientPermissions {
+                clear_color: true,
+                write_color: true,
+                write_resources: true,
+                import_images: true,
+                ..neocogi_render_core::abi::RenderClientPermissions::none()
+            },
+        )
+        .unwrap();
     let resources = domain.resources().unwrap();
     let mut other = Executor::new(self::core()).unwrap();
     let baseline = core.live_allocations();
@@ -1255,7 +1329,13 @@ fn observed_device_loss_rejects_previously_realized_native_storage() {
             .query()
             .unwrap(),
     );
-    let domain = gpu.create_client(Default::default()).unwrap();
+    let domain = gpu
+        .create_client(
+            Default::default(),
+            gpu.surface_target(neocogi_render_core::abi::RenderSurfaceKind::Framebuffer).unwrap(),
+            neocogi_render_core::abi::RenderClientPermissions::default(),
+        )
+        .unwrap();
     let resources = domain.resources().unwrap();
     let buffer = resources
         .create_buffer(

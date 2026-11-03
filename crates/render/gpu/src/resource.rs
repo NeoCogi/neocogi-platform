@@ -73,8 +73,10 @@ pub(crate) struct FactoryEntry<B: crate::native::NativeResources> {
 
 /// One host-controlled domain; immutable versions retain its account, not this device owner.
 pub(crate) struct Domain<B: crate::native::NativeResources> {
-    /// Established by trusted host construction, never copied from caller-reported metadata.
-    pub(crate) kind: DomainKind,
+    /// Authenticated target selected at construction, never copied from caller-reported metadata.
+    pub(crate) target: Rc<crate::target::SurfaceTarget<B>>,
+    /// Immutable operation permissions selected by application setup.
+    pub(crate) permissions: RenderClientPermissions,
     /// Logical device used for provenance and guarded creation.
     pub(crate) device: GpuDevice<B>,
     /// Closing gates new admission without freeing retained snapshots.
@@ -83,15 +85,6 @@ pub(crate) struct Domain<B: crate::native::NativeResources> {
     pub(crate) account: Rc<Account>,
     /// Weak pending sessions allow immediate close without retaining payloads.
     pub(crate) sessions: RefCell<Vec<Weak<crate::record::SessionCore<B>>>>,
-}
-
-/// Trusted compositor provenance is separate from every publicly created client domain.
-#[derive(Clone, Copy, Eq, PartialEq)]
-pub(crate) enum DomainKind {
-    /// Scoped programmable client work initializes independent depth at its ordered position.
-    Client,
-    /// Private GFX work shares the vocabulary but may not change attachment depth.
-    Ui,
 }
 
 impl<B: crate::native::NativeResources> Domain<B> {
@@ -176,21 +169,27 @@ impl<B: crate::native::NativeResources> GpuDevice<B> {
         *self.inner.diagnostic.borrow_mut() = detail;
     }
 
-    /// Creates a host controller for a purely logical domain, useful for independent CPU clients.
-    pub fn create_client(&self, limits: RenderClientLimits) -> Result<ComBox<IRenderClientDomainAbi>, NcStatus> {
-        self.create_client_inner(limits, DomainKind::Client)
+    /// Creates a surface identity on this actual native device; no framebuffer is allocated here.
+    pub fn surface_target(&self, kind: RenderSurfaceKind) -> Result<Rc<crate::target::SurfaceTarget<B>>, NcStatus> {
+        crate::target::SurfaceTarget::new(self.inner.core.clone(), kind)
     }
 
-    /// Trusted compositor provenance shares this same native core without a facade lifetime lease.
-    pub fn create_ui_client(&self, limits: RenderClientLimits) -> Result<ComBox<IRenderClientDomainAbi>, NcStatus> {
-        self.create_client_inner(limits, DomainKind::Ui)
-    }
-
-    /// Publishes separate controller and factory identities only after limits validate.
-    fn create_client_inner(&self, limits: RenderClientLimits, kind: DomainKind) -> Result<ComBox<IRenderClientDomainAbi>, NcStatus> {
+    /// Creates one independently limited resource group with an explicit target and permissions.
+    /// Group ownership, close/reentry rules and version retirement are independent of drawing role.
+    pub fn create_client(
+        &self,
+        limits: RenderClientLimits,
+        target: Rc<crate::target::SurfaceTarget<B>>,
+        permissions: RenderClientPermissions,
+    ) -> Result<ComBox<IRenderClientDomainAbi>, NcStatus> {
         let _operation = self.operation()?;
+        if !Rc::ptr_eq(&target.core, &self.inner.core) {
+            return Err(RENDER_E_OWNER);
+        }
+        target.validate(permissions)?;
         let domain = Rc::new(Domain {
-            kind,
+            target,
+            permissions,
             device: self.clone(),
             closed: Cell::new(false),
             account: Account::new(limits)?,
@@ -239,12 +238,15 @@ impl<B: crate::native::NativeResources> GpuDevice<B> {
         Ok(self.domain(factory)?.account.live_bytes())
     }
 
-    /// Imports an already authenticated native image only into trusted compositor provenance.
+    /// Imports an authenticated native image only when this resource group permits image import.
     /// The actual allocation, not caller-reported metadata, determines compatible core and extent.
-    pub fn import_ui_texture(&self, factory: ComRef<'_, IRenderResourcesAbi>, image: Rc<B::Image>) -> Result<ComBox<IGpuTextureAbi>, NcStatus> {
+    pub fn import_texture(&self, factory: ComRef<'_, IRenderResourcesAbi>, image: Rc<B::Image>) -> Result<ComBox<IGpuTextureAbi>, NcStatus> {
         let _operation = self.operation()?;
         let domain = self.domain(factory)?;
-        if domain.kind != DomainKind::Ui || !Rc::ptr_eq(&self.inner.core, B::image_core(image.as_ref())) {
+        if !domain.permissions.import_images {
+            return Err(RENDER_E_PERMISSION);
+        }
+        if !Rc::ptr_eq(&self.inner.core, B::image_core(image.as_ref())) {
             self.set_diagnostic("image or factory belongs to an incompatible driver/domain".into());
             return Err(RENDER_E_OWNER);
         }
@@ -268,15 +270,15 @@ impl<B: crate::native::NativeResources> GpuDevice<B> {
         )
     }
 
-    /// Native preflight for a private UI upload cannot accept a client factory or foreign resource.
-    pub fn ui_texture_snapshot(
+    /// Imported-image preparation checks group permission and exact resource/device ownership.
+    pub fn imported_texture_snapshot(
         &self,
         factory: ComRef<'_, IRenderResourcesAbi>,
         texture: ComRef<'_, IGpuTextureAbi>,
     ) -> Result<Rc<TextureVersion<B>>, NcStatus> {
         let _operation = self.operation()?;
-        if self.domain(factory)?.kind != DomainKind::Ui {
-            return Err(RENDER_E_OWNER);
+        if !self.domain(factory)?.permissions.import_images {
+            return Err(RENDER_E_PERMISSION);
         }
         self.texture_snapshot(factory, texture)
     }
@@ -889,6 +891,9 @@ impl<B: crate::native::NativeResources> IRenderResources for Factory<B> {
     fn update_buffer(&self, buffer: ComRef<'_, IGpuBufferAbi>, offset: u64, source: ComRef<'_, IGpuDataSourceAbi>) -> Result<(), NcStatus> {
         let _operation = self.domain.device.operation()?;
         self.domain.open()?;
+        if !self.domain.permissions.write_resources {
+            return Err(RENDER_E_PERMISSION);
+        }
         let mut observer = observe(&self.domain.device.inner.buffers, buffer.as_raw().object as usize)?;
         let previous = observer.with(|buffer| {
             same_domain(&self.domain, &buffer.domain)?;
@@ -926,6 +931,9 @@ impl<B: crate::native::NativeResources> IRenderResources for Factory<B> {
     fn update_texture(&self, texture: ComRef<'_, IGpuTextureAbi>, rect: Rect, source: ComRef<'_, IGpuDataSourceAbi>) -> Result<(), NcStatus> {
         let _operation = self.domain.device.operation()?;
         self.domain.open()?;
+        if !self.domain.permissions.write_resources {
+            return Err(RENDER_E_PERMISSION);
+        }
         let mut observer = observe(&self.domain.device.inner.textures, texture.as_raw().object as usize)?;
         let previous = observer.with(|texture| {
             same_domain(&self.domain, &texture.domain)?;
@@ -1003,6 +1011,9 @@ mod tests;
 
 #[cfg(test)]
 mod compiler_tests;
+
+#[cfg(test)]
+mod permissions_tests;
 
 impl<B: crate::native::NativeResources> BufferVersion<B> {
     /// Reads the admitted desc without granting mutation authority.

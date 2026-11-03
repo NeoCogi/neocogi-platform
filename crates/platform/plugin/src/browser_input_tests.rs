@@ -46,7 +46,19 @@ fn canonical_browser_derivatives() {
             .query()
             .unwrap(),
     );
-    let domain = gpu.create_ui_client(Default::default()).unwrap();
+    let domain = gpu
+        .create_client(
+            Default::default(),
+            gpu.surface_target(neocogi_render_core::abi::RenderSurfaceKind::Framebuffer).unwrap(),
+            neocogi_render_core::abi::RenderClientPermissions {
+                clear_color: true,
+                write_color: true,
+                write_resources: true,
+                import_images: true,
+                ..neocogi_render_core::abi::RenderClientPermissions::none()
+            },
+        )
+        .unwrap();
     let resources = domain.resources().unwrap();
     for case in derivatives::cases() {
         let owner = derivatives::block(&gpu, &resources, &case.source);
@@ -148,7 +160,7 @@ fn canonical_browser_derivatives() {
             neocogi_render_core::source::initial(None).borrow().unwrap(),
         )
         .unwrap();
-    let version = gpu.ui_texture_snapshot(resources.as_com_ref(), image.as_com_ref()).unwrap();
+    let version = gpu.imported_texture_snapshot(resources.as_com_ref(), image.as_com_ref()).unwrap();
     renderer.prepare_texture(version.clone()).unwrap();
     lose_test_context(&native);
     assert!(renderer.make_current().is_err(), "actual WebGL loss invalidates the physical owner");

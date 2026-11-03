@@ -69,6 +69,7 @@ impl PlatformObject {
             logical: neocogi_render_gpu::GpuDevice::new(gpu.core(), self.compiler.clone()),
             render: RefCell::new(Some(RenderState { gpu, prepared: Prepared::default() })),
             textures: Rc::default(),
+            surfaces: RefCell::default(),
             window,
             host,
         });

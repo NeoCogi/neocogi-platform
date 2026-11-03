@@ -61,7 +61,13 @@ fn generated_output_obeys_remaining_domain_quota_before_large_allocation() {
             .query()
             .unwrap(),
     );
-    let domain = device.create_client(RenderClientLimits { live_bytes: 65536, ..Default::default() }).unwrap();
+    let domain = device
+        .create_client(
+            RenderClientLimits { live_bytes: 65536, ..Default::default() },
+            device.surface_target(neocogi_render_core::abi::RenderSurfaceKind::Framebuffer).unwrap(),
+            neocogi_render_core::abi::RenderClientPermissions::default(),
+        )
+        .unwrap();
     let factory = domain.resources().unwrap();
     let source = Bytes::source(EXPANDING.as_bytes().to_vec());
     LARGEST.with(|largest| largest.set(0));

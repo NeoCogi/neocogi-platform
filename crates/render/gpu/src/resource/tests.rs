@@ -85,7 +85,13 @@ fn source(bytes: Vec<u8>, mode: ReadMode) -> (ComPtr<IGpuDataSourceAbi>, Rc<Cell
 
 /// Keeps the exclusive host controller alive while handing a shareable factory to test clients.
 fn client(device: &GpuDevice, limits: RenderClientLimits) -> (ComBox<IRenderClientDomainAbi>, ComPtr<IRenderResourcesAbi>) {
-    let owner = device.create_client(limits).unwrap();
+    let owner = device
+        .create_client(
+            limits,
+            device.surface_target(neocogi_render_core::abi::RenderSurfaceKind::Framebuffer).unwrap(),
+            neocogi_render_core::abi::RenderClientPermissions::default(),
+        )
+        .unwrap();
     let factory = owner.resources().unwrap();
     (owner, factory)
 }
@@ -99,21 +105,33 @@ fn ui_image_import_shares_native_storage_without_public_com_or_domain_cycles() {
             .unwrap(),
     );
     let (_client, ordinary) = client(&device, RenderClientLimits::default());
-    let ui = device.create_ui_client(Default::default()).unwrap();
+    let ui = device
+        .create_client(
+            Default::default(),
+            device.surface_target(neocogi_render_core::abi::RenderSurfaceKind::Framebuffer).unwrap(),
+            neocogi_render_core::abi::RenderClientPermissions {
+                clear_color: true,
+                write_color: true,
+                write_resources: true,
+                import_images: true,
+                ..neocogi_render_core::abi::RenderClientPermissions::none()
+            },
+        )
+        .unwrap();
     let factory = ui.resources().unwrap();
     let core = device.inner.core.clone();
     let image = crate::testing::Image::ordinary(core.clone(), Size { width: 1, height: 1 }, 7);
     let other = crate::testing::Image::ordinary(crate::testing::Core::new(), Size { width: 1, height: 1 }, 8);
-    assert!(matches!(device.import_ui_texture(ordinary.as_com_ref(), image.clone()), Err(RENDER_E_OWNER)));
-    assert!(matches!(device.import_ui_texture(factory.as_com_ref(), other), Err(RENDER_E_OWNER)));
-    let imported = device.import_ui_texture(factory.as_com_ref(), image.clone()).unwrap();
+    assert!(matches!(device.import_texture(ordinary.as_com_ref(), image.clone()), Err(RENDER_E_PERMISSION)));
+    assert!(matches!(device.import_texture(factory.as_com_ref(), other), Err(RENDER_E_OWNER)));
+    let imported = device.import_texture(factory.as_com_ref(), image.clone()).unwrap();
     assert!(imported.query_ref::<ITextureAbi>().is_err());
     assert!(imported.query_ref::<IRenderHostAbi>().is_err());
     assert!(matches!(
-        device.ui_texture_snapshot(ordinary.as_com_ref(), imported.as_com_ref()),
-        Err(RENDER_E_OWNER)
+        device.imported_texture_snapshot(ordinary.as_com_ref(), imported.as_com_ref()),
+        Err(RENDER_E_PERMISSION)
     ));
-    let snapshot = device.ui_texture_snapshot(factory.as_com_ref(), imported.as_com_ref()).unwrap();
+    let snapshot = device.imported_texture_snapshot(factory.as_com_ref(), imported.as_com_ref()).unwrap();
     assert!(snapshot.pixels().is_none());
     assert!(Rc::ptr_eq(snapshot.imported_image().unwrap(), &image));
     let patch = neocogi_render_core::source::Bytes::source(vec![0; 4]);

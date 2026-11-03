@@ -29,10 +29,29 @@ pub struct Block<B: crate::native::NativeResources> {
     _base: PendingCharge,
 }
 impl<B: crate::native::NativeResources> Block<B> {
-    /// Host-created compositor provenance permits UI-only surface admission without trusting tags
-    /// or permitting client factories to masquerade as UI work.
-    pub fn is_ui(&self) -> bool {
-        self.domain.kind == DomainKind::Ui
+    /// Target identity captured from the resource group's trusted creation path.
+    pub fn target(&self) -> &Rc<crate::target::SurfaceTarget<B>> {
+        &self.domain.target
+    }
+
+    /// Admits this block only to its selected image target, after foreign readers finish.
+    pub fn admit_target(&self, target: &Rc<crate::target::SurfaceTarget<B>>) -> Result<(), NcStatus> {
+        self.domain.open()?;
+        if Rc::ptr_eq(&self.domain.target, target) {
+            Ok(())
+        } else {
+            Err(RENDER_E_OWNER)
+        }
+    }
+
+    /// Framebuffer-view commands join the enclosing window frame without acquiring another target.
+    pub fn admit_framebuffer(&self) -> Result<(), NcStatus> {
+        self.domain.open()?;
+        if self.domain.target.kind() == RenderSurfaceKind::Framebuffer {
+            Ok(())
+        } else {
+            Err(RENDER_E_OWNER)
+        }
     }
 
     /// Retains original command capacity in native/in-flight representations without device authority.
@@ -196,8 +215,10 @@ impl<B: crate::native::NativeResources> IRenderRecordingFrame for FrameOwner<B> 
             return Err(RENDER_E_BUSY);
         }
         let domain = self.frame.device.domain(factory)?;
-        // A view's automatic regional depth initialization also consumes native work.
-        self.frame.charge(&domain.account, 3)?;
+        // Only an explicitly requested regional depth clear consumes draw/work quota here.
+        if domain.permissions.initialize_depth {
+            self.frame.charge(&domain.account, 3)?;
+        }
         let recorder = Recorder::new(root, &domain)?;
         let core = Rc::new(SessionCore {
             domain: domain.clone(),
@@ -440,7 +461,7 @@ impl<B: crate::native::NativeResources> Recorder<B> {
         result.vertices.try_reserve_exact(8).map_err(|_| NC_E_OUT_OF_MEMORY)?;
         result.textures.try_reserve_exact(8).map_err(|_| NC_E_OUT_OF_MEMORY)?;
         result.uniforms.try_reserve_exact(8).map_err(|_| NC_E_OUT_OF_MEMORY)?;
-        if domain.kind == DomainKind::Client {
+        if domain.permissions.initialize_depth {
             let charge = CommandCharge {
                 _charge: domain.account.pending(std::mem::size_of::<Command<B>>())?,
             };
@@ -876,6 +897,9 @@ impl<B: crate::native::NativeResources> IRenderView for View<B> {
     fn clear_color(&mut self, rgba: u32) -> Result<(), NcStatus> {
         self.mutate(|core, recorder| {
             core.check()?.charge(&core.domain.account, 3)?;
+            if !core.domain.permissions.clear_color {
+                return Err(RENDER_E_PERMISSION);
+            }
             let charge = CommandCharge {
                 _charge: core.domain.account.pending(std::mem::size_of::<Command<B>>())?,
             };
@@ -892,7 +916,10 @@ impl<B: crate::native::NativeResources> IRenderView for View<B> {
     fn clear_depth(&mut self, depth: f32) -> Result<(), NcStatus> {
         self.mutate(|core, recorder| {
             core.check()?.charge(&core.domain.account, 3)?;
-            if core.domain.kind == DomainKind::Ui || !depth.is_finite() || !(0.0..=1.0).contains(&depth) {
+            if !core.domain.permissions.clear_depth {
+                return Err(RENDER_E_PERMISSION);
+            }
+            if !depth.is_finite() || !(0.0..=1.0).contains(&depth) {
                 return Err(NC_E_INVALID_ARG);
             }
             let charge = CommandCharge {
