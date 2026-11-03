@@ -82,3 +82,11 @@ record. Missing, ambiguous or deleted recorded artifacts fail with a rebuild
 diagnostic. Directory scans and modification dates never select a substitute.
 The fixture invokes the pinned rustc directly; it does not start a nested Cargo
 build or retain another Cargo target directory.
+
+File equality compares size/permissions and streams bytes through fixed 8 KiB
+buffers per input, without retaining whole asset or library payloads. New temporary
+payloads are copied directly; unchanged installed files keep their timestamps.
+The no-concurrent-source-mutation and per-mapping publication rules still apply.
+Compiler-selected macro paths decode only the actual pinned rustc space escapes;
+dollar signs and original backslashes remain literal. Producer-boundary regressions
+compile real dep-info and expand the selected macro under punctuation-bearing paths.

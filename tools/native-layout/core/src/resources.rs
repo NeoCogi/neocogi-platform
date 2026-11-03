@@ -296,7 +296,8 @@ fn copy_tree(source: &Path, destination: &Path, inputs: &mut Vec<PathBuf>) -> io
         }
         Ok(())
     } else if metadata.is_file() {
-        super::copy_file(source, destination)
+        // The payload is new and privately owned; equality cannot avoid this copy.
+        fs::copy(source, destination).map(|_| ())
     } else {
         Err(io::Error::other(
             "resource inputs must be regular files/directories, never symlinks or special files",
@@ -325,7 +326,7 @@ fn same_tree(a: &Path, b: &Path) -> io::Result<bool> {
         return Ok(false);
     }
     if left.is_file() {
-        return Ok(left.permissions() == right.permissions() && fs::read(a)? == fs::read(b)?);
+        return super::files_equal(a, b);
     }
     if !left.is_dir() {
         return Ok(false);

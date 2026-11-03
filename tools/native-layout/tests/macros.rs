@@ -308,3 +308,51 @@ fn macro_rejects_input_ancestor_symlinks_and_preserves_previous_output() {
         assert!(!output.join("new-assets").exists());
     }
 }
+
+/// Parse the real compiler's rules and expand its selected library under punctuation-bearing paths.
+/// A portable subset runs on Windows; Unix additionally admits literal backslashes/colons in names.
+#[test]
+fn compiler_emitted_paths_select_and_expand_the_exact_macro() {
+    let selected = artifact::selected_macro(&std::env::current_exe().unwrap()).unwrap();
+    let fixture = tempfile::tempdir().unwrap();
+    let mut names = vec!["ordinary", "space dir", "hash#dir", "money$dir", "double$$dir"];
+    if cfg!(unix) {
+        names.extend([r"slash\back", "colon:dir", r"double\\back", r"back\ space", r"back\#hash", r"back\:colon"]);
+    }
+    for name in names {
+        let root = fixture.path().join(name);
+        fs::create_dir(&root).unwrap();
+        let library = root.join(selected.file_name().unwrap());
+        fs::copy(&selected, &library).unwrap();
+        let source = root.join("producer.rs");
+        fs::write(&source, "use neocogi_native_layout as _; fn main(){}").unwrap();
+        let executable = root.join("producer");
+        let result = Command::new(std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into()))
+            .args([
+                "--edition=2024",
+                "--crate-name=record_producer",
+                "-Zbinary-dep-depinfo",
+                "--emit=metadata,dep-info",
+            ])
+            .arg(&source)
+            .arg("--extern")
+            .arg(format!("neocogi_native_layout={}", library.display()))
+            .arg("-o")
+            .arg(&executable)
+            .output()
+            .unwrap();
+        assert!(result.status.success(), "{name}: {}", String::from_utf8_lossy(&result.stderr));
+        let exact = artifact::selected_macro(&executable).unwrap_or_else(|error| panic!("{name}: {error}"));
+        assert_eq!(exact, library);
+        let consumer = Consumer::from_artifact(exact);
+        let output = consumer.directory.path().join("out");
+        let result = consumer.compile(
+            "fn main(){neocogi_native_layout::stage_resources!(\"assets\"=>\"data\");}",
+            Some(&output),
+            None,
+            None,
+        );
+        assert!(result.status.success(), "{name}: {}", String::from_utf8_lossy(&result.stderr));
+        assert_eq!(fs::read(output.join("data/keep")).unwrap(), b"keep");
+    }
+}

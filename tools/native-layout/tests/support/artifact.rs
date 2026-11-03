@@ -44,34 +44,38 @@ pub(super) fn selected_macro(executable: &Path) -> Result<PathBuf, String> {
     Ok(path)
 }
 
-/// Decodes one rustc Makefile target, preserving Windows separators and escaped spaces.
-/// Phony rules contain a single path; unescaped whitespace is rejected rather than
-/// treating several prerequisites as one filename. Dollar signs use Make's `$$` spelling.
+/// Decodes the pinned rustc's single-path phony rule. That producer escapes
+/// ordinary spaces only: dollar signs, hashes, colons and original backslashes
+/// remain literal. In particular, a backslash before a space survives the extra
+/// space escape; applying generic Make/shell unescaping would change the path.
 fn make_path(rule: &str) -> Result<PathBuf, String> {
     let mut chars = rule.chars().peekable();
     let mut path = String::new();
     while let Some(character) = chars.next() {
         match character {
-            '\\' if chars.peek().is_some_and(|next| matches!(next, ' ' | '\t' | '#' | '\\' | ':')) => path.push(chars.next().expect("peeked escape")),
-            '$' if chars.peek() == Some(&'$') => {
+            '\\' if chars.peek() == Some(&' ') => {
                 chars.next();
-                path.push('$');
+                path.push(' ');
             }
-            c if c.is_whitespace() => return Err("invalid unescaped whitespace in compiler dependency path".into()),
+            ' ' => return Err("invalid unescaped space in compiler dependency path".into()),
             c => path.push(c),
         }
     }
     Ok(path.into())
 }
 
-/// Escaped paths and literal Windows separators remain exact, not shell-decoded guesses.
+/// Literal punctuation remains unchanged; only compiler-emitted ordinary-space escapes decode.
 #[test]
-fn dependency_paths_preserve_spaces_hashes_dollars_and_separators() {
+fn dependency_paths_preserve_literal_characters() {
     assert_eq!(
-        make_path(r"/a\ folder/\#money$$/macro.so").unwrap(),
-        PathBuf::from("/a folder/#money$/macro.so")
+        make_path(r"/a\ folder/#money$$/macro.so").unwrap(),
+        PathBuf::from("/a folder/#money$$/macro.so")
     );
     assert_eq!(make_path(r"C:\build\macro.dll").unwrap(), PathBuf::from(r"C:\build\macro.dll"));
+    assert_eq!(
+        make_path(r"/back\\ space/\#hash/\:colon").unwrap(),
+        PathBuf::from(r"/back\ space/\#hash/\:colon")
+    );
     assert!(make_path("two words").is_err());
 }
 
