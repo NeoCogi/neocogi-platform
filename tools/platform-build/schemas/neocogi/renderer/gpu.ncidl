@@ -423,6 +423,21 @@ interface IGpuPipelineSource {
 }
 
 #[version(1)]
+/// Exclusive operation result retaining either a shader owner or a bounded immutable failure.
+interface IShaderCreationResult: IRenderOutcome {
+    /// Transfers the complete shader exactly once after successful status; subsequent takes reject.
+    /// Dropping an untaken successful result releases the shader normally. Failed results stay readable.
+    fn take_shader(&mut self) -> Result<ComBox<IGpuShader>>;
+}
+
+#[version(1)]
+/// Exclusive operation result retaining either an imported texture owner or an owned failure.
+interface ITextureImportResult: IRenderOutcome {
+    /// Transfers the imported logical resource once; failure retains no partial public resource.
+    fn take_texture(&mut self) -> Result<ComBox<IGpuTexture>>;
+}
+
+#[version(1)]
 /// Restricted shareable factory; all created GPU resource owners are exclusive.
 interface IRenderResources: IRenderDriverBound {
     /// Publish a complete logical buffer; native upload is later and fallible.

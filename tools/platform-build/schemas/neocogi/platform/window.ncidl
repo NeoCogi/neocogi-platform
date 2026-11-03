@@ -22,6 +22,13 @@ interface IPlatformWindow {
 }
 
 #[version(1)]
+/// Exclusive result of one window construction, with no shared diagnostic dependency.
+interface IWindowCreationResult: IRenderOutcome {
+    /// Transfers a fully constructed shareable window once; dropping an untaken result closes it.
+    fn take_window(&mut self) -> Result<ComPtr<IPlatformWindow>>;
+}
+
+#[version(1)]
 /// Constructible platform root whose native-window interface is its concrete API.
 interface Platform: IRenderDiagnostics {
     /// Creates an independent native window and graphics device without UI assets.

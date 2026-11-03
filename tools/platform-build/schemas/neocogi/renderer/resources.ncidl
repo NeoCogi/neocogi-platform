@@ -70,6 +70,15 @@ interface IRenderSurfaceFactory: IRenderDriverBound {
 }
 
 #[version(1)]
+/// Immutable status/text belonging to one completed operation, never a shared device error slot.
+interface IRenderOutcome {
+    /// Original operation status; zero/nonnegative means success. This getter's own error is transport failure.
+    fn status(&self) -> Result<i32>;
+    /// Independently owned UTF-8 text for this result only, bounded to 4096 bytes; empty on success.
+    fn message(&self) -> Result<ComPtr<INcString>>;
+}
+
+#[version(1)]
 /// Owned diagnostic snapshots preserve backend details without exposing backend-dependent errors.
 interface IRenderDiagnostics {
     /// Returns the most recent failed GPU operation's detail, or empty text before a failure.

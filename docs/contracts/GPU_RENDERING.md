@@ -385,3 +385,16 @@ actually advertised surface format. A preferred sRGB format's non-sRGB partner
 is used only if advertised; otherwise another advertised non-sRGB format is
 selected. A surface with no compatible format rejects explicitly. Format-name
 similarity alone grants no native capability; this policy changes no shader colors.
+
+Owned operation errors use `IRenderOutcome` at the COM boundary. A report owns its
+status and at most 4096 UTF-8 bytes for that call. Rust adapters read that same
+immutable report and return `RenderError { status, message }`; transport failures
+receive a local fallback while reported operation failures retain their original
+code. Error text survives the report, renderer and later operations. No Rust
+String layout is exposed in the ABI. Successful unit results may reuse an
+immutable success report containing no device or target state.
+
+Creation reports exclusively own their success capability until a single mutable
+`take_*` call transfers it. A consumed report rejects reuse; dropping an untaken
+result releases the resource normally. Failed reports retain readable owned error
+data and expose no partial resource. All declarations remain version 1.
