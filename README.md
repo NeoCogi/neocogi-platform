@@ -79,10 +79,10 @@ Left-drag rotates, right/middle-drag pans, and the wheel zooms. Press R to reset
 Space to pause animation, B to toggle the skybox, or Escape to close. See the [example guide](examples/native/gltf/README.md)
 for backend selection, bounded headless runs, supported glTF features and asset licenses.
 
-Both companion workspaces pin the published COM, host and IDL packages to exact
-`0.1.0-alpha.1`. Shared dependencies participate in one application Cargo graph.
+The Platform and UI workspaces currently pin the published COM, host and IDL
+packages to exact `0.1.0-alpha.1`. Shared dependencies participate in one application Cargo graph.
 Independent builds can reuse compatible artifacts through `CARGO_TARGET_DIR`.
 
 See [documentation](docs/README.md), [component ownership](docs/architecture/COMPONENTS.md),
 [GPU contracts](docs/contracts/GPU_RENDERING.md), [shader compilation](docs/contracts/SHADER_COMPILATION.md),
-and [companion revisions](docs/project/HISTORY.md).
+and [dependency compatibility and revision history](docs/project/HISTORY.md).

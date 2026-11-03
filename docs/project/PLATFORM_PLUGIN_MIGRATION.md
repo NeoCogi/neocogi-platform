@@ -48,15 +48,16 @@ tests and scripts together. Retain the shader compiler dependency and load or
 register it before acquiring the platform root. Activation still validates its
 exact compiler contract before initializing SDL or creating any device.
 
-Companion NeoCogi UI pins a platform Git revision. Updating its revision is an
-explicit companion upgrade: select a revision containing this migration and
+NeoCogi UI currently pins its Platform dependencies to a Git revision. For an
+upgrade, select a compatible revision containing this migration and
 update **all** its platform-owned packages together, including core, GPU, support,
 shader and native-layout dependencies. Mixing a renamed local implementation
 with core/compiler packages from a different source can create duplicate Rust
 binding types even when their COM interface IDs match. Existing old-revision UI
 checkouts continue to describe their pinned graph; they are not compatibility
 consumers of the new source. The same rule applies to static and Cargo-artifact
-dynamic compositions.
+dynamic compositions. This dependency upgrade does not require a paired UI and
+Platform commit; see [dependency compatibility](HISTORY.md).
 
 Fresh qualification should include CPU-only GPU tests, selected dependency graphs,
 all native backend suites, platform activation and single-backend diagnostics,
@@ -64,7 +65,7 @@ static examples, real final-library discovery/acquisition, and the browser build
 Native WGPU allocation retirement qualification uses `wgpu,test-support`; its
 counter feature stays disabled in ordinary WGPU consumers.
 
-In a companion checkout whose platform dependencies and lockfile have been
+In a UI checkout whose Platform dependencies and lockfile have been
 migrated together, the consumer checks are:
 
 ```sh
