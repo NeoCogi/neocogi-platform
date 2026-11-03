@@ -30,6 +30,8 @@ fn main() -> Result<(), NcStatus> {
     let window = platform.create_window(NcCopyFromBufferOffset::new(0, b"NeoCogi Platform triangle"), size)?;
     let renderer: ComPtr<IRendererAbi> = window.query()?;
     let clients: ComPtr<IRenderClientFactoryAbi> = window.query()?;
+    // Select the existing window framebuffer. This creates no second frame or attachment; the
+    // window renderer below still owns acquisition, the whole-frame clear and presentation.
     let surface = window.query::<IRenderSurfaceFactoryAbi>()?.create_surface(RenderSurfaceDesc {
         kind: RenderSurfaceKind::Framebuffer,
         size: Size::default(),

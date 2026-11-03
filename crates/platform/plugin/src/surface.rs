@@ -1,8 +1,9 @@
 //! Authenticated framebuffer views and independent image-rendering targets on one device.
 //!
-//! COM methods receive shared references, so one documented RefCell gates the
-//! session. Execution takes ownership of its state and thereafter uses ordinary
-//! mutable references; no borrow guard survives foreign image or stream calls.
+//! COM methods receive shared references, so the image session uses a RefCell to
+//! detach its owned state during execution. The device's separate short-lived
+//! registry borrows authenticate public target identities. Neither borrow spans
+//! foreign calls; execution mutates owned state through ordinary mutable references.
 
 use super::*;
 use super::resources::{publish_texture, retain_texture};
@@ -69,12 +70,15 @@ fn validate_size(size: Size) -> Result<(), NcStatus> {
 }
 
 /// Construction-proven target metadata. The public capability alone owns its registry entry.
+/// The device holds only a weak record, avoiding a surface/device cycle. Groups retain `target`
+/// separately so releasing a surface retires its canonical address even while recorded groups live.
 pub(super) struct SurfaceRecord {
     /// Native facade retained while the surface can independently submit or observe its framebuffer.
     device: Rc<Device>,
     /// Resource groups retain only this device/target identity, not this public surface object.
     pub(super) target: Rc<neocogi_render_gpu::target::SurfaceTarget<gpu::Backend>>,
     /// Canonical identity installed before publication; removed before address reuse.
+    /// The COM allocation determines its address, requiring one post-construction write before return.
     key: Cell<usize>,
 }
 impl Drop for SurfaceRecord {
@@ -86,6 +90,8 @@ impl Drop for SurfaceRecord {
 
 #[com_object(interfaces(IRenderSurface))]
 /// View of the window framebuffer. Recording joins the enclosing frame; no renderer/presenter is exposed.
+/// It owns no pixels, size setting or completed-image slot. Independent groups retain the same target
+/// metadata, while only the outer window renderer may acquire, clear and present the whole frame.
 struct FramebufferSurface {
     /// The view retains the real device and construction-proven target metadata.
     record: Rc<SurfaceRecord>,
@@ -116,6 +122,8 @@ impl IRenderDriverBound for FramebufferSurface {
 }
 
 /// Publishes either concrete capability after all descriptor validation and registry reservation.
+/// Framebuffer views require zero descriptor size; image extents may suspend but must remain bounded.
+/// The local canonical identity is registered before return and never inferred from public metadata.
 pub(super) fn create(device: &Rc<Device>, desc: RenderSurfaceDesc) -> Result<ComPtr<IRenderSurfaceAbi>, NcStatus> {
     match desc.kind {
         RenderSurfaceKind::Framebuffer if desc.size == Size::default() => {}
@@ -159,7 +167,9 @@ impl IRenderSurfaceFactory for GraphicsHost {
 }
 
 impl Device {
-    /// Authenticate canonical surface identity, without trusting its reported kind or driver metadata.
+    /// Authenticates canonical surface identity, without calling its kind/size/driver metadata methods.
+    /// The caller holds device access across this owned parameter's foreign QI and final Release.
+    /// A foreign or expired registration returns `RENDER_E_OWNER`, even if public metadata would match.
     pub(super) fn surface(&self, surface: ComPtr<IRenderSurfaceAbi>) -> Result<Rc<SurfaceRecord>, NcStatus> {
         let key = identity(&surface)?;
         let record = self.surfaces.try_borrow().map_err(|_| RENDER_E_BUSY)?.get(&key).and_then(Weak::upgrade);
@@ -225,6 +235,8 @@ impl IRenderer for ImageSurface {
         let state = device.state();
         let _operation = self.record.device.logical.operation()?;
         state.prepared.read(info, stream, self.record.device.as_ref())?;
+        // Preparation may call foreign streams that close groups. Check closure and exact target
+        // after the final callback, before output allocation; rejection preserves the last image.
         for block in state.prepared.blocks() {
             block.admit_target(&self.record.target)?;
         }

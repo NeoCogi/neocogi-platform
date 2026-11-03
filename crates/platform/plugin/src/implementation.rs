@@ -89,6 +89,8 @@ struct Device {
     /// Canonical COM identity maps contain weak native records and never own their COM objects.
     textures: Rc<RefCell<HashMap<usize, Weak<TextureRecord>>>>,
     /// Weak construction records authenticate surface parameters without querying caller metadata.
+    /// COM uses shared receivers, so registration/retirement use short interior borrows; no registry
+    /// borrow spans foreign QI/AddRef/Release, and a public surface removes its entry before address reuse.
     surfaces: RefCell<HashMap<usize, Weak<surface::SurfaceRecord>>>,
     /// Polling can access a live SDL owner even while renderer state is detached.
     window: gpu::Window,
@@ -161,6 +163,8 @@ impl Drop for Polling<'_> {
 
 impl Device {
     /// Resolve the selected surface before constructing its independently controlled resource group.
+    /// Device access spans foreign AddRef/QI/Release so callbacks cannot acquire a nested native frame.
+    /// Only locally registered surfaces are accepted; the logical device then validates permissions/limits.
     fn create_client(
         &self,
         limits: RenderClientLimits,
@@ -173,6 +177,7 @@ impl Device {
     }
 }
 impl IRenderClientFactory for WindowObject {
+    /// Application setup selects the actual target and delegates only the resulting restricted factory.
     fn create_client(
         &self,
         limits: RenderClientLimits,
@@ -183,6 +188,7 @@ impl IRenderClientFactory for WindowObject {
     }
 }
 impl IRenderClientFactory for GraphicsHost {
+    /// Grants the same group assembly as the window without exposing window presentation or OS interfaces.
     fn create_client(
         &self,
         limits: RenderClientLimits,
@@ -194,6 +200,8 @@ impl IRenderClientFactory for GraphicsHost {
 }
 #[com_object(interfaces(IRenderHost, IRenderClientFactory, IRenderSurfaceFactory))]
 /// Trusted graphics assembly retains no window COM object, input registration or UI runtime.
+/// Its surface/group factory projections select targets and permissions; they cannot recover the window
+/// renderer. An independently created image surface exposes only that image's renderer.
 struct GraphicsHost {
     /// Native resources survive public window release without retaining UI/event authority.
     device: Rc<Device>,
@@ -210,7 +218,8 @@ impl IRenderHost for GraphicsHost {
         let mut access = self.device.access()?;
         access.state().gpu.maintain().map_err(|error| self.device.failure(error))
     }
-    /// The private native registry authenticates ordinary image identity before logical import.
+    /// Authenticates ordinary image identity through the device's local weak registry before import.
+    /// Logical admission separately requires the destination group's import permission and same-device image.
     fn import_texture(
         &self,
         resources: ComRef<'_, IRenderResourcesAbi>,
@@ -225,7 +234,8 @@ impl IRenderHost for GraphicsHost {
         self.device.logical.import_texture(resources, record.image.clone())
     }
 
-    /// Logical provenance is checked while native state is detached; driver calls consume owned data.
+    /// Validates group/import permission and exact texture ownership while native state is detached.
+    /// Native preparation consumes the owned version before resource publication, without acquiring a target.
     fn prepare_texture(&self, resources: ComRef<'_, IRenderResourcesAbi>, texture: ComRef<'_, IGpuTextureAbi>) -> Result<(), NcStatus> {
         let mut access = self.device.access()?;
         let version = self.device.logical.imported_texture_snapshot(resources, texture)?;
@@ -250,6 +260,8 @@ impl IRenderer for WindowObject {
         state.prepared.read(info, stream, self).inspect_err(|error| {
             self.device.logical.set_diagnostic(format!("frame preparation failed: {error}"));
         })?;
+        // Foreign stream callbacks have finished. Recheck target selection before any native frame
+        // acquisition so an image-target group cannot redirect work into the window's framebuffer.
         for block in state.prepared.blocks() {
             block.admit_framebuffer()?;
         }

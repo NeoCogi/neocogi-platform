@@ -8,6 +8,7 @@ struct Blocks {
     blocks: Vec<ComBox<IRenderViewBlockAbi>>,
 }
 impl IRenderStream for Blocks {
+    /// Returns a weak observer while this stream retains each exclusive sealed block owner.
     fn view(&self, _: u64, index: u32) -> Result<neocogi_com::WeakComBox<IRenderViewBlockAbi>, NcStatus> {
         self.blocks.get(index as usize).map(ComBox::downgrade).ok_or(NC_E_INVALID_ARG)
     }
@@ -116,6 +117,8 @@ fn image_block(host: &ComPtr<IRenderHostAbi>, resources: &ComPtr<IRenderResource
 }
 
 /// Current-framebuffer views share the parent's target and cannot independently acquire/present a frame.
+/// Image groups instead select an exact output; a retained old image must still sample its original
+/// pixels after another frame publishes a new one. Glow readback checks actual preserved colors.
 #[test]
 #[ignore = "requires a native display; GL also supports SDL_VIDEODRIVER=offscreen"]
 fn framebuffer_views_and_image_targets_select_actual_surfaces_without_ui_roles() {

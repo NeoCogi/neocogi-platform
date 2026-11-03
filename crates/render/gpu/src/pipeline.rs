@@ -8,6 +8,9 @@ use neocogi_com::{ComBox, ComRef, NcOutputBuffer, NcStatus, NC_E_INVALID_ARG, NC
 use std::rc::Rc;
 
 /// Reads bounded descriptor arrays before taking any resource gate, then captures shader snapshots.
+/// Checks requested color/depth operations against the group's immutable permissions before reading
+/// descriptor arrays or allocating a pipeline owner. Permissions allow operations without enabling
+/// them: a UI pipeline still chooses `Always` comparison and disables depth writes explicitly.
 pub(crate) fn create<B: crate::native::NativeResources>(
     domain: &Rc<Domain<B>>,
     source: ComRef<'_, IGpuPipelineSourceAbi>,
@@ -18,6 +21,8 @@ pub(crate) fn create<B: crate::native::NativeResources>(
     domain.open()?;
     let info = source.info()?;
     validate_state(info)?;
+    // Validate syntax first, then authorization. A zero color mask and Always/no-write depth state
+    // need no attachment permissions; this permits color-only composition and independent depth work.
     let permissions = domain.permissions;
     if (info.color_write != 0 && !permissions.write_color)
         || (info.depth_write && !permissions.write_depth)

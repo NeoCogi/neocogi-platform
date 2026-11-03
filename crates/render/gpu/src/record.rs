@@ -29,12 +29,15 @@ pub struct Block<B: crate::native::NativeResources> {
     _base: PendingCharge,
 }
 impl<B: crate::native::NativeResources> Block<B> {
-    /// Target identity captured from the resource group's trusted creation path.
+    /// Observes the immutable target captured from the resource group's trusted creation path.
+    /// This metadata exposes no attachment handle or permission to submit to another target.
     pub fn target(&self) -> &Rc<crate::target::SurfaceTarget<B>> {
         &self.domain.target
     }
 
-    /// Admits this block only to its selected image target, after foreign readers finish.
+    /// Rechecks group closure and exact target identity after foreign readers finish.
+    /// Image submission must use this check: matching device, kind or dimensions are insufficient.
+    /// Returns `NC_E_DROPPED` for a closed group or `RENDER_E_OWNER` for another selected target.
     pub fn admit_target(&self, target: &Rc<crate::target::SurfaceTarget<B>>) -> Result<(), NcStatus> {
         self.domain.open()?;
         if Rc::ptr_eq(&self.domain.target, target) {
@@ -45,6 +48,8 @@ impl<B: crate::native::NativeResources> Block<B> {
     }
 
     /// Framebuffer-view commands join the enclosing window frame without acquiring another target.
+    /// Call after device-authenticated stream preparation; this rejects image groups and closure.
+    /// Distinct framebuffer views are allowed because they refer to this device's current frame.
     pub fn admit_framebuffer(&self) -> Result<(), NcStatus> {
         self.domain.open()?;
         if self.domain.target.kind() == RenderSurfaceKind::Framebuffer {
@@ -440,7 +445,9 @@ struct Recorder<B: crate::native::NativeResources> {
     base: PendingCharge,
 }
 impl<B: crate::native::NativeResources> Recorder<B> {
-    /// Allocates bounded state and one regional depth initialization command.
+    /// Allocates bounded state and inserts a regional depth-one clear only when explicitly requested.
+    /// The frame charges that initial clear before construction; this function owns its pending-byte
+    /// receipt. Color-only groups start with no commands and consume no phantom depth-clear work.
     fn new(root: RenderViewRoot, domain: &Rc<Domain<B>>) -> Result<Self, NcStatus> {
         let bytes = std::mem::size_of::<Self>()
             + domain.account.limits.stack_depth as usize * std::mem::size_of::<crate::scope::ViewState>()
@@ -893,7 +900,8 @@ impl<B: crate::native::NativeResources> IRenderView for View<B> {
             )
         })
     }
-    /// Clear is independent from the client pipeline's blend/write masks.
+    /// Checks explicit color-clear permission independently of the pipeline's blend/write masks.
+    /// Attempted work remains charged on denial, which rejects the session without appending a command.
     fn clear_color(&mut self, rgba: u32) -> Result<(), NcStatus> {
         self.mutate(|core, recorder| {
             core.check()?.charge(&core.domain.account, 3)?;
@@ -913,6 +921,8 @@ impl<B: crate::native::NativeResources> IRenderView for View<B> {
         })
     }
     /// Explicit normalized values are preserved; only automatic initialization is constant one.
+    /// Clear permission is separate from depth testing/writing. Denial rejects the session, while
+    /// allowed calls still validate finite `[0, 1]` values and remain within the effective view clip.
     fn clear_depth(&mut self, depth: f32) -> Result<(), NcStatus> {
         self.mutate(|core, recorder| {
             core.check()?.charge(&core.domain.account, 3)?;

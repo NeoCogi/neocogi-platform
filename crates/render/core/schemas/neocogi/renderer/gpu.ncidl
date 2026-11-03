@@ -359,6 +359,8 @@ struct RenderClientLimits {
 #[version(1)]
 /// Immutable permissions selected by application setup for one resource group.
 /// These describe operations, not a widget/compositor/application role.
+/// UI composition normally enables color writes, resource updates and imports, leaving all depth fields false.
+/// Enabling a permission permits that operation; it does not change pipeline state automatically.
 struct RenderClientPermissions {
     /// Permit explicit regional color clears; this does not clear the whole framebuffer on creation.
     clear_color: bool,
@@ -528,6 +530,8 @@ interface IRenderClientDomain {
 interface IRenderClientFactory: IRenderDriverBound {
     /// Bind a new group to this device's surface with explicit drawing, update and import permissions.
     /// Only application setup receives this factory; clients receive the resulting restricted resources.
+    /// Groups can share a target without sharing resources or quotas. A foreign surface returns RENDER_E_OWNER;
+    /// inconsistent permissions (including depth on a color-only image) return NC_E_INVALID_ARG.
     fn create_client(
         &self,
         limits: RenderClientLimits,

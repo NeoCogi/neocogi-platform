@@ -71,9 +71,12 @@ pub(crate) struct FactoryEntry<B: crate::native::NativeResources> {
     domain: Weak<Domain<B>>,
 }
 
-/// One host-controlled domain; immutable versions retain its account, not this device owner.
+/// One independently owned resource group, with a fixed drawing target and operation permissions.
+/// The exclusive controller closes admission; restricted factories cannot widen its permissions.
+/// Immutable resource versions retain its account, not this device owner, through native completion.
 pub(crate) struct Domain<B: crate::native::NativeResources> {
     /// Authenticated target selected at construction, never copied from caller-reported metadata.
+    /// Shared target ownership permits several groups without sharing their resources or quotas.
     pub(crate) target: Rc<crate::target::SurfaceTarget<B>>,
     /// Immutable operation permissions selected by application setup.
     pub(crate) permissions: RenderClientPermissions,
@@ -169,13 +172,17 @@ impl<B: crate::native::NativeResources> GpuDevice<B> {
         *self.inner.diagnostic.borrow_mut() = detail;
     }
 
-    /// Creates a surface identity on this actual native device; no framebuffer is allocated here.
+    /// Creates target metadata on this actual native device; no framebuffer is allocated here.
+    /// Trusted platform assembly publishes/authenticates the corresponding COM surface separately.
+    /// Unknown kinds reject with `NC_E_INVALID_ARG`; native allocation belongs to frame execution.
     pub fn surface_target(&self, kind: RenderSurfaceKind) -> Result<Rc<crate::target::SurfaceTarget<B>>, NcStatus> {
         crate::target::SurfaceTarget::new(self.inner.core.clone(), kind)
     }
 
     /// Creates one independently limited resource group with an explicit target and permissions.
     /// Group ownership, close/reentry rules and version retirement are independent of drawing role.
+    /// Foreign-device targets return `RENDER_E_OWNER`; inconsistent attachment permissions return
+    /// `NC_E_INVALID_ARG`. Limits and target permissions validate before controller/factory publication.
     pub fn create_client(
         &self,
         limits: RenderClientLimits,
@@ -240,6 +247,8 @@ impl<B: crate::native::NativeResources> GpuDevice<B> {
 
     /// Imports an authenticated native image only when this resource group permits image import.
     /// The actual allocation, not caller-reported metadata, determines compatible core and extent.
+    /// Missing permission returns `RENDER_E_PERMISSION`; incompatible image cores return `RENDER_E_OWNER`.
+    /// The imported version retains the native image and its own quota receipt, never its public COM owner.
     pub fn import_texture(&self, factory: ComRef<'_, IRenderResourcesAbi>, image: Rc<B::Image>) -> Result<ComBox<IGpuTextureAbi>, NcStatus> {
         let _operation = self.operation()?;
         let domain = self.domain(factory)?;
@@ -270,7 +279,9 @@ impl<B: crate::native::NativeResources> GpuDevice<B> {
         )
     }
 
-    /// Imported-image preparation checks group permission and exact resource/device ownership.
+    /// Resolves a texture for the trusted host's eager preparation path.
+    /// Checks import permission and exact resource/group ownership; it also accepts a locally uploaded
+    /// texture in that permitted group so a compositor can prepare its atlas before publication.
     pub fn imported_texture_snapshot(
         &self,
         factory: ComRef<'_, IRenderResourcesAbi>,
@@ -887,7 +898,9 @@ impl<B: crate::native::NativeResources> IRenderResources for Factory<B> {
         crate::pipeline::create(&self.domain, source, vertex, fragment)
     }
 
-    /// Copy-on-write publication happens under the resource writer gate after the last callback.
+    /// Rejects missing update permission before querying either the target or foreign byte source.
+    /// Copies the previous immutable version, then publishes under the resource writer gate after
+    /// the last callback. Denial or failure leaves the current version and recorded snapshots intact.
     fn update_buffer(&self, buffer: ComRef<'_, IGpuBufferAbi>, offset: u64, source: ComRef<'_, IGpuDataSourceAbi>) -> Result<(), NcStatus> {
         let _operation = self.domain.device.operation()?;
         self.domain.open()?;
@@ -927,7 +940,9 @@ impl<B: crate::native::NativeResources> IRenderResources for Factory<B> {
         Ok(())
     }
 
-    /// Row-aware copy of a bounded patch; only one 64KiB foreign output region exists at a time.
+    /// Rejects missing update permission before querying either the target or foreign byte source.
+    /// Copies a bounded row-aware patch with at most one 64KiB foreign output region at a time.
+    /// Imported immutable images have no editable byte backing; failure publishes no new version.
     fn update_texture(&self, texture: ComRef<'_, IGpuTextureAbi>, rect: Rect, source: ComRef<'_, IGpuDataSourceAbi>) -> Result<(), NcStatus> {
         let _operation = self.domain.device.operation()?;
         self.domain.open()?;

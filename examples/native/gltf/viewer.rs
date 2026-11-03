@@ -372,7 +372,9 @@ struct Target {
     _domain: ComBox<IRenderClientDomainAbi>,
 }
 impl Target {
-    /// Establishes one independent client domain before allocating its scene's GPU resources.
+    /// Selects a view of this window's existing framebuffer before creating the scene's resource group.
+    /// Default permissions allow depth-tested 3D drawing and buffer updates for animation. The temporary
+    /// surface capability can drop after construction: the group retains its immutable target metadata.
     fn new(window: ComPtr<IPlatformWindowAbi>) -> Result<Self, NcStatus> {
         let clients: ComPtr<IRenderClientFactoryAbi> = window.query()?;
         let surface = window.query::<IRenderSurfaceFactoryAbi>()?.create_surface(RenderSurfaceDesc {

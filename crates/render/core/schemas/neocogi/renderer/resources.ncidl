@@ -47,6 +47,7 @@ struct RenderSurfaceDesc {
 /// Selected drawing target shared by independently owned resource groups.
 /// Framebuffer views are recorded through IRenderRecordingFrame and submitted by the window's renderer.
 /// Image surfaces additionally expose IRenderer for independent image submission.
+/// Releasing this capability does not change targets retained by existing groups or completed immutable images.
 interface IRenderSurface: IRenderDriverBound {
     /// Returns the immutable target kind established by its trusted factory.
     fn kind(&self) -> Result<RenderSurfaceKind>;
@@ -63,6 +64,8 @@ interface IRenderSurface: IRenderDriverBound {
 interface IRenderSurfaceFactory: IRenderDriverBound {
     /// Framebuffer views expose no independent renderer and never allocate, clear or present a replacement target.
     /// Image surfaces preserve completed images across subsequent rendering, resize and failed submissions.
+    /// Invalid kinds, nonzero framebuffer sizes and negative image extents return NC_E_INVALID_ARG;
+    /// bounded positive or suspended image extents are validated before capability publication.
     fn create_surface(&self, desc: RenderSurfaceDesc) -> Result<ComPtr<IRenderSurface>>;
 }
 
