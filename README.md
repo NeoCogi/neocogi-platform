@@ -61,6 +61,16 @@ The native glTF examples include a textured DamagedHelmet and animated GPU-skinn
 BrainStem, both with arcball rotation, pan and zoom.
 Both use Cannon Exterior HDR lighting, filtered reflections and a skybox.
 
+| Damaged Helmet | BrainStem |
+| :---: | :---: |
+| <img src="docs/images/damaged-helmet.png" alt="Damaged Helmet rendered with textured metallic materials and the Cannon Exterior skybox" width="440"> | <img src="docs/images/brainstem.png" alt="BrainStem rendered with GPU skinning and the Cannon Exterior skybox" width="440"> |
+
+Captured from the examples using the Glow backend. Damaged Helmet is by
+theblueturtle_ and ctxwing ([license](examples/native/gltf/DamagedHelmet-LICENSE.md));
+BrainStem is by Keith Hunter, © Smith Micro Software, Inc.
+([license](examples/native/gltf/BrainStem-LICENSE.md)). The Cannon Exterior environment
+is by Greg Zaal ([CC0](examples/native/gltf/Cannon_Exterior-LICENSE.md)).
+
 ```sh
 python3 scripts/fetch_gltf_examples.py
 cargo run --locked -p neocogi-platform-examples --bin gltf_damaged_helmet
