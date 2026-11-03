@@ -26,6 +26,12 @@ Use static,vulkan or static,wgpu for linked alternatives. Cargo features select
 the backend at build time; this does not add runtime renderer switching.
 SDL offscreen works for Glow. Vulkan/WGPU require a native display/adapter.
 
+The triangle's 320×240 size is an initial window request. Each frame queries the
+window's actual physical pixel size and uses it for both recording bounds and
+submission, including when scaling or resize changes that size. Zero dimensions
+suspend without consuming the requested frame count. Its application-owned loop
+is shared by the executable and the real linked/shared-library regression test.
+
 ## Ownership and deployment
 
 Static assembly registers linked compiler then platform descriptors and acquires
@@ -62,6 +68,8 @@ See [glTF controls, rendering and asset terms](gltf/README.md) and
 
 ~~~sh
 cargo test --locked -p neocogi-platform-examples
+cargo test --locked -p neocogi-platform-examples --test triangle -- --include-ignored --test-threads=1
+cargo test --locked -p neocogi-platform-examples --no-default-features --features dynamic,glow --test triangle -- --include-ignored --test-threads=1
 cargo test --locked -p neocogi-platform-examples --no-default-features --features dynamic,glow --test graphs --test deployment
 SDL_VIDEODRIVER=offscreen cargo test --locked -p neocogi-platform-examples --test gltf_viewer --features test-support -- --include-ignored --test-threads=1
 SDL_VIDEODRIVER=offscreen cargo test --locked -p neocogi-platform-examples --no-default-features --features dynamic,glow --test deployment -- --include-ignored --test-threads=1
@@ -75,3 +83,7 @@ Opt-in deployment acceptance renders all three real examples after relocation.
 Static GL pixel acceptance retains animation, arcball, material/HDR and skybox
 checks. Dependency regressions use the selected Cargo tree and verify artifact-only
 edges; metadata alone may contain inactive weak-feature edges.
+The triangle regression renders a real framebuffer whose extent differs from its
+initial request, checks recorded bounds and successful submissions, counts size
+queries, and tests a suspended iteration. It does not require a particular monitor's
+HiDPI setting; use a working native display/adapter or SDL offscreen with Glow.

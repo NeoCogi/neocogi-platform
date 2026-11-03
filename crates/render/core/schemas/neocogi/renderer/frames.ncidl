@@ -1,7 +1,8 @@
 #[version(1)]
 /// Metadata for one synchronous submission of sealed generic graphics blocks.
 struct RenderInfo {
-    /// Positive logical drawable dimensions; native backends map them to physical pixels.
+    /// Exact positive target dimensions in physical pixels, as reported by the window or image surface.
+    /// Submission performs no DPI conversion; use the same extent for recorded target bounds.
     size: Size,
     /// Packed RGBA attachment clear color, red in the least significant byte.
     clear: u32,

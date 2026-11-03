@@ -19,7 +19,7 @@ jobs:
           sudo apt-get update -qq && sudo apt-get install -y libsdl2-dev libvulkan-dev mesa-vulkan-drivers libgl1-mesa-dri xvfb
       - name: Platform contracts and compiler
         run: |
-          cargo test --locked -p neocogi-render-core -p neocogi-render-gpu -p neocogi-render-support -p neocogi-shader-core -p neocogi-shader-compiler -p neocogi-native-layout
+          cargo test --locked -p neocogi-render-core -p neocogi-render-gpu -p neocogi-render-support -p neocogi-shader-core -p neocogi-shader-compiler -p neocogi-native-layout -p neocogi-native-layout-core
       - name: Backend-owned native regressions
         run: |
           xvfb-run -a cargo test --locked -p neocogi-render-gpu --features ${{ matrix.backend }},test-support --lib backends::${{ matrix.backend }}:: -- --include-ignored --test-threads=1
@@ -29,6 +29,7 @@ jobs:
       - name: Standalone graphics application
         run: |
           xvfb-run -a cargo run --locked -p neocogi-platform-examples --bin triangle --no-default-features --features static,${{ matrix.backend }} -- 3
+          xvfb-run -a cargo test --locked -p neocogi-platform-examples --test triangle --no-default-features --features static,${{ matrix.backend }} -- --include-ignored --test-threads=1
       - name: Pinned glTF example assets
         run: |
           python3 -m unittest discover -s scripts -p test_fetch_gltf_examples.py
@@ -42,7 +43,7 @@ jobs:
           xvfb-run -a cargo run --locked -p neocogi-platform-examples --bin gltf_brainstem --no-default-features --features static,${{ matrix.backend }} -- --frames 3 --time 1
       - name: Dynamic example graphs and relocated shared objects
         run: |
-          xvfb-run -a cargo test --locked -p neocogi-platform-examples --no-default-features --features dynamic,${{ matrix.backend }} --test graphs --test deployment -- --include-ignored --test-threads=1
+          xvfb-run -a cargo test --locked -p neocogi-platform-examples --no-default-features --features dynamic,${{ matrix.backend }} --test graphs --test deployment --test triangle -- --include-ignored --test-threads=1
       - name: Backend warnings
         run: |
           cargo clippy --locked -p neocogi-platform-plugin --all-targets --no-default-features --features ${{ matrix.backend }} -- -D warnings

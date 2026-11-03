@@ -2,13 +2,15 @@
 /// Native window and event-pump capability with no exposed toolkit or graphics handles.
 interface IPlatformWindow {
     /// Returns a separate trusted graphics assembly object. It retains native graphics lifetime
-    /// without exposing this window, input registrations, renderer or resource factories by QI.
+    /// without exposing this window, input registrations, window renderer or ordinary image-upload factory by QI.
+    /// Trusted group/surface assembly remains available through the host's separate factory projections.
     fn graphics_host(&self) -> Result<ComPtr<IRenderHost>>;
     /// Creates a separate narrow clipboard identity safe to delegate to widget services.
     /// QueryInterface on this result cannot recover this window or its renderer/factories.
     fn clipboard(&self) -> Result<ComPtr<ITextClipboard>>;
-    /// Returns current drawable dimensions, including device scaling. Resize is synchronized
-    /// by passing this value to the next UI update before rendering.
+    /// Returns current drawable dimensions in physical pixels, including device scaling and resize.
+    /// Query before recording each frame; use the same value for drawing bounds and RenderInfo.size.
+    /// A zero component suspends rendering; the original window request is not the submitted pixel extent.
     fn size(&self) -> Result<Size>;
     /// Removes one relevant transition and borrows the destination for synchronous delivery.
     /// A failed delivery consumes the attempted event; later events remain queued. Recursive
