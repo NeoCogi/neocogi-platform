@@ -14,10 +14,14 @@ provider's private implementation owns Naga. It uses render-core's existing
 
 ## Outcomes and owned exports
 
-`compile(request, source, entry)` accepts canonical UTF-8 WGSL, a selected entry
+The Rust `compile(request, source, entry)` facade accepts canonical UTF-8 WGSL, a selected entry
 and a combined output-byte cap. There is one supported read-only graphics
 contract, documented in [GPU rendering](GPU_RENDERING.md). The compiler has no
 viewport, surface, Window/Texture, target height or arbitrary profile selector.
+
+Rust callers receive `Result<ComPtr<IShaderCompilationAbi>, RenderError>`: an error
+owns its status and message before the call returns. Raw COM clients use
+`compile_result` to obtain the report for that same operation.
 
 A report is either complete success or rejection with an original failing status
 and diagnostic. Success requires parsing, whole-module admission/validation,
@@ -54,10 +58,6 @@ release; an item survives collection release and retains no unrelated code.
 
 ```rust,ignore
 let report = compiler.compile(request, NcCopyFromBufferOffset::new(0, source), NcCopyFromBufferOffset::new(0, entry))?;
-let status = NcStatus::from_code(report.status()?);
-if status.is_err() {
-    return Err(status);
-}
 let uniforms = report.uniforms()?;
 for index in 0..uniforms.len()? {
     let uniform = uniforms.get(index)?;
@@ -131,11 +131,12 @@ window presentation; offscreen retains compiled Y. The renderer owns fragment
 height normalization, winding, viewport/scissor and target policy. Comments,
 identifier substrings and whitespace do not depend on Naga's epilogue spelling.
 
-Logical and native renderer halves share one bounded device diagnostic. An
-admitted shader operation clears the old text and records its current failure.
-The demo host captures first UI-bind failure detail while the fresh device/window
-is alive, preserving setup phase, original status and independently owned text.
-Later frame handling retains its status-specific guard against stale messages.
+Shader creation returns either the exclusive shader or `RenderError { status,
+message }`. The renderer reads its compiler report before publishing its own
+one-shot creation result. Text export failures preserve the original compilation
+status and supply a local explanation. Each error remains valid across later
+successes, later failures, and destruction of the compiler or resource group.
+No shader operation reads, clears or replaces a device-wide diagnostic.
 
 The min-size profile preserves Naga/naga-types formatting needed for executable
 float literals and distinct symbols while stripping debug symbols. WGPU may

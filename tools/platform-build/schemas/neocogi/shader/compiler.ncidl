@@ -124,7 +124,7 @@ struct ShaderSampledTextureInfo {
 /// Stateless CPU-only portable compiler; native driver realization stays fallible.
 interface ShaderCompiler {
     /// Returns a complete success or a rejected report; no partial artifacts.
-    fn compile(&self, request: ShaderCompileRequest, source: &[u8], entry: &[u8]) -> Result<ComPtr<IShaderCompilation>>;
+    fn compile_result(&self, request: ShaderCompileRequest, source: &[u8], entry: &[u8]) -> Result<ComPtr<IShaderCompilation>>;
 }
 
 #[version(1)]

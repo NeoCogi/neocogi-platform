@@ -31,6 +31,7 @@ fn inactive_profile_violations_reject_through_the_resource_factory() {
             assert_eq!(
                 factory
                     .create_shader(stage, source.as_com_ref(), NcCopyFromBufferOffset::new(0, entry.as_bytes()))
+                    .map_err(|error| error.status)
                     .unwrap_err(),
                 NC_E_INVALID_ARG,
                 "{} / {entry}",
@@ -54,6 +55,10 @@ fn inactive_profile_violations_reject_through_the_resource_factory() {
 enum Fault {
     /// Fully valid transfer.
     None,
+    /// Error text getter fails independently of the original compilation status.
+    Diagnostic,
+    /// A valid string export exceeds the receiver diagnostic limit.
+    LongDiagnostic,
     /// Missing returned WGSL must not fall back to request source.
     Wgsl,
     /// Structural binary rejection, with initialized backing.
@@ -126,14 +131,14 @@ struct CompilerProxy {
     probe: Rc<Probe>,
 }
 impl ShaderCompiler for CompilerProxy {
-    fn compile(
+    fn compile_result(
         &self,
         request: ShaderCompileRequest,
         source: NcCopyFromBufferOffset<'_, u8>,
         entry: NcCopyFromBufferOffset<'_, u8>,
     ) -> Result<ComPtr<IShaderCompilationAbi>, NcStatus> {
         self.probe.call();
-        let inner = self.inner.compile(request, source, entry)?;
+        let inner = self.inner.compile_result(request, source, entry)?;
         ReportProxy::from_value(ReportProxy { inner, probe: self.probe.clone() }).query()
     }
 }
@@ -162,7 +167,11 @@ impl IShaderCompilation for ReportProxy {
         self.inner.status()
     }
     fn diagnostic(&self) -> Result<ComPtr<INcStringAbi>, NcStatus> {
-        self.inner.diagnostic()
+        match self.probe.fault {
+            Fault::Diagnostic => Err(RENDER_E_BUSY),
+            Fault::LongDiagnostic => Ok(neocogi_com::NcString::from_utf8_str(&"x".repeat(4097))),
+            _ => self.inner.diagnostic(),
+        }
     }
     fn info(&self) -> Result<ShaderInfo, NcStatus> {
         self.probe.call();
@@ -278,6 +287,7 @@ fn transfer_failures_reentry_and_release_close_are_atomic() {
         assert_eq!(
             factory
                 .create_shader(GpuShaderStage::Vertex, source.as_com_ref(), NcCopyFromBufferOffset::new(0, b"vs"))
+                .map_err(|error| error.status)
                 .err(),
             Some(expected)
         );
@@ -305,6 +315,7 @@ fn receiving_copy_headroom_and_final_retention_are_exact() {
     assert_eq!(
         factory
             .create_shader(GpuShaderStage::Vertex, source.as_com_ref(), NcCopyFromBufferOffset::new(0, b"vs"))
+            .map_err(|error| error.status)
             .err(),
         Some(NC_E_OUT_OF_RANGE)
     );
@@ -312,22 +323,43 @@ fn receiving_copy_headroom_and_final_retention_are_exact() {
     assert_eq!(device.live_bytes(factory.as_com_ref()).unwrap(), 0);
     assert!(device.inner.shaders.borrow().is_empty());
 }
-/// A new admitted operation replaces stale compiler detail rather than reusing it.
+/// Failure text remains owned after success, another failure, and final device destruction.
 #[test]
-fn diagnostic_is_current_and_clears_on_success() {
-    let (device, _domain, factory, _probe) = fixture(Fault::None, 8 * 1024 * 1024);
+fn shader_errors_outlive_success_and_device_destruction() {
+    let (device, domain, factory, _probe) = fixture(Fault::None, 8 * 1024 * 1024);
     let bad = crate::source::Bytes::source(b"invalid wgsl".to_vec());
-    assert!(
-        factory
-            .create_shader(GpuShaderStage::Vertex, bad.as_com_ref(), NcCopyFromBufferOffset::new(0, b"vs"))
-            .is_err()
-    );
-    assert!(device.diagnostic().contains("invalid"));
+    let error = factory
+        .create_shader(GpuShaderStage::Vertex, bad.as_com_ref(), NcCopyFromBufferOffset::new(0, b"vs"))
+        .unwrap_err();
+    assert_eq!(error.status, NC_E_INVALID_ARG);
+    assert!(error.message.contains("invalid"));
     let good = crate::source::Bytes::source(SOURCE.as_bytes().to_vec());
-    factory
-        .create_shader(GpuShaderStage::Vertex, good.as_com_ref(), NcCopyFromBufferOffset::new(0, b"vs"))
-        .unwrap();
-    assert!(device.diagnostic().is_empty());
+    drop(
+        factory
+            .create_shader(GpuShaderStage::Vertex, good.as_com_ref(), NcCopyFromBufferOffset::new(0, b"vs"))
+            .unwrap(),
+    );
+    let second = factory
+        .create_shader(GpuShaderStage::Vertex, good.as_com_ref(), NcCopyFromBufferOffset::new(0, b"missing"))
+        .unwrap_err();
+    drop((factory, domain, device));
+    assert!(error.message.contains("invalid"));
+    assert!(!second.message.is_empty());
+}
+
+/// Losing error text must never replace the compiler's original failure code.
+#[test]
+fn failed_diagnostic_exports_preserve_compilation_status() {
+    for fault in [Fault::Diagnostic, Fault::LongDiagnostic] {
+        let (_device, _domain, factory, _probe) = fixture(fault, 8 * 1024 * 1024);
+        let bad = crate::source::Bytes::source(b"invalid wgsl".to_vec());
+        let error = factory
+            .create_shader(GpuShaderStage::Vertex, bad.as_com_ref(), NcCopyFromBufferOffset::new(0, b"vs"))
+            .unwrap_err();
+        assert_eq!(error.status, NC_E_INVALID_ARG);
+        assert!(error.message.contains("error text unavailable"));
+        assert!(error.message.len() <= MAX_RENDER_ERROR_BYTES);
+    }
 }
 
 /// Raw SDK byte projection with valid initialized storage and observable final Release.

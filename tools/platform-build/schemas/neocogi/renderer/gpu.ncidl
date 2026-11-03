@@ -447,7 +447,7 @@ interface IRenderResources: IRenderDriverBound {
     /// Create immutable portable filtering state.
     fn create_sampler(&self, desc: GpuSamplerDesc) -> Result<ComBox<IGpuSampler>>;
     /// Validate WGSL graphics profile and retain CPU artifacts for one UTF-8 entry point.
-    fn create_shader(&self, stage: GpuShaderStage, code: &IGpuDataSource, entry: &[u8]) -> Result<ComBox<IGpuShader>>;
+    fn create_shader_result(&self, stage: GpuShaderStage, code: &IGpuDataSource, entry: &[u8]) -> Result<ComBox<IShaderCreationResult>>;
     /// Capture live shader artifacts and validate the complete pipeline layout.
     fn create_pipeline(&self, desc: &IGpuPipelineSource, vertex: &IGpuShader, fragment: &IGpuShader) -> Result<ComBox<IGpuPipeline>>;
     /// Atomically publish a replacement version; previously captured draws retain their versions.

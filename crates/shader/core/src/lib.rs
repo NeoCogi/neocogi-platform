@@ -97,3 +97,39 @@ pub use read::PreparedShader;
 /// Opt-in portable-profile inputs shared by compiler and GPU acceptance tests.
 #[cfg(feature = "test-support")]
 pub mod testing;
+
+/// Reads one compiler report without consulting shared provider state.
+/// A failing text getter cannot replace the original compilation status.
+pub fn check_compilation(report: &abi::IShaderCompilationClient) -> Result<(), neocogi_render_core::abi::RenderError> {
+    use neocogi_com::{INcStringComPtrExt, NcStatus};
+    use neocogi_render_core::abi::RenderError;
+    let status = NcStatus::from_code(report.status().map_err(RenderError::from)?);
+    if status.is_ok() {
+        return Ok(());
+    }
+    let message = match report.diagnostic().and_then(|text| text.to_string_bounded(MAX_DIAGNOSTIC_BYTES)) {
+        Ok(text) if !text.is_empty() => text,
+        Ok(_) => format!("shader compilation failed: {status}"),
+        Err(detail) => format!("shader compilation failed: {status}; error text unavailable: {detail}"),
+    };
+    Err(RenderError::new(status, message))
+}
+
+impl abi::ShaderCompilerClient {
+    /// Returns complete immutable artifacts or an owned compilation failure.
+    /// The COM transport exposes `compile_result`; this facade reads that same report
+    /// before returning, so callers never perform a separate last-error lookup.
+    pub fn compile(
+        &self,
+        request: abi::ShaderCompileRequest,
+        source: neocogi_com::NcCopyFromBufferOffset<'_, u8>,
+        entry: neocogi_com::NcCopyFromBufferOffset<'_, u8>,
+    ) -> Result<neocogi_com::ComPtr<abi::IShaderCompilationAbi>, neocogi_render_core::abi::RenderError> {
+        use neocogi_render_core::abi::RenderError;
+        let report = self
+            .compile_result(request, source, entry)
+            .map_err(|status| RenderError::from(status).context("compile shader"))?;
+        check_compilation(&report)?;
+        Ok(report)
+    }
+}

@@ -27,7 +27,7 @@ impl IRenderStream for Stream {
 /// The caller retains application bootstrap ownership; this function owns the resource group and sealed work.
 /// Query physical pixels before each recording, using that one value for both view bounds and submission.
 /// Zero dimensions suspend without consuming a requested frame; negative dimensions reject as invalid metadata.
-pub fn render_frames(window: ComPtr<IPlatformWindowAbi>, frames: u32) -> Result<(), NcStatus> {
+pub fn render_frames(window: ComPtr<IPlatformWindowAbi>, frames: u32) -> Result<(), RenderError> {
     use neocogi_render_core::source::{Bytes, PipelineDesc};
     let renderer: ComPtr<IRendererAbi> = window.query()?;
     let clients: ComPtr<IRenderClientFactoryAbi> = window.query()?;
@@ -59,7 +59,7 @@ pub fn render_frames(window: ComPtr<IPlatformWindowAbi>, frames: u32) -> Result<
     while rendered < frames {
         let size = window.size()?;
         if size.width < 0 || size.height < 0 {
-            return Err(neocogi_com::NC_E_INVALID_ARG);
+            return Err(neocogi_com::NC_E_INVALID_ARG.into());
         }
         if size.width == 0 || size.height == 0 {
             // Suspension submits no native frame and receives no presentation pacing.

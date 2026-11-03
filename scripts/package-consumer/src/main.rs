@@ -22,7 +22,7 @@ fn main() {
     let root: ComPtr<client::ShaderCompilerAbi> = runtime.acquire_plugin_root(compiler::plugin_descriptor().plugin_id).unwrap();
     let source = b"@vertex fn vs()->@builtin(position) vec4<f32>{return vec4<f32>(0.,0.,0.,1.);}";
     let report = root
-        .compile(
+        .compile_result(
             client::ShaderCompileRequest {
                 stage: GpuShaderStage::Vertex,
                 max_output_bytes: 4 * 1024 * 1024,

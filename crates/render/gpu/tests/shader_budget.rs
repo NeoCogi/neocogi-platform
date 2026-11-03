@@ -72,7 +72,9 @@ fn generated_output_obeys_remaining_domain_quota_before_large_allocation() {
     let source = Bytes::source(EXPANDING.as_bytes().to_vec());
     LARGEST.with(|largest| largest.set(0));
     OBSERVING.with(|observing| observing.set(true));
-    let result = factory.create_shader(GpuShaderStage::Fragment, source.as_com_ref(), NcCopyFromBufferOffset::new(0, b"fs"));
+    let result = factory
+        .create_shader(GpuShaderStage::Fragment, source.as_com_ref(), NcCopyFromBufferOffset::new(0, b"fs"))
+        .map_err(|error| error.status);
     OBSERVING.with(|observing| observing.set(false));
     let largest = LARGEST.with(Cell::get);
     assert!(matches!(result, Err(NC_E_OUT_OF_RANGE)));

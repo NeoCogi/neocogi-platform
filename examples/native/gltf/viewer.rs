@@ -13,7 +13,7 @@ mod scene;
 use camera::Camera;
 use environment::Environment;
 use material::{MaterialAtlas, Tile};
-use neocogi_com::{ComBox, ComPtr, INcStringComPtrExt, NcCopyFromBufferOffset, NcStatus, com_object};
+use neocogi_com::{ComBox, ComPtr, NcCopyFromBufferOffset, NcStatus, com_object};
 use neocogi_render_core::{abi::*, platform::*};
 use neocogi_render_core::source::{Bytes, PipelineDesc, initial_bytes};
 use scene::{MAX_JOINTS, Scene, VERTEX_STRIDE, floats, matrix_bytes};
@@ -133,9 +133,9 @@ fn shader_source(body: &str) -> Vec<u8> {
 
 impl Graphics {
     /// Uploads all immutable scene data once and validates the shader's exact byte contract.
-    fn new(scene: &Scene, materials: Vec<MaterialAtlas>, environment: &Environment, resources: &ComPtr<IRenderResourcesAbi>) -> Result<Self, NcStatus> {
+    fn new(scene: &Scene, materials: Vec<MaterialAtlas>, environment: &Environment, resources: &ComPtr<IRenderResourcesAbi>) -> Result<Self, RenderError> {
         if materials.len() != scene.materials.len() {
-            return Err(neocogi_com::NC_E_INVALID_ARG);
+            return Err(neocogi_com::NC_E_INVALID_ARG.into());
         }
         let code = Bytes::source(shader_source(SHADER));
         let vs = resources.create_shader(GpuShaderStage::Vertex, code.as_com_ref(), NcCopyFromBufferOffset::new(0, b"vs"))?;
@@ -508,7 +508,7 @@ pub fn run(model: &str) -> scene::Result<()> {
     };
     let platform = check(neocogi_platform_examples::acquire_platform())?;
     let title = format!("NeoCogi glTF — {model}");
-    let result = (|| -> Result<(), NcStatus> {
+    let result = (|| -> Result<(), RenderError> {
         let window = platform.create_window(NcCopyFromBufferOffset::new(0, title.as_bytes()), SIZE)?;
         let target = Target::new(window)?;
         let window = &target.window;
@@ -573,10 +573,7 @@ pub fn run(model: &str) -> scene::Result<()> {
         println!("Rendered {rendered} {model} frames.");
         Ok(())
     })();
-    result.map_err(|status| {
-        let diagnostic = platform.diagnostic().ok().and_then(|message| message.to_string().ok()).unwrap_or_default();
-        format!("{model}: {status:?} {diagnostic}")
-    })
+    result.map_err(|error| format!("{model}: {error}"))
 }
 
 /// Preserves concrete COM status diagnostics at the application error boundary.

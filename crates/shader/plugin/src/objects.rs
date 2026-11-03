@@ -10,7 +10,7 @@ use neocogi_shader_core::{abi::*, Shader, MAX_DIAGNOSTIC_BYTES};
 #[com_object(interfaces(neocogi_shader_core::abi::ShaderCompiler))]
 pub struct CompilerObject;
 impl ShaderCompiler for CompilerObject {
-    fn compile(
+    fn compile_result(
         &self,
         request: ShaderCompileRequest,
         source: NcCopyFromBufferOffset<'_, u8>,

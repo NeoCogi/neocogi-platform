@@ -82,6 +82,24 @@ pub fn check_outcome(report: &IRenderOutcomeClient, operation: &str) -> Result<(
     Err(RenderError::new(status, message))
 }
 
+/// Rust callers receive either an exclusive shader or the owned failure from that exact call.
+impl IRenderResourcesClient {
+    /// Compiles and imports a shader, copying failure detail before the report is released.
+    /// Raw COM consumers use `create_shader_result` and own its one-shot report.
+    pub fn create_shader(
+        &self,
+        stage: GpuShaderStage,
+        code: neocogi_com::ComRef<'_, IGpuDataSourceAbi>,
+        entry: neocogi_com::NcCopyFromBufferOffset<'_, u8>,
+    ) -> Result<ComBox<IGpuShaderAbi>, RenderError> {
+        let mut report = self
+            .create_shader_result(stage, code, entry)
+            .map_err(|status| RenderError::from(status).context("create shader"))?;
+        check_outcome(&report, "create shader")?;
+        report.take_shader().map_err(|status| RenderError::from(status).context("take compiled shader"))
+    }
+}
+
 /// Provider-side exclusive result ownership. Only an explicit successful take
 /// consumes the payload; a rejected outcome retains its own immutable failure.
 enum Outcome<T> {

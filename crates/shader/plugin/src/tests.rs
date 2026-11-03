@@ -21,7 +21,7 @@ fn complete_module_profile_admission_precedes_selected_exports() {
         naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::empty())
             .validate(&module).unwrap_or_else(|error| panic!("{}: {error:?}", case.name));
         for (stage, entry) in [(GpuShaderStage::Vertex, "selected"), (case.stage, "outside")] {
-            let report = root.compile(client::ShaderCompileRequest { stage, max_output_bytes: 4194304 },
+            let report = root.compile_result(client::ShaderCompileRequest { stage, max_output_bytes: 4194304 },
                 NcCopyFromBufferOffset::new(0, case.source.as_bytes()), NcCopyFromBufferOffset::new(0, entry.as_bytes())).unwrap();
             assert_eq!(report.status().unwrap(), NC_E_INVALID_ARG.code(), "{} / {entry}", case.name);
             assert_eq!(report.wgsl().unwrap_err(), NC_E_INVALID_ARG);
@@ -30,7 +30,7 @@ fn complete_module_profile_admission_precedes_selected_exports() {
     }
     let source = admission::valid_mixed_module();
     for (stage, entry, texture_count) in [(GpuShaderStage::Vertex, "selected", 0), (GpuShaderStage::Fragment, "outside", 1)] {
-        let report = root.compile(client::ShaderCompileRequest { stage, max_output_bytes: 4194304 },
+        let report = root.compile_result(client::ShaderCompileRequest { stage, max_output_bytes: 4194304 },
             NcCopyFromBufferOffset::new(0, source.as_bytes()), NcCopyFromBufferOffset::new(0, entry.as_bytes())).unwrap();
         assert_eq!(report.status().unwrap(), NC_OK.code(), "{}", report.diagnostic().unwrap().to_string().unwrap());
         assert_eq!(report.wgsl().unwrap().to_string().unwrap(), source);
@@ -43,7 +43,7 @@ fn exact_texel_reads_export_complete_owned_code() {
     let root: ComPtr<client::ShaderCompilerAbi> = CompilerObject::from_value(CompilerObject).query().unwrap();
     for coordinate in ["vec2<i32>(0)", "vec2<i32>(-1,0)", "vec2<u32>(0u)"] {
         let source = format!("@group(2) @binding(0) var t:texture_2d<f32>; @group(2) @binding(1) var s:sampler; @fragment fn fs()->@location(0) vec4<f32>{{return textureLoad(t,{coordinate},0)+textureSample(t,s,vec2(.5));}}");
-        let report = root.compile(client::ShaderCompileRequest { stage: GpuShaderStage::Fragment, max_output_bytes:4194304 },
+        let report = root.compile_result(client::ShaderCompileRequest { stage: GpuShaderStage::Fragment, max_output_bytes:4194304 },
             NcCopyFromBufferOffset::new(0,source.as_bytes()), NcCopyFromBufferOffset::new(0,b"fs")).unwrap();
         assert_eq!(report.status().unwrap(), NC_OK.code(), "{}", report.diagnostic().unwrap().to_string().unwrap());
         assert_eq!(report.wgsl().unwrap().to_string().unwrap(), source);
@@ -62,7 +62,7 @@ fn exact_texel_reads_export_complete_owned_code() {
 fn independent_owned_exports_and_items() {
     let root: neocogi_com::ComPtr<client::ShaderCompilerAbi> = CompilerObject::from_value(CompilerObject).query().unwrap();
     let report = root
-        .compile(
+        .compile_result(
             client::ShaderCompileRequest {
                 stage: GpuShaderStage::Vertex,
                 max_output_bytes: 4 * 1024 * 1024,
@@ -107,7 +107,7 @@ fn rejection_is_complete_and_diagnostics_are_per_call() {
         (SOURCE.as_bytes(), b"vs".as_slice(), 1, NC_E_OUT_OF_RANGE),
     ] {
         let report = root
-            .compile(
+            .compile_result(
                 client::ShaderCompileRequest {
                     stage: GpuShaderStage::Vertex,
                     max_output_bytes: cap,
@@ -130,7 +130,7 @@ fn exact_payload_limit_and_bounded_snapshot() {
     use neocogi_shader_core::{abi::*, PreparedShader};
     let root: neocogi_com::ComPtr<ShaderCompilerAbi> = CompilerObject::from_value(CompilerObject).query().unwrap();
     let compile = |cap| {
-        root.compile(
+        root.compile_result(
             ShaderCompileRequest {
                 stage: GpuShaderStage::Vertex,
                 max_output_bytes: cap,
@@ -146,4 +146,18 @@ fn exact_payload_limit_and_bounded_snapshot() {
     assert_eq!(prepared.copy().unwrap().byte_len(), size);
     assert_eq!(compile(size as u64).status().unwrap(), NC_OK.code());
     assert_eq!(compile(size as u64 - 1).status().unwrap(), NC_E_OUT_OF_RANGE.code());
+}
+
+/// Ordinary Rust clients get their own failure, independent of later reports and provider lifetime.
+#[test]
+fn rust_compiler_errors_retain_status_and_text_after_provider_release() {
+    let root: ComPtr<neocogi_shader_core::abi::ShaderCompilerAbi> = CompilerObject::from_value(CompilerObject).query().unwrap();
+    let request = neocogi_shader_core::abi::ShaderCompileRequest { stage: GpuShaderStage::Vertex, max_output_bytes: 4194304 };
+    let error = root.compile(request, NcCopyFromBufferOffset::new(0,b"invalid wgsl"), NcCopyFromBufferOffset::new(0,b"vs")).unwrap_err();
+    assert_eq!(error.status, NC_E_INVALID_ARG);
+    assert!(!error.message.is_empty());
+    let text = error.message.clone();
+    drop(root.compile(request, NcCopyFromBufferOffset::new(0,SOURCE.as_bytes()), NcCopyFromBufferOffset::new(0,b"vs")).unwrap());
+    drop(root);
+    assert_eq!(error.message, text);
 }

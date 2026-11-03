@@ -806,86 +806,79 @@ impl<B: crate::native::NativeResources> IRenderResources for Factory<B> {
     }
 
     /// Canonical UTF-8 source goes through shared profile validation before logical publication.
-    fn create_shader(
+    fn create_shader_result(
         &self,
         stage: GpuShaderStage,
         source: ComRef<'_, IGpuDataSourceAbi>,
         entry: NcCopyFromBufferOffset<'_, u8>,
-    ) -> Result<ComBox<IGpuShaderAbi>, NcStatus> {
-        let _operation = self.domain.device.operation()?;
-        self.domain.open()?;
-        self.domain.device.set_diagnostic(String::new());
-        // The busy gate and provider receipt enclose every callback and final Release.
-        // Input allocations die before their receipt; native publication follows the
-        // final foreign destructor and a fresh domain-open check.
-        let imported = (|| {
-            if entry.offset() != 0 {
-                return Err(NC_E_INVALID_ARG);
-            }
-            let entry = entry.as_slice();
-            if entry.is_empty()
-                || entry.len() > 128
-                || std::str::from_utf8(entry).is_err()
-                || !matches!(stage, GpuShaderStage::Vertex | GpuShaderStage::Fragment)
-            {
-                return Err(NC_E_INVALID_ARG);
-            }
-            let mut expected = [0u8; 128];
-            expected[..entry.len()].copy_from_slice(entry);
-            let len = usize::try_from(source.byte_count()?).map_err(|_| NC_E_OUT_OF_RANGE)?;
+    ) -> Result<ComBox<IShaderCreationResultAbi>, NcStatus> {
+        let result = (|| -> Result<_, RenderError> {
+            let _operation = self.domain.device.operation()?;
             self.domain.open()?;
-            if len == 0 || len > crate::shader::MAX_SHADER_BYTES {
-                return Err(NC_E_OUT_OF_RANGE);
-            }
-            let owner = self.domain.account.resource()?;
-            let input_charge = self.domain.account.bytes(len)?;
-            let mut bytes = zeroed(len)?;
-            read_bytes(source, len, |offset, chunk| bytes[offset..offset + chunk.len()].copy_from_slice(chunk))?;
-            self.domain.open()?;
-            let cap = (self.domain.account.remaining_bytes().min(crate::shader::MAX_SHADER_ARTIFACT_BYTES as u64)) as usize;
-            let mut provider_charge = self.domain.account.bytes(cap)?;
-            let result = self.domain.device.inner.compiler.compile(
-                neocogi_shader_core::abi::ShaderCompileRequest { stage, max_output_bytes: cap as u64 },
-                NcCopyFromBufferOffset::new(0, &bytes),
-                NcCopyFromBufferOffset::new(0, &expected[..entry.len()]),
-            );
-            drop(bytes);
-            drop(input_charge);
-            let report = result?;
-            let status = NcStatus::from_code(report.status()?);
-            if status != neocogi_com::NC_OK {
-                use neocogi_com::INcStringComPtrExt;
-                let detail = report.diagnostic()?.to_string_bounded(neocogi_shader_core::MAX_DIAGNOSTIC_BYTES)?;
-                self.domain.device.set_diagnostic(detail);
-                return Err(status.normalize_error());
-            }
-            let prepared = neocogi_shader_core::PreparedShader::new(report, stage, &expected[..entry.len()], cap)?;
-            provider_charge.shrink(prepared.byte_len())?;
-            let charge = self.domain.account.bytes(prepared.byte_len())?;
-            let artifact = prepared.copy()?;
-            drop(prepared);
-            drop(provider_charge);
-            self.domain.open()?;
-            Ok((owner, charge, artifact))
+            // The busy gate and provider receipt enclose every callback and final Release.
+            // Input allocations die before their receipt; native publication follows the
+            // final foreign destructor and a fresh domain-open check.
+            let imported = (|| -> Result<_, RenderError> {
+                if entry.offset() != 0 {
+                    return Err(NC_E_INVALID_ARG.into());
+                }
+                let entry = entry.as_slice();
+                if entry.is_empty()
+                    || entry.len() > 128
+                    || std::str::from_utf8(entry).is_err()
+                    || !matches!(stage, GpuShaderStage::Vertex | GpuShaderStage::Fragment)
+                {
+                    return Err(NC_E_INVALID_ARG.into());
+                }
+                let mut expected = [0u8; 128];
+                expected[..entry.len()].copy_from_slice(entry);
+                let len = usize::try_from(source.byte_count()?).map_err(|_| NC_E_OUT_OF_RANGE)?;
+                self.domain.open()?;
+                if len == 0 || len > crate::shader::MAX_SHADER_BYTES {
+                    return Err(NC_E_OUT_OF_RANGE.into());
+                }
+                let owner = self.domain.account.resource()?;
+                let input_charge = self.domain.account.bytes(len)?;
+                let mut bytes = zeroed(len)?;
+                read_bytes(source, len, |offset, chunk| bytes[offset..offset + chunk.len()].copy_from_slice(chunk))?;
+                self.domain.open()?;
+                let cap = (self.domain.account.remaining_bytes().min(crate::shader::MAX_SHADER_ARTIFACT_BYTES as u64)) as usize;
+                let mut provider_charge = self.domain.account.bytes(cap)?;
+                let result = self.domain.device.inner.compiler.compile_result(
+                    neocogi_shader_core::abi::ShaderCompileRequest { stage, max_output_bytes: cap as u64 },
+                    NcCopyFromBufferOffset::new(0, &bytes),
+                    NcCopyFromBufferOffset::new(0, &expected[..entry.len()]),
+                );
+                drop(bytes);
+                drop(input_charge);
+                let report = result?;
+                neocogi_shader_core::check_compilation(&report)?;
+                let prepared = neocogi_shader_core::PreparedShader::new(report, stage, &expected[..entry.len()], cap)?;
+                provider_charge.shrink(prepared.byte_len())?;
+                let charge = self.domain.account.bytes(prepared.byte_len())?;
+                let artifact = prepared.copy()?;
+                drop(prepared);
+                drop(provider_charge);
+                self.domain.open()?;
+                Ok((owner, charge, artifact))
+            })();
+            let (owner, charge, artifact) = imported?;
+            let current = Rc::new(ShaderVersion {
+                core: self.domain.device.inner.core.clone(),
+                artifact,
+                _charge: Rc::new(charge),
+            });
+            publish(
+                &self.domain.device.inner.shaders,
+                ShaderObject::into_local_box(ShaderObject {
+                    domain: self.domain.clone(),
+                    current,
+                    _owner: owner,
+                }),
+            )
+            .map_err(RenderError::from)
         })();
-        let (owner, charge, artifact) = imported.inspect_err(|status| {
-            if self.domain.device.inner.diagnostic.borrow().is_empty() {
-                self.domain.device.set_diagnostic(format!("shader creation failed: {status}"));
-            }
-        })?;
-        let current = Rc::new(ShaderVersion {
-            core: self.domain.device.inner.core.clone(),
-            artifact,
-            _charge: Rc::new(charge),
-        });
-        publish(
-            &self.domain.device.inner.shaders,
-            ShaderObject::into_local_box(ShaderObject {
-                domain: self.domain.clone(),
-                current,
-                _owner: owner,
-            }),
-        )
+        Ok(shader_creation_result(result.map_err(|error| error.context("create shader"))))
     }
 
     /// Copies finite descriptor arrays and captures live same-domain shaders under local gates.
