@@ -31,7 +31,11 @@ also needs the Vulkan loader. On Debian/Ubuntu these are `libsdl2-dev` and
 `libvulkan-dev`. A native display or an appropriate software driver is needed
 for execution.
 
+Fetch dependencies first: some tests inspect every backend and the browser target
+without network access, even when those dependencies are not used by the current build.
+
 ```sh
+cargo fetch --locked
 cargo check --locked --workspace --all-targets
 cargo test --locked --workspace
 cargo run --locked -p neocogi-platform-examples --bin triangle -- 3
