@@ -9,7 +9,7 @@ use std::{
 
 /// One authored input mapped to an exclusively owned application-relative destination.
 pub struct Resource {
-    /// Regular file or directory; symlinks and special files are rejected.
+    /// Regular file or directory; the supplied path's ancestors and contents must not traverse symlinks.
     pub source: PathBuf,
     /// Nonempty relative subtree; parent traversal, lib and receipt names are reserved.
     pub destination: PathBuf,
@@ -50,6 +50,38 @@ struct Prepared {
     destination: PathBuf,
 }
 
+/// Validated source shape determines whether a candidate directory could be copied as source content.
+#[derive(Clone, Copy)]
+enum SourceKind {
+    /// A file has no descendant directory in which a temporary candidate could appear.
+    File,
+    /// Every descendant of this directory belongs to the input tree during preparation.
+    Directory,
+}
+
+/// One source checked in its supplied spelling before resolving its physical path.
+struct Source {
+    /// Canonical path used for containment checks and copying, only after every ancestor rejects links.
+    path: PathBuf,
+    /// Ordinary file or directory; links and special files never reach this representation.
+    kind: SourceKind,
+}
+
+/// Complete mapping plan, validated with every other mapping before any candidate directory exists.
+struct Plan {
+    /// Owned source identity and shape, independent of output preparation order.
+    source: Source,
+    /// Absolute, ownership-checked slot below the canonical application output root.
+    destination: PathBuf,
+}
+
+impl Plan {
+    /// Candidates are siblings of this destination so final replacement stays on the same filesystem.
+    fn temporary_parent(&self) -> &Path {
+        self.destination.parent().expect("validated nonempty relative destination")
+    }
+}
+
 /// Installs exact resource snapshots, serializing compiler processes sharing an output root.
 ///
 /// One package may rebuild the same destination with a different source. Distinct slots
@@ -57,7 +89,12 @@ struct Prepared {
 /// the caller must use a clean output before this tool can acquire deletion authority.
 /// Every input is copied before publication; filesystem commit errors can leave earlier
 /// complete mappings installed, but never turn a partial candidate into a valid snapshot.
+/// Supplied input paths reject symlink ancestors before canonicalization. Every temporary
+/// sibling directory must lie outside every directory input, including inputs of other mappings.
 pub fn stage_resources(manifest: &Path, root: &Path, resources: &[Resource]) -> io::Result<StagedResources> {
+    // Resolve all sources before output setup can introduce new directories or files inside an input.
+    // Inspect the supplied path first: canonicalization alone would conceal a symlink ancestor.
+    let sources = resources.iter().map(|resource| source(&resource.source)).collect::<io::Result<Vec<_>>>()?;
     fs::create_dir_all(root)?;
     let root = root.canonicalize()?;
     let owner: [u8; 32] = Sha256::digest(manifest.canonicalize()?.as_os_str().as_encoded_bytes()).into();
@@ -115,15 +152,35 @@ pub fn stage_resources(manifest: &Path, root: &Path, resources: &[Resource]) -> 
         }
     }
 
+    let plans = sources
+        .into_iter()
+        .zip(destinations)
+        .map(|(source, relative)| Plan { source, destination: root.join(relative) })
+        .collect::<Vec<_>>();
+    for plan in &plans {
+        for input in &plans {
+            match input.source.kind {
+                SourceKind::Directory if plan.temporary_parent().starts_with(&input.source.path) => {
+                    return Err(io::Error::other(format!(
+                        "temporary directory beside destination {} would be inside resource input {}; choose an output outside that input",
+                        plan.destination.display(),
+                        input.source.path.display()
+                    )));
+                }
+                SourceKind::File | SourceKind::Directory => {}
+            }
+        }
+    }
+
     let mut tracked = StagedResources::default();
     let mut prepared = Vec::new();
-    for (resource, relative) in resources.iter().zip(destinations) {
-        let destination = root.join(relative);
-        let parent = destination.parent().expect("validated nonempty relative destination");
-        fs::create_dir_all(parent)?;
-        let temporary = tempfile::Builder::new().prefix(".neocogi-resource-").tempdir_in(parent)?;
-        copy_tree(&resource.source, &temporary.path().join("payload"), &mut tracked.inputs)?;
-        prepared.push(Prepared { temporary, destination });
+    for plan in plans {
+        // All containment checks have finished. No earlier candidate can enter any later input,
+        // including empty directories or another mapping that copies an existing output subtree.
+        fs::create_dir_all(plan.temporary_parent())?;
+        let temporary = tempfile::Builder::new().prefix(".neocogi-resource-").tempdir_in(plan.temporary_parent())?;
+        copy_tree(&plan.source.path, &temporary.path().join("payload"), &mut tracked.inputs)?;
+        prepared.push(Prepared { temporary, destination: plan.destination });
     }
     // Reserve ownership before publication. A failed commit remains retryable by
     // this package; another package cannot adopt partially installed output.
@@ -156,6 +213,37 @@ pub fn stage_resources(manifest: &Path, root: &Path, resources: &[Resource]) -> 
         collect_outputs(&prepared.destination, &mut tracked.outputs)?;
     }
     Ok(tracked)
+}
+
+/// Validates the authored path component by component before canonicalization can erase link traversal.
+/// Parent and trailing-dot forms retain their ordering during this check. Children are checked again
+/// by `copy_tree`; this is a build-input policy, not a sandbox against concurrent source mutation.
+fn source(path: &Path) -> io::Result<Source> {
+    let mut current = PathBuf::new();
+    for component in path.components() {
+        current.push(component);
+        if matches!(component, Component::Prefix(_) | Component::RootDir) {
+            continue;
+        }
+        if fs::symlink_metadata(&current)?.file_type().is_symlink() {
+            return Err(io::Error::other(format!(
+                "resource input must not traverse a symlink: {} (input {})",
+                current.display(),
+                path.display()
+            )));
+        }
+    }
+    let metadata = fs::symlink_metadata(path)?;
+    let kind = if metadata.is_file() {
+        SourceKind::File
+    } else if metadata.is_dir() {
+        SourceKind::Directory
+    } else {
+        return Err(io::Error::other(
+            "resource inputs must be regular files/directories, never symlinks or special files",
+        ));
+    };
+    Ok(Source { path: path.canonicalize()?, kind })
 }
 
 /// Rejects escaping/root destinations and names owned by library/receipt staging.

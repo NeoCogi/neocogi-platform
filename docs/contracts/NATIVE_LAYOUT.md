@@ -32,8 +32,11 @@ are legal for an already owned slot.
 
 Destinations are nonempty normalized relative paths. The output root, parent
 traversal, lib and .neocogi-* are reserved. Inputs must be regular files or
-directories; input symlinks and destination symlink ancestry reject. Pruning an
-old child symlink removes that link without following it.
+directories. Check every component of each supplied input path for symlinks before
+canonicalizing it, including paths such as `linked/assets`, `linked/file.txt`
+and `linked/.`. Destination symlink ancestry also rejects. Pruning an old child
+symlink removes that link without following it. This build-input policy assumes
+sources are not concurrently replaced; it is not a filesystem sandbox.
 
 One consuming package may rebuild its exact destination slot using a different
 source (including A/B/A feature changes). Different slots cannot overlap by prefix,
@@ -53,6 +56,17 @@ publication errors can leave earlier complete mappings installed; staging does
 not promise an atomic transaction across all mappings. Each replacement retains
 its old complete output until the candidate is ready, attempts restoration on
 rename failure, and preserves recovery storage if restoration also fails.
+
+Validate the complete mapping set before creating any temporary candidate.
+The parent directory used for each candidate must be outside every directory
+input, including inputs from other instructions and empty input directories.
+Otherwise reject with a diagnostic naming the destination and conflicting input;
+installed outputs and ownership receipts remain unchanged. This prevents both
+copying a candidate into another mapping and recursively copying an output
+located inside its own source. Candidate directories remain siblings of their
+destinations to preserve rename-based replacement on the same filesystem.
+An already owned input equal to its destination is allowed when its temporary
+sibling is outside that input. Validation does not reject all input/output equality.
 
 Unchanged snapshots preserve deployed file timestamps. Compiler dep-info tracks
 source and output files/directories: removing an output or changing its membership

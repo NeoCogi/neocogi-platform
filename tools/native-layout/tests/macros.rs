@@ -198,3 +198,113 @@ fn staging_dependency_graph_has_no_runtime_contract_owner() {
         assert!(!graph.lines().any(|line| line.starts_with(&format!("{package} "))), "{graph}");
     }
 }
+
+/// Public macro expansion must reject cross-mapping temporary contamination in both orders and for empty inputs.
+/// Earlier installed files and ownership receipts remain intact after the compiler diagnostic.
+#[test]
+fn macro_rejects_temporary_directories_inside_any_input_before_copying() {
+    for empty in [false, true] {
+        for reverse in [false, true] {
+            let consumer = Consumer::new();
+            let root = consumer.directory.path();
+            let output = root.join("out");
+            let initial = consumer.compile(
+                "fn main(){neocogi_native_layout::stage_resources!(\"assets\"=>\"installed\");}",
+                Some(&output),
+                None,
+                None,
+            );
+            assert!(initial.status.success(), "{}", String::from_utf8_lossy(&initial.stderr));
+            let receipts = fs::read(output.join(".neocogi-layout.json")).unwrap();
+            fs::write(root.join("input.txt"), b"A").unwrap();
+            fs::create_dir(output.join("shared")).unwrap();
+            if !empty {
+                fs::write(output.join("shared/keep"), b"keep").unwrap();
+            }
+            let pairs = if reverse {
+                "\"out/shared\"=>\"b\",\"input.txt\"=>\"shared/a.txt\""
+            } else {
+                "\"input.txt\"=>\"shared/a.txt\",\"out/shared\"=>\"b\""
+            };
+            let result = consumer.compile(
+                &format!("fn main(){{neocogi_native_layout::stage_resources!({pairs});}}"),
+                Some(&output),
+                None,
+                None,
+            );
+            assert!(!result.status.success());
+            let diagnostic = String::from_utf8_lossy(&result.stderr);
+            assert!(
+                diagnostic.contains("temporary directory") && diagnostic.contains("inside resource input"),
+                "{diagnostic}"
+            );
+            assert_eq!(fs::read(output.join("installed/keep")).unwrap(), b"keep");
+            assert_eq!(fs::read(output.join(".neocogi-layout.json")).unwrap(), receipts);
+            assert!(!output.join("b").exists());
+            assert!(!output.join("shared/a.txt").exists());
+            assert_eq!(fs::read_dir(output.join("shared")).unwrap().count(), usize::from(!empty));
+        }
+    }
+    // A single mapping must reject a recursive source/output relation before attempting a copy.
+    let consumer = Consumer::new();
+    let nested = consumer.directory.path().join("assets/out");
+    let result = consumer.compile(
+        "fn main(){neocogi_native_layout::stage_resources!(\"assets\"=>\"data\");}",
+        Some(&nested),
+        None,
+        None,
+    );
+    assert!(!result.status.success());
+    assert!(String::from_utf8_lossy(&result.stderr).contains("inside resource input"));
+    assert!(!nested.join("data").exists());
+}
+
+/// Equality with an already owned output remains valid because its candidate is prepared outside the input.
+#[test]
+fn macro_can_copy_an_owned_destination_onto_itself() {
+    let consumer = Consumer::new();
+    let output = consumer.directory.path().join("out");
+    for input in ["assets", "out/installed"] {
+        let result = consumer.compile(
+            &format!("fn main(){{neocogi_native_layout::stage_resources!(\"{input}\"=>\"installed\");}}"),
+            Some(&output),
+            None,
+            None,
+        );
+        assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+        assert_eq!(fs::read(output.join("installed/keep")).unwrap(), b"keep");
+        assert_eq!(fs::read_dir(output.join("installed")).unwrap().count(), 1);
+    }
+}
+
+/// Exercise the actual exported macro with directory/file/trailing-dot paths that traverse an ancestor link.
+#[cfg(unix)]
+#[test]
+fn macro_rejects_input_ancestor_symlinks_and_preserves_previous_output() {
+    use std::os::unix::fs::symlink;
+    let consumer = Consumer::new();
+    let root = consumer.directory.path();
+    let output = root.join("out");
+    let first = consumer.compile(
+        "fn main(){neocogi_native_layout::stage_resources!(\"assets\"=>\"installed\");}",
+        Some(&output),
+        None,
+        None,
+    );
+    assert!(first.status.success(), "{}", String::from_utf8_lossy(&first.stderr));
+    let receipts = fs::read(output.join(".neocogi-layout.json")).unwrap();
+    symlink(root, root.join("linked")).unwrap();
+    for input in ["linked/assets", "linked/assets/keep", "linked/."] {
+        let result = consumer.compile(
+            &format!("fn main(){{neocogi_native_layout::stage_resources!(\"{input}\"=>\"new-assets\");}}"),
+            Some(&output),
+            None,
+            None,
+        );
+        assert!(!result.status.success());
+        assert!(String::from_utf8_lossy(&result.stderr).contains("symlink"));
+        assert_eq!(fs::read(output.join("installed/keep")).unwrap(), b"keep");
+        assert_eq!(fs::read(output.join(".neocogi-layout.json")).unwrap(), receipts);
+        assert!(!output.join("new-assets").exists());
+    }
+}

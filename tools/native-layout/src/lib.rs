@@ -90,6 +90,9 @@ impl Parse for Resource {
 /// destination cannot be the output root, lib, or native-layout metadata. Inputs
 /// and destination ancestry must not traverse symlinks. An absolute explicit root
 /// works without build.rs; inferred output requires Cargo OUT_DIR.
+/// The complete mapping set is checked before copying: no temporary directory
+/// beside any destination may lie inside any directory input. Rejected layouts
+/// leave installed snapshots and ownership receipts unchanged.
 #[proc_macro]
 pub fn stage_resources(input: TokenStream) -> TokenStream {
     let resources = syn::parse_macro_input!(input with Punctuated::<Resource, Token![,]>::parse_terminated);

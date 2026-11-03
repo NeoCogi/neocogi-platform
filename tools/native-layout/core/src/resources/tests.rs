@@ -183,3 +183,115 @@ fn symlinks_reject_without_following_external_storage() {
     assert!(!f.output.join("assets/extra").exists());
     assert!(outside.join("protected").exists(), "pruning must not follow an old child symlink");
 }
+
+/// All inputs are considered before any temporary candidate is created, independent of mapping order.
+/// An existing installed slot and its receipts must survive a rejected cross-mapping configuration.
+#[test]
+fn temporary_candidates_cannot_be_copied_by_another_mapping() {
+    for empty in [false, true] {
+        for reverse in [false, true] {
+            let f = Fixture::new();
+            f.stage().unwrap();
+            let receipts = fs::read(f.output.join(".neocogi-layout.json")).unwrap();
+            let input = f.manifest.join("input.txt");
+            fs::write(&input, b"A").unwrap();
+            let shared = f.output.join("shared");
+            fs::create_dir(&shared).unwrap();
+            if !empty {
+                fs::write(shared.join("keep"), b"keep").unwrap();
+            }
+            let mut mappings = vec![
+                Resource {
+                    source: input,
+                    destination: "shared/a.txt".into(),
+                },
+                Resource {
+                    source: shared.clone(),
+                    destination: "b".into(),
+                },
+            ];
+            if reverse {
+                mappings.reverse();
+            }
+            let error = stage_resources(&f.manifest, &f.output, &mappings).unwrap_err().to_string();
+            assert!(error.contains("temporary directory") && error.contains("inside resource input"), "{error}");
+            assert!(error.contains(shared.to_str().unwrap()), "diagnostic must name the conflicting path: {error}");
+            assert_eq!(fs::read(f.output.join("assets/keep")).unwrap(), b"one");
+            assert_eq!(fs::read(f.output.join(".neocogi-layout.json")).unwrap(), receipts);
+            assert!(!f.output.join("b").exists());
+            assert!(!shared.join("a.txt").exists());
+            assert_eq!(
+                children(&shared).unwrap().len(),
+                usize::from(!empty),
+                "no temporary payload may enter the input"
+            );
+        }
+    }
+}
+
+/// A nested output would copy itself recursively. Copying an already owned slot onto itself is safe
+/// when its temporary sibling lies outside the input, so that supported rebuild must remain valid.
+#[test]
+fn nested_outputs_reject_but_owned_source_equal_to_destination_is_allowed() {
+    let f = Fixture::new();
+    let nested = f.source.join("out");
+    let error = stage_resources(&f.manifest, &nested, &[f.mapping("assets")]).unwrap_err().to_string();
+    assert!(error.contains("temporary directory") && error.contains("inside resource input"), "{error}");
+    assert!(!nested.join("assets").exists());
+    assert!(!nested.join(".neocogi-layout.json").exists());
+    f.stage().unwrap();
+    let installed = f.output.join("assets");
+    stage_resources(
+        &f.manifest,
+        &f.output,
+        &[Resource {
+            source: installed.clone(),
+            destination: "assets".into(),
+        }],
+    )
+    .unwrap();
+    assert_eq!(fs::read(installed.join("keep")).unwrap(), b"one");
+}
+
+/// Directory, file and trailing-dot spellings must reject a link anywhere in the supplied input path.
+/// Canonicalizing first would erase the link. A rejection leaves installed assets and receipts unchanged.
+#[cfg(unix)]
+#[test]
+fn source_ancestors_are_checked_before_canonicalization() {
+    use std::os::unix::fs::symlink;
+    let f = Fixture::new();
+    f.stage().unwrap();
+    let receipts = fs::read(f.output.join(".neocogi-layout.json")).unwrap();
+    let real = f.manifest.join("real");
+    fs::create_dir_all(real.join("assets")).unwrap();
+    fs::write(real.join("assets/value.txt"), b"value").unwrap();
+    symlink(&real, f.manifest.join("linked")).unwrap();
+    symlink(real.join("assets/value.txt"), f.manifest.join("linked-file")).unwrap();
+    for input in [
+        "linked/assets",
+        "linked/assets/value.txt",
+        "linked/.",
+        "linked/assets/../assets/value.txt",
+        "linked-file",
+    ] {
+        let resource = Resource {
+            source: f.manifest.join(input),
+            destination: "new-assets".into(),
+        };
+        let error = stage_resources(&f.manifest, &f.output, &[resource]).unwrap_err().to_string();
+        assert!(error.contains("symlink"), "{input}: {error}");
+        assert!(!f.output.join("new-assets").exists());
+        assert_eq!(fs::read(f.output.join("assets/keep")).unwrap(), b"one");
+        assert_eq!(fs::read(f.output.join(".neocogi-layout.json")).unwrap(), receipts);
+    }
+    stage_resources(
+        &f.manifest,
+        &f.output,
+        &[Resource {
+            source: real.join("assets"),
+            destination: "new-assets".into(),
+        }],
+    )
+    .unwrap();
+    assert_eq!(fs::read(f.output.join("new-assets/value.txt")).unwrap(), b"value");
+}
