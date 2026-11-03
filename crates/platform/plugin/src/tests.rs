@@ -402,6 +402,37 @@ fn input_delivery(unknown: &ComPtr<IUnknown>, device: &Weak<Device>) {
         window.text_input(TextInputArea::Area(Rect { x: 0, y: 0, width: -1, height: 1 })),
         Err(NC_E_INVALID_ARG)
     );
+    // Actual SDL event storage and routing must deliver the canonical horizontal sign once.
+    // The unit translator matrix covers all axes/scales; this establishes the production COM boundary.
+    received.borrow_mut().clear();
+    let events = sdl2::init().unwrap().event().unwrap();
+    for direction in [sdl2::mouse::MouseWheelDirection::Normal, sdl2::mouse::MouseWheelDirection::Flipped] {
+        events
+            .push_event(sdl2::event::Event::MouseWheel {
+                timestamp: 0,
+                window_id: id,
+                which: 0,
+                x: 1,
+                y: 0,
+                precise_x: 1.,
+                precise_y: 0.,
+                direction,
+                mouse_x: 0,
+                mouse_y: 0,
+            })
+            .unwrap();
+    }
+    while window.poll(sink.as_com_ref()).unwrap() == PollStatus::Event {}
+    let physical = window.size().unwrap();
+    let logical = owner.window.size();
+    let pixels = (30. * f64::from(physical.width) / f64::from(logical.0.max(1))).trunc() as i32;
+    assert_eq!(
+        &*received.borrow(),
+        &[
+            (UiInput::Scroll(Point { x: pixels, y: 0 }), String::new()),
+            (UiInput::Scroll(Point { x: -pixels, y: 0 }), String::new()),
+        ]
+    );
     drop(sink);
     // No platform-owned sink reference remains after synchronous delivery.
     assert_eq!(Rc::strong_count(&received), 1);

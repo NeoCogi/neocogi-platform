@@ -90,7 +90,8 @@ enum UiInput: u8 {
         /// Buttons changed by this transition: left=1, right=2, middle=4.
         buttons: u8,
     },
-    /// Wheel delta at the last committed pointer position.
+    /// Wheel delta at the last committed pointer position, in physical pixels.
+    /// Positive X moves right; positive Y moves down, after host natural-scroll normalization.
     Scroll(Point),
     /// Complete key identity, state, and modifiers.
     Key(KeyStroke),

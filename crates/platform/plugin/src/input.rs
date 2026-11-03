@@ -52,11 +52,11 @@ impl InputState {
                 }
             }
             Event::MouseWheel { precise_x, precise_y, direction, .. } => {
-                // SDL reports positive up/left; the UI uses positive down/right. Honor natural
-                // scrolling and retain subpixel trackpad motion instead of rounding each event.
-                let direction = if direction == MouseWheelDirection::Flipped { 1.0 } else { -1.0 };
+                // SDL X is positive right, while Y is positive up. Normalize natural scrolling
+                // on both axes, then reverse only Y for the public positive-right/down convention.
+                let direction = if direction == MouseWheelDirection::Flipped { -1.0 } else { 1.0 };
                 let delta = self.wheel.translate(
-                    [f64::from(precise_x) * direction, f64::from(precise_y) * direction],
+                    [f64::from(precise_x) * direction, -f64::from(precise_y) * direction],
                     WheelUnit::Line,
                     [
                         f64::from(drawable.width) / f64::from(logical.0.max(1)),
@@ -311,6 +311,38 @@ mod tests {
         assert_eq!(translated[3], (UiInput::Cancel, String::new()));
     }
 
+    /// Independent SDL axis semantics survive normal/flipped direction and unequal drawable scales.
+    #[test]
+    fn wheel_axes_follow_sdl_orientation_with_nonuniform_scaling() {
+        for (direction, sign) in [(MouseWheelDirection::Normal, 1), (MouseWheelDirection::Flipped, -1)] {
+            for (x, y, expected) in [(1., 0., [60, 0]), (-1., 0., [-60, 0]), (0., 1., [0, -90]), (0., -1., [0, 90])] {
+                let event = Event::MouseWheel {
+                    timestamp: 0,
+                    window_id: 1,
+                    which: 0,
+                    x: 0,
+                    y: 0,
+                    precise_x: x,
+                    precise_y: y,
+                    direction,
+                    mouse_x: 0,
+                    mouse_y: 0,
+                };
+                let actual = InputState::default().translate(event, (100, 100), Size { width: 200, height: 300 });
+                let Transition::Input(UiInput::Scroll(delta), _) = actual else {
+                    panic!("scroll expected")
+                };
+                assert_eq!(
+                    delta,
+                    Point {
+                        x: expected[0] * sign,
+                        y: expected[1] * sign
+                    }
+                );
+            }
+        }
+    }
+
     /// SDL's precise wheel values accumulate, natural direction reverses them, and focus loss
     /// discards the old gesture's remainder instead of scrolling a newly focused editor.
     #[test]
@@ -333,7 +365,7 @@ mod tests {
         let Transition::Input(UiInput::Scroll(delta), _) = state.translate(wheel.clone(), (100, 100), size) else {
             panic!("accumulated wheel expected")
         };
-        assert_eq!(delta, Point { x: -1, y: 1 });
+        assert_eq!(delta, Point { x: 1, y: 1 });
         state.translate(
             Event::Window {
                 timestamp: 0,
@@ -352,6 +384,6 @@ mod tests {
         let Transition::Input(UiInput::Scroll(delta), _) = state.translate(flipped, (100, 100), size) else {
             panic!("flipped wheel expected")
         };
-        assert_eq!(delta, Point { x: 60, y: -60 });
+        assert_eq!(delta, Point { x: -60, y: -60 });
     }
 }
