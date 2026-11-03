@@ -146,10 +146,10 @@ fn rebuilt_window_composition_is_admitted_before_native_creation() {
 
 /// Read actual native pixels through a completed transfer, preserving the source layout.
 fn pixels(renderer: &VulkanRenderer, image: &Image) -> Vec<u8> {
-    crate::generic::tests::readback(
+    crate::backends::vulkan::generic::tests::readback(
         &renderer.context.core,
         &image.native,
-        <Backend as neocogi_render_gpu::native::NativeResources>::image_size(image),
+        <Backend as crate::native::NativeResources>::image_size(image),
     )
 }
 
@@ -168,7 +168,7 @@ fn independent_texture_frames_preserve_pixels_and_native_surface_configuration()
         );
     }
     let source = [255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 0, 255];
-    let gpu = neocogi_render_gpu::GpuDevice::new(
+    let gpu = crate::GpuDevice::new(
         renderer.core(),
         nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
             .query()
@@ -176,11 +176,11 @@ fn independent_texture_frames_preserve_pixels_and_native_surface_configuration()
     );
     let domain = gpu.create_ui_client(Default::default()).unwrap();
     let resources = domain.resources().unwrap();
-    let size = neocogi_render_gpu::abi::Size { width: 2, height: 2 };
+    let size = crate::abi::Size { width: 2, height: 2 };
     let owner = sampled::block(
         &gpu,
         &resources,
-        neocogi_render_gpu::abi::Rect { x: 0, y: 0, width: 2, height: 2 },
+        crate::abi::Rect { x: 0, y: 0, width: 2, height: 2 },
         size,
         &source,
     );
@@ -244,7 +244,7 @@ fn independent_texture_frames_preserve_pixels_and_native_surface_configuration()
     let empty = sampled::block_initial(
         &gpu,
         &resources,
-        neocogi_render_gpu::abi::Rect { x: 0, y: 0, width: 8, height: 8 },
+        crate::abi::Rect { x: 0, y: 0, width: 8, height: 8 },
         Size { width: 2, height: 2 },
         None,
     );
@@ -269,15 +269,14 @@ fn independent_texture_frames_preserve_pixels_and_native_surface_configuration()
     }
 }
 
-#[path = "../../gpu/tests/support/derivatives.rs"]
-mod derivatives;
+use crate::derivative_fixture as derivatives;
 
 /// Real partial generations remain destructible, and no native entry reuses them.
 /// Injection returns ordinary errors at production stages rather than provoking driver OOM.
 #[test]
 #[ignore = "requires an SDL native display and Vulkan adapter"]
 fn reconstruction_failure_rejects_every_native_entry_and_preserves_finalizer_phase() {
-    use neocogi_render_gpu::{abi::*, source::Bytes};
+    use crate::{abi::*, source::Bytes};
     let _session = NATIVE_SESSION.lock().unwrap_or_else(|error| error.into_inner());
     let sdl = sdl2::init().unwrap();
     let video = sdl.video().unwrap();
@@ -331,7 +330,7 @@ fn reconstruction_failure_rejects_every_native_entry_and_preserves_finalizer_pha
         // cases exercise the successful first owner as well as a later failure.
         for entry in 0..3 {
             let mut renderer = VulkanRenderer::new(&window, 64, 64).unwrap();
-            let gpu = neocogi_render_gpu::GpuDevice::new(
+            let gpu = crate::GpuDevice::new(
                 renderer.core(),
                 nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
                     .query()

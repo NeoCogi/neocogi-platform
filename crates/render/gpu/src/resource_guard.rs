@@ -34,13 +34,6 @@ impl<T, F: FnOnce(T)> ResourceGuard<T, F> {
         self.resource.as_ref().expect("resource guard is always armed before commit")
     }
 
-    /// Mutably borrows the resource while construction is still transactional.
-    pub fn get_mut(&mut self) -> &mut T {
-        // Vulkan aggregate construction updates layout and other bookkeeping before committing the
-        // complete resource; the guard remains responsible for cleanup throughout that mutation.
-        self.resource.as_mut().expect("resource guard is always armed before commit")
-    }
-
     /// Transfers ownership to the completed object and permanently disarms cleanup.
     pub fn into_inner(mut self) -> T {
         // Taking the resource leaves Drop with no `(resource, cleanup)` pair, so the longer-lived
@@ -70,6 +63,7 @@ mod tests {
     fn construct(fail_after: Option<u8>, cleanup_log: Rc<RefCell<Vec<u8>>>) -> Result<[u8; 3], ()> {
         let log = cleanup_log.clone();
         let first = ResourceGuard::new(1, move |value| log.borrow_mut().push(value));
+        assert_eq!(*first.get(), 1);
         if fail_after == Some(1) {
             return Err(());
         }
@@ -103,14 +97,6 @@ mod tests {
         let cleanup_log = Rc::new(RefCell::new(Vec::new()));
         assert_eq!(construct(None, cleanup_log.clone()), Ok([1, 2, 3]));
         assert!(cleanup_log.borrow().is_empty());
-    }
-
-    #[test]
-    fn guarded_resource_can_be_updated_before_commit() {
-        let mut guard = ResourceGuard::new(String::from("pending"), |_| panic!("committed resource was cleaned"));
-        assert_eq!(guard.get(), "pending");
-        guard.get_mut().push_str(" resource");
-        assert_eq!(guard.into_inner(), "pending resource");
     }
 
     #[test]

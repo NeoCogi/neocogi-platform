@@ -74,7 +74,7 @@ WGPU GPU checks require a native adapter (software Vulkan is sufficient) and a
 working SDL native display for the surface test:
 
 ```sh
-cargo test -p neocogi-render-wgpu -- --ignored --test-threads=1
+cargo test -p neocogi-render-gpu --features wgpu,test-support --lib backends::wgpu:: -- --include-ignored --test-threads=1
 cargo test -p neocogi-render-plugin --lib --no-default-features --features wgpu -- --include-ignored --test-threads=1
 ```
 
@@ -87,7 +87,7 @@ panicking raw-window-handle adapter.
 Vulkan checks exercise actual readback and recovery with a native display:
 
 ```sh
-VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation cargo test -p neocogi-render-vulkan -- --include-ignored --test-threads=1
+VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation cargo test -p neocogi-render-gpu --features vulkan --lib backends::vulkan:: -- --include-ignored --test-threads=1
 cargo test -p neocogi-render-plugin --lib --no-default-features --features vulkan -- --include-ignored --test-threads=1
 ```
 

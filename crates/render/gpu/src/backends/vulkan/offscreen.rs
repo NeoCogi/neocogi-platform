@@ -110,7 +110,7 @@ impl Offscreen {
         pending.try_reserve_exact(blocks.len()).map_err(|error| error.to_string())?;
         pending.extend(blocks.iter().cloned());
         let framebuffer = output.framebuffer();
-        let size = <Backend as neocogi_render_gpu::native::NativeResources>::image_size(&output.image);
+        let size = <Backend as crate::native::NativeResources>::image_size(&output.image);
         let extent = vk::Extent2D {
             width: size.width as u32,
             height: size.height as u32,
@@ -145,11 +145,11 @@ impl Offscreen {
             executor.record(
                 self.command_buffer,
                 block,
-                neocogi_render_gpu::abi::Size {
+                crate::abi::Size {
                     width: width as i32,
                     height: height as i32,
                 },
-                neocogi_render_gpu::abi::Size {
+                crate::abi::Size {
                     width: extent.width as i32,
                     height: extent.height as i32,
                 },

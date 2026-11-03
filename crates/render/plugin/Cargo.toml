@@ -17,20 +17,16 @@ crate-type = ["rlib"]
 default = ["glow"]
 # Native acceptance readback and owned diagnostic probes; absent from deployed builds.
 test-support = ["dep:neocogi-shader-compiler"]
-webgl = ["dep:glow", "dep:neocogi-render-webgl"]
-glow = ["dep:glow", "dep:neocogi-render-glow"]
-vulkan = ["dep:neocogi-render-vulkan"]
-wgpu = ["dep:neocogi-render-wgpu"]
+webgl = ["dep:glow", "neocogi-render-gpu/webgl"]
+glow = ["dep:glow", "neocogi-render-gpu/glow"]
+vulkan = ["neocogi-render-gpu/vulkan"]
+wgpu = ["neocogi-render-gpu/wgpu"]
 
 [dependencies]
 neocogi-shader-compiler = { workspace = true, optional = true }
 neocogi-render-gpu.workspace = true
 neocogi-shader-core.workspace = true
 neocogi-render-core.workspace = true
-neocogi-render-webgl = { workspace = true, optional = true }
-neocogi-render-glow = { workspace = true, optional = true }
-neocogi-render-vulkan = { workspace = true, optional = true }
-neocogi-render-wgpu = { workspace = true, optional = true }
 neocogi-render-support.workspace = true
 rs-math3d.workspace = true
 neocogi-com = { workspace = true, default-features = false, features = ["macros", "std", "runtime"] }

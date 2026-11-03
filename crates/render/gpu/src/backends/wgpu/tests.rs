@@ -4,7 +4,7 @@ use super::*;
 
 /// Runs the actual WGPU validation layer; requires any native adapter, including a software one.
 #[test]
-#[ignore = "requires a native WGPU adapter; run cargo test -p neocogi-render-wgpu -- --ignored"]
+#[ignore = "requires a native WGPU adapter; run cargo test -p neocogi-render-gpu --features wgpu,test-support -- --ignored"]
 fn texture_upload_failures_are_returned_without_poisoning_later_uploads() {
     let instance = wgpu::Instance::default();
     let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default())).unwrap();
@@ -12,7 +12,7 @@ fn texture_upload_failures_are_returned_without_poisoning_later_uploads() {
     // An outer scope catches any validation error the helper accidentally lets escape. A real
     // existing texture remains owned while each invalid replacement candidate is rejected.
     let outer = device.push_error_scope(wgpu::ErrorFilter::Validation);
-    let mut executor = crate::generic::Executor::new(Core::new(device.clone(), queue.clone()));
+    let mut executor = crate::backends::wgpu::generic::Executor::new(Core::new(device.clone(), queue.clone()));
     let live = executor
         .image(Size { width: 1, height: 1 }, wgpu::TextureFormat::Rgba8Unorm, Some(&[255; 4]), None, false)
         .unwrap();
@@ -130,7 +130,7 @@ fn independent_texture_frames_preserve_pixels_and_native_surface_configuration()
     let empty = renderer.create_texture(size, None).unwrap();
     assert_eq!(pixels(&renderer, &empty), [0; 4]);
     let source = [255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 0, 255];
-    let gpu = neocogi_render_gpu::GpuDevice::new(
+    let gpu = crate::GpuDevice::new(
         renderer.core(),
         nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
             .query()
@@ -138,8 +138,8 @@ fn independent_texture_frames_preserve_pixels_and_native_surface_configuration()
     );
     let domain = gpu.create_ui_client(Default::default()).unwrap();
     let resources = domain.resources().unwrap();
-    let root = neocogi_render_gpu::abi::Rect { x: 0, y: 0, width: 2, height: 2 };
-    let block = sampled::block(&gpu, &resources, root, neocogi_render_gpu::abi::Size { width: 2, height: 2 }, &source);
+    let root = crate::abi::Rect { x: 0, y: 0, width: 2, height: 2 };
+    let block = sampled::block(&gpu, &resources, root, crate::abi::Size { width: 2, height: 2 }, &source);
     let prepared = renderer.prepare_block(&gpu.block_snapshot(block.as_com_ref()).unwrap(), true).unwrap();
     let output = renderer.create_render_texture(Size { width: 2, height: 2 }).unwrap();
     let info = FrameInfo::try_new(Dimensioni::new(2, 2), color(0, 0, 0, 255)).unwrap();
@@ -191,7 +191,7 @@ fn independent_texture_frames_preserve_pixels_and_native_surface_configuration()
     let empty = sampled::block_initial(
         &gpu,
         &resources,
-        neocogi_render_gpu::abi::Rect { x: 0, y: 0, width: 8, height: 8 },
+        crate::abi::Rect { x: 0, y: 0, width: 8, height: 8 },
         Size { width: 2, height: 2 },
         None,
     );
@@ -219,8 +219,6 @@ fn independent_texture_frames_preserve_pixels_and_native_surface_configuration()
 #[path = "generic_tests.rs"]
 mod generic;
 
-#[path = "../../gpu/tests/support/sampled.rs"]
-mod sampled;
+use crate::sampled_fixture as sampled;
 
-#[path = "../../gpu/tests/support/derivatives.rs"]
-mod derivatives;
+use crate::derivative_fixture as derivatives;

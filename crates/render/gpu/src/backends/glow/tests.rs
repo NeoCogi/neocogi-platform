@@ -79,11 +79,9 @@ impl Drop for ForeignState {
     }
 }
 
-#[path = "../../gpu/tests/support/sampled.rs"]
-mod sampled;
+use crate::sampled_fixture as sampled;
 
-#[path = "../../gpu/tests/support/derivatives.rs"]
-mod derivatives;
+use crate::derivative_fixture as derivatives;
 
 /// Window and FBO draws must use the same canonical signed Y differential axis.
 #[test]
@@ -105,7 +103,7 @@ fn canonical_signed_derivatives_match_window_and_texture_pixels() {
         8,
     )
     .unwrap();
-    let gpu = neocogi_render_gpu::GpuDevice::new(
+    let gpu = crate::GpuDevice::new(
         renderer.core(),
         nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
             .query()
@@ -176,7 +174,7 @@ fn ui_draws_clears_and_uploads_survive_application_gl_state() {
         8,
     )
     .unwrap();
-    let gpu = neocogi_render_gpu::GpuDevice::new(
+    let gpu = crate::GpuDevice::new(
         renderer.core(),
         nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
             .query()
@@ -184,8 +182,8 @@ fn ui_draws_clears_and_uploads_survive_application_gl_state() {
     );
     let domain = gpu.create_ui_client(Default::default()).unwrap();
     let resources = domain.resources().unwrap();
-    let root = neocogi_render_gpu::abi::Rect { x: 1, y: 1, width: 6, height: 6 };
-    let block = sampled::block(&gpu, &resources, root, neocogi_render_gpu::abi::Size { width: 1, height: 1 }, &[255, 0, 0, 255]);
+    let root = crate::abi::Rect { x: 1, y: 1, width: 6, height: 6 };
+    let block = sampled::block(&gpu, &resources, root, crate::abi::Size { width: 1, height: 1 }, &[255, 0, 0, 255]);
     foreign.bind();
     let prepared = renderer.prepare_block(&gpu.block_snapshot(block.as_com_ref()).unwrap(), false).unwrap();
     let info = FrameInfo::try_new(Dimensioni::new(8, 8), color(17, 19, 23, 255)).unwrap();
@@ -220,7 +218,7 @@ fn ui_draws_clears_and_uploads_survive_application_gl_state() {
 fn native_completion_owns_resource_and_command_charges() {
     let _session = NATIVE_SESSION.lock().unwrap_or_else(|error| error.into_inner());
     use neocogi_com::NcCopyFromBufferOffset;
-    use neocogi_render_gpu::{
+    use crate::{
         GpuDevice,
         abi::*,
         source::{Bytes, PipelineDesc},
@@ -329,7 +327,7 @@ fn native_completion_owns_resource_and_command_charges() {
 fn dynamic_shader_indices_cannot_escape_uniform_or_private_storage() {
     let _session = NATIVE_SESSION.lock().unwrap_or_else(|error| error.into_inner());
     use neocogi_com::NcCopyFromBufferOffset;
-    use neocogi_render_gpu::{
+    use crate::{
         GpuDevice,
         abi::*,
         source::{Bytes, PipelineDesc},
@@ -420,7 +418,7 @@ fn dynamic_shader_indices_cannot_escape_uniform_or_private_storage() {
 fn fragment_identifiers_containing_builtin_names_compile_and_render() {
     let _session = NATIVE_SESSION.lock().unwrap_or_else(|error| error.into_inner());
     use neocogi_com::NcCopyFromBufferOffset;
-    use neocogi_render_gpu::{
+    use crate::{
         GpuDevice,
         abi::*,
         source::{Bytes, PipelineDesc},
@@ -555,9 +553,9 @@ fn independent_logical_devices_keep_distinct_native_resources() {
     .unwrap();
     let mut owners = Vec::new();
     let mut snapshots = Vec::new();
-    let root = neocogi_render_gpu::abi::Rect { x: 0, y: 0, width: 8, height: 8 };
+    let root = crate::abi::Rect { x: 0, y: 0, width: 8, height: 8 };
     for rgba in [[255, 0, 0, 255], [0, 0, 255, 255]] {
-        let gpu = neocogi_render_gpu::GpuDevice::new(
+        let gpu = crate::GpuDevice::new(
             renderer.core(),
             nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
                 .query()
@@ -565,7 +563,7 @@ fn independent_logical_devices_keep_distinct_native_resources() {
         );
         let domain = gpu.create_client(Default::default()).unwrap();
         let resources = domain.resources().unwrap();
-        let owner = sampled::block(&gpu, &resources, root, neocogi_render_gpu::abi::Size { width: 1, height: 1 }, &rgba);
+        let owner = sampled::block(&gpu, &resources, root, crate::abi::Size { width: 1, height: 1 }, &rgba);
         snapshots.push(gpu.block_snapshot(owner.as_com_ref()).unwrap());
         owners.push((gpu, domain, resources, owner));
     }
@@ -645,7 +643,7 @@ fn read_image(gl: &glow::Context, image: &Image, width: i32, height: i32) -> Vec
 #[test]
 #[ignore = "requires native GL ES3; run with SDL_VIDEODRIVER=offscreen"]
 fn absent_initial_images_are_native_zero_without_a_cpu_zero_payload() {
-    use neocogi_render_gpu::{GpuDevice, abi::*};
+    use crate::{GpuDevice, abi::*};
     let _session = NATIVE_SESSION.lock().unwrap_or_else(|error| error.into_inner());
     let sdl = sdl2::init().unwrap();
     let video = sdl.video().unwrap();
@@ -674,7 +672,7 @@ fn absent_initial_images_are_native_zero_without_a_cpu_zero_payload() {
     let block = sampled::block_initial(
         &device,
         &resources,
-        neocogi_render_gpu::abi::Rect { x: 0, y: 0, width: 4, height: 4 },
+        crate::abi::Rect { x: 0, y: 0, width: 4, height: 4 },
         Size { width: 2, height: 2 },
         None,
     );
@@ -722,7 +720,7 @@ fn late_native_owners_preserve_their_context_and_next_driver_reselects_its_own()
     let weak_a = Rc::downgrade(&core_a);
     let metadata_a = core_a.identity().clone();
     let mut renderer_a = GLRenderer::new(core_a, 4, 4).unwrap();
-    let gpu_a = neocogi_render_gpu::GpuDevice::new(
+    let gpu_a = crate::GpuDevice::new(
         renderer_a.core(),
         nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
             .query()
@@ -730,8 +728,8 @@ fn late_native_owners_preserve_their_context_and_next_driver_reselects_its_own()
     );
     let domain_a = gpu_a.create_client(Default::default()).unwrap();
     let resources_a = domain_a.resources().unwrap();
-    let root = neocogi_render_gpu::abi::Rect { x: 0, y: 0, width: 4, height: 4 };
-    let size = neocogi_render_gpu::abi::Size { width: 1, height: 1 };
+    let root = crate::abi::Rect { x: 0, y: 0, width: 4, height: 4 };
+    let size = crate::abi::Size { width: 1, height: 1 };
     let block_a = sampled::block(&gpu_a, &resources_a, root, size, &[255, 0, 0, 255]);
     let snapshot_a = gpu_a.block_snapshot(block_a.as_com_ref()).unwrap();
     let prepared_a = renderer_a.prepare_block(&snapshot_a, false).unwrap();
@@ -746,7 +744,7 @@ fn late_native_owners_preserve_their_context_and_next_driver_reselects_its_own()
     let core_b = unsafe { Core::from_sdl(gl_b.clone(), window_b, context_b) }.unwrap();
     assert_ne!(metadata_a.as_raw().object, core_b.identity().as_raw().object);
     let mut renderer_b = GLRenderer::new(core_b, 4, 4).unwrap();
-    let gpu_b = neocogi_render_gpu::GpuDevice::new(
+    let gpu_b = crate::GpuDevice::new(
         renderer_b.core(),
         nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
             .query()
@@ -791,7 +789,7 @@ fn unsubmitted_target_variants_release_the_source_and_all_charges() {
     let gl = Rc::new(unsafe { glow::Context::from_loader_function(|name| video.gl_get_proc_address(name).cast()) });
     let core = unsafe { Core::from_sdl(gl, window, context) }.unwrap();
     let mut renderer = GLRenderer::new(core, 8, 8).unwrap();
-    let gpu = neocogi_render_gpu::GpuDevice::new(
+    let gpu = crate::GpuDevice::new(
         renderer.core(),
         nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
             .query()
@@ -803,7 +801,7 @@ fn unsubmitted_target_variants_release_the_source_and_all_charges() {
     for _ in 0..8 {
         let owner = derivatives::block(&gpu, &resources, shader);
         let snapshot = gpu.block_snapshot(owner.as_com_ref()).unwrap();
-        let neocogi_render_gpu::command::Command::Draw(draw) = &snapshot.commands()[0] else {
+        let crate::command::Command::Draw(draw) = &snapshot.commands()[0] else {
             panic!("draw")
         };
         let source = Rc::downgrade(&draw.pipeline);

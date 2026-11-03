@@ -3,13 +3,13 @@ use super::*;
 use neocogi_render_core::{Color, FrameInfo, RendererBackend, RendererFrame, prelude::Dimensioni};
 
 #[cfg(feature = "glow")]
-pub(super) use neocogi_render_glow::{Backend, Core, GLRenderer as Renderer};
+pub(super) use neocogi_render_gpu::backends::glow::{Backend, Core, GLRenderer as Renderer};
 #[cfg(feature = "vulkan")]
-pub(super) use neocogi_render_vulkan::{Backend, VulkanRenderer as Renderer};
+pub(super) use neocogi_render_gpu::backends::vulkan::{Backend, VulkanRenderer as Renderer};
 #[cfg(feature = "wgpu")]
-pub(super) use neocogi_render_wgpu::{Backend, WgpuRenderer as Renderer};
+pub(super) use neocogi_render_gpu::backends::wgpu::{Backend, WgpuRenderer as Renderer};
 #[cfg(feature = "webgl")]
-pub(super) use neocogi_render_webgl::{Backend, Core, WebGlCanvasRenderer as Renderer};
+pub(super) use neocogi_render_gpu::backends::webgl::{Backend, Core, WebGlCanvasRenderer as Renderer};
 /// Native immutable image selected with its statically typed resource family.
 pub(super) type Image = <Renderer as RendererBackend>::Image;
 /// Consumed private output target; cannot be reused after publication.

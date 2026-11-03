@@ -1,12 +1,12 @@
 //! Headless direct-Vulkan acceptance uses real COM recording, native passes and readback.
 use super::*;
-use crate::sampled;
+use crate::backends::vulkan::sampled;
 use neocogi_com::{ComBox, ComPtr, NcCopyFromBufferOffset};
-use neocogi_render_gpu::{
+use crate::{
     source::{Bytes, PipelineDesc},
 };
 
-type GpuDevice = neocogi_render_gpu::GpuDevice<Backend>;
+type GpuDevice = crate::GpuDevice<Backend>;
 
 /// Opens a graphics device without requiring a native window or presentation extension.
 fn core() -> Rc<Core> {
@@ -219,7 +219,7 @@ impl Target {
         let pixels = Allocation::new(&core, (width * height * 4) as usize, None, vk::BufferUsageFlags::TRANSFER_DST).unwrap();
         let depths = Allocation::new(&core, (width * height * 4) as usize, None, vk::BufferUsageFlags::TRANSFER_DST).unwrap();
         unsafe {
-            let pass = crate::pass::create(
+            let pass = crate::backends::vulkan::pass::create(
                 &core.device,
                 signature,
                 vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
@@ -1044,7 +1044,7 @@ fn import_native_image(
 fn private_output_uses_production_pass_upload_and_completion_paths() {
     let core = core();
     let mut executor = Executor::new(core.clone()).unwrap();
-    let mut output_session = crate::offscreen::Offscreen::new(&core).unwrap();
+    let mut output_session = crate::backends::vulkan::offscreen::Offscreen::new(&core).unwrap();
     let size = Size { width: 2, height: 2 };
     let native = super::Image::allocate(
         &core,
@@ -1067,9 +1067,9 @@ fn private_output_uses_production_pass_upload_and_completion_paths() {
         )
     }
     .unwrap();
-    let output = Rc::new(crate::OutputState {
+    let output = Rc::new(crate::backends::vulkan::OutputState {
         image: executor.own_image(native.clone(), size, None),
-        framebuffer: Some(crate::FramebufferAllocation {
+        framebuffer: Some(crate::backends::vulkan::FramebufferAllocation {
             core: core.clone(),
             raw: framebuffer,
             _native: native.clone(),
@@ -1117,7 +1117,7 @@ fn private_output_uses_production_pass_upload_and_completion_paths() {
 }
 
 /// Native fixture readback preserves a completed image's shader-readable layout for later sampling.
-pub(crate) fn readback(core: &Rc<Core>, native: &super::Image, size: Size) -> Vec<u8> {
+pub(in crate::backends::vulkan) fn readback(core: &Rc<Core>, native: &super::Image, size: Size) -> Vec<u8> {
     // Target supplies only independent command/readback ownership; this image was rendered by
     // the production Offscreen session above, rather than a second test-only output executor.
     let target = Target::new(core.clone(), size.width as u32, size.height as u32);
@@ -1196,7 +1196,7 @@ fn unsubmitted_variants_reuse_native_objects_and_reject_other_cores() {
     let core = core();
     let mut executor = Executor::new(core.clone()).unwrap();
     let target = Target::new(core.clone(), 8, 8);
-    let output = crate::offscreen::Offscreen::new(&core).unwrap();
+    let output = crate::backends::vulkan::offscreen::Offscreen::new(&core).unwrap();
     let offscreen = Signature {
         color: vk::Format::R8G8B8A8_UNORM,
         depth: None,

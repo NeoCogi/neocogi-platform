@@ -1,14 +1,14 @@
 //! Direct Vulkan realization of the shared immutable graphics vocabulary.
 //! Native allocations retain a narrow device core and opaque accounting, without source versions.
 use ash::{Entry, vk};
-use neocogi_render_gpu::{
+use crate::{
     abi::*,
     command::{DrawRange, CommandCharge},
     resource::BackingCharge,
     native::NativeResources,
     scope::physical_rect,
 };
-use neocogi_render_support::resource_guard::ResourceGuard;
+use crate::resource_guard::ResourceGuard;
 use std::{
     cell::Cell,
     ops::Deref,
@@ -17,14 +17,14 @@ use std::{
     rc::Rc,
 };
 
-type Block = neocogi_render_gpu::record::Block<Backend>;
-type Command = neocogi_render_gpu::command::Command<Backend>;
-type Draw = neocogi_render_gpu::command::Draw<Backend>;
-type BufferVersion = neocogi_render_gpu::resource::BufferVersion<Backend>;
-type TextureVersion = neocogi_render_gpu::resource::TextureVersion<Backend>;
-type SamplerVersion = neocogi_render_gpu::resource::SamplerVersion<Backend>;
-type PipelineVersion = neocogi_render_gpu::resource::PipelineVersion<Backend>;
-type UniformData = neocogi_render_gpu::command::UniformData<Backend>;
+type Block = crate::record::Block<Backend>;
+type Command = crate::command::Command<Backend>;
+type Draw = crate::command::Draw<Backend>;
+type BufferVersion = crate::resource::BufferVersion<Backend>;
+type TextureVersion = crate::resource::TextureVersion<Backend>;
+type SamplerVersion = crate::resource::SamplerVersion<Backend>;
+type PipelineVersion = crate::resource::PipelineVersion<Backend>;
+type UniformData = crate::command::UniformData<Backend>;
 /// Statically selected concrete Vulkan resource family.
 pub struct Backend;
 /// Exclusive native construction capability; render-pass compatibility comes only from the host.
@@ -91,7 +91,7 @@ impl NativeResources for Backend {
     }
 }
 /// Complete owned packets contain no logical source, domain, driver or producer endpoint.
-pub(crate) enum Retirement {
+pub(in crate::backends::vulkan) enum Retirement {
     /// Vertex/index/uniform storage and its opaque receipt.
     Buffer(BufferAllocation),
     /// Independent native sampling state.
@@ -105,7 +105,7 @@ pub(crate) enum Retirement {
 }
 impl Retirement {
     /// Exhaustively destroy the returned/drained owned packet; payloads contain no producer.
-    pub(crate) fn discard(self) {
+    pub(in crate::backends::vulkan) fn discard(self) {
         match self {
             Self::Buffer(value) => drop(value),
             Self::Sampler(value) => drop(value),
@@ -153,7 +153,7 @@ pub struct Core {
     /// Parent of the logical device; no swapchain or cache is owned here.
     instance: ash::Instance,
     /// Shared native dispatch and allocation owner, never a client-facing capability.
-    pub(crate) device: ash::Device,
+    pub(in crate::backends::vulkan) device: ash::Device,
     /// Query handle and immutable native limits belong to this exact logical device.
     physical: vk::PhysicalDevice,
     /// Logical byte/resource budgets cannot replace Vulkan's per-device validity limits.
@@ -189,7 +189,7 @@ impl Core {
 
     /// Teardown cannot free children while completion is uncertain. Device loss permits native
     /// destruction; other wait failures retry rather than pretending that queue use has ended.
-    pub(crate) fn wait_idle(&self) {
+    pub(in crate::backends::vulkan) fn wait_idle(&self) {
         loop {
             match unsafe { self.device.device_wait_idle() } {
                 Ok(()) => return,
@@ -202,7 +202,7 @@ impl Core {
         }
     }
     /// Takes native ownership after bootstrap has transferred every handle successfully.
-    pub(crate) fn new(entry: Entry, instance: ash::Instance, physical: vk::PhysicalDevice, device: ash::Device, family: u32) -> Rc<Self> {
+    pub(in crate::backends::vulkan) fn new(entry: Entry, instance: ash::Instance, physical: vk::PhysicalDevice, device: ash::Device, family: u32) -> Rc<Self> {
         // SAFETY: Bootstrap owns a live physical/logical device and requested queue zero.
         let memory = unsafe { instance.get_physical_device_memory_properties(physical) };
         let limits = unsafe { instance.get_physical_device_properties(physical) }.limits;
@@ -231,7 +231,7 @@ impl Core {
     }
 
     /// Reserve a native object slot before calling Vulkan; failure publishes neither owner nor count.
-    pub(crate) fn allocate(self: &Rc<Self>, info: &vk::MemoryAllocateInfo<'_>) -> Result<Memory, String> {
+    pub(in crate::backends::vulkan) fn allocate(self: &Rc<Self>, info: &vk::MemoryAllocateInfo<'_>) -> Result<Memory, String> {
         let count = self.memory_count.get();
         if count >= self.limits.max_memory_allocation_count {
             return Err("Vulkan device memory allocation count exhausted".into());
@@ -243,7 +243,7 @@ impl Core {
     }
 
     /// Native sampler counts are shared across generic and host-owned graphics resources.
-    pub(crate) fn sampler(self: &Rc<Self>, info: &vk::SamplerCreateInfo<'_>) -> Result<NativeSampler, String> {
+    pub(in crate::backends::vulkan) fn sampler(self: &Rc<Self>, info: &vk::SamplerCreateInfo<'_>) -> Result<NativeSampler, String> {
         let count = self.sampler_count.get();
         if count >= self.limits.max_sampler_allocation_count {
             return Err("Vulkan sampler allocation count exhausted".into());
@@ -255,7 +255,7 @@ impl Core {
     }
 
     /// Validate the exact format/usage before an image creation call can violate device limits.
-    pub(crate) fn image_extent(&self, format: vk::Format, width: u32, height: u32, usage: vk::ImageUsageFlags) -> Result<(), String> {
+    pub(in crate::backends::vulkan) fn image_extent(&self, format: vk::Format, width: u32, height: u32, usage: vk::ImageUsageFlags) -> Result<(), String> {
         if width == 0 || height == 0 || width > self.limits.max_image_dimension2_d || height > self.limits.max_image_dimension2_d {
             return Err("Vulkan image dimensions exceed device limits".into());
         }
@@ -289,11 +289,11 @@ impl Core {
 }
 
 /// A device allocation owns its exact count until actual native memory release.
-pub(crate) struct Memory {
+pub(in crate::backends::vulkan) struct Memory {
     /// No presentation/cache/domain edge; an escaped native allocation keeps only its device alive.
     core: Rc<Core>,
     /// Bound memory handle, released after the associated buffer/image is destroyed.
-    pub(crate) raw: vk::DeviceMemory,
+    pub(in crate::backends::vulkan) raw: vk::DeviceMemory,
 }
 impl Drop for Memory {
     /// Completion owners establish quiescence before the bound resource is destroyed.
@@ -304,11 +304,11 @@ impl Drop for Memory {
 }
 
 /// Shared native sampler owner enforces the physical count independently of client quotas.
-pub(crate) struct NativeSampler {
+pub(in crate::backends::vulkan) struct NativeSampler {
     /// Cache-free device remains live for destruction.
     core: Rc<Core>,
     /// Normalized sampler used by immutable descriptors.
-    pub(crate) raw: vk::Sampler,
+    pub(in crate::backends::vulkan) raw: vk::Sampler,
 }
 impl Drop for NativeSampler {
     /// Cache and submission owners release only after the final native sampling use completes.
@@ -411,21 +411,21 @@ pub struct BufferAllocation {
 }
 notifying!(Buffer, BufferAllocation);
 /// Cache-free native image can be shared by ordinary UI images and generic sampled bindings.
-pub(crate) struct Image {
+pub(in crate::backends::vulkan) struct Image {
     /// Bound storage drops after this owner's view and image destruction.
     _memory: Memory,
     /// Parent dispatch has no renderer/cache/domain reverse edge.
     core: Rc<Core>,
     /// Single-mip immutable image storage.
-    pub(crate) raw: vk::Image,
+    pub(in crate::backends::vulkan) raw: vk::Image,
     /// Read-only sampling or host-owned attachment view.
-    pub(crate) view: vk::ImageView,
+    pub(in crate::backends::vulkan) view: vk::ImageView,
 }
 impl Image {
     /// Transfers fully initialized same-device handles from an armed creation transaction.
     /// Allocate one native image/view with device-limit checks and counted memory ownership.
     /// Both initialized uploads and host color/depth attachments use this same transaction.
-    pub(crate) fn allocate(
+    pub(in crate::backends::vulkan) fn allocate(
         core: &Rc<Core>,
         size: Size,
         format: vk::Format,
@@ -484,7 +484,7 @@ impl Image {
         Ok(Rc::new(Self::new(core.clone(), image.into_inner(), memory, view.into_inner())))
     }
 
-    pub(crate) fn new(core: Rc<Core>, raw: vk::Image, memory: Memory, view: vk::ImageView) -> Self {
+    pub(in crate::backends::vulkan) fn new(core: Rc<Core>, raw: vk::Image, memory: Memory, view: vk::ImageView) -> Self {
         Self { _memory: memory, core, raw, view }
     }
 }
@@ -501,7 +501,7 @@ impl Drop for Image {
 /// Sender-free image packet shares raw storage without retaining a source version or public image.
 pub struct TextureAllocation {
     /// Shared raw image owner contains neither a sender nor a logical source.
-    pub(crate) native: Rc<Image>,
+    pub(in crate::backends::vulkan) native: Rc<Image>,
     /// Immutable admitted extent of this exact native allocation.
     size: Size,
     /// Generic allocation charge; per-import use reservations stay outside this image.
@@ -521,9 +521,9 @@ notifying!(Sampler, SamplerAllocation);
 #[derive(Clone, Copy, Eq, PartialEq, Hash)]
 pub struct Signature {
     /// Host-selected single color attachment format.
-    pub(crate) color: vk::Format,
+    pub(in crate::backends::vulkan) color: vk::Format,
     /// Optional host depth attachment; clients cannot add one.
-    pub(crate) depth: Option<vk::Format>,
+    pub(in crate::backends::vulkan) depth: Option<vk::Format>,
 }
 /// Pipeline layouts/descriptors are owned independently of the presentation render pass.
 pub struct PipelineAllocation {
@@ -670,7 +670,7 @@ impl Drop for Transfer {
 }
 
 /// One direct Vulkan executor realizes exactly the same CPU command vocabulary as other backends.
-pub(crate) struct Executor {
+pub(in crate::backends::vulkan) struct Executor {
     /// Cache-free raw instance/device lifetime.
     core: Rc<Core>,
     /// Dedicated upload command pool never selects or acquires presentation targets.
@@ -692,7 +692,7 @@ pub(crate) struct Executor {
 
 impl Executor {
     /// Creates only a private transient command pool; resource realization is lazy and fallible.
-    pub(crate) fn new(core: Rc<Core>) -> Result<Self, String> {
+    pub(in crate::backends::vulkan) fn new(core: Rc<Core>) -> Result<Self, String> {
         let uploads = unsafe {
             core.device.create_command_pool(
                 &vk::CommandPoolCreateInfo::default()
@@ -717,7 +717,7 @@ impl Executor {
     }
 
     /// Polls context-owned fences, releases completed native owners and drains owned retirement packets.
-    pub(crate) fn collect(&mut self) -> Result<(), String> {
+    pub(in crate::backends::vulkan) fn collect(&mut self) -> Result<(), String> {
         let mut failure = None;
         self.submitted.retain(|entry| match unsafe { self.core.device.get_fence_status(entry.fence) } {
             Ok(true) => false,
@@ -735,7 +735,7 @@ impl Executor {
     }
 
     /// Realizes immutable native snapshots against a compatible host-selected render pass.
-    pub(crate) fn prepare(&mut self, block: &Block, pass: vk::RenderPass, signature: Signature) -> Result<PreparedBlock, String> {
+    pub(in crate::backends::vulkan) fn prepare(&mut self, block: &Block, pass: vk::RenderPass, signature: Signature) -> Result<PreparedBlock, String> {
         block.admit_on(&self.core).map_err(|error| error.to_string())?;
         let first = self.transfers.len();
         let result = self.prepare_inner(block, pass, signature);
@@ -953,7 +953,7 @@ impl Executor {
         }))
     }
     /// Private UI uploads share the exact same immutable version-owned slot and completion path.
-    pub(crate) fn prepare_texture(&mut self, source: Rc<TextureVersion>) -> Result<(), String> {
+    pub(in crate::backends::vulkan) fn prepare_texture(&mut self, source: Rc<TextureVersion>) -> Result<(), String> {
         self.collect()?;
         source
             .native(&mut Preparation {
@@ -963,19 +963,19 @@ impl Executor {
             .map(|_| ())
     }
     /// Wrap actual same-core native pixels without retaining any public COM image or source version.
-    pub(crate) fn own_image(&self, native: Rc<Image>, size: Size, charge: Option<BackingCharge>) -> Rc<Texture> {
+    pub(in crate::backends::vulkan) fn own_image(&self, native: Rc<Image>, size: Size, charge: Option<BackingCharge>) -> Rc<Texture> {
         Rc::new(Texture {
             owner: Some(TextureAllocation { native, size, _charge: charge }),
             retired: self.retired_tx.clone(),
         })
     }
     /// Ordinary and generic images share explicit initialized uploads with no renderer-global map.
-    pub(crate) fn create_image(&mut self, size: Size, format: vk::Format, pixels: Option<&[u8]>, charge: Option<BackingCharge>) -> Result<Rc<Texture>, String> {
+    pub(in crate::backends::vulkan) fn create_image(&mut self, size: Size, format: vk::Format, pixels: Option<&[u8]>, charge: Option<BackingCharge>) -> Result<Rc<Texture>, String> {
         let native = self.upload_image(size, format, pixels, charge.clone())?;
         Ok(self.own_image(native, size, charge))
     }
     /// Only actual native backings clone a producer; source versions and Core own none.
-    pub(crate) fn sender(&self) -> Sender<Retirement> {
+    pub(in crate::backends::vulkan) fn sender(&self) -> Sender<Retirement> {
         self.retired_tx.clone()
     }
     /// Drains sender-free owned packets, including packets arriving while previous packets are dropped.
@@ -987,7 +987,7 @@ impl Executor {
 
     /// Shared ordinary/generic initialization retains commands, source and destination before
     /// submitting. A failed wait is terminal and keeps every referenced owner until idle/loss.
-    pub(crate) fn upload_image(&mut self, size: Size, format: vk::Format, pixels: Option<&[u8]>, receipt: Option<BackingCharge>) -> Result<Rc<Image>, String> {
+    pub(in crate::backends::vulkan) fn upload_image(&mut self, size: Size, format: vk::Format, pixels: Option<&[u8]>, receipt: Option<BackingCharge>) -> Result<Rc<Image>, String> {
         if self.unusable() {
             return Err("Vulkan graphics executor is unavailable".into());
         }
@@ -1127,7 +1127,7 @@ impl Executor {
     }
 
     /// Host acquisition must also reject a failed executor, including frames without client blocks.
-    pub(crate) fn unusable(&self) -> bool {
+    pub(in crate::backends::vulkan) fn unusable(&self) -> bool {
         matches!(self.health, Health::Failed) || self.core.lost.get()
     }
 }
@@ -1310,7 +1310,7 @@ impl Executor {
 
     /// The actual acquired target must remain compatible, even after an asynchronous WSI rebuild.
     /// This local check runs before beginning the target render pass, including clear-only blocks.
-    pub(crate) fn admit(&self, block: &PreparedBlock, signature: Signature) -> Result<(), String> {
+    pub(in crate::backends::vulkan) fn admit(&self, block: &PreparedBlock, signature: Signature) -> Result<(), String> {
         if self.unusable() {
             return Err("Vulkan graphics executor is unavailable".into());
         }
@@ -1321,7 +1321,7 @@ impl Executor {
     }
 
     /// Replays only native snapshots inside a host-owned pass; no client can select attachments.
-    pub(crate) fn record(&self, command: vk::CommandBuffer, block: &PreparedBlock, logical: Size, physical: Size, signature: Signature) -> Result<(), String> {
+    pub(in crate::backends::vulkan) fn record(&self, command: vk::CommandBuffer, block: &PreparedBlock, logical: Size, physical: Size, signature: Signature) -> Result<(), String> {
         self.admit(block, signature)?;
         let device = &self.core.device;
         for operation in &block.0.commands {
@@ -1411,7 +1411,7 @@ impl Executor {
     }
 
     /// Keeps snapshots through the context-owned completion fence, including later presentation failure.
-    pub(crate) fn submitted(&mut self, fence: vk::Fence, blocks: Vec<PreparedBlock>) {
+    pub(in crate::backends::vulkan) fn submitted(&mut self, fence: vk::Fence, blocks: Vec<PreparedBlock>) {
         if !blocks.is_empty() {
             self.submitted.push(Submitted { fence, _blocks: blocks });
         }
@@ -1509,4 +1509,4 @@ fn blend_op(value: GpuBlendOp) -> vk::BlendOp {
 
 #[cfg(test)]
 #[path = "generic_tests.rs"]
-pub(crate) mod tests;
+pub(in crate::backends::vulkan) mod tests;

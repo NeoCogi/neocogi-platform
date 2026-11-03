@@ -25,9 +25,9 @@ fn canonical_browser_derivatives() {
         .unwrap()
         .dyn_into::<web_sys::WebGl2RenderingContext>()
         .unwrap();
-    let core = neocogi_render_webgl::Core::from_canvas(canvas, native.clone()).unwrap();
+    let core = neocogi_render_gpu::backends::webgl::Core::from_canvas(canvas, native.clone()).unwrap();
     let gl = core.dispatch().clone();
-    let mut renderer = neocogi_render_webgl::WebGlCanvasRenderer::new(core, 8, 8).unwrap();
+    let mut renderer = neocogi_render_gpu::backends::webgl::WebGlCanvasRenderer::new(core, 8, 8).unwrap();
     let size = Size { width: 1, height: 1 };
     for len in [0, 1, 3, 5] {
         assert!(matches!(

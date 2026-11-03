@@ -1,6 +1,6 @@
 //! Native WGPU realization of the shared immutable command vocabulary.
 //! No client callbacks or COM owners enter a render pass or completion collection.
-use neocogi_render_gpu::{
+use crate::{
     abi::*,
     command::{DrawRange, CommandCharge},
     resource::BackingCharge,
@@ -19,14 +19,14 @@ use std::{
     },
 };
 use super::{Core, Image, ImageAllocation};
-type Block = neocogi_render_gpu::record::Block<Backend>;
-type Command = neocogi_render_gpu::command::Command<Backend>;
-type Draw = neocogi_render_gpu::command::Draw<Backend>;
-type BufferVersion = neocogi_render_gpu::resource::BufferVersion<Backend>;
-type TextureVersion = neocogi_render_gpu::resource::TextureVersion<Backend>;
-type SamplerVersion = neocogi_render_gpu::resource::SamplerVersion<Backend>;
-type PipelineVersion = neocogi_render_gpu::resource::PipelineVersion<Backend>;
-type UniformData = neocogi_render_gpu::command::UniformData<Backend>;
+type Block = crate::record::Block<Backend>;
+type Command = crate::command::Command<Backend>;
+type Draw = crate::command::Draw<Backend>;
+type BufferVersion = crate::resource::BufferVersion<Backend>;
+type TextureVersion = crate::resource::TextureVersion<Backend>;
+type SamplerVersion = crate::resource::SamplerVersion<Backend>;
+type PipelineVersion = crate::resource::PipelineVersion<Backend>;
+type UniformData = crate::command::UniformData<Backend>;
 /// Statically selected native WGPU resource family, never an erased payload or COM extension.
 pub struct Backend;
 /// Exclusive native construction capability, not publicly constructible from a resource owner.
@@ -98,7 +98,7 @@ impl NativeResources for Backend {
     }
 }
 /// Sender-free owned packets retain only actual native handles, physical lifetime and reservations.
-pub(crate) enum Retirement {
+pub(in crate::backends::wgpu) enum Retirement {
     /// Vertex/index/uniform storage and its opaque receipt.
     Buffer(BufferAllocation),
     /// Independent native sampling state.
@@ -110,7 +110,7 @@ pub(crate) enum Retirement {
 }
 impl Retirement {
     /// Exhaustively destroy the returned/drained owned packet; payloads contain no producer.
-    pub(crate) fn discard(self) {
+    pub(in crate::backends::wgpu) fn discard(self) {
         match self {
             Self::Buffer(value) => drop(value),
             Self::Sampler(value) => drop(value),
@@ -191,7 +191,7 @@ impl Drop for Pipeline {
 }
 /// One existing driver owns completion and retirement. Only tiny host clear variants are cached here;
 /// application realizations live in their returned versions and are never indexed globally.
-pub(crate) struct Executor {
+pub(in crate::backends::wgpu) struct Executor {
     /// Actual physical device identity/lifetime, independent from the driver facade.
     pub(super) core: Rc<Core>,
     /// Only actual native construction clones this producer.
@@ -222,7 +222,7 @@ pub struct PreparedBlock(Rc<PreparedData>);
 #[cfg(test)]
 impl PreparedBlock {
     /// Observe actual native reuse, without adding a production registry or performance counter.
-    pub(crate) fn first_pipeline(&self) -> Rc<Pipeline> {
+    pub(in crate::backends::wgpu) fn first_pipeline(&self) -> Rc<Pipeline> {
         let PreparedCommand::Draw(draw) = &self.0.commands[0] else { panic!("draw") };
         draw.pipeline.clone()
     }
@@ -310,7 +310,7 @@ enum Upload {
 
 impl Executor {
     /// Existing driver receives owned packets; the shared physical core owns neither endpoint.
-    pub(crate) fn new(core: Rc<Core>) -> Self {
+    pub(in crate::backends::wgpu) fn new(core: Rc<Core>) -> Self {
         let (retired_tx, retired_rx) = mpsc::channel();
         Self {
             core,
@@ -324,7 +324,7 @@ impl Executor {
         }
     }
     /// Poll actual completion, drop completed owners, then drain even when polling reports failure.
-    pub(crate) fn collect(&mut self) -> Result<(), String> {
+    pub(in crate::backends::wgpu) fn collect(&mut self) -> Result<(), String> {
         let result = self.core.device.poll(wgpu::PollType::Poll).map_err(|e| e.to_string());
         self.submitted.retain(|entry| match &entry.completion {
             Completion::Pending(done) => !done.load(Ordering::Acquire),
@@ -341,12 +341,12 @@ impl Executor {
         }
     }
     /// Authenticate the core before any native operation, including a clear-only block.
-    pub(crate) fn prepare(&mut self, block: &Block, format: wgpu::TextureFormat, depth: bool) -> Result<PreparedBlock, String> {
+    pub(in crate::backends::wgpu) fn prepare(&mut self, block: &Block, format: wgpu::TextureFormat, depth: bool) -> Result<PreparedBlock, String> {
         block.admit_on(&self.core).map_err(|e| e.to_string())?;
         self.preflight(block.retain_capacity(), |executor| executor.prepare_inner(block, format, depth))
     }
     /// Native slots resolve all constructor scopes before publishing Ready; no global rollback exists.
-    pub(crate) fn prepare_texture(&mut self, source: Rc<TextureVersion>) -> Result<(), String> {
+    pub(in crate::backends::wgpu) fn prepare_texture(&mut self, source: Rc<TextureVersion>) -> Result<(), String> {
         self.preflight(Vec::new(), |executor| source.native(&mut Preparation { executor }).map(|_| ()))
     }
     /// Even failed preparation seals queued initialization and retains its exact owners/receipts.
@@ -365,7 +365,7 @@ impl Executor {
         }
     }
     /// Reserve before uncertain submission so registering already-used native owners is infallible.
-    pub(crate) fn reserve_submission(&mut self) -> Result<(), String> {
+    pub(in crate::backends::wgpu) fn reserve_submission(&mut self) -> Result<(), String> {
         self.submitted.try_reserve(1).map_err(|e| e.to_string())
     }
     /// Makes queued uploads progress even after preparation/acquisition failure or abandonment.
@@ -378,7 +378,7 @@ impl Executor {
     }
     /// One fallible queue boundary owns every actual resource before submit, including queued writes.
     /// A scoped submit failure is terminal for this compatible core, without evicting version slots.
-    pub(crate) fn submit(
+    pub(in crate::backends::wgpu) fn submit(
         &mut self,
         command: Option<wgpu::CommandBuffer>,
         blocks: Vec<PreparedBlock>,
@@ -545,7 +545,7 @@ impl Executor {
         }))
     }
     /// Standalone ordinary/output construction owns initialization progress without a later frame.
-    pub(crate) fn image(
+    pub(in crate::backends::wgpu) fn image(
         &mut self,
         size: Size,
         format: wgpu::TextureFormat,
@@ -950,7 +950,7 @@ impl Executor {
     }
 
     /// Records complete native state into a host-owned load/store pass with no foreign callbacks.
-    pub(crate) fn record<'pass>(
+    pub(in crate::backends::wgpu) fn record<'pass>(
         &'pass self,
         pass: &mut wgpu::RenderPass<'pass>,
         block: &'pass PreparedBlock,
@@ -1000,7 +1000,7 @@ impl Executor {
     }
 
     /// Reject foreign-device or incompatible target blocks before attachment recording/submission.
-    pub(crate) fn admit(&self, block: &PreparedBlock, signature: (wgpu::TextureFormat, bool)) -> Result<(), String> {
+    pub(in crate::backends::wgpu) fn admit(&self, block: &PreparedBlock, signature: (wgpu::TextureFormat, bool)) -> Result<(), String> {
         self.core.check()?;
         if Rc::ptr_eq(&self.core, &block.0.core) && block.0.signature == signature {
             Ok(())
@@ -1011,7 +1011,7 @@ impl Executor {
 
     /// Both clear-only attachments and draw resources follow the actual ordered completion signal.
     #[cfg(test)]
-    pub(crate) fn submitted(&mut self, blocks: Vec<PreparedBlock>, attachments: Vec<Rc<Image>>) {
+    pub(in crate::backends::wgpu) fn submitted(&mut self, blocks: Vec<PreparedBlock>, attachments: Vec<Rc<Image>>) {
         let done = Arc::new(AtomicBool::new(false));
         let callback = done.clone();
         self.core.queue.on_submitted_work_done(move || callback.store(true, Ordering::Release));

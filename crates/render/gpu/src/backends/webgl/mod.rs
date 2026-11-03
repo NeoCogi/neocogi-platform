@@ -6,8 +6,8 @@
 use std::rc::Rc;
 
 use neocogi_render_core::{FrameError, FrameInfo, RendererBackend, TextureError, abi::Size};
-use neocogi_render_glow::{GLRenderer, GlFrame};
-pub use neocogi_render_glow::{Backend, Core, Image, Output, PreparedBlock};
+use crate::backends::glow::{GLRenderer, GlFrame};
+pub use crate::backends::glow::{Backend, Core, Image, Output, PreparedBlock};
 
 /// Renderer specialized for a browser WebGL 2 context attached to an HTML canvas.
 pub struct WebGlCanvasRenderer {
@@ -32,12 +32,12 @@ impl WebGlCanvasRenderer {
         self.inner.make_current()
     }
     /// Realizes the common graphics vocabulary through the shared WebGL 2 executor.
-    pub fn prepare_block(&mut self, block: &neocogi_render_gpu::record::Block<Backend>, offscreen: bool) -> Result<PreparedBlock, String> {
+    pub fn prepare_block(&mut self, block: &crate::record::Block<Backend>, offscreen: bool) -> Result<PreparedBlock, String> {
         self.inner.prepare_block(block, offscreen)
     }
 
     /// Private UI image preparation uses the same context and immutable image accounting.
-    pub fn prepare_texture(&mut self, texture: Rc<neocogi_render_gpu::resource::TextureVersion<Backend>>) -> Result<(), String> {
+    pub fn prepare_texture(&mut self, texture: Rc<crate::resource::TextureVersion<Backend>>) -> Result<(), String> {
         self.inner.prepare_texture(texture)
     }
 }

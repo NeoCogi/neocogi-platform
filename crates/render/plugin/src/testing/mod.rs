@@ -3,13 +3,13 @@ use super::*;
 use neocogi_render_gpu::native::NativeResources;
 
 #[cfg(feature = "glow")]
-pub use neocogi_render_glow::Backend as NativeBackend;
+pub use neocogi_render_gpu::backends::glow::Backend as NativeBackend;
 #[cfg(feature = "vulkan")]
-pub use neocogi_render_vulkan::Backend as NativeBackend;
+pub use neocogi_render_gpu::backends::vulkan::Backend as NativeBackend;
 #[cfg(feature = "wgpu")]
-pub use neocogi_render_wgpu::Backend as NativeBackend;
+pub use neocogi_render_gpu::backends::wgpu::Backend as NativeBackend;
 #[cfg(feature = "webgl")]
-pub use neocogi_render_webgl::Backend as NativeBackend;
+pub use neocogi_render_gpu::backends::webgl::Backend as NativeBackend;
 
 #[cfg(all(feature = "glow", not(target_arch = "wasm32")))]
 pub(crate) mod calls;

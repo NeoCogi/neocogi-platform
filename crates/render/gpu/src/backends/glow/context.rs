@@ -110,14 +110,14 @@ impl Core {
     }
 
     /// Actual context loss is terminal; no Ready backing may silently reuse a recreated context.
-    pub(crate) fn lose(&self, reason: String) {
+    pub(in crate::backends::glow) fn lose(&self, reason: String) {
         let previous = self.state.replace(State::Failed(reason));
         drop(previous);
     }
 
     /// Late allocation destruction uses the same physical selection and terminal-loss policy.
     /// False means storage ended with its own context; never issue glDelete against the other one.
-    pub(crate) fn for_drop(&self) -> bool {
+    pub(in crate::backends::glow) fn for_drop(&self) -> bool {
         self.current().is_ok()
     }
 }

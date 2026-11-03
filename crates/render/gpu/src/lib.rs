@@ -1,13 +1,32 @@
-//! Generic graphics data and admission, shared by concrete renderer backends.
+//! Generic graphics admission and optional concrete renderer backends.
 //!
 //! Semantic geometry, cameras and material shaders belong to clients. Public
 //! resources have exclusive COM owners; commands retain immutable private data.
 #![deny(missing_docs)]
 
+// Shared fixture sources also compile in the platform's browser tests. This test-only self name
+// lets the same real COM producer code address this library from inside its native unit tests.
+#[cfg(test)]
+extern crate self as neocogi_render_gpu;
+
+// One fixture module per native test executable, shared by every enabled backend. The browser
+// platform tests compile the same sources in their own executable through the external crate API.
+#[cfg(all(test, not(target_arch = "wasm32"), any(feature = "glow", feature = "vulkan", feature = "wgpu")))]
+#[path = "../tests/support/sampled.rs"]
+mod sampled_fixture;
+#[cfg(all(test, not(target_arch = "wasm32"), any(feature = "glow", feature = "vulkan", feature = "wgpu")))]
+#[path = "../tests/support/derivatives.rs"]
+mod derivative_fixture;
+
+pub mod backends;
+
 mod budget;
 pub mod command;
 pub mod native;
 mod pipeline;
+// Native construction cleanup is crate-private; callers receive concrete completed resources.
+#[cfg(any(test, feature = "glow", feature = "vulkan"))]
+mod resource_guard;
 pub mod record;
 pub mod resource;
 pub mod scope;

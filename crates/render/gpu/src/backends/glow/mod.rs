@@ -40,8 +40,8 @@ use std::{
 };
 use glow::*;
 use neocogi_render_core::{prelude::*, abi::Size};
-use neocogi_render_gpu::resource::BackingCharge;
-use neocogi_render_support::resource_guard::ResourceGuard;
+use crate::resource::BackingCharge;
+use crate::resource_guard::ResourceGuard;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests;
 
@@ -89,7 +89,7 @@ impl Drop for Image {
     }
 }
 /// Owned attachment packet; it retains only raw allocation lifetime, never a notifying image wrapper.
-pub(crate) struct FramebufferAllocation {
+pub(in crate::backends::glow) struct FramebufferAllocation {
     /// Parent context selected for this framebuffer's destruction.
     core: Rc<Core>,
     /// One framebuffer name, no public target-selector API.
@@ -185,11 +185,11 @@ impl GLRenderer {
         self.core.current()
     }
     /// Realizes exact immutable objects, checking driver ownership even for empty/clear-only blocks.
-    pub fn prepare_block(&mut self, block: &neocogi_render_gpu::record::Block<Backend>, offscreen: bool) -> Result<PreparedBlock, String> {
+    pub fn prepare_block(&mut self, block: &crate::record::Block<Backend>, offscreen: bool) -> Result<PreparedBlock, String> {
         self.generic.prepare(block, offscreen)
     }
     /// Initializes an owned private UI image without acquiring or clearing any target.
-    pub fn prepare_texture(&mut self, source: Rc<neocogi_render_gpu::resource::TextureVersion<Backend>>) -> Result<(), String> {
+    pub fn prepare_texture(&mut self, source: Rc<crate::resource::TextureVersion<Backend>>) -> Result<(), String> {
         self.generic.prepare_texture(source)
     }
     /// Returns the full default framebuffer in the UI's top-left coordinates.

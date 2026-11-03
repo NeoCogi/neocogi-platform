@@ -1,13 +1,13 @@
 //! Headless native-adapter acceptance exercises real COM recording and WGPU validation/pixels.
 use super::*;
-use neocogi_render_gpu::abi::{Rect, Size};
+use crate::abi::{Rect, Size};
 use neocogi_com::{ComBox, ComPtr, NcCopyFromBufferOffset};
-use neocogi_render_gpu::{
+use crate::{
     abi::*,
     source::{Bytes, PipelineDesc},
 };
 
-type GpuDevice = neocogi_render_gpu::GpuDevice<Backend>;
+type GpuDevice = crate::GpuDevice<Backend>;
 
 /// Obtains a real native adapter/device without requiring presentation or an SDL display.
 fn device() -> (wgpu::Device, wgpu::Queue) {
@@ -82,7 +82,7 @@ fn values(view: &mut ComBox<IRenderViewAbi>, color: [f32; 4], depth: f32) {
 fn regional_depth_clears_ordered_views_and_completion_keep_their_contracts() {
     let (native, queue) = device();
     let outer = native.push_error_scope(wgpu::ErrorFilter::Validation);
-    let mut executor = crate::generic::Executor::new(Core::new(native.clone(), queue.clone()));
+    let mut executor = crate::backends::wgpu::generic::Executor::new(Core::new(native.clone(), queue.clone()));
     let gpu = GpuDevice::new(
         executor.core.clone(),
         nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
@@ -237,7 +237,7 @@ fn indexed_textures_and_uniform_versions_execute_without_public_owners() {
 fn indexed_texture_case(operation: GpuBlendOp, imported: bool) {
     let (native, queue) = device();
     let outer = native.push_error_scope(wgpu::ErrorFilter::Validation);
-    let mut executor = crate::generic::Executor::new(Core::new(native.clone(), queue.clone()));
+    let mut executor = crate::backends::wgpu::generic::Executor::new(Core::new(native.clone(), queue.clone()));
     let gpu = GpuDevice::new(
         executor.core.clone(),
         nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
@@ -504,7 +504,7 @@ fn clear_block(gpu: &GpuDevice, resources: &ComPtr<IRenderResourcesAbi>) -> ComB
 #[ignore = "requires a native WGPU adapter, including a software adapter"]
 fn abandoned_preparation_retains_upload_capacity_until_completion() {
     let (native, queue) = device();
-    let mut executor = crate::generic::Executor::new(Core::new(native.clone(), queue.clone()));
+    let mut executor = crate::backends::wgpu::generic::Executor::new(Core::new(native.clone(), queue.clone()));
     let gpu = GpuDevice::new(
         executor.core.clone(),
         nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
@@ -537,7 +537,7 @@ fn native_buffer_creation_failure_returns_error_without_panicking_or_leaking_sco
         ..Default::default()
     });
     let outer = native.push_error_scope(wgpu::ErrorFilter::Validation);
-    let mut executor = crate::generic::Executor::new(Core::new(native.clone(), queue.clone()));
+    let mut executor = crate::backends::wgpu::generic::Executor::new(Core::new(native.clone(), queue.clone()));
     let gpu = GpuDevice::new(
         executor.core.clone(),
         nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
@@ -575,7 +575,7 @@ fn partial_preparation_failure_keeps_resource_versions_charged_through_upload_co
             ..Default::default()
         });
         let outer = native.push_error_scope(wgpu::ErrorFilter::Validation);
-        let mut executor = crate::generic::Executor::new(Core::new(native.clone(), queue.clone()));
+        let mut executor = crate::backends::wgpu::generic::Executor::new(Core::new(native.clone(), queue.clone()));
         let gpu = GpuDevice::new(
             executor.core.clone(),
             nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
@@ -724,7 +724,7 @@ fn partial_preparation_failure_keeps_resource_versions_charged_through_upload_co
 fn import_native_image(
     gpu: &GpuDevice,
     resources: &ComPtr<IRenderResourcesAbi>,
-    executor: &mut crate::generic::Executor,
+    executor: &mut crate::backends::wgpu::generic::Executor,
     pixel: ComBox<IGpuTextureAbi>,
 ) -> ComBox<IGpuTextureAbi> {
     let source = gpu.texture_snapshot(resources.as_com_ref(), pixel.as_com_ref()).unwrap();
@@ -742,10 +742,11 @@ fn import_native_image(
 
 /// An import-only preflight must flush source initialization and retire it without a target frame.
 #[test]
-#[ignore = "requires a native WGPU adapter with native allocation counters"]
+#[cfg(feature = "test-support")]
+#[ignore = "requires wgpu,test-support and a native WGPU adapter with allocation counters"]
 fn imported_preparation_flushes_initialization_before_refunding_native_storage() {
     let (native, queue) = device();
-    let mut executor = crate::generic::Executor::new(Core::new(native.clone(), queue.clone()));
+    let mut executor = crate::backends::wgpu::generic::Executor::new(Core::new(native.clone(), queue.clone()));
     let gpu = GpuDevice::new(
         executor.core.clone(),
         nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
@@ -789,7 +790,7 @@ fn imported_preparation_flushes_initialization_before_refunding_native_storage()
 #[ignore = "requires a native WGPU adapter"]
 fn native_slots_reuse_variants_reject_other_devices_and_release_without_submission() {
     let (native, queue) = device();
-    let mut executor = crate::generic::Executor::new(Core::new(native.clone(), queue.clone()));
+    let mut executor = crate::backends::wgpu::generic::Executor::new(Core::new(native.clone(), queue.clone()));
     let gpu = GpuDevice::new(
         executor.core.clone(),
         nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
@@ -799,13 +800,13 @@ fn native_slots_reuse_variants_reject_other_devices_and_release_without_submissi
     let domain = gpu.create_ui_client(Default::default()).unwrap();
     let resources = domain.resources().unwrap();
     let (other_native, other_queue) = device();
-    let mut other = crate::generic::Executor::new(Core::new(other_native, other_queue));
+    let mut other = crate::backends::wgpu::generic::Executor::new(Core::new(other_native, other_queue));
     assert_ne!(gpu.driver_identity().as_raw().object, other.core.identity.as_raw().object);
     let shader = &super::derivatives::cases()[0].source;
     for _ in 0..8 {
         let owner = super::derivatives::block(&gpu, &resources, shader);
         let snapshot = gpu.block_snapshot(owner.as_com_ref()).unwrap();
-        let neocogi_render_gpu::command::Command::Draw(draw) = &snapshot.commands()[0] else {
+        let crate::command::Command::Draw(draw) = &snapshot.commands()[0] else {
             panic!("draw")
         };
         let source = Rc::downgrade(&draw.pipeline);
@@ -832,7 +833,7 @@ fn native_slots_reuse_variants_reject_other_devices_and_release_without_submissi
 fn initialization_submission_is_scoped_and_invalidates_all_compatible_facades_on_failure() {
     let (native, queue) = device();
     let core = Core::new(native.clone(), queue);
-    let mut executor = crate::generic::Executor::new(core.clone());
+    let mut executor = crate::backends::wgpu::generic::Executor::new(core.clone());
     let gpu = GpuDevice::new(
         core.clone(),
         nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
@@ -862,7 +863,7 @@ fn initialization_submission_is_scoped_and_invalidates_all_compatible_facades_on
     };
     assert!(error.to_lowercase().contains("mapped"), "unexpected error: {error}");
     assert!(pollster::block_on(outer.pop()).is_none(), "submission scopes must own the native error");
-    let mut compatible = crate::generic::Executor::new(core);
+    let mut compatible = crate::backends::wgpu::generic::Executor::new(core);
     assert!(
         compatible.prepare_texture(source.clone()).is_err(),
         "a Ready slot cannot bypass failed initialization through another facade"

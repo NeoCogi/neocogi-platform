@@ -8,9 +8,22 @@ of their ordinary dependency. There is one authored owner per namespace; no
 consumer maintains a copy of another package's declarations.
 
 `neocogi-render-gpu` owns logical resource versions, driver provenance, command
-validation, quotas and scoped recording. Backends realize those immutable
+validation, quotas, scoped recording and concrete implementations under
+`backends::{glow,vulkan,wgpu,webgl}`. Backends realize those immutable
 versions and retain submitted native allocations until completion. The compiler
 is a required typed dependency acquired before native device construction.
+
+The GPU crate enables no backend by default. Optional native backend features
+are additive and retain distinct concrete resource families and driver identities.
+WebGL shares the GL executor; target-specific dependencies keep SDL out of browser
+builds. CPU-only consumers and virtual fixtures require no graphics library.
+`test-support` weakly enables WGPU allocation counters only if WGPU is already
+selected. The native counter regression therefore requires `wgpu,test-support`.
+
+Transactional native construction cleanup belongs to the GPU crate. It is private
+to that crate, avoiding a dependency back to `render-support`, whose authenticated
+frame preparation already depends on GPU records. The former four backend crates
+and support-layer cleanup path are superseded, with no compatibility reexports.
 
 The selected renderer plugin owns SDL/DOM windows, event normalization, text
 input, clipboard, native devices and offscreen surfaces. Keeping native owners

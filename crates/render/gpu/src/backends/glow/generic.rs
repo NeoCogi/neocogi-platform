@@ -1,6 +1,6 @@
 //! Owned native realizations and one driver-local retirement/completion path for GL and WebGL.
 use glow::HasContext;
-use neocogi_render_gpu::{
+use crate::{
     abi::*,
     command::{DrawRange, CommandCharge},
     native::NativeResources,
@@ -13,14 +13,14 @@ use std::{
     sync::mpsc::{self, Sender, Receiver, SendError},
 };
 use super::{Core, Image, ImageAllocation, OutputState};
-type BufferVersion = neocogi_render_gpu::resource::BufferVersion<Backend>;
-type TextureVersion = neocogi_render_gpu::resource::TextureVersion<Backend>;
-type SamplerVersion = neocogi_render_gpu::resource::SamplerVersion<Backend>;
-type PipelineVersion = neocogi_render_gpu::resource::PipelineVersion<Backend>;
-type UniformData = neocogi_render_gpu::command::UniformData<Backend>;
-type Draw = neocogi_render_gpu::command::Draw<Backend>;
-type Block = neocogi_render_gpu::record::Block<Backend>;
-type Command = neocogi_render_gpu::command::Command<Backend>;
+type BufferVersion = crate::resource::BufferVersion<Backend>;
+type TextureVersion = crate::resource::TextureVersion<Backend>;
+type SamplerVersion = crate::resource::SamplerVersion<Backend>;
+type PipelineVersion = crate::resource::PipelineVersion<Backend>;
+type UniformData = crate::command::UniformData<Backend>;
+type Draw = crate::command::Draw<Backend>;
+type Block = crate::record::Block<Backend>;
+type Command = crate::command::Command<Backend>;
 
 /// Statically selected resource family; its native objects are never Rust trait objects over COM.
 pub struct Backend;
@@ -93,7 +93,7 @@ impl NativeResources for Backend {
 }
 
 /// Owned packets contain no sender, driver, Domain, source version or public COM resource.
-pub(crate) enum Retirement {
+pub(in crate::backends::glow) enum Retirement {
     /// Vertex/index/uniform allocation and its opaque receipt.
     Buffer(BufferAllocation),
     /// Immutable sampling state.
@@ -284,7 +284,7 @@ enum PreparedCommand {
     Depth(f32, Rect),
 }
 /// Existing driver owns work and retirement endpoints; no global resource realization maps remain.
-pub(crate) struct Executor {
+pub(in crate::backends::glow) struct Executor {
     /// Dispatch selected through the actual physical owner.
     gl: Rc<glow::Context>,
     /// Hardware-only shared lifetime, with neither channel endpoint nor submitted work.
@@ -308,7 +308,7 @@ pub(crate) struct Executor {
 }
 impl Executor {
     /// Creates only driver-private state and transport; resources remain lazy object-owned realizations.
-    pub(crate) fn new(core: Rc<Core>) -> Result<Self, String> {
+    pub(in crate::backends::glow) fn new(core: Rc<Core>) -> Result<Self, String> {
         core.current()?;
         let gl = core.dispatch().clone();
         // SAFETY: The owning physical context is current.
@@ -328,7 +328,7 @@ impl Executor {
         })
     }
     /// Only concrete native creation receives a producer clone.
-    pub(crate) fn sender(&self) -> Sender<Retirement> {
+    pub(in crate::backends::glow) fn sender(&self) -> Sender<Retirement> {
         self.retired_tx.clone()
     }
     /// Drops safe owned packets; a failed poll never prevents unrelated retirement maintenance.
@@ -338,13 +338,13 @@ impl Executor {
         }
     }
     /// Polls completion then drains, preserving useful first-error reporting.
-    pub(crate) fn maintain(&mut self) -> Result<(), String> {
+    pub(in crate::backends::glow) fn maintain(&mut self) -> Result<(), String> {
         let result = self.poll();
         self.drain();
         result
     }
     /// Reclaims previous work before subsequent preparation, even when the next frame is empty.
-    pub(crate) fn collect(&mut self) -> Result<(), String> {
+    pub(in crate::backends::glow) fn collect(&mut self) -> Result<(), String> {
         self.maintain()
     }
     /// Observes actual completion; no reference count or frame return substitutes for a fence.
@@ -374,7 +374,7 @@ impl Executor {
         }
     }
     /// Seals all issued immediate work; failed allocation/fence creation leaves its owners installed.
-    pub(crate) fn complete(&mut self) -> Result<(), String> {
+    pub(in crate::backends::glow) fn complete(&mut self) -> Result<(), String> {
         self.core.current()?;
         if self.pending.is_empty() && self.uploads.is_empty() && self.pending_targets.is_empty() {
             return Ok(());
@@ -393,13 +393,13 @@ impl Executor {
         Ok(())
     }
     /// Installs target lifetime before the host clear, independently of client block count.
-    pub(crate) fn retain_target(&mut self, output: Rc<OutputState>) -> Result<(), String> {
+    pub(in crate::backends::glow) fn retain_target(&mut self, output: Rc<OutputState>) -> Result<(), String> {
         self.pending_targets.try_reserve(1).map_err(|error| error.to_string())?;
         self.pending_targets.push(output);
         Ok(())
     }
     /// Complete immutable block realization precedes target acquisition and has no foreign callbacks.
-    pub(crate) fn prepare(&mut self, block: &Block, offscreen: bool) -> Result<PreparedBlock, String> {
+    pub(in crate::backends::glow) fn prepare(&mut self, block: &Block, offscreen: bool) -> Result<PreparedBlock, String> {
         block.admit_on(&self.core).map_err(|error| error.to_string())?;
         self.collect()?;
         let capacity = block.retain_capacity();
@@ -473,7 +473,7 @@ impl Executor {
         })
     }
     /// Common typed atlas preparation uses the exact version's own image slot without target work.
-    pub(crate) fn prepare_texture(&mut self, source: Rc<TextureVersion>) -> Result<(), String> {
+    pub(in crate::backends::glow) fn prepare_texture(&mut self, source: Rc<TextureVersion>) -> Result<(), String> {
         self.collect()?;
         source.native(&mut Preparation { executor: self }).map(|_| ())
     }
@@ -564,7 +564,7 @@ impl Executor {
     }
     /// Unified allocation for sampled images, ordinary images and private unpublished output storage.
     /// False initialization is only used by single-use Output, whose complete host clear precedes publication.
-    pub(crate) fn create_image(
+    pub(in crate::backends::glow) fn create_image(
         &mut self,
         size: Size,
         format: u32,
@@ -701,7 +701,7 @@ impl Executor {
         Ok(value)
     }
     /// Reports native errors before publication; terminal context loss invalidates all old handles.
-    pub(crate) fn check(&self) -> Result<(), String> {
+    pub(in crate::backends::glow) fn check(&self) -> Result<(), String> {
         // SAFETY: Called only in a selected live native execution phase.
         let error = unsafe { self.gl.get_error() };
         if error == glow::NO_ERROR {
@@ -715,7 +715,7 @@ impl Executor {
         }
     }
     /// Replays only prepared native objects; the caller has already bound its authorized target.
-    pub(crate) fn execute(&mut self, block: &PreparedBlock, logical: Size, physical: Size, offscreen: bool) -> Result<(), String> {
+    pub(in crate::backends::glow) fn execute(&mut self, block: &PreparedBlock, logical: Size, physical: Size, offscreen: bool) -> Result<(), String> {
         if !Rc::ptr_eq(&self.core, &block.data.core) || offscreen != block.data.offscreen {
             return Err("prepared GL block belongs to another driver or target".into());
         }

@@ -46,15 +46,14 @@ use neocogi_render_core::prelude::*;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use sdl2::video::Window;
 
-use neocogi_render_support::resource_guard::ResourceGuard;
+use crate::resource_guard::ResourceGuard;
 
 mod generic;
 mod offscreen;
 mod pass;
 pub use generic::{Backend, Core, Texture as Image, PreparedBlock};
 #[cfg(test)]
-#[path = "../../gpu/tests/support/sampled.rs"]
-mod sampled;
+use crate::sampled_fixture as sampled;
 #[cfg(test)]
 mod surface_tests;
 
@@ -246,7 +245,7 @@ impl VulkanRenderer {
     }
 
     /// Compiles immutable resources before acquiring or clearing a presentation target.
-    pub fn prepare_block(&mut self, block: &neocogi_render_gpu::record::Block<Backend>, offscreen: bool) -> Result<PreparedBlock> {
+    pub fn prepare_block(&mut self, block: &crate::record::Block<Backend>, offscreen: bool) -> Result<PreparedBlock> {
         self.ensure_usable()?;
         if offscreen {
             if !block.is_ui() {
@@ -268,7 +267,7 @@ impl VulkanRenderer {
     }
 
     /// Trusted UI resource preparation never acquires or clears a rendering target.
-    pub fn prepare_texture(&mut self, texture: Rc<neocogi_render_gpu::resource::TextureVersion<Backend>>) -> Result<()> {
+    pub fn prepare_texture(&mut self, texture: Rc<crate::resource::TextureVersion<Backend>>) -> Result<()> {
         self.ensure_usable()?;
         self.generic.prepare_texture(texture)
     }
@@ -466,10 +465,10 @@ impl RendererBackend for VulkanRenderer {
     fn texture_frame(&mut self, info: FrameInfo, output: Output) -> std::result::Result<VulkanFrame<'_>, FrameError> {
         self.ensure_usable().map_err(FrameError::new)?;
         let size = info.dimensions();
-        let actual = <Backend as neocogi_render_gpu::native::NativeResources>::image_size(&output.state.image);
+        let actual = <Backend as crate::native::NativeResources>::image_size(&output.state.image);
         if !Rc::ptr_eq(
             &self.context.core,
-            <Backend as neocogi_render_gpu::native::NativeResources>::image_core(&output.state.image),
+            <Backend as crate::native::NativeResources>::image_core(&output.state.image),
         ) || (size.width, size.height) != (actual.width, actual.height)
             || info.clear().a != 255
         {
@@ -521,7 +520,7 @@ impl Drop for OutputState {
     }
 }
 /// Sender-free framebuffer packet retains its raw attachment until framebuffer destruction.
-pub(crate) struct FramebufferAllocation {
+pub(in crate::backends::vulkan) struct FramebufferAllocation {
     /// Same native device remains alive independently of the renderer facade.
     core: Rc<Core>,
     /// One framebuffer is destroyed before releasing its raw attachment owner.
@@ -641,7 +640,7 @@ impl Drop for VulkanBootstrap {
     }
 }
 
-pub(crate) struct VulkanContext {
+pub(in crate::backends::vulkan) struct VulkanContext {
     // `VulkanContext` owns the actual Vulkan objects and implements the frame graph used by the
     // example renderer: acquire -> upload/record -> submit -> present -> recreate on demand.
     /// Cache-free native owner can outlive presentation through escaped prepared blocks.
@@ -1386,11 +1385,11 @@ impl VulkanContext {
                 .cmd_begin_render_pass(command_buffer, &render_pass_info, vk::SubpassContents::INLINE);
         }
 
-        let logical = neocogi_render_gpu::abi::Size {
+        let logical = crate::abi::Size {
             width: width as i32,
             height: height as i32,
         };
-        let physical = neocogi_render_gpu::abi::Size {
+        let physical = crate::abi::Size {
             width: self.extent.width as i32,
             height: self.extent.height as i32,
         };
@@ -1505,7 +1504,7 @@ impl VulkanContext {
         } else {
             vk::ImageAspectFlags::DEPTH
         };
-        let size = neocogi_render_gpu::abi::Size {
+        let size = crate::abi::Size {
             width: extent.width as i32,
             height: extent.height as i32,
         };

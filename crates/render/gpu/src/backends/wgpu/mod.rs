@@ -41,7 +41,7 @@ use neocogi_render_core::{
     abi::Size,
     source::{DriverIdentity, new_driver_identity},
 };
-use neocogi_render_gpu::resource::BackingCharge;
+use crate::resource::BackingCharge;
 use neocogi_render_core::prelude::*;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use sdl2::video::Window;
@@ -64,7 +64,7 @@ pub struct Core {
 }
 impl Core {
     /// Takes one compatible device/queue pair. The device-loss callback belongs exclusively to Core.
-    pub(crate) fn new(device: wgpu::Device, queue: wgpu::Queue) -> Rc<Self> {
+    pub(in crate::backends::wgpu) fn new(device: wgpu::Device, queue: wgpu::Queue) -> Rc<Self> {
         let unavailable = Arc::new(AtomicBool::new(false));
         let signal = unavailable.clone();
         device.set_device_lost_callback(move |_, _| signal.store(true, Ordering::Release));
@@ -402,7 +402,7 @@ impl WgpuRenderer {
         self.core.clone()
     }
     /// Realizes resources before target acquisition using its concrete attachment signature.
-    pub fn prepare_block(&mut self, block: &neocogi_render_gpu::record::Block<Backend>, offscreen: bool) -> Result<PreparedBlock, String> {
+    pub fn prepare_block(&mut self, block: &crate::record::Block<Backend>, offscreen: bool) -> Result<PreparedBlock, String> {
         let format = if offscreen {
             wgpu::TextureFormat::Rgba8Unorm
         } else {
@@ -412,7 +412,7 @@ impl WgpuRenderer {
     }
 
     /// Trusted private UI uploads complete their native error transaction before asset publication.
-    pub fn prepare_texture(&mut self, texture: std::rc::Rc<neocogi_render_gpu::resource::TextureVersion<Backend>>) -> Result<(), String> {
+    pub fn prepare_texture(&mut self, texture: std::rc::Rc<crate::resource::TextureVersion<Backend>>) -> Result<(), String> {
         self.generic.prepare_texture(texture)
     }
 
@@ -534,11 +534,11 @@ impl WgpuRenderer {
                     .record(
                         &mut pass,
                         command,
-                        neocogi_render_gpu::abi::Size {
+                        crate::abi::Size {
                             width: self.width as i32,
                             height: self.height as i32,
                         },
-                        neocogi_render_gpu::abi::Size {
+                        crate::abi::Size {
                             width: self.width as i32,
                             height: self.height as i32,
                         },

@@ -19,7 +19,7 @@ jobs:
       - name: Platform contracts and compiler
         run: cargo test --locked -p neocogi-render-core -p neocogi-render-gpu -p neocogi-render-support -p neocogi-shader-core -p neocogi-shader-compiler -p neocogi-native-layout
       - name: Backend-owned native regressions
-        run: xvfb-run -a cargo test --locked -p neocogi-render-${{ matrix.backend }} --lib -- --include-ignored --test-threads=1
+        run: xvfb-run -a cargo test --locked -p neocogi-render-gpu --features ${{ matrix.backend }},test-support --lib backends::${{ matrix.backend }}:: -- --include-ignored --test-threads=1
       - name: Backend acceptance
         run: xvfb-run -a cargo test --locked -p neocogi-render-plugin --lib --test compiler_activation --no-default-features --features ${{ matrix.backend }} -- --include-ignored --test-threads=1
       - name: Standalone graphics application

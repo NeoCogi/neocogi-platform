@@ -901,27 +901,23 @@ dependencies = [
 ]
 
 [[package]]
-name = "neocogi-render-glow"
-version = "0.0.0"
-dependencies = [
- "glow 0.18.0",
- "neocogi-com",
- "neocogi-render-core",
- "neocogi-render-gpu",
- "neocogi-render-support",
- "neocogi-shader-compiler",
- "sdl2",
- "web-sys",
-]
-
-[[package]]
 name = "neocogi-render-gpu"
 version = "0.0.0"
 dependencies = [
+ "ash",
+ "ash-window",
+ "glow 0.18.0",
  "neocogi-com",
  "neocogi-render-core",
  "neocogi-shader-compiler",
  "neocogi-shader-core",
+ "pollster",
+ "raw-window-handle",
+ "sdl2",
+ "serde_json",
+ "tempfile",
+ "web-sys",
+ "wgpu",
 ]
 
 [[package]]
@@ -935,12 +931,8 @@ dependencies = [
  "neocogi-com",
  "neocogi-com-host",
  "neocogi-render-core",
- "neocogi-render-glow",
  "neocogi-render-gpu",
  "neocogi-render-support",
- "neocogi-render-vulkan",
- "neocogi-render-webgl",
- "neocogi-render-wgpu",
  "neocogi-shader-compiler",
  "neocogi-shader-core",
  "rs-math3d",
@@ -969,45 +961,6 @@ dependencies = [
  "neocogi-render-core",
  "neocogi-render-gpu",
  "neocogi-shader-compiler",
-]
-
-[[package]]
-name = "neocogi-render-vulkan"
-version = "0.0.0"
-dependencies = [
- "ash",
- "ash-window",
- "neocogi-com",
- "neocogi-render-core",
- "neocogi-render-gpu",
- "neocogi-render-support",
- "neocogi-shader-compiler",
- "raw-window-handle",
- "sdl2",
-]
-
-[[package]]
-name = "neocogi-render-webgl"
-version = "0.0.0"
-dependencies = [
- "glow 0.18.0",
- "neocogi-render-core",
- "neocogi-render-glow",
- "neocogi-render-gpu",
-]
-
-[[package]]
-name = "neocogi-render-wgpu"
-version = "0.0.0"
-dependencies = [
- "neocogi-com",
- "neocogi-render-core",
- "neocogi-render-gpu",
- "neocogi-shader-compiler",
- "pollster",
- "raw-window-handle",
- "sdl2",
- "wgpu",
 ]
 
 [[package]]

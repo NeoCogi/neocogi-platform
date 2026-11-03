@@ -10,9 +10,8 @@ with [NeoCogi UI](https://github.com/NeoCogi/neocogi-ui).
 | Package family | Responsibility |
 | --- | --- |
 | `crates/render/core` | Renderer/platform contracts, upload producers and packaged authored NCIDL sources |
-| `crates/render/gpu` | Typed resources, provenance, bounded command recording and lifetime accounting |
+| `crates/render/gpu` | Typed resources, command recording, lifetime accounting and optional graphics backends |
 | `crates/render/support` | Shared frame preparation and platform algorithms |
-| `crates/render/glow`, `webgl`, `vulkan`, `wgpu` | Native resource realization and graphics execution |
 | `crates/render/plugin` | Selected platform/backend assembly; windows, input, clipboard and surfaces |
 | `crates/shader/core`, `plugin` | Portable compiler contracts, reflection and Naga-backed compiler provider |
 | `tools/native-layout` | Compile-time staging of Cargo artifacts and application resources |
@@ -49,6 +48,11 @@ Browser consumers select `webgl` and `wasm32-unknown-unknown`. Dynamic deploymen
 use the final renderer and compiler `*-dylib` packages; static applications use
 their ordinary Rust implementations. The application owns the COM host and
 compiler/profile selection for the complete build graph.
+
+The GPU package has empty default features. Its `glow`, `vulkan`, `wgpu` and
+`webgl` features expose implementations under `neocogi_render_gpu::backends`;
+native features are additive there. The platform assembly selects exactly one
+backend. CPU-only recording and validation need no SDL or graphics dependencies.
 
 The native glTF examples include a textured DamagedHelmet and animated GPU-skinned
 BrainStem, both with arcball rotation, pan and zoom.
