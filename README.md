@@ -9,12 +9,13 @@ with [NeoCogi UI](https://github.com/NeoCogi/neocogi-ui).
 
 | Package family | Responsibility |
 | --- | --- |
-| `crates/render/core` | Renderer/platform contracts, upload producers and packaged authored NCIDL sources |
+| `crates/render/core` | Renderer/platform bindings and upload producers |
 | `crates/render/gpu` | Typed resources, command recording, lifetime accounting and optional graphics backends |
 | `crates/render/support` | Shared frame preparation and platform algorithms |
 | `crates/platform/plugin` | Selected platform/backend assembly; windows, input, clipboard and surfaces |
 | `crates/shader/core`, `plugin` | Portable compiler contracts, reflection and Naga-backed compiler provider |
 | `examples/native` | Triangle and glTF applications with static/dynamic plugin assembly |
+| `tools/platform-build` | Packaged authoritative interfaces and build-only generation helper |
 | `tools/native-layout` | Build-only output policy and compile-time staging of Cargo artifacts and exact resource snapshots |
 
 Platform and graphics implementations share native lifetime ownership. Native

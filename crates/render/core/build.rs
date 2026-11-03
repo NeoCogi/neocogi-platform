@@ -1,8 +1,9 @@
 //! Generates the renderer contracts and a stable alias for the actual resolved optional source.
-#[path = "../../../scripts/idl_build.rs"]
-mod shared_idl;
+use neocogi_platform_build::{Module, build, sources};
+
+/// Generate this package's namespaces from its declared build dependency.
 fn main() {
-    let modules = shared_idl::build(shared_idl::sources("../../..", &["neocogi.renderer", "neocogi.platform"]));
+    let modules = build(sources(&[Module::Renderer, Module::Platform])).expect("generate renderer/platform bindings");
     let renderer = modules.iter().find(|module| module.module_name == "neocogi.renderer").expect("renderer module");
     let syntax = syn::parse_file(&std::fs::read_to_string(&renderer.bindings).expect("renderer bindings")).expect("generated Rust");
     let source = syntax

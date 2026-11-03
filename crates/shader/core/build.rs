@@ -1,6 +1,7 @@
 //! Generate the portable shader namespace.
-#[path = "../../../scripts/idl_build.rs"]
-mod shared_idl;
+use neocogi_platform_build::{Module, build, sources};
+
+/// Generate independent shader bindings from the packaged source owner.
 fn main() {
-    shared_idl::build(shared_idl::sources("../../..", &["neocogi.shader"]));
+    build(sources(&[Module::Shader])).expect("generate shader bindings");
 }

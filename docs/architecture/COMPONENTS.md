@@ -1,11 +1,18 @@
 # Platform and graphics ownership
 
-The contract packages expose renderer/platform and shader namespaces with their
-authored NCIDL source trees. Consumers generate their own bindings using
-`neocogi_render_core::SCHEMA_ROOT` and, when needed,
-`neocogi_shader_core::SCHEMA_ROOT`. Imported Rust helper types use the bindings
-of their ordinary dependency. There is one authored owner per namespace; no
-consumer maintains a copy of another package's declarations.
+`neocogi-platform-build` owns the authored renderer, platform and shader NCIDL
+files and the shared generation helper. Consumers declare it as a build dependency
+and generate into their own `OUT_DIR` from its packaged source tree. They use
+`neocogi_platform_build::sources` with explicit `Module` selections, then `build`.
+Consumers adding their own namespaces extend the returned request with their own
+source roots and module locations. Imported Rust helper types use the bindings of
+their ordinary library dependency. There is one authored owner per namespace; no
+consumer copies declarations or searches sibling checkout directories.
+
+The runtime contract libraries expose generated bindings and Rust conveniences.
+Their former `SCHEMA_ROOT` constants are removed: build-time consumers use the
+build-only package instead, avoiding runtime dependency on the IDL compiler.
+All authored declaration versions and COM identities remain unchanged.
 
 `neocogi-render-gpu` owns logical resource versions, driver provenance, command
 validation, quotas, scoped recording and concrete implementations under

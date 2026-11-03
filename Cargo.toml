@@ -12,6 +12,7 @@ members = [
     "crates/render/support",
     "tools/native-layout",
     "tools/native-layout/core",
+    "tools/platform-build",
     "tests/browser",
     "examples/native",
     "examples/native/plugins",
@@ -25,6 +26,7 @@ license = "BSD-3-Clause AND MIT AND OFL-1.1 AND Apache-2.0 AND CC0-1.0"
 repository = "https://github.com/NeoCogi/neocogi-platform"
 
 [workspace.dependencies]
+neocogi-platform-build = { path = "tools/platform-build" }
 neocogi-native-layout-core = { path = "tools/native-layout/core" }
 neocogi-shader-core = { path = "crates/shader/core" }
 neocogi-shader-compiler = { path = "crates/shader/plugin", default-features = false }

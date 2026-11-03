@@ -1,6 +1,7 @@
 //! Generate an independent caller projection for ABI regressions.
-#[path = "../../../scripts/idl_build.rs"]
-mod shared_idl;
+use neocogi_platform_build::{Module, build, sources};
+
+/// Generate the independent caller without borrowing another crate's generated output.
 fn main() {
-    shared_idl::build(shared_idl::sources("../../..", &["neocogi.shader"]));
+    build(sources(&[Module::Shader])).expect("generate independent shader caller");
 }

@@ -31,6 +31,3 @@ pub mod abi;
 pub mod platform;
 /// Owned upload producers shared by clients and GFX without linking renderer implementation.
 pub mod source;
-
-/// Authored NCIDL source root shipped with this contract package for build-time consumers.
-pub const SCHEMA_ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/schemas");

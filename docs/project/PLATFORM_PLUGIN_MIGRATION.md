@@ -130,3 +130,24 @@ glow/wgpu). No old example forwarding entry points are retained.
 The dynamic composition uses normal Cargo cdylib artifacts and executable-relative
 loading; it does not add provider Rust implementation dependencies to the executable.
 See [native assembly](../../examples/native/README.md) for qualification and relocation.
+
+## Build-time interface sources
+
+Declare `neocogi-platform-build` as a build dependency when generating bindings.
+It packages all shared interface sources and replaces the repository-only
+`scripts/idl_build.rs` helper and the runtime libraries' `SCHEMA_ROOT` constants.
+No checkout-relative path or copy of another package's declarations is needed.
+For example, shader binding generation uses:
+
+```rust
+use neocogi_platform_build::{Module, build, sources};
+
+fn main() {
+    build(sources(&[Module::Shader])).expect("generate shader bindings");
+}
+```
+
+`Module::Renderer` and `Module::Platform` select the other namespaces. Unselected
+reachable namespaces import their ordinary Rust library types. Consumers with
+additional interfaces can extend `sources(&[])` with their own root and modules.
+Each build owns its generated files, and authored declarations retain version 1.

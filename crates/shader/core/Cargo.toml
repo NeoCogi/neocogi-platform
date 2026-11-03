@@ -13,4 +13,4 @@ neocogi-com = { workspace = true, features = ["std", "macros"] }
 neocogi-render-core.workspace = true
 
 [build-dependencies]
-neocogi-idl.workspace = true
+neocogi-platform-build.workspace = true

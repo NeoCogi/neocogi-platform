@@ -22,4 +22,4 @@ neocogi-render-core.workspace = true
 naga.workspace = true
 
 [build-dependencies]
-neocogi-idl.workspace = true
+neocogi-platform-build.workspace = true

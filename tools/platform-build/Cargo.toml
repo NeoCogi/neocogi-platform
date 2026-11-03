@@ -1,0 +1,12 @@
+[package]
+name = "neocogi-platform-build"
+version = "0.0.0"
+publish = false
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Packaged NeoCogi platform, renderer and shader interface sources and build helpers"
+
+[dependencies]
+neocogi-idl.workspace = true

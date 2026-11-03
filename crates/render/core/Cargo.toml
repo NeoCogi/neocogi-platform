@@ -13,7 +13,7 @@ neocogi-com = { workspace = true, features = ["alloc", "std", "macros"] }
 rs-math3d.workspace = true
 
 [build-dependencies]
-neocogi-idl.workspace = true
+neocogi-platform-build.workspace = true
 syn.workspace = true
 quote.workspace = true
 
