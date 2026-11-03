@@ -1,6 +1,6 @@
 [package]
 name = "neocogi-platform-examples"
-version = "0.0.0"
+version.workspace = true
 publish = false
 edition.workspace = true
 license.workspace = true

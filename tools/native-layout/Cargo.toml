@@ -1,9 +1,15 @@
 [package]
 name = "neocogi-native-layout"
-version = "0.0.0"
-edition = "2024"
-publish = false
+version.workspace = true
+publish = ["crates-io"]
 description = "Compile-time copying of Cargo artifacts and application resources"
+
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "README.md"
+include = ["Cargo.toml", "README.md", "LICENSE", "src/**", "build.rs", "tests/**", "schemas/**"]
 
 [lib]
 proc-macro = true

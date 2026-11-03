@@ -7,6 +7,7 @@
 - [Shader compilation and reflection](contracts/SHADER_COMPILATION.md)
 - [Drawing targets and resource groups](contracts/RENDER_SURFACES.md)
 - [UI workspace integration](contracts/UI_INTEGRATION.md)
+- [Release preparation and publication](project/RELEASING.md)
 - [Dependency compatibility and revision history](project/HISTORY.md)
 - [GPU and platform plugin migration](project/PLATFORM_PLUGIN_MIGRATION.md)
 - [Native example static/dynamic assembly](../examples/native/README.md)

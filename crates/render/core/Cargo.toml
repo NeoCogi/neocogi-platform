@@ -1,12 +1,15 @@
 [package]
 name = "neocogi-render-core"
-version = "0.0.0"
+version.workspace = true
 authors.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Backend-neutral renderer SPI for NeoCogi"
-publish = false
+publish = ["crates-io"]
+
+readme = "README.md"
+include = ["Cargo.toml", "README.md", "LICENSE", "src/**", "build.rs", "tests/**", "schemas/**"]
 
 [dependencies]
 neocogi-com = { workspace = true, features = ["alloc", "std", "macros"] }

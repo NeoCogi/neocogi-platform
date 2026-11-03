@@ -1,11 +1,15 @@
 [package]
 name = "neocogi-native-layout-core"
-version = "0.0.0"
-publish = false
+version.workspace = true
+publish = ["crates-io"]
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Build-only native output policy and exclusively owned resource staging"
+
+authors.workspace = true
+readme = "README.md"
+include = ["Cargo.toml", "README.md", "LICENSE", "src/**", "build.rs", "tests/**", "schemas/**"]
 
 [dependencies]
 tempfile.workspace = true

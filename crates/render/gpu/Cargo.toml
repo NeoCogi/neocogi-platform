@@ -1,12 +1,15 @@
 [package]
 name = "neocogi-render-gpu"
-version = "0.0.0"
-publish = false
+version.workspace = true
+publish = ["crates-io"]
 authors.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Portable GPU resources and command recording with optional concrete graphics backends"
+
+readme = "README.md"
+include = ["Cargo.toml", "README.md", "LICENSE", "src/**", "build.rs", "tests/**", "schemas/**"]
 
 [dependencies]
 neocogi-render-core.workspace = true

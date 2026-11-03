@@ -1,12 +1,15 @@
 [package]
 name = "neocogi-shader-compiler"
-version = "0.0.0"
-publish = false
+version.workspace = true
+publish = ["crates-io"]
 authors.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "CPU-only portable shader compiler COM provider"
+
+readme = "README.md"
+include = ["Cargo.toml", "README.md", "LICENSE", "src/**", "build.rs", "tests/**", "schemas/**"]
 
 [lib]
 name = "nc_shader_compiler"

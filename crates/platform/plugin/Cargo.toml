@@ -1,12 +1,15 @@
 [package]
 name = "neocogi-platform-plugin"
-version = "0.0.0"
+version.workspace = true
 authors.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-publish = false
+publish = ["crates-io"]
 description = "SDL/browser platform hosting with selected GPU backend assembly"
+
+readme = "README.md"
+include = ["Cargo.toml", "README.md", "LICENSE", "src/**", "build.rs", "tests/**", "schemas/**"]
 
 [lib]
 # Reusable implementation; the dylib subpackage alone owns the native loader export.

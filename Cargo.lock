@@ -828,7 +828,7 @@ dependencies = [
 
 [[package]]
 name = "neocogi-browser-tests"
-version = "0.0.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "neocogi-com",
  "neocogi-com-host",
@@ -874,7 +874,7 @@ dependencies = [
 
 [[package]]
 name = "neocogi-example-plugins"
-version = "0.0.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "neocogi-com",
  "neocogi-native-layout",
@@ -900,7 +900,7 @@ dependencies = [
 
 [[package]]
 name = "neocogi-native-layout"
-version = "0.0.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "neocogi-native-layout-core",
  "proc-macro2",
@@ -911,7 +911,7 @@ dependencies = [
 
 [[package]]
 name = "neocogi-native-layout-core"
-version = "0.0.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -921,14 +921,14 @@ dependencies = [
 
 [[package]]
 name = "neocogi-platform-build"
-version = "0.0.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "neocogi-idl",
 ]
 
 [[package]]
 name = "neocogi-platform-examples"
-version = "0.0.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "gltf",
  "image",
@@ -948,7 +948,7 @@ dependencies = [
 
 [[package]]
 name = "neocogi-platform-plugin"
-version = "0.0.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "glow 0.18.0",
  "js-sys",
@@ -969,7 +969,7 @@ dependencies = [
 
 [[package]]
 name = "neocogi-platform-plugin-dylib"
-version = "0.0.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "neocogi-com",
  "neocogi-platform-plugin",
@@ -977,7 +977,7 @@ dependencies = [
 
 [[package]]
 name = "neocogi-render-core"
-version = "0.0.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "neocogi-com",
  "neocogi-platform-build",
@@ -989,7 +989,7 @@ dependencies = [
 
 [[package]]
 name = "neocogi-render-gpu"
-version = "0.0.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "ash",
  "ash-window",
@@ -1009,7 +1009,7 @@ dependencies = [
 
 [[package]]
 name = "neocogi-render-support"
-version = "0.0.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "neocogi-com",
  "neocogi-render-core",
@@ -1019,7 +1019,7 @@ dependencies = [
 
 [[package]]
 name = "neocogi-shader-compiler"
-version = "0.0.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "naga",
  "neocogi-com",
@@ -1030,7 +1030,7 @@ dependencies = [
 
 [[package]]
 name = "neocogi-shader-compiler-dylib"
-version = "0.0.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "neocogi-com",
  "neocogi-shader-compiler",
@@ -1038,7 +1038,7 @@ dependencies = [
 
 [[package]]
 name = "neocogi-shader-core"
-version = "0.0.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "neocogi-com",
  "neocogi-platform-build",
