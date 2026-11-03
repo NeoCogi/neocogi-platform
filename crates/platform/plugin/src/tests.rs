@@ -1,11 +1,11 @@
 //! Native acceptance uses the production platform constructor and real COM resource calls.
 //! Run explicitly with a usable SDL video driver; ordinary unit runs do not open OS windows.
 use super::*;
-use neocogi_com::INcStringComPtrExt;
 use neocogi_com::ComBox;
 use neocogi_render_gpu::source::{Bytes, PipelineDesc};
 
 mod surface_targets;
+mod owned_errors;
 #[cfg(feature = "glow")]
 mod view_geometry;
 mod window_lifetime;
@@ -57,7 +57,10 @@ impl IRenderStream for Stream {
         if index != 0 {
             return Err(NC_E_INVALID_ARG);
         }
-        assert_eq!(self.input.renderer.render(info(), self.input.empty.as_com_ref()), Err(RENDER_E_BUSY));
+        assert_eq!(
+            self.input.renderer.render(info(), self.input.empty.as_com_ref()).map_err(|error| error.status),
+            Err(RENDER_E_BUSY)
+        );
         let factory: ComPtr<ITextureFactoryAbi> = self.input.renderer.query()?;
         assert_eq!(
             factory
@@ -65,6 +68,7 @@ impl IRenderStream for Stream {
                     Size { width: 1, height: 1 },
                     neocogi_render_core::source::initial_bytes(vec![0; 4]).borrow().unwrap()
                 )
+                .map_err(|error| error.status)
                 .unwrap_err(),
             RENDER_E_BUSY
         );
@@ -201,7 +205,10 @@ fn native_order_ownership_reentry_and_final_release() {
     assert_eq!(identity(&driver).unwrap(), identity(&clients.driver_identity().unwrap()).unwrap());
     assert_eq!(identity(&driver).unwrap(), identity(&resources.driver_identity().unwrap()).unwrap());
     let zero = neocogi_render_core::source::initial(None);
-    let initialized = factory.create_texture(Size { width: 1, height: 1 }, zero.borrow().unwrap()).unwrap();
+    let initialized = factory
+        .create_texture(Size { width: 1, height: 1 }, zero.borrow().unwrap())
+        .map_err(|error| error.status)
+        .unwrap();
     assert_eq!(initialized.size().unwrap(), Size { width: 1, height: 1 });
     assert_eq!(identity(&driver).unwrap(), identity(&initialized.driver_identity().unwrap()).unwrap());
     assert!(driver.query::<IRendererAbi>().is_err());
@@ -223,6 +230,7 @@ fn native_order_ownership_reentry_and_final_release() {
                 .borrow()
                 .unwrap(),
         )
+        .map_err(|error| error.status)
         .unwrap();
     let spare = factory
         .create_texture(
@@ -231,6 +239,7 @@ fn native_order_ownership_reentry_and_final_release() {
                 .borrow()
                 .unwrap(),
         )
+        .map_err(|error| error.status)
         .unwrap();
     let spare_key = identity(&spare).unwrap();
     let input = Rc::new(Input {
@@ -243,7 +252,7 @@ fn native_order_ownership_reentry_and_final_release() {
         reentries: Cell::new(0),
     });
     let stream: ComPtr<IRenderStreamAbi> = Stream::from_value(Stream { input: input.clone() }).query().unwrap();
-    renderer.render(info(), stream.as_com_ref()).unwrap();
+    renderer.render(info(), stream.as_com_ref()).map_err(|error| error.status).unwrap();
     assert_eq!(input.reentries.get(), 1);
     {
         let owner = device.upgrade().unwrap();
@@ -280,6 +289,7 @@ fn native_order_ownership_reentry_and_final_release() {
                 .borrow()
                 .unwrap(),
         )
+        .map_err(|error| error.status)
         .unwrap();
     let graphics_host = unknown.query::<IPlatformWindowAbi>().unwrap().graphics_host().unwrap();
     let ui_domain = framebuffer_group(
@@ -291,34 +301,29 @@ fn native_order_ownership_reentry_and_final_release() {
         },
     );
     assert!(matches!(
-        graphics_host.import_texture(ui_domain.resources().unwrap().as_com_ref(), foreign_texture.as_com_ref()),
+        graphics_host
+            .import_texture(ui_domain.resources().unwrap().as_com_ref(), foreign_texture.as_com_ref())
+            .map_err(|error| error.status),
         Err(RENDER_E_OWNER)
     ));
     drop((ui_domain, graphics_host, foreign_texture));
     let original = input.block.replace(foreign_block);
-    assert_eq!(renderer.render(info(), stream.as_com_ref()), Err(RENDER_E_OWNER));
-    assert!(
-        renderer
-            .query::<IRenderDiagnosticsAbi>()
-            .unwrap()
-            .diagnostic()
-            .unwrap()
-            .to_string()
-            .unwrap()
-            .contains("frame preparation")
-    );
+    let failure = renderer.render_result(info(), stream.as_com_ref()).unwrap();
+    let failure = check_outcome(&failure, "render").unwrap_err();
+    assert_eq!(failure.status, RENDER_E_OWNER);
+    assert!(failure.message.contains("frame preparation"));
     drop(input.block.replace(original));
     // A failed frame must not poison the next explicit native submission.
-    renderer.render(info(), stream.as_com_ref()).unwrap();
+    renderer.render(info(), stream.as_com_ref()).map_err(|error| error.status).unwrap();
     // Replaying sealed data and replacing it with another immutable block must keep ordering
     // and native lifetime valid without retaining any public shader/pipeline owner.
     for _ in 0..4 {
-        renderer.render(info(), stream.as_com_ref()).unwrap();
+        renderer.render(info(), stream.as_com_ref()).map_err(|error| error.status).unwrap();
     }
     let replacement = graphics(&resources, &broker, RenderViewRoot { client: root, target: root });
     drop(input.block.replace(replacement));
     for _ in 0..3 {
-        renderer.render(info(), stream.as_com_ref()).unwrap();
+        renderer.render(info(), stream.as_com_ref()).map_err(|error| error.status).unwrap();
     }
     drop((foreign_resources, foreign_controller, foreign_clients, foreign_broker, foreign_factory, foreign));
     assert!(foreign_device.upgrade().is_none());
@@ -452,7 +457,9 @@ impl IGpuDataSource for InitialReentry {
     fn byte_count(&self) -> Result<u64, NcStatus> {
         self.calls.set(self.calls.get() + 1);
         assert_eq!(
-            self.renderer.render(RenderInfo { block_count: 0, ..info() }, self.empty.as_com_ref()),
+            self.renderer
+                .render(RenderInfo { block_count: 0, ..info() }, self.empty.as_com_ref())
+                .map_err(|error| error.status),
             Err(RENDER_E_BUSY)
         );
         Ok(4)
@@ -493,8 +500,12 @@ fn ordinary_image_source_reentry_cannot_acquire_the_native_renderer() {
             Size { width: 1, height: 1 },
             neocogi_render_core::source::initial(Some(source)).borrow().unwrap(),
         )
+        .map_err(|error| error.status)
         .unwrap();
     assert!(calls.get() > 0);
     assert_eq!(image.size().unwrap(), Size { width: 1, height: 1 });
-    renderer.render(RenderInfo { block_count: 0, ..info() }, empty.as_com_ref()).unwrap();
+    renderer
+        .render(RenderInfo { block_count: 0, ..info() }, empty.as_com_ref())
+        .map_err(|error| error.status)
+        .unwrap();
 }

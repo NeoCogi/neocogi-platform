@@ -86,21 +86,28 @@ fn browser_surface_targets() {
         invocation: 1,
         block_count: 1,
     };
-    image_renderer.render(info, image_stream.as_com_ref()).unwrap();
+    image_renderer.render(info, image_stream.as_com_ref()).map_err(|error| error.status).unwrap();
     let old = image.completed_image().unwrap();
     let other = surfaces.create_surface(RenderSurfaceDesc { kind: RenderSurfaceKind::Image, size }).unwrap();
     assert_eq!(
-        other.query::<IRendererAbi>().unwrap().render(info, image_stream.as_com_ref()),
+        other
+            .query::<IRendererAbi>()
+            .unwrap()
+            .render(info, image_stream.as_com_ref())
+            .map_err(|error| error.status),
         Err(RENDER_E_OWNER)
     );
     assert!(matches!(other.completed_image(), Err(neocogi_com::NC_E_NOT_FOUND)));
     let renderer: ComPtr<IRendererAbi> = window.query().unwrap();
     assert_eq!(
-        renderer.render(RenderInfo { size: drawable, ..info }, image_stream.as_com_ref()),
+        renderer
+            .render(RenderInfo { size: drawable, ..info }, image_stream.as_com_ref())
+            .map_err(|error| error.status),
         Err(RENDER_E_OWNER)
     );
     renderer
         .render(RenderInfo { size: drawable, ..info }, surface_clear(&host, &window_group).as_com_ref())
+        .map_err(|error| error.status)
         .unwrap();
     let mut inside = [0u8; 4];
     let mut outside = [0u8; 4];
@@ -140,6 +147,7 @@ fn browser_surface_targets() {
             },
             empty.as_com_ref(),
         )
+        .map_err(|error| error.status)
         .unwrap();
     assert_ne!(identity(&old).unwrap(), identity(&image.completed_image().unwrap()).unwrap());
     let resources = window_group.resources().unwrap();

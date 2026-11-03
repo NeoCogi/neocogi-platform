@@ -49,23 +49,18 @@ impl NativeHost {
 
 impl PlatformObject {
     /// Constructs the concrete native owner used by COM activation and native lifetime acceptance tests.
-    pub(super) fn window(&self, title: &str, size: Size) -> Result<WindowObject, NcStatus> {
+    pub(super) fn window(&self, title: &str, size: Size) -> Result<WindowObject, RenderError> {
         let mut owner = self.host.try_borrow_mut().map_err(|_| PLATFORM_E_BUSY)?;
         if owner.is_none() {
-            *owner = Some(NativeHost::new().map_err(|error| {
-                *self.diagnostic.borrow_mut() = error;
-                PLATFORM_E_BACKEND
-            })?);
+            *owner = Some(NativeHost::new().map_err(|error| RenderError::new(PLATFORM_E_BACKEND, error))?);
         }
         let host = owner.as_ref().expect("host initialized").clone();
         drop(owner);
-        let gpu = gpu::Gpu::new(&host.video, title, size).map_err(|error| {
-            *self.diagnostic.borrow_mut() = error;
-            PLATFORM_E_BACKEND
-        })?;
+        let gpu = gpu::Gpu::new(&host.video, title, size).map_err(|error| RenderError::new(PLATFORM_E_BACKEND, error))?;
         let window = gpu.window();
         host.queues.borrow_mut().insert(window.id(), VecDeque::new());
         let device = Rc::new(Device {
+            success: operation_result(Ok(())),
             logical: neocogi_render_gpu::GpuDevice::new(gpu.core(), self.compiler.clone()),
             render: RefCell::new(Some(RenderState { gpu, prepared: Prepared::default() })),
             textures: Rc::default(),
@@ -101,13 +96,17 @@ mod tests {
         let platform = local.query::<PlatformAbi>().unwrap();
         for size in [Size { width: 0, height: 8 }, Size { width: 8, height: -1 }] {
             assert_eq!(
-                platform.create_window(NcCopyFromBufferOffset::new(0, b"invalid"), size).unwrap_err(),
+                platform
+                    .create_window(NcCopyFromBufferOffset::new(0, b"invalid"), size)
+                    .map_err(|error| error.status)
+                    .unwrap_err(),
                 NC_E_INVALID_ARG
             );
         }
         assert_eq!(
             platform
                 .create_window(NcCopyFromBufferOffset::new(0, &[0xff]), Size { width: 8, height: 8 })
+                .map_err(|error| error.status)
                 .unwrap_err(),
             NC_E_INVALID_ARG
         );

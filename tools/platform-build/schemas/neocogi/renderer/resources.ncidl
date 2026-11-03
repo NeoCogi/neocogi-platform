@@ -22,7 +22,8 @@ interface ITexture: IRenderDriverBound {
 /// Optional renderer capability for uploading immutable external images.
 interface ITextureFactory: IRenderDriverBound {
     /// Some copies exact tightly packed RGBA; None creates initialized transparent-black pixels.
-    fn create_texture(&self, size: Size, pixels: &Option<ComPtr<IGpuDataSource>>) -> Result<ComPtr<ITexture>>;
+    /// The returned report owns this upload's image or its original native failure.
+    fn create_texture_result(&self, size: Size, pixels: &Option<ComPtr<IGpuDataSource>>) -> Result<ComBox<ITextureCreationResult>>;
 }
 
 #[version(1)]
@@ -79,8 +80,8 @@ interface IRenderOutcome {
 }
 
 #[version(1)]
-/// Owned diagnostic snapshots preserve backend details without exposing backend-dependent errors.
-interface IRenderDiagnostics {
-    /// Returns the most recent failed GPU operation's detail, or empty text before a failure.
-    fn diagnostic(&self) -> Result<ComPtr<INcString>>;
+/// One native image creation result, independent of later operations and factory lifetime.
+interface ITextureCreationResult: IRenderOutcome {
+    /// Transfers the complete immutable image once; abandonment releases an untaken image.
+    fn take_texture(&mut self) -> Result<ComPtr<ITexture>>;
 }

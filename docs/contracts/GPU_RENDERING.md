@@ -398,3 +398,16 @@ Creation reports exclusively own their success capability until a single mutable
 `take_*` call transfers it. A consumed report rejects reuse; dropping an untaken
 result releases the resource normally. Failed reports retain readable owned error
 data and expose no partial resource. All declarations remain version 1.
+
+Window construction, ordinary image uploads, shader creation, window/image frame
+submission, host image import/preparation and maintenance use this contract.
+The raw generated methods end in `_result` and return the per-call report;
+ordinary Rust methods retain the operation name and return `Result<T, RenderError>`.
+`IRenderDiagnostics` and the device-wide last-error slot have been removed.
+
+Native submission retires its prepared references and restores detached native
+state before its result is published. An operation failure retains precedence
+over a cleanup failure. If the operation succeeded but retirement failed, that
+failure is returned. Image submissions publish their new completed image only
+after both steps succeed; failure preserves the previous completed image.
+Destructor-only cleanup attempts retirement without emitting a new error.

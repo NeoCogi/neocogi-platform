@@ -24,7 +24,7 @@ pub const RENDER_E_EXPIRED: NcStatus = NcStatus::from_code(-1003);
 /// An operation is illegal in the current recording/session state.
 pub const RENDER_E_STATE: NcStatus = NcStatus::from_code(-1004);
 
-/// A renderer backend failed; its diagnostics capability retains concrete detail.
+/// A renderer backend failed; the operation error owns its concrete detail.
 pub const RENDER_E_BACKEND: NcStatus = NcStatus::from_code(-1005);
 
 /// The resource group's immutable creation permissions forbid this operation.

@@ -129,6 +129,15 @@ later surface work without retaining the renderer facade. See
 UI-specific input routing, asset publication and painter budgets remain documented
 separately in [UI workspace integration](UI_INTEGRATION.md).
 
+## Operation failures
+
+The Rust `render` call returns `Result<(), RenderError>` for both window and image
+renderers. The error owns the original status and explanation; later work,
+renderer destruction and device destruction cannot change it. Raw COM clients
+call `render_result` and read that operation's `IRenderOutcome`. There is no
+separate renderer diagnostic lookup. For image rendering, publication also waits
+for native retirement to succeed, preserving the previous image on failure.
+
 ## Acceptance checks
 
 Platform acceptance exercises generated COM calls, several groups sharing each

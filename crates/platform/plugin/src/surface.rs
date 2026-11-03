@@ -16,7 +16,7 @@ struct SurfaceState {
     completed: Option<ComPtr<ITextureAbi>>,
 }
 
-#[com_object(interfaces(IRenderSurface, IRenderer, IRenderDiagnostics))]
+#[com_object(interfaces(IRenderSurface, IRenderer))]
 /// One independently submitted image target; completed images are immutable snapshots.
 struct ImageSurface {
     /// Shared typed device keeps the native context alive through final texture retirement.
@@ -225,35 +225,32 @@ impl IRenderSurface for ImageSurface {
 
 impl IRenderer for ImageSurface {
     /// Validates all commands, renders to fresh private storage, and then publishes atomically.
-    fn render(&self, info: RenderInfo, stream: ComRef<'_, IRenderStreamAbi>) -> Result<(), NcStatus> {
-        let mut device = self.record.device.access()?;
-        let mut session = self.access()?;
-        let session = session.state();
-        if info.size != session.size || info.size.width <= 0 || info.size.height <= 0 || info.clear.to_le_bytes()[3] != 255 {
-            return Err(NC_E_INVALID_ARG);
-        }
-        let state = device.state();
-        let _operation = self.record.device.logical.operation()?;
-        state.prepared.read(info, stream, self.record.device.as_ref())?;
-        // Preparation may call foreign streams that close groups. Check closure and exact target
-        // after the final callback, before output allocation; rejection preserves the last image.
-        for block in state.prepared.blocks() {
-            block.admit_target(&self.record.target)?;
-        }
-        let image = state
-            .gpu
-            .render_surface(info, &state.prepared)
-            .map_err(|error| self.record.device.failure(error))?;
-        let output = retain_texture(&self.record.device, image);
-        session.completed = Some(publish_texture(output));
-        Ok(())
-    }
-}
-
-impl IRenderDiagnostics for ImageSurface {
-    /// Copies the shared device diagnostic independently of later failures.
-    fn diagnostic(&self) -> Result<ComPtr<INcStringAbi>, NcStatus> {
-        Ok(NcString::from_utf8_str(&self.record.device.logical.diagnostic()))
+    fn render_result(&self, info: RenderInfo, stream: ComRef<'_, IRenderStreamAbi>) -> Result<ComPtr<IRenderOutcomeAbi>, NcStatus> {
+        let result = (|| -> Result<(), RenderError> {
+            let mut session = self.access()?;
+            let session = session.state();
+            if info.size != session.size || info.size.width <= 0 || info.size.height <= 0 || info.clear.to_le_bytes()[3] != 255 {
+                return Err(NC_E_INVALID_ARG.into());
+            }
+            let image = self.record.device.execute(|state| {
+                let _operation = self.record.device.logical.operation()?;
+                state
+                    .prepared
+                    .read(info, stream, self.record.device.as_ref())
+                    .map_err(|status| RenderError::from(status).context("frame preparation"))?;
+                // Foreign callbacks finish before the final closure/target checks and allocation.
+                for block in state.prepared.blocks() {
+                    block.admit_target(&self.record.target)?;
+                }
+                state
+                    .gpu
+                    .render_surface(info, &state.prepared)
+                    .map_err(|error| self.record.device.failure(error))
+            })?;
+            session.completed = Some(publish_texture(retain_texture(&self.record.device, image)));
+            Ok(())
+        })();
+        Ok(self.record.device.complete(result, "render image"))
     }
 }
 

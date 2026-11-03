@@ -392,12 +392,12 @@ impl Target {
     }
 
     /// Records one complete contribution and synchronously submits through public contracts.
-    fn render(&self, scene: &Scene, graphics: &Graphics, camera: &Camera, seconds: f32, lighting: &Lighting, invocation: u64) -> Result<(), NcStatus> {
+    fn render(&self, scene: &Scene, graphics: &Graphics, camera: &Camera, seconds: f32, lighting: &Lighting, invocation: u64) -> Result<(), RenderError> {
         self.submit(invocation, |view| graphics.record(scene, camera, seconds, lighting, view))
     }
 
     /// Owns the complete recording/sealing boundary for either a scene or a sky-only probe.
-    fn submit(&self, invocation: u64, record: impl FnOnce(&mut ComBox<IRenderViewAbi>) -> Result<(), NcStatus>) -> Result<(), NcStatus> {
+    fn submit(&self, invocation: u64, record: impl FnOnce(&mut ComBox<IRenderViewAbi>) -> Result<(), NcStatus>) -> Result<(), RenderError> {
         self.host.maintain()?;
         let size = self.window.size()?;
         let broker = self.host.recording_broker()?;

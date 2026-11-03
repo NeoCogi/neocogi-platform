@@ -561,13 +561,13 @@ interface IRenderClientFactory: IRenderDriverBound {
 interface IRenderHost: IRenderDriverBound {
     /// Observe completed work and reclaim retired storage before quota-sensitive creation.
     /// No target is acquired, cleared or presented; incomplete work remains owned and charged.
-    fn maintain(&self) -> Result<()>;
+    fn maintain_result(&self) -> Result<ComPtr<IRenderOutcome>>;
     /// Import an authenticated immutable image when this group's creation permissions allow it.
     /// Same-device and exact-group ownership remain mandatory; no native handle or image editing is exposed.
-    fn import_texture(&self, resources: &IRenderResources, image: &ITexture) -> Result<ComBox<IGpuTexture>>;
+    fn import_texture_result(&self, resources: &IRenderResources, image: &ITexture) -> Result<ComBox<ITextureImportResult>>;
     /// Complete fallible preparation of a permitted imported image before the caller publishes its resource revision.
     /// This never acquires a target or invokes a client during native execution.
-    fn prepare_texture(&self, resources: &IRenderResources, texture: &IGpuTexture) -> Result<()>;
+    fn prepare_texture_result(&self, resources: &IRenderResources, texture: &IGpuTexture) -> Result<ComPtr<IRenderOutcome>>;
     /// Creates a narrow CPU recording broker for one host-controlled drawing traversal.
     fn recording_broker(&self) -> Result<ComPtr<IRenderViewBroker>>;
 }

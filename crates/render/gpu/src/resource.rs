@@ -40,9 +40,6 @@ impl<B: NativeResources> Clone for GpuDevice<B> {
 pub(crate) struct Device<B: crate::native::NativeResources> {
     /// Required compiler capability, acquired once by the renderer assembly.
     compiler: ComPtr<neocogi_shader_core::abi::ShaderCompilerAbi>,
-    /// One bounded diagnostic shared with the native renderer. Interior mutability
-    /// supports shareable COM methods, with no borrow across foreign calls.
-    diagnostic: RefCell<String>,
     /// Actual compatible native instance retained without any renderer or submission owner.
     pub(crate) core: Rc<B::Core>,
     /// Exclusive buffer objects constructed by this device.
@@ -137,7 +134,6 @@ impl<B: crate::native::NativeResources> GpuDevice<B> {
         Self {
             inner: Rc::new(Device {
                 compiler,
-                diagnostic: RefCell::new(String::new()),
                 core,
                 buffers: RefCell::new(HashMap::new()),
                 textures: RefCell::new(HashMap::new()),
@@ -154,22 +150,6 @@ impl<B: crate::native::NativeResources> GpuDevice<B> {
     /// Stable compatibility metadata; this getter grants no renderer or factory authority.
     pub fn driver_identity(&self) -> ComPtr<IRenderDriverIdentityAbi> {
         B::identity(self.inner.core.as_ref()).clone()
-    }
-
-    /// Copies current bounded detail for the native diagnostic facade.
-    pub fn diagnostic(&self) -> String {
-        self.inner.diagnostic.borrow().clone()
-    }
-
-    /// Replaces detail after formatting outside the store borrow; no foreign code
-    /// runs while it is borrowed. The store owns at most 4 KiB of UTF-8 text.
-    pub fn set_diagnostic(&self, mut detail: String) {
-        let mut end = detail.len().min(neocogi_shader_core::MAX_DIAGNOSTIC_BYTES);
-        while !detail.is_char_boundary(end) {
-            end -= 1;
-        }
-        detail.truncate(end);
-        *self.inner.diagnostic.borrow_mut() = detail;
     }
 
     /// Creates target metadata on this actual native device; no framebuffer is allocated here.
@@ -256,7 +236,6 @@ impl<B: crate::native::NativeResources> GpuDevice<B> {
             return Err(RENDER_E_PERMISSION);
         }
         if !Rc::ptr_eq(&self.inner.core, B::image_core(image.as_ref())) {
-            self.set_diagnostic("image or factory belongs to an incompatible driver/domain".into());
             return Err(RENDER_E_OWNER);
         }
         let desc = GpuTextureDesc {

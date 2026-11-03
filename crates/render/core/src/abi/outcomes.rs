@@ -230,6 +230,35 @@ pub fn texture_import_result(result: Result<ComBox<IGpuTextureAbi>, RenderError>
         .unwrap_or_else(|(status, _)| panic!("texture result interface: {status}"))
 }
 
+#[com_object(interfaces(ITextureCreationResult), ownership = exclusive)]
+/// One exclusive report owns an ordinary shareable native image until transfer.
+struct TextureCreation {
+    /// Untaken success retains pixels; rejection retains only bounded text/status.
+    outcome: Outcome<ComPtr<ITextureAbi>>,
+}
+impl IRenderOutcome for TextureCreation {
+    /// Reads this operation's unconsumed discriminator.
+    fn status(&self) -> Result<i32, NcStatus> {
+        self.outcome.status()
+    }
+    /// Exports immutable text owned by this operation.
+    fn message(&self) -> Result<ComPtr<INcStringAbi>, NcStatus> {
+        self.outcome.message()
+    }
+}
+impl ITextureCreationResult for TextureCreation {
+    /// Transfers the one image capability and consumes this report's success.
+    fn take_texture(&mut self) -> Result<ComPtr<ITextureAbi>, NcStatus> {
+        self.outcome.take()
+    }
+}
+/// Publishes a native image or its original owned failure without a shared diagnostic slot.
+pub fn texture_creation_result(result: Result<ComPtr<ITextureAbi>, RenderError>) -> ComBox<ITextureCreationResultAbi> {
+    TextureCreation::into_local_box(TextureCreation { outcome: Outcome::new(result) })
+        .into_interface()
+        .unwrap_or_else(|(status, _)| panic!("native image result interface: {status}"))
+}
+
 #[com_object(interfaces(IWindowCreationResult), ownership = exclusive)]
 /// Exclusive construction report; an untaken window is released with this report.
 struct WindowCreation {
@@ -257,6 +286,68 @@ pub fn window_creation_result(result: Result<ComPtr<IPlatformWindowAbi>, RenderE
     WindowCreation::into_local_box(WindowCreation { outcome: Outcome::new(result) })
         .into_interface()
         .unwrap_or_else(|(status, _)| panic!("window result interface: {status}"))
+}
+
+impl crate::platform::PlatformClient {
+    /// Constructs one window or returns the failure and text belonging to that construction.
+    pub fn create_window(&self, title: neocogi_com::NcCopyFromBufferOffset<'_, u8>, size: Size) -> Result<ComPtr<IPlatformWindowAbi>, RenderError> {
+        let mut report = self
+            .create_window_result(title, size)
+            .map_err(|status| RenderError::from(status).context("create window"))?;
+        check_outcome(&report, "create window")?;
+        report.take_window().map_err(|status| RenderError::from(status).context("take window"))
+    }
+}
+impl ITextureFactoryClient {
+    /// Uploads an ordinary immutable image, retaining any native failure in the returned error.
+    pub fn create_texture(&self, size: Size, pixels: neocogi_com::NcValueRef<'_, InitialGpuData>) -> Result<ComPtr<ITextureAbi>, RenderError> {
+        let mut report = self
+            .create_texture_result(size, pixels)
+            .map_err(|status| RenderError::from(status).context("create native texture"))?;
+        check_outcome(&report, "create native texture")?;
+        report.take_texture().map_err(|status| RenderError::from(status).context("take native texture"))
+    }
+}
+impl IRendererClient {
+    /// Submits one frame and returns that submission's complete owned failure, if any.
+    pub fn render(&self, info: RenderInfo, stream: neocogi_com::ComRef<'_, IRenderStreamAbi>) -> Result<(), RenderError> {
+        let report = self.render_result(info, stream).map_err(|status| RenderError::from(status).context("render"))?;
+        check_outcome(&report, "render")
+    }
+}
+impl IRenderHostClient {
+    /// Reclaims retired native resources, returning its own status and explanation.
+    pub fn maintain(&self) -> Result<(), RenderError> {
+        let report = self
+            .maintain_result()
+            .map_err(|status| RenderError::from(status).context("maintain renderer"))?;
+        check_outcome(&report, "maintain renderer")
+    }
+    /// Imports an authenticated image into this group, or returns this import's failure.
+    pub fn import_texture(
+        &self,
+        resources: neocogi_com::ComRef<'_, IRenderResourcesAbi>,
+        image: neocogi_com::ComRef<'_, ITextureAbi>,
+    ) -> Result<ComBox<IGpuTextureAbi>, RenderError> {
+        let mut report = self
+            .import_texture_result(resources, image)
+            .map_err(|status| RenderError::from(status).context("import texture"))?;
+        check_outcome(&report, "import texture")?;
+        report
+            .take_texture()
+            .map_err(|status| RenderError::from(status).context("take imported texture"))
+    }
+    /// Prepares one imported image before recording, with owned native failure detail.
+    pub fn prepare_texture(
+        &self,
+        resources: neocogi_com::ComRef<'_, IRenderResourcesAbi>,
+        texture: neocogi_com::ComRef<'_, IGpuTextureAbi>,
+    ) -> Result<(), RenderError> {
+        let report = self
+            .prepare_texture_result(resources, texture)
+            .map_err(|status| RenderError::from(status).context("prepare texture"))?;
+        check_outcome(&report, "prepare texture")
+    }
 }
 
 #[cfg(test)]
@@ -293,6 +384,40 @@ mod tests {
         })
         .into_interface()
         .unwrap_or_else(|(status, _)| panic!("test shader interface: {status}"))
+    }
+
+    #[com_object(interfaces(IRenderOutcome))]
+    /// Valid foreign-style report storage isolates error-text failure from the operation status.
+    struct UnreadableFailure {
+        /// Oversized successful text export versus an explicit failing getter.
+        oversized: bool,
+    }
+    impl IRenderOutcome for UnreadableFailure {
+        /// The original failed operation always retains its distinct backend status.
+        fn status(&self) -> Result<i32, NcStatus> {
+            Ok(RENDER_E_BACKEND.code())
+        }
+        /// Both forms are legal COM interactions with initialized storage.
+        fn message(&self) -> Result<ComPtr<INcStringAbi>, NcStatus> {
+            if self.oversized {
+                Ok(NcString::from_utf8_str(&"x".repeat(MAX_RENDER_ERROR_BYTES + 1)))
+            } else {
+                Err(NC_E_INVALID_ARG)
+            }
+        }
+    }
+    /// A secondary getter/size failure must not replace the actual operation's code.
+    #[test]
+    fn unreadable_report_text_preserves_original_operation_status() {
+        for oversized in [false, true] {
+            let report: ComPtr<IRenderOutcomeAbi> = UnreadableFailure::from_value(UnreadableFailure { oversized }).query().unwrap();
+            let error = check_outcome(&report, "native upload").unwrap_err();
+            drop(report);
+            assert_eq!(error.status, RENDER_E_BACKEND);
+            assert!(error.message.contains("native upload"));
+            assert!(error.message.contains("error text unavailable"));
+            assert!(error.message.len() <= MAX_RENDER_ERROR_BYTES);
+        }
     }
 
     /// Reports survive unrelated success, later failures and final report destruction as Rust errors.

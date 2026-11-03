@@ -6,11 +6,8 @@ use web_sys::HtmlCanvasElement;
 impl PlatformObject {
     /// Allocates an independent canvas for each COM window; no two devices accidentally share
     /// one WebGL context. Applications style canvas elements using ordinary page CSS.
-    pub(super) fn window(&self, title: &str, size: Size) -> Result<WindowObject, NcStatus> {
-        self.canvas(title, size).map_err(|error| {
-            *self.diagnostic.borrow_mut() = error;
-            PLATFORM_E_BACKEND
-        })
+    pub(super) fn window(&self, title: &str, size: Size) -> Result<WindowObject, RenderError> {
+        self.canvas(title, size).map_err(|error| RenderError::new(PLATFORM_E_BACKEND, error))
     }
 
     /// Owns partial DOM construction so listener or GPU failures leave no orphan canvas in the page.
@@ -32,6 +29,7 @@ impl PlatformObject {
         let gpu = gpu::Gpu::from_canvas(pending.canvas.clone())?;
         let window = gpu.window();
         let device = Rc::new(Device {
+            success: operation_result(Ok(())),
             logical: neocogi_render_gpu::GpuDevice::new(gpu.core(), self.compiler.clone()),
             render: RefCell::new(Some(RenderState { gpu, prepared: Prepared::default() })),
             textures: Rc::default(),
@@ -121,7 +119,7 @@ fn resize(canvas: &HtmlCanvasElement) {
     }
 }
 
-/// Preserves JavaScript construction details in the platform's owned diagnostic snapshot.
+/// Preserves JavaScript construction details in the returned owned construction error.
 fn js_error(error: wasm_bindgen::JsValue) -> String {
     error.as_string().unwrap_or_else(|| format!("{error:?}"))
 }

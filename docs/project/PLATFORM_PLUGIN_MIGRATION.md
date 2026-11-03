@@ -151,3 +151,20 @@ fn main() {
 reachable namespaces import their ordinary Rust library types. Consumers with
 additional interfaces can extend `sources(&[])?` with their own root and modules.
 Each build owns its generated files, and authored declarations retain version 1.
+
+## Retain each operation's error
+
+Use the ordinary Rust `create_window`, `create_shader`, `create_texture` on the
+native image factory, `render`, `maintain`, `import_texture` and `prepare_texture`
+methods. They now return `RenderError { status, message }` on failure. Propagate
+that value to the application and format it there; keep `status` for programmatic
+handling. Remove `IRenderDiagnostics` queries and device/platform last-error
+storage. An error's message remains valid after dropping the failing object.
+Logical GPU buffer/texture validation methods still return their direct status.
+
+Implementations and independently generated COM callers use the corresponding
+`*_result` wire methods. Each returns a report containing that call's status/text;
+creation reports exclusively own a successful resource until `take_*` transfers
+it once. Shader compiler COM callers use `compile_result`; the shader-core Rust
+`compile` facade returns owned compilation errors. Regenerate all affected
+bindings together; these pre-release authored declarations remain version 1.

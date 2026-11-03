@@ -58,7 +58,7 @@ fn wide_view_edges_draw_and_recover_through_generated_com() {
         };
         let block = graphics(&resources, &broker, RenderViewRoot { client, target: clip });
         let stream: ComPtr<IRenderStreamAbi> = ViewStream::from_value(ViewStream { blocks: vec![block] }).query().unwrap();
-        renderer.render(info, stream.as_com_ref()).unwrap();
+        renderer.render(info, stream.as_com_ref()).map_err(|error| error.status).unwrap();
         let owner = device.upgrade().unwrap();
         let mut access = owner.access().unwrap();
         let pixels = access.state().gpu.last_pixels().to_vec();

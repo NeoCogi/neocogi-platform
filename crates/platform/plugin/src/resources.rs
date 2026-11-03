@@ -32,17 +32,20 @@ impl Drop for Texture {
 }
 impl ITextureFactory for WindowObject {
     /// Validates exact RGBA length through the common image policy, uploads, then publishes one capability.
-    fn create_texture(&self, size: Size, pixels: neocogi_com::NcValueRef<'_, InitialGpuData>) -> Result<ComPtr<ITextureAbi>, NcStatus> {
-        let len = rgba_bytes(size)?;
-        // Detach ownership before foreign source calls; no RefCell guard spans the copy.
-        let mut access = self.device.access()?;
-        let pixels = neocogi_render_core::source::read_initial(pixels, len)?;
-        let image = access
-            .state()
-            .gpu
-            .create_texture(size, pixels.as_deref())
-            .map_err(|error| self.device.failure(error))?;
-        Ok(publish_texture(retain_texture(&self.device, image)))
+    fn create_texture_result(
+        &self,
+        size: Size,
+        pixels: neocogi_com::NcValueRef<'_, InitialGpuData>,
+    ) -> Result<neocogi_com::ComBox<ITextureCreationResultAbi>, NcStatus> {
+        let result = (|| -> Result<_, RenderError> {
+            let len = rgba_bytes(size)?;
+            let image = self.device.execute(|state| {
+                let pixels = neocogi_render_core::source::read_initial(pixels, len)?;
+                state.gpu.create_texture(size, pixels.as_deref()).map_err(|error| self.device.failure(error))
+            })?;
+            Ok(publish_texture(retain_texture(&self.device, image)))
+        })();
+        Ok(texture_creation_result(result.map_err(|error| error.context("create native texture"))))
     }
 }
 

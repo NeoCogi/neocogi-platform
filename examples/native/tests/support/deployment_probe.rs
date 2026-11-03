@@ -1,23 +1,24 @@
 //! Test-only executable: real plugin acquisition/failure paths without constructing a GPU.
 #[cfg(not(target_arch = "wasm32"))]
-use neocogi_com::{ComPtr, INcStringComPtrExt, NcStatus};
+use neocogi_com::{ComPtr, NcStatus};
 
 /// A valid owned plugin with the right identity but deliberately incompatible root contract.
 #[cfg(not(target_arch = "wasm32"))]
 mod wrong {
     use super::*;
-    use neocogi_render_core::abi::{IRenderDiagnostics, IRenderDiagnosticsAbi};
-    #[neocogi_com::com_object(interfaces(neocogi_render_core::abi::IRenderDiagnostics))]
-    /// Valid COM allocation advertising diagnostics rather than the compiler contract.
+    use neocogi_render_core::abi::{IRenderOutcome, IRenderOutcomeAbi};
+    #[neocogi_com::com_object(interfaces(neocogi_render_core::abi::IRenderOutcome))]
+    /// Valid COM allocation advertising an operation outcome rather than the compiler contract.
     struct Root;
-    impl IRenderDiagnostics for Root {
-        fn diagnostic(&self) -> Result<ComPtr<neocogi_com::INcStringAbi>, NcStatus> {
+    impl IRenderOutcome for Root {
+        fn status(&self) -> Result<i32, NcStatus> { Ok(neocogi_com::NC_OK.code()) }
+        fn message(&self) -> Result<ComPtr<neocogi_com::INcStringAbi>, NcStatus> {
             Ok(neocogi_com::NcString::from_utf8_str("wrong compiler root"))
         }
     }
     #[neocogi_com::plugin(name = "neocogi.shader.compiler")]
     /// Deliberately wrong exact root under the required compiler plugin identity.
-    fn acquire_root(_runtime: neocogi_com::Runtime) -> Result<ComPtr<IRenderDiagnosticsAbi>, NcStatus> {
+    fn acquire_root(_runtime: neocogi_com::Runtime) -> Result<ComPtr<IRenderOutcomeAbi>, NcStatus> {
         Root::from_value(Root).query()
     }
 }
@@ -30,9 +31,8 @@ fn main() {
     let scenario = std::env::args().nth(1).unwrap_or_else(|| "valid".into());
     match scenario.as_str() {
         "valid" => {
-            let platform = neocogi_platform_examples::acquire_platform().unwrap();
-            let text = platform.diagnostic().unwrap().to_string().unwrap();
-            assert!(text.is_empty(), "root acquisition must not initialize a failed native device");
+            let _platform = neocogi_platform_examples::acquire_platform().unwrap();
+            // This process uses a deliberately invalid SDL driver; acquisition alone must succeed.
             // Independent expectation catches a stale library after cached backend switches.
             let name = if cfg!(feature = "vulkan") {
                 "neocogi.platform.vulkan"

@@ -95,16 +95,24 @@ impl IRenderDriverBound for ObservedHost {
 }
 impl IRenderHost for ObservedHost {
     /// Keep real completion/retirement behavior before client geometry creation.
-    fn maintain(&self) -> Result<(), NcStatus> {
-        self.host.maintain()
+    fn maintain_result(&self) -> Result<ComPtr<IRenderOutcomeAbi>, NcStatus> {
+        self.host.maintain_result()
     }
     /// Ordinary image imports still pass through the native host's permission/identity checks.
-    fn import_texture(&self, resources: ComRef<'_, IRenderResourcesAbi>, image: ComRef<'_, ITextureAbi>) -> Result<ComBox<IGpuTextureAbi>, NcStatus> {
-        self.host.import_texture(resources, image)
+    fn import_texture_result(
+        &self,
+        resources: ComRef<'_, IRenderResourcesAbi>,
+        image: ComRef<'_, ITextureAbi>,
+    ) -> Result<ComBox<ITextureImportResultAbi>, NcStatus> {
+        self.host.import_texture_result(resources, image)
     }
     /// Native preparation errors remain visible rather than being replaced by fixture success.
-    fn prepare_texture(&self, resources: ComRef<'_, IRenderResourcesAbi>, texture: ComRef<'_, IGpuTextureAbi>) -> Result<(), NcStatus> {
-        self.host.prepare_texture(resources, texture)
+    fn prepare_texture_result(
+        &self,
+        resources: ComRef<'_, IRenderResourcesAbi>,
+        texture: ComRef<'_, IGpuTextureAbi>,
+    ) -> Result<ComPtr<IRenderOutcomeAbi>, NcStatus> {
+        self.host.prepare_texture_result(resources, texture)
     }
     /// Add observation around the real broker without changing any session or sealed-block identity.
     fn recording_broker(&self) -> Result<ComPtr<IRenderViewBrokerAbi>, NcStatus> {
@@ -178,10 +186,12 @@ impl IRenderSurfaceFactory for ObservedWindow {
 }
 impl IRenderer for ObservedWindow {
     /// Native submission enforces actual pixel dimensions and validates every recorded view's bounds.
-    fn render(&self, info: RenderInfo, stream: ComRef<'_, IRenderStreamAbi>) -> Result<(), NcStatus> {
-        self.window.query::<IRendererAbi>()?.render(info, stream)?;
-        self.submissions.set(self.submissions.get() + 1);
-        Ok(())
+    fn render_result(&self, info: RenderInfo, stream: ComRef<'_, IRenderStreamAbi>) -> Result<ComPtr<IRenderOutcomeAbi>, NcStatus> {
+        let report = self.window.query::<IRendererAbi>()?.render_result(info, stream)?;
+        if neocogi_com::NcStatus::from_code(report.status()?).is_ok() {
+            self.submissions.set(self.submissions.get() + 1);
+        }
+        Ok(report)
     }
 }
 

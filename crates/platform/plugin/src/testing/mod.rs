@@ -51,7 +51,7 @@ pub struct NativeProbe {
 }
 
 /// Constructs the production selected backend with an explicitly supplied shader compiler.
-pub fn window(compiler: ComPtr<neocogi_shader_core::abi::ShaderCompilerAbi>, title: &str, size: Size) -> Result<NativeWindow, NcStatus> {
+pub fn window(compiler: ComPtr<neocogi_shader_core::abi::ShaderCompilerAbi>, title: &str, size: Size) -> Result<NativeWindow, RenderError> {
     let native = PlatformObject::new(compiler).window(title, size)?;
     let probe = NativeProbe {
         device: Rc::downgrade(&native.device),
@@ -92,7 +92,7 @@ impl NativeProbe {
     }
     /// Waits for already issued native commands before an exact retirement-quota assertion.
     #[cfg(feature = "glow")]
-    pub fn finish(&self) -> Result<(), NcStatus> {
+    pub fn finish(&self) -> Result<(), RenderError> {
         use glow::HasContext;
         let device = self.device.upgrade().ok_or(RENDER_E_EXPIRED)?;
         let core = device.access()?.state().gpu.core();

@@ -358,3 +358,45 @@ fn hdr_interpolation_probe() {
     );
     assert_eq!(&pixels[offset + 1..offset + 4], &[0, 0, 255]);
 }
+
+/// The application's rendered-scene error keeps native detail after all target owners drop.
+#[cfg(all(feature = "test-support", feature = "glow"))]
+#[test]
+#[ignore = "requires native SDL GL; SDL_VIDEODRIVER=offscreen is sufficient"]
+fn scene_render_failure_keeps_native_texture_reason_after_target_destruction() {
+    let _native = NATIVE_SESSION.lock().expect("previous native viewer case panicked");
+    let error = {
+        let mut scene = emissive_scene(Some([1., 0., 0.]), Some([255; 4]));
+        // The atlas fits the logical byte quota, but exceeds the tested native
+        // maximum width. This is the failure that the former root lookup lost.
+        scene.images[0] = scene::Image {
+            width: 32769,
+            height: 1,
+            pixels: vec![255; 32769 * 4],
+        };
+        let region = environment::Region { x: 0, y: 0, width: 1, height: 1 };
+        let lighting = Lighting {
+            environment: Environment {
+                width: 1,
+                height: 1,
+                pixels: vec![128, 0, 0, 129],
+                regions: [region; environment::REGION_COUNT],
+            },
+            exposure: 1.,
+            intensity: 0.,
+            background: Background::Hidden,
+        };
+        let compiler = nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
+            .query()
+            .unwrap();
+        let native = nc_platform::testing::window(compiler, "retained scene error", SIZE).unwrap();
+        let target = Target::new(native.window).unwrap();
+        let graphics = Graphics::new(&scene, prepare_materials(&scene).unwrap(), &lighting.environment, &target.resources).unwrap();
+        let (center, radius) = scene.bounds();
+        let camera = Camera::new(center, radius, SIZE);
+        target.render(&scene, &graphics, &camera, 0., &lighting, 1).unwrap_err()
+    };
+    assert_eq!(error.status, RENDER_E_BACKEND);
+    let displayed = format!("DamagedHelmet: {error}");
+    assert!(displayed.contains("texture 32770x2 exceeds native dimension limit"), "{displayed}");
+}

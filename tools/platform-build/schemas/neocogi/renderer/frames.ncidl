@@ -24,8 +24,9 @@ interface IRenderStream {
 /// Device accepts only complete generic graphics blocks, with no UI layout or atlas state.
 interface IRenderer: IRenderDriverBound {
     /// Prepares all resources before target acquisition, executes in order and explicitly submits.
-    /// A failed frame must not present; already executed immediate operations cannot be rolled back.
-    fn render(&self, info: RenderInfo, stream: &IRenderStream) -> Result<()>;
+    /// Preparation failure never acquires or presents a target. Backend/retirement failures may follow
+    /// immediate execution or presentation, which cannot be rolled back. The report owns this call's failure.
+    fn render_result(&self, info: RenderInfo, stream: &IRenderStream) -> Result<ComPtr<IRenderOutcome>>;
 }
 
 #[version(1)]

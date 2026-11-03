@@ -66,7 +66,10 @@ fn stream(blocks: Vec<ComBox<IRenderViewBlockAbi>>) -> ComPtr<IRenderStreamAbi> 
 
 /// Import a completed image using the group's explicit permission, then sample it through ordinary shaders.
 fn image_block(host: &ComPtr<IRenderHostAbi>, resources: &ComPtr<IRenderResourcesAbi>, image: &ComPtr<ITextureAbi>) -> ComBox<IRenderViewBlockAbi> {
-    let imported = host.import_texture(resources.as_com_ref(), image.as_com_ref()).unwrap();
+    let imported = host
+        .import_texture(resources.as_com_ref(), image.as_com_ref())
+        .map_err(|error| error.status)
+        .unwrap();
     let sampler = resources.create_sampler(GpuSamplerDesc::default()).unwrap();
     let source = Bytes::source(
         br#"
@@ -168,6 +171,7 @@ fn framebuffer_views_and_image_targets_select_actual_surfaces_without_ui_roles()
             },
             blocks.as_com_ref(),
         )
+        .map_err(|error| error.status)
         .unwrap();
     #[cfg(feature = "glow")]
     {
@@ -222,6 +226,7 @@ fn framebuffer_views_and_image_targets_select_actual_surfaces_without_ui_roles()
             },
             image_blocks.as_com_ref(),
         )
+        .map_err(|error| error.status)
         .unwrap();
     let old = image.completed_image().unwrap();
     // Descriptor rejection uses the shared InvalidArg mapping before any output allocation.
@@ -250,28 +255,32 @@ fn framebuffer_views_and_image_targets_select_actual_surfaces_without_ui_roles()
         .unwrap();
     let other_renderer: ComPtr<IRendererAbi> = other.query().unwrap();
     assert_eq!(
-        other_renderer.render(
-            RenderInfo {
-                size: extent,
-                clear: 0xff000000,
-                invocation: 3,
-                block_count: 2
-            },
-            image_blocks.as_com_ref()
-        ),
+        other_renderer
+            .render(
+                RenderInfo {
+                    size: extent,
+                    clear: 0xff000000,
+                    invocation: 3,
+                    block_count: 2
+                },
+                image_blocks.as_com_ref()
+            )
+            .map_err(|error| error.status),
         Err(RENDER_E_OWNER)
     );
     assert!(matches!(other.completed_image(), Err(neocogi_com::NC_E_NOT_FOUND)));
     assert_eq!(
-        renderer.render(
-            RenderInfo {
-                size: SIZE,
-                clear: 0xff000000,
-                invocation: 4,
-                block_count: 2
-            },
-            image_blocks.as_com_ref()
-        ),
+        renderer
+            .render(
+                RenderInfo {
+                    size: SIZE,
+                    clear: 0xff000000,
+                    invocation: 4,
+                    block_count: 2
+                },
+                image_blocks.as_com_ref()
+            )
+            .map_err(|error| error.status),
         Err(RENDER_E_OWNER)
     );
     image_renderer
@@ -284,6 +293,7 @@ fn framebuffer_views_and_image_targets_select_actual_surfaces_without_ui_roles()
             },
             stream(Vec::new()).as_com_ref(),
         )
+        .map_err(|error| error.status)
         .unwrap();
     assert_ne!(old_identity, identity(&image.completed_image().unwrap()).unwrap());
     assert_eq!(old.size().unwrap(), extent);
@@ -298,6 +308,7 @@ fn framebuffer_views_and_image_targets_select_actual_surfaces_without_ui_roles()
             },
             picture.as_com_ref(),
         )
+        .map_err(|error| error.status)
         .unwrap();
     #[cfg(feature = "glow")]
     {
@@ -490,18 +501,21 @@ fn image_submission_rechecks_group_closure_after_the_final_stream_callback() {
     ];
     renderer
         .render(RenderInfo { block_count: 0, ..info() }, stream(Vec::new()).as_com_ref())
+        .map_err(|error| error.status)
         .unwrap();
     let completed = image.completed_image().unwrap();
     let source: ComPtr<IRenderStreamAbi> = ClosingStream::from_value(ClosingStream { blocks, close: RefCell::new(Some(first)) })
         .query()
         .unwrap();
     assert_eq!(
-        renderer.render(RenderInfo { block_count: 2, ..info() }, source.as_com_ref()),
+        renderer
+            .render(RenderInfo { block_count: 2, ..info() }, source.as_com_ref())
+            .map_err(|error| error.status),
         Err(neocogi_com::NC_E_DROPPED)
     );
     assert_eq!(identity(&completed).unwrap(), identity(&image.completed_image().unwrap()).unwrap());
     // The other group and the surface remain usable after the failed frame.
     let valid = stream(vec![clear_block(&host, &second.resources().unwrap(), bounds, 0xff00ffff)]);
-    renderer.render(info(), valid.as_com_ref()).unwrap();
+    renderer.render(info(), valid.as_com_ref()).map_err(|error| error.status).unwrap();
     assert_ne!(identity(&completed).unwrap(), identity(&image.completed_image().unwrap()).unwrap());
 }

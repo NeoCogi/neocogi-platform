@@ -30,13 +30,14 @@ interface IWindowCreationResult: IRenderOutcome {
 
 #[version(1)]
 /// Constructible platform root whose native-window interface is its concrete API.
-interface Platform: IRenderDiagnostics {
+interface Platform {
     /// Creates an independent native window and graphics device without UI assets.
-    fn create_window(
+    /// Construction detail belongs to the returned report, never to shared platform state.
+    fn create_window_result(
         &self,
         title: &[u8],
         size: Size,
-    ) -> Result<ComPtr<IPlatformWindow>>;
+    ) -> Result<ComBox<IWindowCreationResult>>;
 }
 
 #[version(1)]

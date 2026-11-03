@@ -6,16 +6,17 @@ use neocogi_render_core::platform::PlatformAbi;
 /// Wrong root uses valid metadata and storage, but advertises another exact contract.
 mod wrong {
     use super::*;
-    use neocogi_render_core::abi::{IRenderDiagnostics, IRenderDiagnosticsAbi};
-    #[neocogi_com::com_object(interfaces(neocogi_render_core::abi::IRenderDiagnostics))]
+    use neocogi_render_core::abi::{IRenderOutcome, IRenderOutcomeAbi};
+    #[neocogi_com::com_object(interfaces(neocogi_render_core::abi::IRenderOutcome))]
     struct Root;
-    impl IRenderDiagnostics for Root {
-        fn diagnostic(&self) -> Result<ComPtr<neocogi_com::INcStringAbi>, NcStatus> {
+    impl IRenderOutcome for Root {
+        fn status(&self) -> Result<i32, NcStatus> { Ok(neocogi_com::NC_OK.code()) }
+        fn message(&self) -> Result<ComPtr<neocogi_com::INcStringAbi>, NcStatus> {
             Ok(neocogi_com::NcString::from_utf8_str("wrong root"))
         }
     }
     #[neocogi_com::plugin(name = "neocogi.shader.compiler")]
-    fn acquire_root(_runtime: neocogi_com::Runtime) -> Result<ComPtr<IRenderDiagnosticsAbi>, NcStatus> {
+    fn acquire_root(_runtime: neocogi_com::Runtime) -> Result<ComPtr<IRenderOutcomeAbi>, NcStatus> {
         Root::from_value(Root).query()
     }
 }

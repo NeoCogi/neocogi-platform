@@ -3,7 +3,7 @@
 use neocogi_render_core::platform::*;
 use neocogi_render_core::abi::*;
 use neocogi_render_support::com::{PreparedFrame, Resources};
-use neocogi_com::{ComInterface, ComPtr, ComRef, IUnknown, INcStringAbi, NcCopyFromBufferOffset, NcStatus, NcString, NC_E_INVALID_ARG, com_object};
+use neocogi_com::{ComInterface, ComPtr, ComRef, IUnknown, NcCopyFromBufferOffset, NcStatus, NC_E_INVALID_ARG, com_object};
 use std::{
     cell::{Cell, RefCell},
     collections::HashMap,
@@ -37,8 +37,6 @@ pub struct PlatformObject {
     /// One SDL event pump shared by this platform's windows.
     #[cfg(not(target_arch = "wasm32"))]
     host: RefCell<Option<Rc<NativeHost>>>,
-    /// Owned detail from the most recent failed native construction.
-    diagnostic: RefCell<String>,
 }
 
 impl PlatformObject {
@@ -48,27 +46,23 @@ impl PlatformObject {
             compiler,
             #[cfg(not(target_arch = "wasm32"))]
             host: RefCell::new(None),
-            diagnostic: RefCell::new(String::new()),
         }
     }
 }
 
 impl Platform for PlatformObject {
     /// Validates input and publishes one complete native object only after the selected backend exists.
-    fn create_window(&self, title: NcCopyFromBufferOffset<'_, u8>, size: Size) -> Result<ComPtr<IPlatformWindowAbi>, NcStatus> {
-        if title.offset() != 0 || size.width <= 0 || size.height <= 0 {
-            return Err(NC_E_INVALID_ARG);
-        }
-        let title = std::str::from_utf8(title.as_slice()).map_err(|_| NC_E_INVALID_ARG)?;
-        Ok(WindowObject::from_value(self.window(title, size)?)
-            .query()
-            .expect("native window declares IPlatformWindow"))
-    }
-}
-impl IRenderDiagnostics for PlatformObject {
-    /// Copies construction detail; callers may retain the resulting immutable text independently.
-    fn diagnostic(&self) -> Result<ComPtr<INcStringAbi>, NcStatus> {
-        Ok(NcString::from_utf8_str(&self.diagnostic.borrow()))
+    fn create_window_result(&self, title: NcCopyFromBufferOffset<'_, u8>, size: Size) -> Result<neocogi_com::ComBox<IWindowCreationResultAbi>, NcStatus> {
+        let result = (|| -> Result<_, RenderError> {
+            if title.offset() != 0 || size.width <= 0 || size.height <= 0 {
+                return Err(NC_E_INVALID_ARG.into());
+            }
+            let title = std::str::from_utf8(title.as_slice()).map_err(|_| NC_E_INVALID_ARG)?;
+            Ok(WindowObject::from_value(self.window(title, size)?)
+                .query()
+                .expect("native window declares IPlatformWindow"))
+        })();
+        Ok(window_creation_result(result.map_err(|error| error.context("create window"))))
     }
 }
 
@@ -84,6 +78,8 @@ struct RenderState {
 struct Device {
     /// None throughout preparation and submission; reentrant GPU operations receive RENDER_E_BUSY.
     render: RefCell<Option<RenderState>>,
+    /// Immutable device-free success report reused by successful frame and maintenance calls.
+    success: ComPtr<IRenderOutcomeAbi>,
     /// Generic resource provenance and CPU recording shared with this native device.
     logical: neocogi_render_gpu::GpuDevice<gpu::Backend>,
     /// Canonical COM identity maps contain weak native records and never own their COM objects.
@@ -112,10 +108,25 @@ impl Device {
         let state = self.render.try_borrow_mut().map_err(|_| RENDER_E_BUSY)?.take().ok_or(RENDER_E_BUSY)?;
         Ok(RenderAccess { device: self, state: Some(state) })
     }
-    /// Preserves native backend failure text rather than erasing it into a status alone.
-    fn failure(&self, error: impl std::fmt::Display) -> NcStatus {
-        self.logical.set_diagnostic(error.to_string());
-        RENDER_E_BACKEND
+    /// Preserves backend text directly in the operation's returned error.
+    fn failure(&self, error: impl std::fmt::Display) -> RenderError {
+        RenderError::new(RENDER_E_BACKEND, error.to_string())
+    }
+    /// Reuses only immutable success; each failure has an independent owned report.
+    fn complete(&self, result: Result<(), RenderError>, operation: &str) -> ComPtr<IRenderOutcomeAbi> {
+        match result {
+            Ok(()) => self.success.clone(),
+            Err(error) => operation_result(Err(error.context(operation))),
+        }
+    }
+    /// Retires submitted snapshots before completing an operation. The primary
+    /// failure wins over a cleanup failure; successful work reports failed cleanup.
+    /// No native/registry borrow spans a foreign stream, source, or destructor.
+    fn execute<T>(&self, operation: impl FnOnce(&mut RenderState) -> Result<T, RenderError>) -> Result<T, RenderError> {
+        let mut access = self.access()?;
+        let result = operation(access.state());
+        let cleanup = access.retire();
+        result.and_then(|value| cleanup.map(|()| value))
     }
 }
 impl RenderAccess<'_> {
@@ -123,19 +134,26 @@ impl RenderAccess<'_> {
     fn state(&mut self) -> &mut RenderState {
         self.state.as_mut().expect("live render transaction")
     }
-}
-impl Drop for RenderAccess<'_> {
-    /// Release snapshots before native texture destruction and restore even after failed preparation/finish.
-    fn drop(&mut self) {
-        let mut state = self.state.take().expect("render transaction restored once");
+    /// Restores native ownership on both cleanup outcomes; a completed retirement is idempotent.
+    fn retire(&mut self) -> Result<(), RenderError> {
+        let Some(mut state) = self.state.take() else {
+            return Ok(());
+        };
         state.prepared.clear();
-        if let Err(error) = state.gpu.maintain() {
-            self.device.failure(error);
-        }
+        let result = state.gpu.maintain().map_err(|error| self.device.failure(error));
         *self.device.render.borrow_mut() = Some(state);
+        result
     }
 }
-#[com_object(interfaces(IPlatformWindow, IRenderer, IRenderClientFactory, ITextureFactory, IRenderSurfaceFactory, IRenderDiagnostics))]
+impl Drop for RenderAccess<'_> {
+    /// Panic and status-only metadata paths still restore ownership and attempt
+    /// cleanup. Result-bearing native operations call retire explicitly so their
+    /// cleanup failure is returned. Destructors cannot deliver a new error.
+    fn drop(&mut self) {
+        let _ = self.retire();
+    }
+}
+#[com_object(interfaces(IPlatformWindow, IRenderer, IRenderClientFactory, ITextureFactory, IRenderSurfaceFactory))]
 /// One COM identity exposes OS polling, rendering and concrete resource factories.
 struct WindowObject {
     /// Resources retain this same native owner after the public window interface is released.
@@ -214,32 +232,36 @@ impl GraphicsHost {
 }
 impl IRenderHost for GraphicsHost {
     /// Reclamation is reachable before GFX lowers and allocates the next frame's resources.
-    fn maintain(&self) -> Result<(), NcStatus> {
-        let mut access = self.device.access()?;
-        access.state().gpu.maintain().map_err(|error| self.device.failure(error))
+    fn maintain_result(&self) -> Result<ComPtr<IRenderOutcomeAbi>, NcStatus> {
+        Ok(self.device.complete(self.device.execute(|_| Ok(())), "maintain renderer"))
     }
-    /// Authenticates ordinary image identity through the device's local weak registry before import.
-    /// Logical admission separately requires the destination group's import permission and same-device image.
-    fn import_texture(
+    /// Resolves image provenance while detached; the result exclusively owns the imported texture.
+    fn import_texture_result(
         &self,
         resources: ComRef<'_, IRenderResourcesAbi>,
         image: ComRef<'_, ITextureAbi>,
-    ) -> Result<neocogi_com::ComBox<IGpuTextureAbi>, NcStatus> {
-        let _access = self.device.access()?;
-        // Finish canonical QI and the receiver-owned foreign Release before final admission.
-        let record = {
-            let image = image.try_add_ref()?;
-            self.device.texture(image)?
-        };
-        self.device.logical.import_texture(resources, record.image.clone())
+    ) -> Result<neocogi_com::ComBox<ITextureImportResultAbi>, NcStatus> {
+        let result = self.device.execute(|_| {
+            // Canonical QI and receiver-owned foreign Release finish before final admission.
+            let record = {
+                let image = image.try_add_ref()?;
+                self.device.texture(image)?
+            };
+            Ok(self.device.logical.import_texture(resources, record.image.clone())?)
+        });
+        Ok(texture_import_result(result.map_err(|error| error.context("import texture"))))
     }
-
-    /// Validates group/import permission and exact texture ownership while native state is detached.
-    /// Native preparation consumes the owned version before resource publication, without acquiring a target.
-    fn prepare_texture(&self, resources: ComRef<'_, IRenderResourcesAbi>, texture: ComRef<'_, IGpuTextureAbi>) -> Result<(), NcStatus> {
-        let mut access = self.device.access()?;
-        let version = self.device.logical.imported_texture_snapshot(resources, texture)?;
-        access.state().gpu.prepare_texture(version).map_err(|error| self.device.failure(error))
+    /// Prepares the owned version without acquiring a target and returns its exact native failure.
+    fn prepare_texture_result(
+        &self,
+        resources: ComRef<'_, IRenderResourcesAbi>,
+        texture: ComRef<'_, IGpuTextureAbi>,
+    ) -> Result<ComPtr<IRenderOutcomeAbi>, NcStatus> {
+        let result = self.device.execute(|state| {
+            let version = self.device.logical.imported_texture_snapshot(resources, texture)?;
+            state.gpu.prepare_texture(version).map_err(|error| self.device.failure(error))
+        });
+        Ok(self.device.complete(result, "prepare texture"))
     }
 
     /// Separate broker identity prevents indirect QueryInterface access to the window.
@@ -250,28 +272,26 @@ impl IRenderHost for GraphicsHost {
 
 impl IRenderer for WindowObject {
     /// Prepares the complete frame without borrowing native state, then executes and explicitly finishes it.
-    fn render(&self, info: RenderInfo, stream: ComRef<'_, IRenderStreamAbi>) -> Result<(), NcStatus> {
-        if info.size != self.size()? {
-            return Err(NC_E_INVALID_ARG);
-        }
-        let mut access = self.device.access()?;
-        let state = access.state();
-        let _operation = self.device.logical.operation()?;
-        state.prepared.read(info, stream, self).inspect_err(|error| {
-            self.device.logical.set_diagnostic(format!("frame preparation failed: {error}"));
-        })?;
-        // Foreign stream callbacks have finished. Recheck target selection before any native frame
-        // acquisition so an image-target group cannot redirect work into the window's framebuffer.
-        for block in state.prepared.blocks() {
-            block.admit_framebuffer()?;
-        }
-        state.gpu.render(info, &state.prepared).map_err(|error| self.device.failure(error))
-    }
-}
-impl IRenderDiagnostics for WindowObject {
-    /// Retains a copy so subsequent native failures cannot mutate an earlier diagnostic.
-    fn diagnostic(&self) -> Result<ComPtr<INcStringAbi>, NcStatus> {
-        Ok(NcString::from_utf8_str(&self.device.logical.diagnostic()))
+    fn render_result(&self, info: RenderInfo, stream: ComRef<'_, IRenderStreamAbi>) -> Result<ComPtr<IRenderOutcomeAbi>, NcStatus> {
+        let result = (|| -> Result<(), RenderError> {
+            if info.size != self.size()? {
+                return Err(RenderError::new(NC_E_INVALID_ARG, "submitted frame size differs from the window drawable size"));
+            }
+            self.device.execute(|state| {
+                let _operation = self.device.logical.operation()?;
+                state
+                    .prepared
+                    .read(info, stream, self)
+                    .map_err(|status| RenderError::from(status).context("frame preparation"))?;
+                // The last foreign callback may close a group or replace its target.
+                // Authenticate every block before any native frame acquisition.
+                for block in state.prepared.blocks() {
+                    block.admit_framebuffer()?;
+                }
+                state.gpu.render(info, &state.prepared).map_err(|error| self.device.failure(error))
+            })
+        })();
+        Ok(self.device.complete(result, "render window"))
     }
 }
 
