@@ -247,3 +247,73 @@ fn image_import_permission_is_independent_of_target_and_resource_update_permissi
         }
     }
 }
+
+#[com_object(interfaces(IGpuDataSource))]
+/// Models a foreign update source whose callbacks must remain untouched when updates are forbidden.
+struct UnexpectedRead {
+    /// Shared observation outlives this COM allocation without retaining any renderer resource.
+    calls: Rc<Cell<u32>>,
+}
+impl IGpuDataSource for UnexpectedRead {
+    /// Rejecting here would mask a permission-check ordering bug, so the caller also checks the counter.
+    fn byte_count(&self) -> Result<u64, NcStatus> {
+        self.calls.set(self.calls.get() + 1);
+        Err(NC_E_INVALID_ARG)
+    }
+    /// No foreign output buffer should be requested for an operation the group cannot perform.
+    fn read(&self, _: neocogi_com::NcOutputWriter<'_, u8>) -> Result<(), NcStatus> {
+        self.calls.set(self.calls.get() + 1);
+        Err(NC_E_INVALID_ARG)
+    }
+}
+
+/// Permission denial must precede foreign reads and preserve both resource versions and their quota charges.
+#[test]
+fn forbidden_updates_do_not_call_foreign_sources_or_change_live_storage() {
+    let device = device();
+    let target = device.surface_target(RenderSurfaceKind::Framebuffer).unwrap();
+    let (_owner, resources) = group(&device, target, RenderClientPermissions::none());
+    let initial = crate::source::initial_bytes(vec![1, 2, 3, 4]);
+    let buffer = resources
+        .create_buffer(GpuBufferDesc { role: GpuBufferRole::Vertex, byte_len: 4 }, initial.borrow().unwrap())
+        .unwrap();
+    let texture = resources
+        .create_texture(
+            GpuTextureDesc {
+                size: Size { width: 1, height: 1 },
+                format: GpuTextureFormat::Rgba8Unorm,
+                mip_count: 1,
+            },
+            initial.borrow().unwrap(),
+        )
+        .unwrap();
+    let calls = Rc::new(Cell::new(0));
+    let source: ComPtr<IGpuDataSourceAbi> = UnexpectedRead::from_value(UnexpectedRead { calls: calls.clone() }).query().unwrap();
+    let before = device.live_bytes(resources.as_com_ref()).unwrap();
+    assert_eq!(resources.update_buffer(buffer.as_com_ref(), 0, source.as_com_ref()), Err(RENDER_E_PERMISSION));
+    assert_eq!(
+        resources.update_texture(texture.as_com_ref(), Rect { x: 0, y: 0, width: 1, height: 1 }, source.as_com_ref()),
+        Err(RENDER_E_PERMISSION)
+    );
+    assert_eq!(calls.get(), 0);
+    assert_eq!(device.live_bytes(resources.as_com_ref()).unwrap(), before);
+    assert_eq!(
+        device
+            .buffer_snapshot(resources.as_com_ref(), buffer.as_com_ref())
+            .unwrap()
+            .bytes
+            .as_slice()
+            .unwrap(),
+        &[1, 2, 3, 4]
+    );
+    assert_eq!(
+        device
+            .texture_snapshot(resources.as_com_ref(), texture.as_com_ref())
+            .unwrap()
+            .pixels()
+            .unwrap()
+            .as_slice()
+            .unwrap(),
+        &[1, 2, 3, 4]
+    );
+}

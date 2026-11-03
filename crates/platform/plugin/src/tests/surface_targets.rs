@@ -297,3 +297,193 @@ fn framebuffer_views_and_image_targets_select_actual_surfaces_without_ui_roles()
     assert_eq!(old.size().unwrap(), extent);
     assert_eq!(image.completed_image().unwrap().size().unwrap(), extent);
 }
+
+#[com_object(interfaces(IRenderSurface))]
+/// A foreign surface can report the real driver token without being a target created by that driver.
+struct ForgedSurface {
+    /// Deliberately copied public metadata must not replace local construction authentication.
+    driver: ComPtr<IRenderDriverIdentityAbi>,
+    /// Metadata access must remain unnecessary, including methods with possible side effects.
+    metadata_calls: Rc<Cell<u32>>,
+}
+impl IRenderSurface for ForgedSurface {
+    /// Plausible metadata is available, but successful authentication must never consult it.
+    fn kind(&self) -> Result<RenderSurfaceKind, NcStatus> {
+        self.metadata_calls.set(self.metadata_calls.get() + 1);
+        Ok(RenderSurfaceKind::Framebuffer)
+    }
+    /// Matching drawable dimensions must not make an external allocation a local surface.
+    fn size(&self) -> Result<Size, NcStatus> {
+        self.metadata_calls.set(self.metadata_calls.get() + 1);
+        Ok(SIZE)
+    }
+    /// No mutation is expected while authenticating a group-creation argument.
+    fn resize(&self, _: Size) -> Result<(), NcStatus> {
+        self.metadata_calls.set(self.metadata_calls.get() + 1);
+        Err(NC_E_INVALID_ARG)
+    }
+    /// The foreign object supplies no image; rejection must precede this method too.
+    fn completed_image(&self) -> Result<ComPtr<ITextureAbi>, NcStatus> {
+        self.metadata_calls.set(self.metadata_calls.get() + 1);
+        Err(neocogi_com::NC_E_NOT_FOUND)
+    }
+}
+impl IRenderDriverBound for ForgedSurface {
+    /// Even a retained exact copy of the local driver token is insufficient authority.
+    fn driver_identity(&self) -> Result<ComPtr<IRenderDriverIdentityAbi>, NcStatus> {
+        self.metadata_calls.set(self.metadata_calls.get() + 1);
+        Ok(self.driver.clone())
+    }
+}
+
+/// Real COM calls reject forged and other-window surfaces, malformed descriptors and unsupported depth.
+/// Both windows share one SDL owner but have distinct devices; public metadata is intentionally plausible.
+#[test]
+#[ignore = "requires a native display; GL also supports SDL_VIDEODRIVER=offscreen"]
+fn group_creation_authenticates_surface_ownership_and_attachment_permissions() {
+    let _session = native_session();
+    let platform = PlatformObject::new(
+        nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
+            .query()
+            .unwrap(),
+    );
+    let local: ComPtr<IPlatformWindowAbi> = WindowObject::from_value(platform.window("local surface", SIZE).unwrap()).query().unwrap();
+    let foreign: ComPtr<IPlatformWindowAbi> = WindowObject::from_value(platform.window("other device", SIZE).unwrap()).query().unwrap();
+    let surfaces: ComPtr<IRenderSurfaceFactoryAbi> = local.graphics_host().unwrap().query().unwrap();
+    let groups: ComPtr<IRenderClientFactoryAbi> = local.graphics_host().unwrap().query().unwrap();
+    let metadata_calls = Rc::new(Cell::new(0));
+    let forged: ComPtr<IRenderSurfaceAbi> = ForgedSurface::from_value(ForgedSurface {
+        driver: groups.driver_identity().unwrap(),
+        metadata_calls: metadata_calls.clone(),
+    })
+    .query()
+    .unwrap();
+    let other_surface = foreign
+        .query::<IRenderSurfaceFactoryAbi>()
+        .unwrap()
+        .create_surface(RenderSurfaceDesc {
+            kind: RenderSurfaceKind::Framebuffer,
+            size: Size::default(),
+        })
+        .unwrap();
+    for invalid in [&forged, &other_surface] {
+        assert!(matches!(
+            groups.create_client(Default::default(), invalid.as_com_ref(), color_permissions()),
+            Err(RENDER_E_OWNER)
+        ));
+    }
+    assert_eq!(metadata_calls.get(), 0, "authentication must not invoke foreign surface metadata");
+    for (invalid, expected) in [
+        (
+            RenderSurfaceDesc {
+                kind: RenderSurfaceKind::from_raw(255),
+                size: Size::default(),
+            },
+            neocogi_com::NC_E_INVALID_TAG,
+        ),
+        (
+            RenderSurfaceDesc {
+                kind: RenderSurfaceKind::Framebuffer,
+                size: SIZE,
+            },
+            NC_E_INVALID_ARG,
+        ),
+        (
+            RenderSurfaceDesc {
+                kind: RenderSurfaceKind::Image,
+                size: Size { width: -1, height: 1 },
+            },
+            NC_E_INVALID_ARG,
+        ),
+    ] {
+        let result = surfaces.create_surface(invalid);
+        assert!(matches!(result, Err(actual) if actual == expected), "descriptor {invalid:?}: {result:?}");
+    }
+    let image = surfaces
+        .create_surface(RenderSurfaceDesc {
+            kind: RenderSurfaceKind::Image,
+            size: SIZE,
+        })
+        .unwrap();
+    for depth in [
+        RenderClientPermissions { read_depth: true, ..color_permissions() },
+        RenderClientPermissions { write_depth: true, ..color_permissions() },
+        RenderClientPermissions { clear_depth: true, ..color_permissions() },
+        RenderClientPermissions {
+            initialize_depth: true,
+            clear_depth: true,
+            ..color_permissions()
+        },
+    ] {
+        assert!(matches!(
+            groups.create_client(Default::default(), image.as_com_ref(), depth),
+            Err(NC_E_INVALID_ARG)
+        ));
+    }
+    // Rejections must not poison factory state; a correct color-only group remains constructible.
+    assert!(groups.create_client(Default::default(), image.as_com_ref(), color_permissions()).is_ok());
+}
+
+#[com_object(interfaces(IRenderStream))]
+/// Closes an earlier group from the final foreign accessor, after its block was initially accepted.
+struct ClosingStream {
+    /// Real sealed owners survive through synchronous submission and the final admission check.
+    blocks: Vec<ComBox<IRenderViewBlockAbi>>,
+    /// Final release closes the first block's group without affecting the second group's ownership.
+    close: RefCell<Option<ComBox<IRenderClientDomainAbi>>>,
+}
+impl IRenderStream for ClosingStream {
+    /// The final callback invalidates earlier admission; the renderer must recheck every block.
+    fn view(&self, _: u64, index: u32) -> Result<neocogi_com::WeakComBox<IRenderViewBlockAbi>, NcStatus> {
+        if index == 1 {
+            drop(self.close.borrow_mut().take());
+        }
+        self.blocks.get(index as usize).map(ComBox::downgrade).ok_or(NC_E_INVALID_ARG)
+    }
+}
+
+/// A late group closure rejects image submission before allocation, preserving the previous output.
+#[test]
+#[ignore = "requires a native display; GL also supports SDL_VIDEODRIVER=offscreen"]
+fn image_submission_rechecks_group_closure_after_the_final_stream_callback() {
+    let _session = native_session();
+    let native = window();
+    let host = native.window.graphics_host().unwrap();
+    let surfaces: ComPtr<IRenderSurfaceFactoryAbi> = host.query().unwrap();
+    let groups: ComPtr<IRenderClientFactoryAbi> = host.query().unwrap();
+    let image = surfaces
+        .create_surface(RenderSurfaceDesc {
+            kind: RenderSurfaceKind::Image,
+            size: SIZE,
+        })
+        .unwrap();
+    let renderer: ComPtr<IRendererAbi> = image.query().unwrap();
+    let first = groups.create_client(Default::default(), image.as_com_ref(), color_permissions()).unwrap();
+    let second = groups.create_client(Default::default(), image.as_com_ref(), color_permissions()).unwrap();
+    let bounds = Rect {
+        x: 0,
+        y: 0,
+        width: SIZE.width,
+        height: SIZE.height,
+    };
+    let blocks = vec![
+        clear_block(&host, &first.resources().unwrap(), bounds, 0xff0000ff),
+        clear_block(&host, &second.resources().unwrap(), bounds, 0xffff0000),
+    ];
+    renderer
+        .render(RenderInfo { block_count: 0, ..info() }, stream(Vec::new()).as_com_ref())
+        .unwrap();
+    let completed = image.completed_image().unwrap();
+    let source: ComPtr<IRenderStreamAbi> = ClosingStream::from_value(ClosingStream { blocks, close: RefCell::new(Some(first)) })
+        .query()
+        .unwrap();
+    assert_eq!(
+        renderer.render(RenderInfo { block_count: 2, ..info() }, source.as_com_ref()),
+        Err(neocogi_com::NC_E_DROPPED)
+    );
+    assert_eq!(identity(&completed).unwrap(), identity(&image.completed_image().unwrap()).unwrap());
+    // The other group and the surface remain usable after the failed frame.
+    let valid = stream(vec![clear_block(&host, &second.resources().unwrap(), bounds, 0xff00ffff)]);
+    renderer.render(info(), valid.as_com_ref()).unwrap();
+    assert_ne!(identity(&completed).unwrap(), identity(&image.completed_image().unwrap()).unwrap());
+}

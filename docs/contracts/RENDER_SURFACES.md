@@ -16,6 +16,10 @@ Call `IRenderSurfaceFactory::create_surface(RenderSurfaceDesc)`, then
 They retain separate ownership, quotas, permissions and closure state; sharing a
 target does not share resources.
 
+The generated COM boundary rejects unknown enum tags with `NC_E_INVALID_TAG`.
+Known target kinds with invalid dimensions return `NC_E_INVALID_ARG`; oversized
+image allocations return `NC_E_OUT_OF_RANGE` before publication.
+
 | Surface kind | Descriptor size | Submission | Depth |
 | --- | --- | --- | --- |
 | `Framebuffer` | Zero; `size()` follows the window's physical pixel size | Submit recorded blocks in the window renderer's ordered frame | Uses the window's depth attachment |

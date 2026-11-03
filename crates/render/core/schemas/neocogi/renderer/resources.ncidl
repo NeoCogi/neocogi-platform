@@ -64,8 +64,8 @@ interface IRenderSurface: IRenderDriverBound {
 interface IRenderSurfaceFactory: IRenderDriverBound {
     /// Framebuffer views expose no independent renderer and never allocate, clear or present a replacement target.
     /// Image surfaces preserve completed images across subsequent rendering, resize and failed submissions.
-    /// Invalid kinds, nonzero framebuffer sizes and negative image extents return NC_E_INVALID_ARG;
-    /// bounded positive or suspended image extents are validated before capability publication.
+    /// Unknown wire-enum tags return NC_E_INVALID_TAG at the generated ABI boundary. Nonzero framebuffer
+    /// sizes and negative image extents return NC_E_INVALID_ARG; all extents validate before publication.
     fn create_surface(&self, desc: RenderSurfaceDesc) -> Result<ComPtr<IRenderSurface>>;
 }
 
