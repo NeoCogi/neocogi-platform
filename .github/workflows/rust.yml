@@ -24,6 +24,16 @@ jobs:
         run: xvfb-run -a cargo test --locked -p neocogi-render-plugin --lib --test compiler_activation --no-default-features --features ${{ matrix.backend }} -- --include-ignored --test-threads=1
       - name: Standalone graphics application
         run: xvfb-run -a cargo run --locked -p neocogi-render-plugin --example triangle --no-default-features --features ${{ matrix.backend }} -- 3
+      - name: Pinned glTF example assets
+        run: |
+          python3 -m unittest discover -s scripts -p test_fetch_gltf_examples.py
+          python3 scripts/fetch_gltf_examples.py
+      - name: glTF import, arcball and native pixel regressions
+        run: xvfb-run -a cargo test --locked -p neocogi-render-plugin --test gltf_scene --test gltf_camera --test gltf_viewer --no-default-features --features ${{ matrix.backend }},test-support -- --include-ignored --test-threads=1
+      - name: Standalone glTF applications
+        run: |
+          xvfb-run -a cargo run --locked -p neocogi-render-plugin --example gltf_damaged_helmet --no-default-features --features ${{ matrix.backend }} -- --frames 3
+          xvfb-run -a cargo run --locked -p neocogi-render-plugin --example gltf_brainstem --no-default-features --features ${{ matrix.backend }} -- --frames 3 --time 1
       - name: Backend warnings
         run: cargo clippy --locked -p neocogi-render-plugin --all-targets --no-default-features --features ${{ matrix.backend }} -- -D warnings
   browser:

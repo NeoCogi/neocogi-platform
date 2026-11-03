@@ -13,6 +13,12 @@ widget only a resource factory. The [smoke widget](https://github.com/NeoCogi/ne
 uses a separate color-interpolation pipeline. Both consume the same scoped
 binding, uniform and primitive-draw operations.
 
+The standalone [glTF examples](../../crates/render/plugin/examples/gltf/README.md)
+similarly own their scene import, arcball camera, materials and animation. Their
+64-byte vertex streams and 64-matrix uniform palettes exercise indexed, textured,
+depth-tested drawing and GPU skinning through these same generic contracts.
+Scene/node/skin semantics remain outside the renderer.
+
 Each public GPU resource has one `ComBox` owner. Renderers observe its lifetime
 through construction-proven `WeakLocalBox` and typed `WeakComBox` registrations.
 Borrowed interface arguments validate identity, not resource liveness. Resource
