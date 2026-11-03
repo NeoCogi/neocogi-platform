@@ -17,3 +17,4 @@ SDL2.*
 /.codex/
 /.aws/
 /tmp/
+/crates/render/plugin/examples/gltf/assets/
