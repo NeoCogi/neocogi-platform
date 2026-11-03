@@ -23,6 +23,8 @@ impl IRenderStream for Stream {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+/// Owns one example session and records a procedural triangle in a framebuffer-bound resource group.
+/// The window renderer owns the whole-frame clear and presentation; group recording only supplies commands.
 fn main() -> Result<(), NcStatus> {
     use neocogi_render_core::source::{Bytes, PipelineDesc};
     let platform = neocogi_platform_examples::acquire_platform()?;

@@ -318,7 +318,7 @@ struct GpuShaderBinding {
 #[version(1)]
 /// Host-authoritative root expressed in two coordinate spaces.
 struct RenderViewRoot {
-    /// Final visible client rectangle in widget-local coordinates.
+    /// Final visible client rectangle in that client's own drawing coordinates.
     client: Rect,
     /// Same region in logical target coordinates; extents must match.
     target: Rect,
@@ -327,7 +327,7 @@ struct RenderViewRoot {
 #[version(1)]
 /// Projection mapping and visibility are independent.
 struct RenderViewInfo {
-    /// Immutable widget-local visible root.
+    /// Immutable visible root in client drawing coordinates.
     client: Rect,
     /// Current viewport in root-client-local coordinates.
     viewport: Rect,
@@ -510,7 +510,8 @@ interface IRenderRecordingFrame {
 }
 
 #[version(1)]
-/// Trusted recording bridge installed privately in a UI runtime.
+/// Trusted CPU recording bridge; it grants no native frame acquisition or presentation.
+/// Applications may install it in a UI runtime while delegating only bounded views to widgets.
 interface IRenderViewBroker {
     /// Start one CPU traversal with fresh attempted-work counters.
     fn begin_frame(&self) -> Result<ComBox<IRenderRecordingFrame>>;
@@ -552,6 +553,6 @@ interface IRenderHost: IRenderDriverBound {
     /// Complete fallible preparation of a permitted imported image before the caller publishes its resource revision.
     /// This never acquires a target or invokes a client during native execution.
     fn prepare_texture(&self, resources: &IRenderResources, texture: &IGpuTexture) -> Result<()>;
-    /// Creates a narrow CPU recording broker for installation into one UI runtime.
+    /// Creates a narrow CPU recording broker for one host-controlled drawing traversal.
     fn recording_broker(&self) -> Result<ComPtr<IRenderViewBroker>>;
 }

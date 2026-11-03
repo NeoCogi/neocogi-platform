@@ -125,6 +125,9 @@ per-import accounting have their own owners. A retained completed image survives
 later surface work without retaining the renderer facade. See
 [GPU rendering](GPU_RENDERING.md) for completion and device lifetime rules.
 
+UI-specific input routing, asset publication and painter budgets remain documented
+separately in [UI workspace integration](UI_INTEGRATION.md).
+
 ## Acceptance checks
 
 Platform acceptance exercises generated COM calls, several groups sharing each

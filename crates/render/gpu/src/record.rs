@@ -182,7 +182,7 @@ impl<B: crate::native::NativeResources> Frame<B> {
 #[com_object(interfaces(IRenderViewBroker))]
 /// Shareable trusted entry; clients receive neither this object nor the frame owner.
 struct Broker<B: crate::native::NativeResources> {
-    /// Shared logical renderer, without UI traversal ownership.
+    /// Shared logical renderer, without retaining a window or application traversal owner.
     device: GpuDevice<B>,
     /// Only one active CPU traversal per installed broker.
     active: Rc<Cell<bool>>,
@@ -205,7 +205,7 @@ impl<B: crate::native::NativeResources> IRenderViewBroker for Broker<B> {
 }
 
 #[com_object(interfaces(IRenderRecordingFrame), ownership = exclusive)]
-/// Trusted owner kept in UI traversal; Drop is abort, never submission.
+/// Trusted owner of one CPU recording traversal; Drop aborts without submitting GPU commands.
 struct FrameOwner<B: crate::native::NativeResources> {
     /// Sessions refer to this frame weakly and cannot extend its active lifetime.
     frame: Rc<Frame<B>>,
@@ -268,7 +268,7 @@ impl<B: crate::native::NativeResources> IRenderRecordingFrame for FrameOwner<B> 
     }
 }
 impl<B: crate::native::NativeResources> Drop for FrameOwner<B> {
-    /// Restores broker admission even when UI paint exits without native submission.
+    /// Restores broker admission when a recording traversal exits without native submission.
     fn drop(&mut self) {
         self.frame.stop();
     }
@@ -944,7 +944,7 @@ impl<B: crate::native::NativeResources> IRenderView for View<B> {
             Ok(())
         })
     }
-    /// Sealing does not submit, present, rebind attachments or change reserved UI ordering.
+    /// Sealing does not submit, present, rebind attachments or change the host's reserved submission order.
     fn finish(&mut self) -> Result<(), NcStatus> {
         self.mutate(|_, recorder| {
             if recorder.stack.depth() != 1 {

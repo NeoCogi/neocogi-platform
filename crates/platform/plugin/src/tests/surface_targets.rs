@@ -429,14 +429,16 @@ fn group_creation_authenticates_surface_ownership_and_attachment_permissions() {
 struct ClosingStream {
     /// Real sealed owners survive through synchronous submission and the final admission check.
     blocks: Vec<ComBox<IRenderViewBlockAbi>>,
-    /// Final release closes the first block's group without affecting the second group's ownership.
+    /// Shared COM callbacks take this controller once; its final release runs outside the short borrow
+    /// and closes the first block's group without affecting the second group's ownership.
     close: RefCell<Option<ComBox<IRenderClientDomainAbi>>>,
 }
 impl IRenderStream for ClosingStream {
     /// The final callback invalidates earlier admission; the renderer must recheck every block.
     fn view(&self, _: u64, index: u32) -> Result<neocogi_com::WeakComBox<IRenderViewBlockAbi>, NcStatus> {
         if index == 1 {
-            drop(self.close.borrow_mut().take());
+            let controller = self.close.borrow_mut().take();
+            drop(controller);
         }
         self.blocks.get(index as usize).map(ComBox::downgrade).ok_or(NC_E_INVALID_ARG)
     }

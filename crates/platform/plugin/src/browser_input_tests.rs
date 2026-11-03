@@ -5,6 +5,9 @@
 //! serves the checked-in page and requires actual browser PASS.
 
 use super::*;
+use crate::{PlatformObject, WindowObject, identity};
+use neocogi_com::{ComPtr, NC_E_INVALID_ARG, com_object};
+use neocogi_render_core::abi::*;
 use wasm_bindgen::prelude::*;
 
 #[path = "../../../render/gpu/tests/support/derivatives.rs"]
@@ -12,6 +15,141 @@ mod derivatives;
 
 #[path = "../../../render/gpu/tests/support/sampled.rs"]
 mod sampled;
+
+#[com_object(interfaces(IRenderStream))]
+/// Browser-owned sealed contributions exercise the same generated COM path as native applications.
+struct SurfaceBlocks {
+    /// Exclusive owners remain alive through each synchronous image/window submission.
+    blocks: Vec<neocogi_com::ComBox<IRenderViewBlockAbi>>,
+}
+impl IRenderStream for SurfaceBlocks {
+    /// Borrows a sealed contribution without transferring its owner to the renderer.
+    fn view(&self, _: u64, index: u32) -> Result<neocogi_com::WeakComBox<IRenderViewBlockAbi>, NcStatus> {
+        self.blocks.get(index as usize).map(neocogi_com::ComBox::downgrade).ok_or(NC_E_INVALID_ARG)
+    }
+}
+
+/// Records a regional color clear with depth disabled; no automatic depth command may be required.
+fn surface_clear(host: &ComPtr<IRenderHostAbi>, group: &neocogi_com::ComBox<IRenderClientDomainAbi>) -> ComPtr<IRenderStreamAbi> {
+    let bounds = Rect { x: 0, y: 0, width: 4, height: 4 };
+    let mut frame = host.recording_broker().unwrap().begin_frame().unwrap();
+    let resources = group.resources().unwrap();
+    let mut session = frame
+        .begin_view(RenderViewRoot { client: bounds, target: bounds }, resources.as_com_ref())
+        .unwrap();
+    let mut view = session.view().unwrap();
+    view.clear_color(0xff0000ff).unwrap();
+    view.finish().unwrap();
+    let block = session.take_block().unwrap();
+    frame.finish().unwrap();
+    SurfaceBlocks::from_value(SurfaceBlocks { blocks: vec![block] }).query().unwrap()
+}
+
+/// Actual WebGL COM submission distinguishes framebuffer views from exact image targets.
+/// Pixel readback verifies that a view's regional clear preserves the rest of the parent frame.
+fn browser_surface_targets() {
+    use glow::HasContext;
+    let size = Size { width: 8, height: 8 };
+    let platform = PlatformObject::new(
+        nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
+            .query()
+            .unwrap(),
+    );
+    let object = platform.window("browser target contract", size).unwrap();
+    object.device.window.style().set_css_text("width:8px;height:8px");
+    let gl = object.device.access().unwrap().state().gpu.core().dispatch().clone();
+    let window: ComPtr<IPlatformWindowAbi> = WindowObject::from_value(object).query().unwrap();
+    let drawable = window.size().unwrap();
+    let host = window.graphics_host().unwrap();
+    let groups: ComPtr<IRenderClientFactoryAbi> = host.query().unwrap();
+    let surfaces: ComPtr<IRenderSurfaceFactoryAbi> = host.query().unwrap();
+    assert!(host.query::<IRendererAbi>().is_err());
+    let permissions = RenderClientPermissions {
+        clear_color: true,
+        write_color: true,
+        write_resources: true,
+        import_images: true,
+        ..RenderClientPermissions::none()
+    };
+    let framebuffer = surfaces
+        .create_surface(RenderSurfaceDesc {
+            kind: RenderSurfaceKind::Framebuffer,
+            size: Size::default(),
+        })
+        .unwrap();
+    assert_eq!(framebuffer.size().unwrap(), drawable);
+    assert!(framebuffer.query::<IRendererAbi>().is_err());
+    let window_group = groups.create_client(Default::default(), framebuffer.as_com_ref(), permissions).unwrap();
+    let image = surfaces.create_surface(RenderSurfaceDesc { kind: RenderSurfaceKind::Image, size }).unwrap();
+    let image_group = groups.create_client(Default::default(), image.as_com_ref(), permissions).unwrap();
+    let image_renderer: ComPtr<IRendererAbi> = image.query().unwrap();
+    let image_stream = surface_clear(&host, &image_group);
+    let info = RenderInfo {
+        size,
+        clear: 0xff00ff00,
+        invocation: 1,
+        block_count: 1,
+    };
+    image_renderer.render(info, image_stream.as_com_ref()).unwrap();
+    let old = image.completed_image().unwrap();
+    let other = surfaces.create_surface(RenderSurfaceDesc { kind: RenderSurfaceKind::Image, size }).unwrap();
+    assert_eq!(
+        other.query::<IRendererAbi>().unwrap().render(info, image_stream.as_com_ref()),
+        Err(RENDER_E_OWNER)
+    );
+    assert!(matches!(other.completed_image(), Err(neocogi_com::NC_E_NOT_FOUND)));
+    let renderer: ComPtr<IRendererAbi> = window.query().unwrap();
+    assert_eq!(
+        renderer.render(RenderInfo { size: drawable, ..info }, image_stream.as_com_ref()),
+        Err(RENDER_E_OWNER)
+    );
+    renderer
+        .render(RenderInfo { size: drawable, ..info }, surface_clear(&host, &window_group).as_com_ref())
+        .unwrap();
+    let mut inside = [0u8; 4];
+    let mut outside = [0u8; 4];
+    // SAFETY: The live window retains this WebGL context and framebuffer; both outputs are initialized
+    // RGBA storage, and coordinates are within the size just accepted by the production renderer.
+    unsafe {
+        gl.bind_framebuffer(glow::READ_FRAMEBUFFER, None);
+        gl.read_pixels(
+            1,
+            drawable.height - 2,
+            1,
+            1,
+            glow::RGBA,
+            glow::UNSIGNED_BYTE,
+            glow::PixelPackData::Slice(Some(&mut inside)),
+        );
+        gl.read_pixels(
+            drawable.width - 1,
+            0,
+            1,
+            1,
+            glow::RGBA,
+            glow::UNSIGNED_BYTE,
+            glow::PixelPackData::Slice(Some(&mut outside)),
+        );
+        assert_eq!(gl.get_error(), glow::NO_ERROR);
+    }
+    assert_eq!(inside, [255, 0, 0, 255]);
+    assert_eq!(outside, [0, 255, 0, 255]);
+    let empty: ComPtr<IRenderStreamAbi> = SurfaceBlocks::from_value(SurfaceBlocks { blocks: vec![] }).query().unwrap();
+    image_renderer
+        .render(
+            RenderInfo {
+                block_count: 0,
+                clear: 0xff00ffff,
+                ..info
+            },
+            empty.as_com_ref(),
+        )
+        .unwrap();
+    assert_ne!(identity(&old).unwrap(), identity(&image.completed_image().unwrap()).unwrap());
+    let resources = window_group.resources().unwrap();
+    let imported = host.import_texture(resources.as_com_ref(), old.as_com_ref()).unwrap();
+    host.prepare_texture(resources.as_com_ref(), imported.as_com_ref()).unwrap();
+}
 
 /// Exercises actual browser WebGL target adaptation and the delegated safe upload boundary.
 fn canonical_browser_derivatives() {
@@ -214,15 +352,17 @@ export function exercise(target, name) {
 extern "C" {
     /// Keeps the Rust panic diagnostic in the dumped DOM even when wasm traps without unwinding.
     fn record_panic(text: &str);
-    /// Dispatches one deterministic DOM sequence against the actual installed Rust listeners.
+    /// Triggers actual WebGL context loss after an image has reached its prepared state.
     fn lose_test_context(context: &web_sys::WebGl2RenderingContext);
+    /// Dispatches one deterministic DOM sequence against the actual installed Rust listeners.
     fn exercise(target: &EventTarget, name: &str);
 }
 
-/// Runs DOM composition, paste, keyboard, wheel, pointer, and teardown assertions in a browser.
+/// Runs WebGL target/ownership checks and DOM composition, paste, keyboard, wheel, pointer and teardown assertions.
 pub fn run_platform_input_tests() {
     std::panic::set_hook(Box::new(|info| record_panic(&info.to_string())));
     canonical_browser_derivatives();
+    browser_surface_targets();
     let document = web_sys::window().unwrap().document().unwrap();
     let canvas = document.create_element("canvas").unwrap().dyn_into::<HtmlCanvasElement>().unwrap();
     canvas.set_width(200);

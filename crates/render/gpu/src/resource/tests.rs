@@ -96,16 +96,17 @@ fn client(device: &GpuDevice, limits: RenderClientLimits) -> (ComBox<IRenderClie
     (owner, factory)
 }
 
-/// Native imports are same-core immutable objects; per-domain receipts do not pin global images.
+/// Each permitted import owns its quota reservation; another native-image alias cannot retain that charge.
+/// Capturing native pixels retains neither a public image COM owner nor a cycle through the group/device.
 #[test]
-fn ui_image_import_shares_native_storage_without_public_com_or_domain_cycles() {
+fn permitted_image_import_shares_native_storage_without_public_com_or_group_cycles() {
     let device = new_device(
         nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
             .query()
             .unwrap(),
     );
     let (_client, ordinary) = client(&device, RenderClientLimits::default());
-    let ui = device
+    let permitted = device
         .create_client(
             Default::default(),
             device.surface_target(neocogi_render_core::abi::RenderSurfaceKind::Framebuffer).unwrap(),
@@ -118,7 +119,7 @@ fn ui_image_import_shares_native_storage_without_public_com_or_domain_cycles() {
             },
         )
         .unwrap();
-    let factory = ui.resources().unwrap();
+    let factory = permitted.resources().unwrap();
     let core = device.inner.core.clone();
     let image = crate::testing::Image::ordinary(core.clone(), Size { width: 1, height: 1 }, 7);
     let other = crate::testing::Image::ordinary(crate::testing::Core::new(), Size { width: 1, height: 1 }, 8);

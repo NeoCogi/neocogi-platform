@@ -326,7 +326,7 @@ against its extent before allocating or passing pointers to GL.
 
 The common resource, command and recording types are parameterized by one concrete
 `NativeResources` family. That Rust type selects native storage and a physical core;
-COM interfaces retain their existing v1 roles and contain no native handles. Each
+All authored COM declarations remain version 1 and contain no native handles. Each
 immutable version owns its native slot, and each pipeline version owns its target
 variants. Prepared objects retain native allocations and opaque accounting receipts,
 never the parent version or a client domain. Uniform payloads use the same mechanism.

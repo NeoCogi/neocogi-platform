@@ -194,15 +194,15 @@ const PROCEDURAL: &str = r#"
 @fragment fn fs() -> @location(0) vec4<f32> { return vec4<f32>(1.0); }
 "#;
 
-/// Trusted UI provenance changes depth authority without adding another draw vocabulary.
+/// Explicit depth permissions control initialization and clearing without assigning a rendering role.
 #[test]
-fn host_ui_domains_seal_without_depth_initialization_and_cannot_clear_depth() {
+fn color_only_groups_seal_without_depth_initialization_and_cannot_clear_depth() {
     let device = new_device(
         nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
             .query()
             .unwrap(),
     );
-    let ui = device
+    let color_only = device
         .create_client(
             RenderClientLimits::default(),
             device.surface_target(neocogi_render_core::abi::RenderSurfaceKind::Framebuffer).unwrap(),
@@ -215,14 +215,14 @@ fn host_ui_domains_seal_without_depth_initialization_and_cannot_clear_depth() {
             },
         )
         .unwrap();
-    let client = device
+    let depth_enabled = device
         .create_client(
             RenderClientLimits::default(),
             device.surface_target(neocogi_render_core::abi::RenderSurfaceKind::Framebuffer).unwrap(),
             neocogi_render_core::abi::RenderClientPermissions::default(),
         )
         .unwrap();
-    for (controller, is_ui) in [(&ui, true), (&client, false)] {
+    for (controller, initialize_depth) in [(&color_only, false), (&depth_enabled, true)] {
         let resources = controller.resources().unwrap();
         assert!(resources.query::<IRenderHostAbi>().is_err());
         let mut frame = device.broker().begin_frame().unwrap();
@@ -230,24 +230,24 @@ fn host_ui_domains_seal_without_depth_initialization_and_cannot_clear_depth() {
         session.view().unwrap().finish().unwrap();
         let owner = session.take_block().unwrap();
         let block = device.block_snapshot(owner.as_com_ref()).unwrap();
-        assert_eq!(block.domain.permissions.initialize_depth, !is_ui);
-        if is_ui {
-            assert!(block.commands.is_empty());
-        } else {
+        assert_eq!(block.domain.permissions.initialize_depth, initialize_depth);
+        if initialize_depth {
             assert!(matches!(block.commands.as_slice(), [Command::ClearDepth { depth: 1.0, .. }]));
+        } else {
+            assert!(block.commands.is_empty());
         }
         frame.finish().unwrap();
     }
-    let resources = ui.resources().unwrap();
+    let resources = color_only.resources().unwrap();
     let mut frame = device.broker().begin_frame().unwrap();
     let mut session = frame.begin_view(root(), resources.as_com_ref()).unwrap();
     assert_eq!(session.view().unwrap().clear_depth(1.0), Err(RENDER_E_PERMISSION));
     assert!(session.take_block().is_err());
 }
 
-/// UI pipelines cannot test or write attachment depth even on a window target that has depth.
+/// A color-only group cannot test or write depth even when its framebuffer target has a depth attachment.
 #[test]
-fn host_ui_pipeline_admission_excludes_depth_state() {
+fn color_only_group_pipeline_admission_excludes_depth_state() {
     let device = new_device(
         nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
             .query()
