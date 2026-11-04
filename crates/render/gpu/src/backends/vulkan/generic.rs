@@ -12,6 +12,7 @@ use crate::resource_guard::ResourceGuard;
 use std::{
     cell::Cell,
     ops::Deref,
+    ptr::NonNull,
     sync::mpsc::{self, Sender, Receiver, SendError},
     ffi::CString,
     rc::Rc,
@@ -94,6 +95,8 @@ impl NativeResources for Backend {
 pub(in crate::backends::vulkan) enum Retirement {
     /// Vertex/index/uniform storage and its opaque receipt.
     Buffer(BufferAllocation),
+    /// Exclusive descriptor capacity after its final prepared/completion owner ends.
+    Pool(PoolAllocation),
     /// Independent native sampling state.
     Sampler(SamplerAllocation),
     /// One target-compatible executable and dependency receipts.
@@ -108,6 +111,7 @@ impl Retirement {
     pub(in crate::backends::vulkan) fn discard(self) {
         match self {
             Self::Buffer(value) => drop(value),
+            Self::Pool(value) => drop(value),
             Self::Sampler(value) => drop(value),
             Self::Pipeline(value) => drop(value),
             Self::Texture(value) => drop(value),
@@ -329,26 +333,72 @@ impl Drop for Core {
     }
 }
 
-/// Fully bound native buffer; staging and logical vertex/index/uniform owners share this mechanism.
-struct Allocation {
-    /// Native allocation destruction remains valid even after the renderer facade disappears.
-    core: Rc<Core>,
-    /// Exactly one initialized native buffer.
-    raw: vk::Buffer,
-    /// Exactly one bound memory allocation.
+/// One host-visible mapping stays valid until its allocation is destroyed.
+/// The pointer is used only behind exclusive Allocation access after completion.
+struct MappedMemory {
+    /// Native memory and physical allocation count outlive the mapping.
     memory: Memory,
-    /// Native padding does not enlarge admitted logical draw ranges.
+    /// Vulkan guarantees a non-null pointer for a successful nonempty mapping.
+    pointer: NonNull<u8>,
+}
+impl MappedMemory {
+    /// Maps the complete owned allocation once; coherent visibility is handled by Allocation.
+    fn new(memory: Memory) -> Result<Self, String> {
+        // SAFETY: This newly allocated memory is host-visible and not already mapped.
+        let mapped = unsafe { memory.core.device.map_memory(memory.raw, 0, vk::WHOLE_SIZE, vk::MemoryMapFlags::empty()) }
+            .map_err(|error| memory.core.failure("map graphics buffer", error))?;
+        let Some(pointer) = NonNull::new(mapped.cast()) else {
+            // SAFETY: The native mapping succeeded; release it before rejecting its null address.
+            unsafe { memory.core.device.unmap_memory(memory.raw) };
+            return Err("map graphics buffer returned a null address".into());
+        };
+        Ok(Self { memory, pointer })
+    }
+}
+impl Drop for MappedMemory {
+    /// Unmapping precedes Memory's counted native destruction.
+    fn drop(&mut self) {
+        // SAFETY: This aggregate exclusively owns the successful mapping and its live device.
+        unsafe { self.memory.core.device.unmap_memory(self.memory.raw) };
+    }
+}
+
+/// Fully bound, persistently mapped native storage with one exclusive initialization owner.
+struct Allocation {
+    /// Native allocation destruction remains valid after the renderer facade disappears.
+    core: Rc<Core>,
+    /// Exactly one buffer, destroyed before its mapping and memory.
+    raw: vk::Buffer,
+    /// Complete host-visible mapping; no pointer escapes this allocation.
+    memory: MappedMemory,
+    /// Current initialized binding range, including required 16-byte padding.
     size: u64,
+    /// Native buffer capacity may exceed the next immutable version's logical range.
+    capacity: u64,
+    /// Actual VkDeviceMemory extent bounds retained idle physical storage.
+    memory_bytes: u64,
+    /// Reuse requires the same native usage capabilities.
+    usage: vk::BufferUsageFlags,
+    /// Host-coherent memory needs no explicit flush before submission.
+    coherent: bool,
 }
 impl Allocation {
-    /// Creates initialized host-visible storage with explicit visibility before any queue submission.
+    /// Rounds nonempty native binding storage without overflowing its integer representation.
+    fn padded_size(len: usize) -> Result<u64, String> {
+        let len = u64::try_from(len).map_err(|_| "native buffer size overflow")?.max(1);
+        let size = len.checked_add(15).map(|size| size & !15).ok_or("native buffer size overflow")?;
+        usize::try_from(size).map_err(|_| "native buffer size overflow")?;
+        Ok(size)
+    }
+
+    /// Creates and maps host-visible storage before its first immutable initialization.
     fn new(core: &Rc<Core>, len: usize, bytes: Option<&[u8]>, usage: vk::BufferUsageFlags) -> Result<Self, String> {
-        let size = len.max(1).div_ceil(16) as u64 * 16;
+        let size = Self::padded_size(len)?;
         if bytes.is_some_and(|bytes| bytes.len() != len) {
             return Err("native buffer extent mismatch".into());
         }
         let device = &core.device;
-        // SAFETY: All pointers reference call-local initialized descriptors or owned input bytes.
+        // SAFETY: All descriptors reference call-local initialized values; guards own failures.
         unsafe {
             let raw = ResourceGuard::new(
                 device
@@ -369,42 +419,100 @@ impl Allocation {
             device
                 .bind_buffer_memory(*raw.get(), memory.raw, 0)
                 .map_err(|error| core.failure("bind graphics buffer", error))?;
-            let value = Self {
+            let memory = MappedMemory::new(memory)?;
+            let mut value = Self {
                 core: core.clone(),
                 raw: raw.into_inner(),
                 memory,
                 size,
+                capacity: size,
+                memory_bytes: requirements.size,
+                usage,
+                coherent: core.memory.memory_types[kind as usize].property_flags.contains(coherent),
             };
-            let mapped = device
-                .map_memory(value.memory.raw, 0, vk::WHOLE_SIZE, vk::MemoryMapFlags::empty())
-                .map_err(|error| core.failure("map graphics buffer", error))?;
-            std::ptr::write_bytes(mapped.cast::<u8>(), 0, size as usize);
-            if let Some(bytes) = bytes {
-                std::ptr::copy_nonoverlapping(bytes.as_ptr(), mapped.cast::<u8>(), bytes.len());
-            }
-            let visibility = if core.memory.memory_types[kind as usize].property_flags.contains(coherent) {
-                Ok(())
-            } else {
-                device.flush_mapped_memory_ranges(&[vk::MappedMemoryRange::default().memory(value.memory.raw).offset(0).size(vk::WHOLE_SIZE)])
-            };
-            device.unmap_memory(value.memory.raw);
-            visibility.map_err(|error| core.failure("flush graphics buffer", error))?;
+            value.initialize(len, bytes)?;
             Ok(value)
         }
     }
+
+    /// Reinitializes storage only after every previous native owner and queue use has ended.
+    /// Clearing the entire capacity prevents a later shorter version from exposing old bytes.
+    fn initialize(&mut self, len: usize, bytes: Option<&[u8]>) -> Result<(), String> {
+        let size = Self::padded_size(len)?;
+        if size > self.capacity || bytes.is_some_and(|bytes| bytes.len() != len) {
+            return Err("native buffer extent mismatch".into());
+        }
+        // SAFETY: Exclusive ownership proves no captured version or submitted command can access
+        // this allocation. The permanent mapping covers capacity, and input bytes are borrowed.
+        unsafe {
+            std::ptr::write_bytes(self.memory.pointer.as_ptr(), 0, self.capacity as usize);
+            if let Some(bytes) = bytes {
+                std::ptr::copy_nonoverlapping(bytes.as_ptr(), self.memory.pointer.as_ptr(), bytes.len());
+            }
+            if !self.coherent {
+                self.core
+                    .device
+                    .flush_mapped_memory_ranges(&[vk::MappedMemoryRange::default().memory(self.memory.memory.raw).offset(0).size(vk::WHOLE_SIZE)])
+                    .map_err(|error| self.core.failure("flush graphics buffer", error))?;
+            }
+        }
+        self.size = size;
+        Ok(())
+    }
 }
 impl Drop for Allocation {
-    /// Completion owners ensure no queue can still access the allocation when it is released.
+    /// Completion owners end all native use before destruction and subsequent unmapping/freeing.
     fn drop(&mut self) {
-        unsafe {
-            self.core.device.destroy_buffer(self.raw, None);
-        }
+        // SAFETY: Allocation owns the handle; its mapped memory remains live through this call.
+        unsafe { self.core.device.destroy_buffer(self.raw, None) };
     }
 }
 
-/// Sender-free storage packet keeps allocation destruction before its final opaque receipt.
+/// Upper bounds apply to actual native memory, independently of logical client byte quotas.
+const IDLE_BUFFER_BYTES: u64 = 4 * 1024 * 1024;
+/// Small buffers must not turn the byte bound into an excessive native allocation count.
+const IDLE_BUFFER_COUNT: usize = 64;
+
+/// Executor-owned reusable capacity has no version, client receipt, producer or Core back-edge.
+#[derive(Default)]
+struct BufferPool {
+    /// Only last-owner packets can enter this exclusive idle collection.
+    idle: Vec<Allocation>,
+    /// Sum of actual VkDeviceMemory extents retained in idle.
+    bytes: u64,
+}
+impl BufferPool {
+    /// Takes the smallest compatible allocation; callers initialize it before publication.
+    fn take(&mut self, size: u64, usage: vk::BufferUsageFlags) -> Option<Allocation> {
+        let index = self
+            .idle
+            .iter()
+            .enumerate()
+            .filter(|(_, value)| value.capacity >= size && value.usage == usage)
+            .min_by_key(|(_, value)| value.capacity)
+            .map(|(index, _)| index)?;
+        let value = self.idle.swap_remove(index);
+        self.bytes -= value.memory_bytes;
+        Some(value)
+    }
+    /// Caches only bounded physical capacity, dropping excess allocations without failing retirement.
+    fn put(&mut self, value: Allocation) {
+        if self.idle.len() == IDLE_BUFFER_COUNT || value.memory_bytes > IDLE_BUFFER_BYTES - self.bytes || self.idle.try_reserve(1).is_err() {
+            return;
+        }
+        self.bytes += value.memory_bytes;
+        self.idle.push(value);
+    }
+    /// Release idle storage on allocation misses, native failure and executor shutdown.
+    fn clear(&mut self) {
+        self.idle.clear();
+        self.bytes = 0;
+    }
+}
+
+/// Sender-free packet retains immutable initialized storage until every native use ends.
 pub struct BufferAllocation {
-    /// Mapped initialized native storage is destroyed before refunding its reservation.
+    /// Exclusive initialized storage is destroyed or returned to the bounded allocator on retirement.
     allocation: Allocation,
     /// Shared original reservation, with no source-version or domain reference.
     _charge: BackingCharge,
@@ -551,18 +659,94 @@ impl Drop for PipelineAllocation {
     }
 }
 notifying!(Pipeline, PipelineAllocation);
-/// One block's descriptor sets have the same completion lifetime as its prepared commands.
-struct Pool {
+/// Exact capacity of the four descriptor namespaces allocated for one prepared block.
+#[derive(Clone, Copy)]
+struct PoolCapacity {
+    /// Every draw allocates four stage-separated sets, including empty namespaces.
+    sets: u32,
+    /// Uniform-buffer descriptors consumed across all draws.
+    uniforms: u32,
+    /// Each sampled binding consumes one image and one sampler descriptor.
+    images: u32,
+}
+impl PoolCapacity {
+    /// Layout identity is irrelevant after reset; every descriptor category must fit.
+    fn fits(self, requested: Self) -> bool {
+        self.sets >= requested.sets && self.uniforms >= requested.uniforms && self.images >= requested.images
+    }
+}
+/// Sender-free descriptor storage never retains the resources referenced by stale sets.
+pub struct PoolAllocation {
     /// Keeps descriptor destruction valid after presentation teardown.
     core: Rc<Core>,
-    /// Dedicated pool allows one deterministic final destruction without individual free races.
+    /// Only exclusive checkout resets and reallocates this pool's sets.
     raw: vk::DescriptorPool,
+    /// Bounds opaque driver storage independently of application resource identity.
+    capacity: PoolCapacity,
 }
-impl Drop for Pool {
+impl Drop for PoolAllocation {
+    /// Final ownership proves no queued command can still consume any set in this pool.
     fn drop(&mut self) {
-        unsafe {
-            self.core.device.destroy_descriptor_pool(self.raw, None);
+        // SAFETY: All prepared/completion owners ended before this exclusive packet was returned.
+        unsafe { self.core.device.destroy_descriptor_pool(self.raw, None) };
+    }
+}
+notifying!(Pool, PoolAllocation);
+/// Reuse must bound the number of native pools even when their descriptor namespaces are small.
+const IDLE_DESCRIPTOR_POOLS: usize = 32;
+/// A set-count bound limits retained driver capacity; Vulkan owns its opaque physical layout.
+const IDLE_DESCRIPTOR_SETS: u32 = 8192;
+/// Each descriptor category has its own retained-capacity bound, independently of set count.
+const IDLE_DESCRIPTOR_BINDINGS: u32 = 8192;
+/// Only final-owner packets enter this executor-owned descriptor allocator.
+#[derive(Default)]
+struct DescriptorPools {
+    /// Exclusive pools are reset on checkout before any new set handle is published.
+    idle: Vec<PoolAllocation>,
+    /// Total retained set capacity, independent of logical recording charges.
+    sets: u32,
+    /// Total cached uniform-buffer descriptors, not current client bindings.
+    uniforms: u32,
+    /// Total cached descriptors of each sampled-image/sampler category.
+    images: u32,
+}
+impl DescriptorPools {
+    /// Finds a compatible capacity without retaining any earlier pipeline/layout identity.
+    fn take(&mut self, requested: PoolCapacity) -> Option<PoolAllocation> {
+        let index = self
+            .idle
+            .iter()
+            .enumerate()
+            .filter(|(_, pool)| pool.capacity.fits(requested))
+            .min_by_key(|(_, pool)| pool.capacity.sets)
+            .map(|(index, _)| index)?;
+        let pool = self.idle.swap_remove(index);
+        self.sets -= pool.capacity.sets;
+        self.uniforms -= pool.capacity.uniforms;
+        self.images -= pool.capacity.images;
+        Some(pool)
+    }
+    /// Excess or uncacheable storage is destroyed rather than making retirement fail.
+    fn put(&mut self, pool: PoolAllocation) {
+        if self.idle.len() == IDLE_DESCRIPTOR_POOLS
+            || pool.capacity.sets > IDLE_DESCRIPTOR_SETS - self.sets
+            || pool.capacity.uniforms > IDLE_DESCRIPTOR_BINDINGS - self.uniforms
+            || pool.capacity.images > IDLE_DESCRIPTOR_BINDINGS - self.images
+            || self.idle.try_reserve(1).is_err()
+        {
+            return;
         }
+        self.sets += pool.capacity.sets;
+        self.uniforms += pool.capacity.uniforms;
+        self.images += pool.capacity.images;
+        self.idle.push(pool);
+    }
+    /// Failure, shutdown and an allocation miss release retained driver capacity.
+    fn clear(&mut self) {
+        self.idle.clear();
+        self.sets = 0;
+        self.uniforms = 0;
+        self.images = 0;
     }
 }
 
@@ -681,6 +865,10 @@ pub(in crate::backends::vulkan) struct Executor {
     retired_rx: Receiver<Retirement>,
     /// Native completion retains private backing/receipts without retaining client domain authority.
     submitted: Vec<Submitted>,
+    /// Bounded reusable storage owns only idle physical capacity, never immutable versions.
+    buffers: BufferPool,
+    /// Descriptor capacity follows the same final-owner and completion boundary as buffers.
+    pools: DescriptorPools,
     /// Usually empty because initialization waits before returning; errors retain uncertain use.
     transfers: Vec<Transfer>,
     /// A native submit/wait failure is not a panel-local recoverable recording error.
@@ -709,6 +897,8 @@ impl Executor {
             retired_tx,
             retired_rx,
             submitted: Vec::new(),
+            buffers: BufferPool::default(),
+            pools: DescriptorPools::default(),
             transfers: Vec::new(),
             health: Health::Active,
             #[cfg(test)]
@@ -779,7 +969,7 @@ impl Executor {
     }
 
     /// Descriptor storage is sized from exact consumed bindings, never caller-claimed counts.
-    fn pool(&self, block: &Block) -> Result<Option<Pool>, String> {
+    fn pool(&mut self, block: &Block) -> Result<Option<Pool>, String> {
         let mut draws = 0u32;
         let mut uniforms = 0u32;
         let mut images = 0u32;
@@ -793,6 +983,23 @@ impl Executor {
         if draws == 0 {
             return Ok(None);
         }
+        let capacity = PoolCapacity {
+            sets: draws.checked_mul(4).ok_or("descriptor set count overflow")?,
+            uniforms,
+            images,
+        };
+        if let Some(pool) = self.pools.take(capacity) {
+            // SAFETY: Final prepared/completion ownership ended before the pool entered idle.
+            // Reset invalidates only dead set handles and precedes all new descriptor writes.
+            unsafe { self.core.device.reset_descriptor_pool(pool.raw, vk::DescriptorPoolResetFlags::empty()) }
+                .map_err(|error| self.core.failure("reset graphics descriptor pool", error))?;
+            return Ok(Some(Pool {
+                owner: Some(pool),
+                retired: self.retired_tx.clone(),
+            }));
+        }
+        // Do not retain idle driver capacity while requesting a pool it cannot serve.
+        self.pools.clear();
         let mut sizes = Vec::new();
         for (kind, count) in [
             (vk::DescriptorType::UNIFORM_BUFFER, uniforms),
@@ -804,15 +1011,15 @@ impl Executor {
             }
         }
         let raw = unsafe {
-            self.core.device.create_descriptor_pool(
-                &vk::DescriptorPoolCreateInfo::default()
-                    .max_sets(draws.checked_mul(4).ok_or("descriptor set count overflow")?)
-                    .pool_sizes(&sizes),
-                None,
-            )
+            self.core
+                .device
+                .create_descriptor_pool(&vk::DescriptorPoolCreateInfo::default().max_sets(capacity.sets).pool_sizes(&sizes), None)
         }
         .map_err(|error| self.core.failure("create graphics descriptor pool", error))?;
-        Ok(Some(Pool { core: self.core.clone(), raw }))
+        Ok(Some(Pool {
+            owner: Some(PoolAllocation { core: self.core.clone(), raw, capacity }),
+            retired: self.retired_tx.clone(),
+        }))
     }
 
     /// Captures concrete native owners before constructing descriptor writes into the private pool.
@@ -919,7 +1126,7 @@ impl Executor {
         } else {
             vk::BufferUsageFlags::VERTEX_BUFFER
         };
-        let allocation = Allocation::new(&self.core, source.bytes().len(), source.bytes().as_slice(), usage)?;
+        let allocation = self.buffer_allocation(source.bytes().len(), source.bytes().as_slice(), usage)?;
         Ok(Rc::new(Buffer {
             owner: Some(BufferAllocation { allocation, _charge: source.receipt() }),
             retired: self.retired_tx.clone(),
@@ -927,12 +1134,23 @@ impl Executor {
     }
     /// Copied uniforms use the same native storage ownership as vertex/index bytes.
     fn uniform(&mut self, source: &UniformData) -> Result<Rc<Buffer>, String> {
-        let allocation = Allocation::new(&self.core, source.bytes().len(), Some(source.bytes()), vk::BufferUsageFlags::UNIFORM_BUFFER)?;
+        let allocation = self.buffer_allocation(source.bytes().len(), Some(source.bytes()), vk::BufferUsageFlags::UNIFORM_BUFFER)?;
         Ok(Rc::new(Buffer {
             owner: Some(BufferAllocation { allocation, _charge: source.receipt() }),
             retired: self.retired_tx.clone(),
         }))
     }
+    /// Reuses only exclusive last-owner storage. A miss releases idle capacity before allocation
+    /// so the cache cannot manufacture a device-allocation-count failure for an otherwise valid request.
+    fn buffer_allocation(&mut self, len: usize, bytes: Option<&[u8]>, usage: vk::BufferUsageFlags) -> Result<Allocation, String> {
+        if let Some(mut allocation) = self.buffers.take(Allocation::padded_size(len)?, usage) {
+            allocation.initialize(len, bytes)?;
+            return Ok(allocation);
+        }
+        self.buffers.clear();
+        Allocation::new(&self.core, len, bytes, usage)
+    }
+
     /// One normalized native sampler owns its exact physical count until packet destruction.
     fn sampler(&mut self, source: &SamplerVersion) -> Result<Rc<Sampler>, String> {
         let desc = source.desc();
@@ -970,7 +1188,13 @@ impl Executor {
         })
     }
     /// Ordinary and generic images share explicit initialized uploads with no renderer-global map.
-    pub(in crate::backends::vulkan) fn create_image(&mut self, size: Size, format: vk::Format, pixels: Option<&[u8]>, charge: Option<BackingCharge>) -> Result<Rc<Texture>, String> {
+    pub(in crate::backends::vulkan) fn create_image(
+        &mut self,
+        size: Size,
+        format: vk::Format,
+        pixels: Option<&[u8]>,
+        charge: Option<BackingCharge>,
+    ) -> Result<Rc<Texture>, String> {
         let native = self.upload_image(size, format, pixels, charge.clone())?;
         Ok(self.own_image(native, size, charge))
     }
@@ -978,16 +1202,37 @@ impl Executor {
     pub(in crate::backends::vulkan) fn sender(&self) -> Sender<Retirement> {
         self.retired_tx.clone()
     }
-    /// Drains sender-free owned packets, including packets arriving while previous packets are dropped.
+    /// Final-owner packets have no remaining captured or submitted use. Recycle their exclusive
+    /// buffer capacity, refunding the ended immutable version while retaining physical accounting.
+    /// Failed executors destroy every packet and idle allocation instead of offering reuse.
     fn drain(&mut self) {
+        let reuse = !self.unusable();
+        if !reuse {
+            self.buffers.clear();
+            self.pools.clear();
+        }
         while let Ok(packet) = self.retired_rx.try_recv() {
-            packet.discard();
+            match packet {
+                Retirement::Buffer(value) if reuse => {
+                    let BufferAllocation { allocation, _charge } = value;
+                    self.buffers.put(allocation);
+                    drop(_charge);
+                }
+                Retirement::Pool(pool) if reuse => self.pools.put(pool),
+                packet => packet.discard(),
+            }
         }
     }
 
     /// Shared ordinary/generic initialization retains commands, source and destination before
     /// submitting. A failed wait is terminal and keeps every referenced owner until idle/loss.
-    pub(in crate::backends::vulkan) fn upload_image(&mut self, size: Size, format: vk::Format, pixels: Option<&[u8]>, receipt: Option<BackingCharge>) -> Result<Rc<Image>, String> {
+    pub(in crate::backends::vulkan) fn upload_image(
+        &mut self,
+        size: Size,
+        format: vk::Format,
+        pixels: Option<&[u8]>,
+        receipt: Option<BackingCharge>,
+    ) -> Result<Rc<Image>, String> {
         if self.unusable() {
             return Err("Vulkan graphics executor is unavailable".into());
         }
@@ -1321,7 +1566,14 @@ impl Executor {
     }
 
     /// Replays only native snapshots inside a host-owned pass; no client can select attachments.
-    pub(in crate::backends::vulkan) fn record(&self, command: vk::CommandBuffer, block: &PreparedBlock, logical: Size, physical: Size, signature: Signature) -> Result<(), String> {
+    pub(in crate::backends::vulkan) fn record(
+        &self,
+        command: vk::CommandBuffer,
+        block: &PreparedBlock,
+        logical: Size,
+        physical: Size,
+        signature: Signature,
+    ) -> Result<(), String> {
         self.admit(block, signature)?;
         let device = &self.core.device;
         for operation in &block.0.commands {
@@ -1421,6 +1673,7 @@ impl Drop for Executor {
     /// All pending native uses end before descriptors, retirement packets and the upload pool are released.
     fn drop(&mut self) {
         self.core.wait_idle();
+        self.health = Health::Failed;
         self.submitted.clear();
         self.transfers.clear();
         self.drain();

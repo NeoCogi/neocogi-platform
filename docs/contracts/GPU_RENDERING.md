@@ -274,7 +274,16 @@ pipelines before target acquisition. Native allocations retain only the physical
 device core and opaque shared accounting. Submitted blocks remain owned through their
 graphics fence, including presentation failure. Memory and sampler counts are
 checked device-wide, including host images and UI allocations, and are refunded
-only after native destruction. Image format/usage, dimensions and attachment
+only after native destruction. The executor may retain at most 64 idle host-visible
+buffer allocations and 4 MiB of their actual native memory. This capacity has no
+resource identity or client reservation; it remains counted against native limits.
+An allocation miss releases idle capacity before requesting new native memory.
+The same final-prepared-owner rule permits at most 32 idle descriptor pools and
+8192 sets, uniform buffers, sampled images and samplers of total retained capacity
+each. Checkout resets a compatible pool before
+publishing any new set handle; matching covers set, uniform, image and sampler
+capacity, without retaining a pipeline or resource identity. Descriptor allocation
+misses, terminal failure and shutdown release unused pools. Image format/usage, dimensions and attachment
 limits are checked before native creation. Native preparation errors remain
 fallible rather than invalid Vulkan calls.
 
@@ -348,8 +357,17 @@ backing before native use, so final-owner notification is not proof of completio
 Maintenance observes completion, releases its owners and drains retirement packets.
 It runs before CPU admission, on frame exits, failures, abandonment and shutdown.
 Idle releases wait for maintenance; a disconnected send returns the same owned
-packet for safe late destruction. Native storage is destroyed before its final
-reservation refunds. Metadata alone cannot retain the physical core.
+packet for safe late destruction. Image, sampler and pipeline storage is destroyed
+before its final reservation refunds. A Vulkan buffer's final-owner packet may
+instead transfer exclusive storage to the executor's bounded idle allocator after
+all immutable-version and submission ownership ends. Its ended logical byte charge
+then refunds; physical memory remains counted until actual destruction. Before a
+new version can use that storage, the complete capacity is cleared and initialized,
+with explicit visibility for noncoherent memory. Each allocation stays mapped until
+native destruction, and no mapping pointer escapes the concrete allocator. Terminal
+failure and executor shutdown destroy idle capacity. This pool contains neither
+version identity nor client authority and creates no Core/driver ownership cycle.
+Metadata alone cannot retain the physical core.
 
 WGPU presentation construction, resize and lost/outdated recovery use one checked
 fallible target transaction. Extents are validated against the actual device before

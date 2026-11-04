@@ -371,18 +371,11 @@ impl Target {
     fn read(&self, buffer: &Allocation) -> Vec<u8> {
         unsafe {
             self.core.device.wait_for_fences(&[self.fence], true, u64::MAX).unwrap();
-            let data = self
-                .core
-                .device
-                .map_memory(buffer.memory.raw, 0, vk::WHOLE_SIZE, vk::MemoryMapFlags::empty())
-                .unwrap();
             self.core
                 .device
-                .invalidate_mapped_memory_ranges(&[vk::MappedMemoryRange::default().memory(buffer.memory.raw).offset(0).size(vk::WHOLE_SIZE)])
+                .invalidate_mapped_memory_ranges(&[vk::MappedMemoryRange::default().memory(buffer.memory.memory.raw).offset(0).size(vk::WHOLE_SIZE)])
                 .unwrap();
-            let bytes = std::slice::from_raw_parts(data.cast::<u8>(), (self.extent.width * self.extent.height * 4) as usize).to_vec();
-            self.core.device.unmap_memory(buffer.memory.raw);
-            bytes
+            std::slice::from_raw_parts(buffer.memory.pointer.as_ptr(), (self.extent.width * self.extent.height * 4) as usize).to_vec()
         }
     }
 }
@@ -1311,9 +1304,11 @@ fn unsubmitted_variants_reuse_native_objects_and_reject_other_cores() {
         assert!(source.upgrade().is_none());
         drop((first, second, repeated));
         executor.collect().unwrap();
-        assert_eq!(core.live_allocations(), baseline);
         assert_eq!(gpu.live_bytes(resources.as_com_ref()).unwrap(), 0);
         assert_eq!(gpu.recording_usage(resources.as_com_ref()).unwrap(), (0, 0));
+        // Only bounded allocator capacity may remain; no source, version or receipt survives.
+        executor.buffers.clear();
+        assert_eq!(core.live_allocations(), baseline);
     }
 }
 
@@ -1371,4 +1366,245 @@ fn observed_device_loss_rejects_previously_realized_native_storage() {
     drop((source, buffer, native));
     assert!(executor.collect().is_err());
     assert_eq!(core.live_allocations(), 0, "terminal admission must still drain safe native retirement");
+}
+
+/// Reuse begins only after final native ownership ends, resets all bytes, refunds the ended
+/// version, and cannot prevent new allocations at a device-wide allocation-count boundary.
+#[test]
+#[ignore = "requires a native Vulkan device"]
+fn retired_buffers_reuse_exclusive_capacity_without_retaining_versions_or_charges() {
+    let mut core = core();
+    Rc::get_mut(&mut core).unwrap().limits.max_memory_allocation_count = 2;
+    let mut executor = Executor::new(core.clone()).unwrap();
+    let gpu = GpuDevice::new(
+        core.clone(),
+        nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
+            .query()
+            .unwrap(),
+    );
+    let domain = gpu
+        .create_client(
+            Default::default(),
+            gpu.surface_target(neocogi_render_core::abi::RenderSurfaceKind::Framebuffer).unwrap(),
+            Default::default(),
+        )
+        .unwrap();
+    let resources = domain.resources().unwrap();
+    let create = |len: usize, fill: u8, role| {
+        resources
+            .create_buffer(
+                GpuBufferDesc { role, byte_len: len as u64 },
+                neocogi_render_core::source::initial_bytes(vec![fill; len]).borrow().unwrap(),
+            )
+            .unwrap()
+    };
+    let owner = create(32, 0xA5, GpuBufferRole::Vertex);
+    let version = gpu.buffer_snapshot(resources.as_com_ref(), owner.as_com_ref()).unwrap();
+    let first = version
+        .native(&mut Preparation {
+            executor: &mut executor,
+            pass: vk::RenderPass::null(),
+        })
+        .unwrap();
+    let handle = first.allocation.raw;
+    drop((version, owner));
+    executor.collect().unwrap();
+    assert!(
+        executor.buffers.idle.is_empty(),
+        "another native owner forbids reuse, including a completion owner"
+    );
+    assert_eq!(gpu.live_bytes(resources.as_com_ref()).unwrap(), 32);
+
+    let owner = create(32, 0xB6, GpuBufferRole::Vertex);
+    let version = gpu.buffer_snapshot(resources.as_com_ref(), owner.as_com_ref()).unwrap();
+    let second = version
+        .native(&mut Preparation {
+            executor: &mut executor,
+            pass: vk::RenderPass::null(),
+        })
+        .unwrap();
+    assert_ne!(handle, second.allocation.raw);
+    assert_eq!(core.live_allocations(), 2);
+    drop(first);
+    executor.collect().unwrap();
+    assert_eq!(executor.buffers.idle.len(), 1);
+    assert_eq!(gpu.live_bytes(resources.as_com_ref()).unwrap(), 32);
+
+    let shorter = create(16, 0xC7, GpuBufferRole::Vertex);
+    let shorter_version = gpu.buffer_snapshot(resources.as_com_ref(), shorter.as_com_ref()).unwrap();
+    let reused = shorter_version
+        .native(&mut Preparation {
+            executor: &mut executor,
+            pass: vk::RenderPass::null(),
+        })
+        .unwrap();
+    assert_eq!(reused.allocation.raw, handle);
+    assert_eq!(reused.allocation.size, 16);
+    assert_eq!(reused.allocation.capacity, 32);
+    // SAFETY: The first version has no owners or submitted use; the new mapping is initialized.
+    let bytes = unsafe { std::slice::from_raw_parts(reused.allocation.memory.pointer.as_ptr(), 32) };
+    assert_eq!(&bytes[..16], &[0xC7; 16]);
+    assert_eq!(&bytes[16..], &[0; 16], "shorter versions cannot expose the previous tail");
+    assert_eq!(gpu.live_bytes(resources.as_com_ref()).unwrap(), 48);
+    drop((second, owner, version, reused, shorter, shorter_version));
+    executor.collect().unwrap();
+    assert_eq!(gpu.live_bytes(resources.as_com_ref()).unwrap(), 0);
+    assert_eq!(executor.buffers.idle.len(), 2);
+    assert_eq!(core.live_allocations(), 2);
+
+    // Different usage misses the pool. Idle capacity must not exhaust the native limit.
+    let index = create(16, 0xD8, GpuBufferRole::Index);
+    let version = gpu.buffer_snapshot(resources.as_com_ref(), index.as_com_ref()).unwrap();
+    let native = version
+        .native(&mut Preparation {
+            executor: &mut executor,
+            pass: vk::RenderPass::null(),
+        })
+        .unwrap();
+    assert!(executor.buffers.idle.is_empty());
+    assert_eq!(core.live_allocations(), 1);
+    drop((native, version, index));
+    executor.collect().unwrap();
+    drop(executor);
+    assert_eq!(core.live_allocations(), 0, "the executor owns every cached allocation");
+}
+
+/// Both native count and actual native byte bounds apply, and excess storage is destroyed.
+#[test]
+#[ignore = "requires a native Vulkan device"]
+fn idle_buffer_capacity_is_bounded_by_native_bytes_and_count() {
+    let core = core();
+    let mut pool = BufferPool::default();
+    for _ in 0..IDLE_BUFFER_COUNT + 1 {
+        pool.put(Allocation::new(&core, 16, None, vk::BufferUsageFlags::VERTEX_BUFFER).unwrap());
+    }
+    assert!(pool.bytes <= IDLE_BUFFER_BYTES);
+    assert_eq!(pool.idle.len(), IDLE_BUFFER_COUNT);
+    assert_eq!(core.live_allocations(), IDLE_BUFFER_COUNT as u32);
+    pool.clear();
+    assert_eq!(core.live_allocations(), 0);
+    pool.put(Allocation::new(&core, IDLE_BUFFER_BYTES as usize + 1, None, vk::BufferUsageFlags::VERTEX_BUFFER).unwrap());
+    assert!(pool.idle.is_empty());
+    assert_eq!(pool.bytes, 0);
+    assert_eq!(core.live_allocations(), 0);
+}
+
+/// Pool reset waits for every prepared clone and completion owner, then real replay rewrites
+/// every consumed descriptor and produces identical sampled output after native pool reuse.
+#[test]
+#[ignore = "requires a native Vulkan device"]
+fn descriptor_capacity_reuses_only_after_final_prepared_and_completion_ownership() {
+    let core = core();
+    let mut executor = Executor::new(core.clone()).unwrap();
+    let mut target = Target::new(core.clone(), 8, 8);
+    let gpu = GpuDevice::new(
+        core.clone(),
+        nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
+            .query()
+            .unwrap(),
+    );
+    let domain = gpu
+        .create_client(
+            Default::default(),
+            gpu.surface_target(neocogi_render_core::abi::RenderSurfaceKind::Framebuffer).unwrap(),
+            Default::default(),
+        )
+        .unwrap();
+    let resources = domain.resources().unwrap();
+    let owner = sampled::block(
+        &gpu,
+        &resources,
+        Rect { x: 0, y: 0, width: 8, height: 8 },
+        Size { width: 1, height: 1 },
+        &[255; 4],
+    );
+    let snapshot = gpu.block_snapshot(owner.as_com_ref()).unwrap();
+    let first = executor.prepare(&snapshot, target.pass, target.signature).unwrap();
+    let handle = first.0._pool.as_ref().unwrap().raw;
+    let retained = first.clone();
+    target.render_color(&mut executor, vec![first], Size { width: 8, height: 8 }, [0., 0., 0., 1.]);
+    let expected = target.read(&target.pixels);
+    assert!(expected.as_chunks::<4>().0.iter().all(|pixel| pixel == &[255; 4]));
+    executor.collect().unwrap();
+    assert!(executor.pools.idle.is_empty(), "a prepared clone still owns the descriptor handles");
+    let second = executor.prepare(&snapshot, target.pass, target.signature).unwrap();
+    assert_ne!(second.0._pool.as_ref().unwrap().raw, handle);
+    drop(retained);
+    executor.collect().unwrap();
+    assert_eq!(executor.pools.idle.len(), 1);
+    let reused = executor.prepare(&snapshot, target.pass, target.signature).unwrap();
+    assert_eq!(reused.0._pool.as_ref().unwrap().raw, handle);
+    target.render_color(&mut executor, vec![reused], Size { width: 8, height: 8 }, [0., 0., 0., 1.]);
+    assert_eq!(target.read(&target.pixels), expected);
+    drop((second, snapshot, owner));
+    executor.collect().unwrap();
+    assert_eq!(gpu.live_bytes(resources.as_com_ref()).unwrap(), 0);
+    assert!(executor.pools.sets <= IDLE_DESCRIPTOR_SETS);
+    assert_eq!(executor.pools.idle.len(), 2);
+}
+
+/// Descriptor caches bound both opaque native pool count and total declared set capacity.
+#[test]
+#[ignore = "requires a native Vulkan device"]
+fn idle_descriptor_capacity_obeys_pool_and_set_bounds() {
+    let core = core();
+    let make = |sets, uniforms, images| {
+        let mut sizes = Vec::new();
+        for (ty, count) in [
+            (vk::DescriptorType::UNIFORM_BUFFER, uniforms),
+            (vk::DescriptorType::SAMPLED_IMAGE, images),
+            (vk::DescriptorType::SAMPLER, images),
+        ] {
+            if count > 0 {
+                sizes.push(vk::DescriptorPoolSize { ty, descriptor_count: count });
+            }
+        }
+        // SAFETY: Every capacity is backed by the corresponding native pool descriptor.
+        let raw = unsafe {
+            core.device
+                .create_descriptor_pool(&vk::DescriptorPoolCreateInfo::default().max_sets(sets).pool_sizes(&sizes), None)
+        }
+        .unwrap();
+        PoolAllocation {
+            core: core.clone(),
+            raw,
+            capacity: PoolCapacity { sets, uniforms, images },
+        }
+    };
+    let mut pools = DescriptorPools::default();
+    for _ in 0..IDLE_DESCRIPTOR_POOLS + 1 {
+        pools.put(make(4, 0, 0));
+    }
+    assert_eq!(pools.idle.len(), IDLE_DESCRIPTOR_POOLS);
+    assert_eq!(pools.sets, 4 * IDLE_DESCRIPTOR_POOLS as u32);
+    pools.clear();
+    for (sets, uniforms, images) in [
+        (IDLE_DESCRIPTOR_SETS + 4, 0, 0),
+        (4, IDLE_DESCRIPTOR_BINDINGS + 1, 0),
+        (4, 0, IDLE_DESCRIPTOR_BINDINGS + 1),
+    ] {
+        pools.put(make(sets, uniforms, images));
+        assert!(pools.idle.is_empty());
+        assert_eq!((pools.sets, pools.uniforms, pools.images), (0, 0, 0));
+    }
+    for _ in 0..2 {
+        pools.put(make(4, IDLE_DESCRIPTOR_BINDINGS / 2, IDLE_DESCRIPTOR_BINDINGS / 2));
+    }
+    pools.put(make(4, 1, 1));
+    assert_eq!(pools.idle.len(), 2, "aggregate category capacities also obey their bounds");
+    assert_eq!((pools.uniforms, pools.images), (IDLE_DESCRIPTOR_BINDINGS, IDLE_DESCRIPTOR_BINDINGS));
+    let allocation = pools.take(PoolCapacity { sets: 4, uniforms: 1, images: 1 }).unwrap();
+    assert_eq!((pools.uniforms, pools.images), (IDLE_DESCRIPTOR_BINDINGS / 2, IDLE_DESCRIPTOR_BINDINGS / 2));
+    pools.put(allocation);
+    pools.clear();
+    assert_eq!((pools.sets, pools.uniforms, pools.images), (0, 0, 0));
+}
+
+/// Native mapping lengths stay representable on both 32-bit and 64-bit hosts.
+#[test]
+fn native_buffer_padding_rejects_unrepresentable_host_lengths() {
+    for (len, expected) in [(0, 16), (1, 16), (16, 16), (17, 32)] {
+        assert_eq!(Allocation::padded_size(len).unwrap(), expected);
+    }
+    assert!(Allocation::padded_size(usize::MAX).is_err());
 }
