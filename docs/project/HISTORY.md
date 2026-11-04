@@ -5,14 +5,12 @@ evolve independently; a Platform revision does not require a corresponding UI
 commit. Manifests and lockfiles select reproducible dependencies, and integration
 tests qualify supported combinations.
 
-UI currently pins its Platform dependencies to a Git commit. That pin selects a
-dependency graph, rather than establishing a mandatory pair of repository
-revisions. When upgrading the current pre-release packages, update the related
-Platform dependencies together and avoid resolving shared Rust contract types
-from different Cargo sources. See the [platform migration guide](PLATFORM_PLUGIN_MIGRATION.md).
-The current manifests also pin the published COM, host and IDL packages to
-`0.1.0-alpha.1`; these are dependency choices, not a requirement to synchronize
-repository commits.
+UI selects the Platform package release `0.1.0-alpha.2`. That dependency graph
+is independent of repository commit pairing. Upgrade related Platform packages
+together and avoid resolving shared Rust contract types from different Cargo
+sources. See the [platform migration guide](PLATFORM_PLUGIN_MIGRATION.md).
+The current manifests pin the published COM, host and IDL packages to `0.1.0`;
+these dependency choices do not require synchronizing repository commits.
 
 Static consumers must resolve compatible shared Rust types. Dynamically loaded
 plugins must satisfy the COM SDK's interface, ABI and threading checks as well as

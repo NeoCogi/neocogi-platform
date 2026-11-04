@@ -21,26 +21,26 @@ members = [
 default-members = ["crates/render/core"]
 
 [workspace.package]
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 authors = ["Raja Lehtihet", "Wael El Oraiby"]
 edition = "2024"
 license = "BSD-3-Clause AND MIT AND OFL-1.1 AND Apache-2.0 AND CC0-1.0"
 repository = "https://github.com/NeoCogi/neocogi-platform"
 
 [workspace.dependencies]
-neocogi-platform-build = { path = "tools/platform-build", version = "=0.1.0-alpha.1" }
-neocogi-native-layout-core = { path = "tools/native-layout/core", version = "=0.1.0-alpha.1" }
-neocogi-shader-core = { path = "crates/shader/core", version = "=0.1.0-alpha.1" }
-neocogi-shader-compiler = { path = "crates/shader/plugin", version = "=0.1.0-alpha.1", default-features = false }
-neocogi-com = { version = "=0.1.0-alpha.1", default-features = false }
-neocogi-com-host = { version = "=0.1.0-alpha.1", default-features = false }
-neocogi-idl = { version = "=0.1.0-alpha.1" }
+neocogi-platform-build = { path = "tools/platform-build", version = "=0.1.0-alpha.2" }
+neocogi-native-layout-core = { path = "tools/native-layout/core", version = "=0.1.0-alpha.2" }
+neocogi-shader-core = { path = "crates/shader/core", version = "=0.1.0-alpha.2" }
+neocogi-shader-compiler = { path = "crates/shader/plugin", version = "=0.1.0-alpha.2", default-features = false }
+neocogi-com = { version = "=0.1.0", default-features = false }
+neocogi-com-host = { version = "=0.1.0", default-features = false }
+neocogi-idl = { version = "=0.1.0" }
 proc-macro2 = { version = "1", features = ["span-locations"] }
 quote = "1"
 syn = { version = "2", features = ["full", "extra-traits"] }
-neocogi-render-gpu = { path = "crates/render/gpu", version = "=0.1.0-alpha.1" }
-neocogi-render-core = { path = "crates/render/core", version = "=0.1.0-alpha.1" }
-neocogi-render-support = { path = "crates/render/support", version = "=0.1.0-alpha.1" }
+neocogi-render-gpu = { path = "crates/render/gpu", version = "=0.1.0-alpha.2" }
+neocogi-render-core = { path = "crates/render/core", version = "=0.1.0-alpha.2" }
+neocogi-render-support = { path = "crates/render/support", version = "=0.1.0-alpha.2" }
 ash = { version = "0.38", default-features = false, features = ["linked"] }
 ash-window-handle = { package = "ash-window", version = "0.13" }
 glow = "0.18"

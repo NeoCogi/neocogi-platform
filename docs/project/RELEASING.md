@@ -1,10 +1,10 @@
 # Preparing and publishing Platform packages
 
-The current release target is **0.1.0-alpha.1**. All workspace packages inherit
+The current release target is **0.1.0-alpha.2**. All workspace packages inherit
 that version. The eleven library/build/shared-library packages are enabled for
 crates.io; the native examples, example plugin composition and browser test
-harness remain unpublished. Publication is a separate explicit action after
-local qualification and review.
+harness and typed-buffer ABI fixture remain unpublished. Publication is a separate
+explicit action after local qualification and review.
 
 ## Build inputs and archive contents
 
@@ -18,7 +18,7 @@ unchanged files and pruning obsolete declarations. A cached helper therefore
 keeps working after its original source directory moves or disappears. Source
 declarations stay version 1.
 
-Internal package dependencies specify an exact `=0.1.0-alpha.1` requirement in
+Internal package dependencies specify an exact `=0.1.0-alpha.2` requirement in
 addition to their development path. Cargo removes development paths from the
 published manifests. This release set is intentionally qualified together;
 NeoCogi UI does not need a matching repository commit and must migrate its own
@@ -47,7 +47,8 @@ unpublished members during local packaging:
 cargo package --locked --offline --workspace \
   --exclude neocogi-platform-examples \
   --exclude neocogi-example-plugins \
-  --exclude neocogi-browser-tests
+  --exclude neocogi-browser-tests \
+  --exclude neocogi-typed-buffer-tests
 ```
 
 For development checks of uncommitted changes, add `--allow-dirty`; release
@@ -96,7 +97,7 @@ this check in addition to the existing backend/browser jobs.
 
 Publish after the selected archives and external consumer have passed and the
 review findings have been triaged. The already published COM/host/IDL dependencies
-remain pinned at `0.1.0-alpha.1`. Publish this repository's packages in this order,
+are pinned at `0.1.0`. Publish this repository's packages in this order,
 waiting for each required dependency to become available in the crates.io index:
 
 1. `neocogi-platform-build`

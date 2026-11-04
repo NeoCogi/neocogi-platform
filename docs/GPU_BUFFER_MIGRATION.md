@@ -1,7 +1,7 @@
 # Persistent GPU buffers during alpha
 
 All NCIDL declarations remain version 1. This change uses the published,
-unchanged `neocogi-com = 0.1.0-alpha.1` SDK and its existing input/output slices.
+unchanged `neocogi-com = 0.1.0` SDK and its existing input/output slices.
 Platform builds normally, with no SDK source override:
 
 ```sh

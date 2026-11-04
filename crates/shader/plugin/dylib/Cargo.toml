@@ -19,5 +19,5 @@ crate-type = ["cdylib"]
 default = []
 
 [dependencies]
-provider = { package = "neocogi-shader-compiler", path = "..", version = "=0.1.0-alpha.1", default-features = false }
+provider = { package = "neocogi-shader-compiler", path = "..", version = "=0.1.0-alpha.2", default-features = false }
 neocogi-com = { workspace = true, default-features = false, features = ["std"] }

@@ -4,7 +4,7 @@ Declare this crate as a build dependency. It owns the renderer, platform and sha
 
 ```toml
 [build-dependencies]
-neocogi-platform-build = "=0.1.0-alpha.1"
+neocogi-platform-build = "=0.1.0-alpha.2"
 ```
 
 ```rust
@@ -23,7 +23,7 @@ This build-only dependency owns all shared authored sources; runtime contract
 libraries expose generated bindings and do not provide `SCHEMA_ROOT` aliases.
 
 
-This is NeoCogi Platform `0.1.0-alpha.1`; authored interfaces remain version 1.
+This is NeoCogi Platform `0.1.0-alpha.2`; authored interfaces remain version 1.
 See the [repository documentation](https://github.com/NeoCogi/neocogi-platform/tree/master/docs)
 for ownership, supported operations and deployment. The package LICENSE contains
 the project license and bundled workspace license notices.

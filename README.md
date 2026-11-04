@@ -95,12 +95,12 @@ Space to pause animation, B to toggle the skybox, or Escape to close. See the [e
 for backend selection, bounded headless runs, supported glTF features and asset licenses.
 
 The Platform and UI workspaces currently pin the published COM, host and IDL
-packages to exact `0.1.0-alpha.1`. Shared dependencies participate in one application Cargo graph.
+packages to exact `0.1.0`. Shared dependencies participate in one application Cargo graph.
 Independent builds can reuse compatible artifacts through `CARGO_TARGET_DIR`.
 
 See [documentation](docs/README.md), [component ownership](docs/architecture/COMPONENTS.md),
 [GPU contracts](docs/contracts/GPU_RENDERING.md), [shader compilation](docs/contracts/SHADER_COMPILATION.md),
 and [dependency compatibility and revision history](docs/project/HISTORY.md).
 
-The current release target is `0.1.0-alpha.1`. See [release preparation](docs/project/RELEASING.md)
+The current release target is `0.1.0-alpha.2`. See [release preparation](docs/project/RELEASING.md)
 for the published package set, self-contained build inputs and verification.

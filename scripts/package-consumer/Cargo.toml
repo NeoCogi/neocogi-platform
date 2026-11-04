@@ -1,6 +1,6 @@
 [package]
 name = "neocogi-package-consumer"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 edition = "2024"
 publish = false
 
@@ -9,14 +9,14 @@ publish = false
 staging = ["dep:neocogi-native-layout"]
 
 [dependencies]
-neocogi-com = { version = "=0.1.0-alpha.1", features = ["std", "macros", "runtime"] }
-neocogi-com-host = "=0.1.0-alpha.1"
-neocogi-render-core = "=0.1.0-alpha.1"
-neocogi-shader-core = "=0.1.0-alpha.1"
-compiler = { package = "neocogi-shader-compiler", version = "=0.1.0-alpha.1" }
-neocogi-render-gpu = "=0.1.0-alpha.1"
-neocogi-render-support = "=0.1.0-alpha.1"
-neocogi-native-layout = { version = "=0.1.0-alpha.1", optional = true }
+neocogi-com = { version = "=0.1.0", features = ["std", "macros", "runtime"] }
+neocogi-com-host = "=0.1.0"
+neocogi-render-core = "=0.1.0-alpha.2"
+neocogi-shader-core = "=0.1.0-alpha.2"
+compiler = { package = "neocogi-shader-compiler", version = "=0.1.0-alpha.2" }
+neocogi-render-gpu = "=0.1.0-alpha.2"
+neocogi-render-support = "=0.1.0-alpha.2"
+neocogi-native-layout = { version = "=0.1.0-alpha.2", optional = true }
 
 [build-dependencies]
-neocogi-platform-build = "=0.1.0-alpha.1"
+neocogi-platform-build = "=0.1.0-alpha.2"

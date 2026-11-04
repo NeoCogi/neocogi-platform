@@ -828,7 +828,7 @@ dependencies = [
 
 [[package]]
 name = "neocogi-browser-tests"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "neocogi-com",
  "neocogi-com-host",
@@ -838,9 +838,9 @@ dependencies = [
 
 [[package]]
 name = "neocogi-com"
-version = "0.1.0-alpha.1"
+version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3bd3a365560f357cea98dccf58e644c95dc1a1ce684f929468c77bc69c123c58"
+checksum = "97c73e6b10fdee9ede43cb9d8aa396569da11d75f34569423cab6e5c4020eab8"
 dependencies = [
  "neocogi-com-core",
  "neocogi-com-macros",
@@ -848,15 +848,15 @@ dependencies = [
 
 [[package]]
 name = "neocogi-com-core"
-version = "0.1.0-alpha.1"
+version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9f0d6ee88b545d204a9019d4c7d60643db139411bdcb75f99f6d46b4b7233145"
+checksum = "caf1ee02e5dd10965b55d643a3a453109eceb31c98fc12cc53663aacdd04e823"
 
 [[package]]
 name = "neocogi-com-host"
-version = "0.1.0-alpha.1"
+version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eae3a4db16029323d55a89411f040b2cb79cf91bba7b05e8a327f08fcae9a1e9"
+checksum = "c1ccfe87b37a70ff9eaa0930763edae0338a7706df41bde88b75bec0a83b71f4"
 dependencies = [
  "neocogi-com",
  "neocogi-com-core",
@@ -864,9 +864,9 @@ dependencies = [
 
 [[package]]
 name = "neocogi-com-macros"
-version = "0.1.0-alpha.1"
+version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0058eb48fa1b00c9f32feef24bfa6d4088c5ec51b481c548fc00d66c035ff99b"
+checksum = "32673a3fef6696ad59f95da42bdbe6877e2e781a50508ef9aa1547b7122ee825"
 dependencies = [
  "neocogi-idl",
  "syn 2.0.119",
@@ -874,7 +874,7 @@ dependencies = [
 
 [[package]]
 name = "neocogi-example-plugins"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "neocogi-com",
  "neocogi-native-layout",
@@ -885,9 +885,9 @@ dependencies = [
 
 [[package]]
 name = "neocogi-idl"
-version = "0.1.0-alpha.1"
+version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6290e8f967be22aa58f3e3399ea5dbe73cb61e8517db52648c76c97ac10c33d8"
+checksum = "0a9f2b1bb8b6b8d82df63f761422e9a4d741ce7b5f22e9a2131cd50976275310"
 dependencies = [
  "neocogi-com-core",
  "prettyplease",
@@ -900,7 +900,7 @@ dependencies = [
 
 [[package]]
 name = "neocogi-native-layout"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "neocogi-native-layout-core",
  "proc-macro2",
@@ -911,7 +911,7 @@ dependencies = [
 
 [[package]]
 name = "neocogi-native-layout-core"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "serde",
  "serde_json",
@@ -921,7 +921,7 @@ dependencies = [
 
 [[package]]
 name = "neocogi-platform-build"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "neocogi-idl",
  "tempfile",
@@ -929,7 +929,7 @@ dependencies = [
 
 [[package]]
 name = "neocogi-platform-examples"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "gltf",
  "image",
@@ -949,7 +949,7 @@ dependencies = [
 
 [[package]]
 name = "neocogi-platform-plugin"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "glow 0.18.0",
  "js-sys",
@@ -970,7 +970,7 @@ dependencies = [
 
 [[package]]
 name = "neocogi-platform-plugin-dylib"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "neocogi-com",
  "neocogi-platform-plugin",
@@ -978,7 +978,7 @@ dependencies = [
 
 [[package]]
 name = "neocogi-render-core"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "neocogi-com",
  "neocogi-platform-build",
@@ -990,7 +990,7 @@ dependencies = [
 
 [[package]]
 name = "neocogi-render-gpu"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "ash",
  "ash-window",
@@ -1010,7 +1010,7 @@ dependencies = [
 
 [[package]]
 name = "neocogi-render-support"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "neocogi-com",
  "neocogi-render-core",
@@ -1020,7 +1020,7 @@ dependencies = [
 
 [[package]]
 name = "neocogi-shader-compiler"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "naga",
  "neocogi-com",
@@ -1031,7 +1031,7 @@ dependencies = [
 
 [[package]]
 name = "neocogi-shader-compiler-dylib"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "neocogi-com",
  "neocogi-shader-compiler",
@@ -1039,7 +1039,7 @@ dependencies = [
 
 [[package]]
 name = "neocogi-shader-core"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "neocogi-com",
  "neocogi-platform-build",
@@ -1048,7 +1048,7 @@ dependencies = [
 
 [[package]]
 name = "neocogi-typed-buffer-tests"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "neocogi-com",
  "neocogi-platform-build",
