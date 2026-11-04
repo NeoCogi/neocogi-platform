@@ -134,11 +134,13 @@ fn permitted_image_import_shares_native_storage_without_public_com_or_group_cycl
     ));
     let snapshot = device.imported_texture_snapshot(factory.as_com_ref(), imported.as_com_ref()).unwrap();
     assert!(snapshot.pixels().is_none());
+    let mut copied = NcOutputBuffer::new();
+    assert_eq!(imported.read(copied.output(0, 4)), Err(RENDER_E_PERMISSION));
+    assert!(copied.is_empty(), "native-only images provide no CPU readback");
     assert!(Rc::ptr_eq(snapshot.imported_image().unwrap(), &image));
-    let patch = neocogi_render_core::source::Bytes::source(vec![0; 4]);
     assert_eq!(
-        factory.update_texture(imported.as_com_ref(), Rect { x: 0, y: 0, width: 1, height: 1 }, patch.as_com_ref()),
-        Err(NC_E_INVALID_ARG)
+        imported.as_com_ref().upload(neocogi_com::NcCopyFromBufferOffset::new(0, &[0; 4])),
+        Err(RENDER_E_PERMISSION)
     );
     let native = snapshot.native(&mut crate::testing::Preparation::new(&core)).unwrap();
     assert!(Rc::ptr_eq(&native, &image));
@@ -154,13 +156,7 @@ fn permitted_image_import_shares_native_storage_without_public_com_or_group_cycl
 fn buffer(factory: &ComPtr<IRenderResourcesAbi>, bytes: &[u8]) -> ComBox<IGpuBufferAbi> {
     let (source, _, _) = source(bytes.to_vec(), ReadMode::Exact);
     factory
-        .create_buffer(
-            GpuBufferDesc {
-                role: GpuBufferRole::Vertex,
-                byte_len: bytes.len() as u64,
-            },
-            neocogi_render_core::source::supplied(source.as_com_ref()).unwrap().borrow().unwrap(),
-        )
+        .create_static_buffer(GpuBufferDesc::Vertex { byte_len: bytes.len() as u64 }, source.as_com_ref())
         .unwrap()
 }
 
@@ -176,13 +172,7 @@ fn exclusive_buffer_creation_reads_bounded_chunks_and_exposes_no_renderer() {
     let bytes: Vec<_> = (0..SOURCE_CHUNK * 2 + 17).map(|n| n as u8).collect();
     let (source, reads, largest) = source(bytes.clone(), ReadMode::Exact);
     let owner = factory
-        .create_buffer(
-            GpuBufferDesc {
-                role: GpuBufferRole::Vertex,
-                byte_len: bytes.len() as u64,
-            },
-            neocogi_render_core::source::supplied(source.as_com_ref()).unwrap().borrow().unwrap(),
-        )
+        .create_static_buffer(GpuBufferDesc::Vertex { byte_len: bytes.len() as u64 }, source.as_com_ref())
         .unwrap();
     assert_eq!(reads.get(), 3);
     assert_eq!(largest.get(), SOURCE_CHUNK);
@@ -191,12 +181,7 @@ fn exclusive_buffer_creation_reads_bounded_chunks_and_exposes_no_renderer() {
     assert!(owner.query_ref::<IRenderResourcesAbi>().is_err());
     assert!(factory.query::<IRenderClientDomainAbi>().is_err());
     assert_eq!(
-        device
-            .buffer_snapshot(factory.as_com_ref(), owner.as_com_ref())
-            .unwrap()
-            .bytes
-            .as_slice()
-            .unwrap(),
+        device.buffer_snapshot(factory.as_com_ref(), owner.as_com_ref()).unwrap().bytes.as_slice(),
         bytes
     );
 }
@@ -209,25 +194,23 @@ fn weak_expiry_does_not_invalidate_snapshots_or_refund_retained_versions() {
             .query()
             .unwrap(),
     );
-    let (_controller, factory) = client(&device, RenderClientLimits::default());
-    let owner = buffer(&factory, &[1, 2, 3, 4]);
+    let (_controller, factory) = client(&device, Default::default());
+    let owner = factory.create_streamed_buffer(GpuBufferDesc::Vertex { byte_len: 4 }).unwrap();
+    crate::testing::write_buffer(owner.as_com_ref(), 0, &[1, 2, 3, 4]).unwrap();
     let weak = owner.downgrade();
-    let a = device.buffer_snapshot(factory.as_com_ref(), owner.as_com_ref()).unwrap();
-    let (update, _, _) = source(vec![9, 8], ReadMode::Exact);
-    factory.update_buffer(owner.as_com_ref(), 1, update.as_com_ref()).unwrap();
-    let b = device.buffer_snapshot(factory.as_com_ref(), weak.as_com_ref()).unwrap();
-    assert_eq!(a.bytes.as_slice().unwrap(), [1, 2, 3, 4]);
-    assert_eq!(b.bytes.as_slice().unwrap(), [1, 9, 8, 4]);
-    assert!(!Rc::ptr_eq(&a, &b));
-    assert_eq!(device.live_bytes(factory.as_com_ref()).unwrap(), 8);
+    let before = device.buffer_snapshot(factory.as_com_ref(), owner.as_com_ref()).unwrap();
+    crate::testing::write_buffer(owner.as_com_ref(), 0, &[9; 4]).unwrap();
+    let after = device.buffer_snapshot(factory.as_com_ref(), owner.as_com_ref()).unwrap();
+    assert!(!Rc::ptr_eq(&before, &after));
+    assert_eq!(device.live_bytes(factory.as_com_ref()).unwrap(), 12);
     drop(owner);
     assert!(!weak.is_alive());
-    assert!(weak.query::<IGpuBufferAbi>().is_ok()); // Metadata is deliberately still available.
-    assert!(matches!(device.buffer_snapshot(factory.as_com_ref(), weak.as_com_ref()), Err(NC_E_DROPPED)));
+    assert_eq!(before.bytes().as_slice(), &[1, 2, 3, 4]);
+    assert_eq!(after.bytes().as_slice(), &[9; 4]);
     assert_eq!(device.live_bytes(factory.as_com_ref()).unwrap(), 8);
-    drop(a);
+    drop(before);
     assert_eq!(device.live_bytes(factory.as_com_ref()).unwrap(), 4);
-    drop(b);
+    drop(after);
     assert_eq!(device.live_bytes(factory.as_com_ref()).unwrap(), 0);
 }
 
@@ -239,34 +222,28 @@ fn quota_admission_precedes_bulk_copy_and_retained_versions_keep_their_charge() 
             .query()
             .unwrap(),
     );
-    let limits = RenderClientLimits {
-        resources: 1,
-        live_bytes: 8,
-        ..RenderClientLimits::default()
-    };
-    let (_controller, factory) = client(&device, limits);
-    let owner = buffer(&factory, &[1, 2, 3, 4]);
-    let (input, reads, _) = source(vec![5, 6, 7, 8], ReadMode::Exact);
+    let (_controller, factory) = client(
+        &device,
+        RenderClientLimits {
+            resources: 1,
+            live_bytes: 8,
+            ..Default::default()
+        },
+    );
+    let mut owner = factory.create_dynamic_buffer(GpuBufferDesc::Vertex { byte_len: 4 }).unwrap();
+    crate::testing::write_buffer(owner.as_com_ref(), 0, &[1; 4]).unwrap();
+    let (input, reads, _) = source(vec![5; 4], ReadMode::Exact);
     assert!(matches!(
-        factory.clone().create_buffer(
-            GpuBufferDesc { role: GpuBufferRole::Index, byte_len: 4 },
-            neocogi_render_core::source::supplied(input.as_com_ref()).unwrap().borrow().unwrap()
-        ),
+        factory.create_static_buffer(GpuBufferDesc::Index { byte_len: 4 }, input.as_com_ref()),
         Err(NC_E_OUT_OF_RANGE)
     ));
     assert_eq!(reads.get(), 0);
-    let a = device.buffer_snapshot(factory.as_com_ref(), owner.as_com_ref()).unwrap();
-    factory.update_buffer(owner.as_com_ref(), 0, input.as_com_ref()).unwrap();
-    let b = device.buffer_snapshot(factory.as_com_ref(), owner.as_com_ref()).unwrap();
-    reads.set(0);
-    assert!(matches!(
-        factory.update_buffer(owner.as_com_ref(), 0, input.as_com_ref()),
-        Err(NC_E_OUT_OF_RANGE)
-    ));
-    assert_eq!(reads.get(), 0);
-    drop(a);
-    drop(b);
-    factory.update_buffer(owner.as_com_ref(), 0, input.as_com_ref()).unwrap();
+    let captured = device.buffer_snapshot(factory.as_com_ref(), owner.as_com_ref()).unwrap();
+    assert_eq!(owner.upload(neocogi_com::NcCopyFromBufferOffset::new(0, &[5; 4])), Err(RENDER_E_BUSY));
+    assert_eq!(device.live_bytes(factory.as_com_ref()).unwrap(), 4);
+    drop(captured);
+    owner.upload(neocogi_com::NcCopyFromBufferOffset::new(0, &[5; 4])).unwrap();
+    assert_eq!(device.live_bytes(factory.as_com_ref()).unwrap(), 4);
 }
 
 /// Short prefixes/errors/changing headers roll back the entire unpublished candidate.
@@ -277,14 +254,14 @@ fn failed_sources_preserve_current_buffer_and_release_candidate_charges() {
             .query()
             .unwrap(),
     );
-    let (_controller, factory) = client(&device, RenderClientLimits::default());
+    let (_controller, factory) = client(&device, Default::default());
     let owner = buffer(&factory, &[1, 2, 3, 4]);
-    let a = device.buffer_snapshot(factory.as_com_ref(), owner.as_com_ref()).unwrap();
+    let before = device.buffer_snapshot(factory.as_com_ref(), owner.as_com_ref()).unwrap();
     for mode in [ReadMode::Short, ReadMode::Fail, ReadMode::Changing] {
         let (input, _, _) = source(vec![9; 4], mode);
-        assert!(factory.update_buffer(owner.as_com_ref(), 0, input.as_com_ref()).is_err());
+        assert!(factory.create_static_buffer(GpuBufferDesc::Vertex { byte_len: 4 }, input.as_com_ref()).is_err());
         let after = device.buffer_snapshot(factory.as_com_ref(), owner.as_com_ref()).unwrap();
-        assert!(Rc::ptr_eq(&after, &a));
+        assert!(Rc::ptr_eq(&before, &after));
         assert_eq!(device.live_bytes(factory.as_com_ref()).unwrap(), 4);
     }
 }
@@ -300,7 +277,17 @@ fn different_domains_devices_and_forged_buffers_reject() {
             Err(neocogi_com::NC_E_NOINTERFACE)
         }
     }
-    impl IGpuBuffer for Forged {}
+    impl IGpuBuffer for Forged {
+        fn info(&self) -> Result<GpuBufferInfo, NcStatus> {
+            panic!("forged resource called")
+        }
+        fn upload(&mut self, _: NcCopyFromBufferOffset<'_, u8>) -> Result<(), NcStatus> {
+            panic!("forged resource called")
+        }
+        fn read(&self, _: neocogi_com::NcOutputWriter<'_, u8>) -> Result<(), NcStatus> {
+            panic!("forged resource called")
+        }
+    }
     let device = new_device(
         nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
             .query()
@@ -316,16 +303,15 @@ fn different_domains_devices_and_forged_buffers_reject() {
     let (_c, domain_factory) = client(&device, RenderClientLimits::default());
     let owner = buffer(&factory, &[0; 4]);
     let forged: ComBox<IGpuBufferAbi> = Forged::into_box(Forged).query().unwrap();
-    let (input, _, _) = source(vec![1; 4], ReadMode::Exact);
     assert!(matches!(
-        foreign_factory.update_buffer(owner.as_com_ref(), 0, input.as_com_ref()),
+        other.buffer_snapshot(foreign_factory.as_com_ref(), owner.as_com_ref()),
         Err(RENDER_E_OWNER)
     ));
     assert!(matches!(
-        domain_factory.update_buffer(owner.as_com_ref(), 0, input.as_com_ref()),
+        device.buffer_snapshot(domain_factory.as_com_ref(), owner.as_com_ref()),
         Err(RENDER_E_OWNER)
     ));
-    assert!(matches!(factory.update_buffer(forged.as_com_ref(), 0, input.as_com_ref()), Err(RENDER_E_OWNER)));
+    assert!(matches!(device.buffer_snapshot(factory.as_com_ref(), forged.as_com_ref()), Err(RENDER_E_OWNER)));
 }
 
 /// Closing can happen inside a source callback; publication rechecks it with no borrowed account.
@@ -340,10 +326,7 @@ fn close_during_source_read_rejects_publication_and_drop_closes_shared_factories
     let account = device.domain(factory.as_com_ref()).unwrap().account.clone();
     let (input, _, _) = source(vec![1; 4], ReadMode::Close(controller.downgrade()));
     assert!(matches!(
-        factory.create_buffer(
-            GpuBufferDesc { role: GpuBufferRole::Vertex, byte_len: 4 },
-            neocogi_render_core::source::supplied(input.as_com_ref()).unwrap().borrow().unwrap()
-        ),
+        factory.create_static_buffer(GpuBufferDesc::Vertex { byte_len: 4 }, input.as_com_ref()),
         Err(NC_E_DROPPED)
     ));
     assert_eq!(account.live_bytes(), 0);
@@ -357,22 +340,24 @@ fn close_during_source_read_rejects_publication_and_drop_closes_shared_factories
 
 /// The resource reader/writer gate is never retained through a foreign read that removes its owner.
 #[test]
-fn owner_removal_during_update_rejects_final_commit_without_pinning_public_value() {
+fn owner_removal_during_static_creation_does_not_pin_another_public_value() {
     let device = new_device(
         nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
             .query()
             .unwrap(),
     );
-    let (_controller, factory) = client(&device, RenderClientLimits::default());
+    let (_controller, factory) = client(&device, Default::default());
     let owner = buffer(&factory, &[1; 4]);
     let weak = owner.downgrade();
-    let captured = device.buffer_snapshot(factory.as_com_ref(), weak.as_com_ref()).unwrap();
+    let captured = device.buffer_snapshot(factory.as_com_ref(), owner.as_com_ref()).unwrap();
     let owner = Rc::new(RefCell::new(Some(owner)));
     let (input, _, _) = source(vec![2; 4], ReadMode::DropBuffer(owner.clone()));
-    assert!(matches!(factory.update_buffer(weak.as_com_ref(), 0, input.as_com_ref()), Err(NC_E_DROPPED)));
+    let created = factory.create_static_buffer(GpuBufferDesc::Vertex { byte_len: 4 }, input.as_com_ref()).unwrap();
     assert!(owner.borrow().is_none());
     assert!(!weak.is_alive());
-    assert_eq!(captured.bytes.as_slice().unwrap(), [1; 4]);
+    assert_eq!(captured.bytes.as_slice(), [1; 4]);
+    assert_eq!(device.live_bytes(factory.as_com_ref()).unwrap(), 8);
+    drop(created);
     assert_eq!(device.live_bytes(factory.as_com_ref()).unwrap(), 4);
 }
 
@@ -387,107 +372,74 @@ fn factory_reentry_returns_busy_and_the_outer_copy_remains_valid() {
     let (_controller, factory) = client(&device, RenderClientLimits::default());
     let status = Rc::new(Cell::new(None));
     let (input, _, _) = source(vec![7; 4], ReadMode::Reenter(factory.clone(), status.clone()));
-    let owner = factory
-        .create_buffer(
-            GpuBufferDesc { role: GpuBufferRole::Vertex, byte_len: 4 },
-            neocogi_render_core::source::supplied(input.as_com_ref()).unwrap().borrow().unwrap(),
-        )
-        .unwrap();
+    let owner = factory.create_static_buffer(GpuBufferDesc::Vertex { byte_len: 4 }, input.as_com_ref()).unwrap();
     assert_eq!(status.get(), Some(RENDER_E_BUSY));
     assert_eq!(
-        device
-            .buffer_snapshot(factory.as_com_ref(), owner.as_com_ref())
-            .unwrap()
-            .bytes
-            .as_slice()
-            .unwrap(),
+        device.buffer_snapshot(factory.as_com_ref(), owner.as_com_ref()).unwrap().bytes.as_slice(),
         [7; 4]
     );
 }
 
-/// Texture patches can cross output-chunk and pixel-row boundaries without touching other texels.
+/// Rectangle composition crosses pixel rows without changing other dynamic texels.
 #[test]
-fn texture_update_captures_old_pixels_and_copies_only_the_admitted_patch() {
+fn texture_upload_preserves_pixels_outside_the_admitted_dynamic_patch() {
     let device = new_device(
         nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
             .query()
             .unwrap(),
     );
-    let (_controller, factory) = client(&device, RenderClientLimits::default());
-    let (pixels, _, _) = source(vec![7; 256 * 256 * 4], ReadMode::Exact);
+    let (_controller, factory) = client(&device, Default::default());
     let owner = factory
-        .create_texture(
-            GpuTextureDesc {
-                size: Size { width: 256, height: 256 },
-                format: GpuTextureFormat::Rgba8Unorm,
-                mip_count: 1,
-            },
-            neocogi_render_core::source::supplied(pixels.as_com_ref()).unwrap().borrow().unwrap(),
-        )
+        .create_dynamic_buffer(GpuBufferDesc::Texture {
+            size: Size { width: 256, height: 256 },
+            format: GpuTextureFormat::Rgba8Unorm,
+            mip_count: 1,
+        })
         .unwrap();
     assert!(owner.query_ref::<ITextureAbi>().is_err());
-    let a = device.texture_snapshot(factory.as_com_ref(), owner.as_com_ref()).unwrap();
+    crate::testing::write_pixels(owner.as_com_ref(), Rect { x: 0, y: 0, width: 256, height: 256 }, &vec![7; 256 * 256 * 4]).unwrap();
     let patch: Vec<_> = (0..201 * 201 * 4).map(|n| n as u8).collect();
-    let (input, reads, largest) = source(patch.clone(), ReadMode::Exact);
-    factory
-        .update_texture(owner.as_com_ref(), Rect { x: 5, y: 7, width: 201, height: 201 }, input.as_com_ref())
-        .unwrap();
-    let b = device.texture_snapshot(factory.as_com_ref(), owner.as_com_ref()).unwrap();
+    crate::testing::write_pixels(owner.as_com_ref(), Rect { x: 5, y: 7, width: 201, height: 201 }, &patch).unwrap();
+    let snapshot = device.texture_snapshot(factory.as_com_ref(), owner.as_com_ref()).unwrap();
     let mut expected = vec![7; 256 * 256 * 4];
     for row in 0..201 {
         expected[((row + 7) * 256 + 5) * 4..((row + 7) * 256 + 206) * 4].copy_from_slice(&patch[row * 201 * 4..(row + 1) * 201 * 4]);
     }
-    assert_eq!(b.pixels().unwrap().as_slice().unwrap(), expected);
-    assert!(a.pixels().unwrap().as_slice().unwrap().iter().all(|byte| *byte == 7));
-    assert_eq!(reads.get(), 3);
-    assert_eq!(largest.get(), SOURCE_CHUNK);
+    assert_eq!(snapshot.pixels().unwrap().as_slice(), expected);
 }
 
 /// All pointer-free descriptors still reject unknown open-enum and inconsistent size values.
 #[test]
-fn malformed_descriptors_and_overflowing_updates_reject_before_bulk_reads() {
+fn malformed_shapes_and_overflowing_uploads_reject_before_state_changes() {
     let device = new_device(
         nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
             .query()
             .unwrap(),
     );
-    let (_controller, factory) = client(&device, RenderClientLimits::default());
-    let (input, reads, _) = source(vec![1; 4], ReadMode::Exact);
-    assert!(
-        factory
-            .create_buffer(
-                GpuBufferDesc {
-                    role: GpuBufferRole::from_raw(255),
-                    byte_len: 4
-                },
-                neocogi_render_core::source::supplied(input.as_com_ref()).unwrap().borrow().unwrap()
-            )
-            .is_err()
-    );
-    assert!(
-        factory
-            .create_texture(
-                GpuTextureDesc {
-                    size: Size { width: i32::MAX, height: i32::MAX },
-                    format: GpuTextureFormat::Rgba8Unorm,
-                    mip_count: 1
-                },
-                neocogi_render_core::source::supplied(input.as_com_ref()).unwrap().borrow().unwrap()
-            )
-            .is_err()
-    );
-    assert!(
-        factory
-            .create_sampler(GpuSamplerDesc {
-                min_filter: GpuFilter::from_raw(255),
-                ..GpuSamplerDesc::default()
-            })
-            .is_err()
-    );
+    let (_controller, factory) = client(&device, Default::default());
+    let (input, reads, _) = source(vec![0; 4], ReadMode::Exact);
+    for desc in [
+        GpuBufferDesc::Vertex { byte_len: 0 },
+        GpuBufferDesc::Vertex { byte_len: u64::MAX },
+        GpuBufferDesc::Texture {
+            size: Size { width: 0, height: 1 },
+            format: GpuTextureFormat::Rgba8Unorm,
+            mip_count: 1,
+        },
+        GpuBufferDesc::Texture {
+            size: Size { width: 1, height: 1 },
+            format: GpuTextureFormat(255),
+            mip_count: 1,
+        },
+    ] {
+        assert!(factory.create_static_buffer(desc, input.as_com_ref()).is_err());
+    }
     assert_eq!(reads.get(), 0);
-    let owner = buffer(&factory, &[0; 4]);
-    assert!(factory.update_buffer(owner.as_com_ref(), u64::MAX, input.as_com_ref()).is_err());
-    assert_eq!(reads.get(), 0);
+    let mut owner = factory.create_dynamic_buffer(GpuBufferDesc::Vertex { byte_len: 4 }).unwrap();
+    for (offset, bytes) in [(1, &[1; 4][..]), (u64::MAX, &[2; 2][..]), (5, &[][..])] {
+        assert_eq!(owner.upload(NcCopyFromBufferOffset::new(offset, bytes)), Err(NC_E_OUT_OF_RANGE));
+    }
+    owner.upload(NcCopyFromBufferOffset::new(4, &[])).unwrap();
 }
 
 /// Captured native owners retain hardware and receipts without retaining logical admission authority.
@@ -771,22 +723,16 @@ fn owned_versions_stay_distinct_across_drivers_updates_and_owner_release() {
         let (_owner, factory) = client(&device, Default::default());
         let core = device.inner.core.clone();
         metadata.push(device.driver_identity());
-        let initial = neocogi_render_core::source::initial_bytes(vec![pixel; 4]);
         let texture = factory
-            .create_texture(
-                GpuTextureDesc {
-                    size: Size { width: 1, height: 1 },
-                    format: GpuTextureFormat::Rgba8Unorm,
-                    mip_count: 1,
-                },
-                initial.borrow().unwrap(),
-            )
+            .create_streamed_buffer(GpuBufferDesc::Texture {
+                size: Size { width: 1, height: 1 },
+                format: GpuTextureFormat::Rgba8Unorm,
+                mip_count: 1,
+            })
             .unwrap();
+        crate::testing::write_pixels(texture.as_com_ref(), Rect { x: 0, y: 0, width: 1, height: 1 }, &[pixel; 4]).unwrap();
         let before = device.texture_snapshot(factory.as_com_ref(), texture.as_com_ref()).unwrap();
-        let replacement = neocogi_render_core::source::Bytes::source(vec![pixel + 1; 4]);
-        factory
-            .update_texture(texture.as_com_ref(), Rect { x: 0, y: 0, width: 1, height: 1 }, replacement.as_com_ref())
-            .unwrap();
+        crate::testing::write_pixels(texture.as_com_ref(), Rect { x: 0, y: 0, width: 1, height: 1 }, &[pixel + 1; 4]).unwrap();
         let after = device.texture_snapshot(factory.as_com_ref(), texture.as_com_ref()).unwrap();
         let a = before.native(&mut crate::testing::Preparation::new(&core)).unwrap();
         let b = after.native(&mut crate::testing::Preparation::new(&core)).unwrap();
@@ -796,8 +742,8 @@ fn owned_versions_stay_distinct_across_drivers_updates_and_owner_release() {
         assert!(before.native(&mut crate::testing::Preparation::new(&other)).is_err());
         assert_eq!(other.created(), 0);
         drop(texture);
-        assert_eq!(before.pixels().unwrap().as_slice().unwrap(), [pixel; 4]);
-        assert_eq!(after.pixels().unwrap().as_slice().unwrap(), [pixel + 1; 4]);
+        assert_eq!(before.pixels().unwrap().as_slice(), [pixel; 4]);
+        assert_eq!(after.pixels().unwrap().as_slice(), [pixel + 1; 4]);
         retained.extend([before, after]);
         native.extend([a, b]);
     }
@@ -832,99 +778,59 @@ fn resource_owned_slots_retry_failures_and_check_health_on_reuse() {
     assert_eq!(bytes, [1, 2, 3, 4]);
 }
 
-/// None reserves the descriptor extent but owns no CPU zero vector; updates preserve old snapshots.
+/// Size-only creation initializes fixed capacity; uploads preserve captured contents.
 #[test]
-fn absent_initial_contents_are_zero_and_updates_are_immutable() {
+fn size_only_storage_is_initialized_and_dynamic_uploads_wait_for_captures() {
     let device = new_device(
         nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
             .query()
             .unwrap(),
     );
-    let (_owner, factory) = client(&device, RenderClientLimits::default());
-    let none = neocogi_render_core::source::initial(None);
-    let buffer = factory
-        .create_buffer(GpuBufferDesc { role: GpuBufferRole::Index, byte_len: 4 }, none.borrow().unwrap())
-        .unwrap();
-    let before = device.buffer_snapshot(factory.as_com_ref(), buffer.as_com_ref()).unwrap();
-    assert!(matches!(before.bytes(), VersionBytes::Zeroed { len: 4 }));
-    let mut output = [7; 4];
-    before.bytes().read(0, &mut output).unwrap();
-    assert_eq!(output, [0; 4]);
-    let patch = neocogi_render_core::source::Bytes::source(vec![9, 8]);
-    factory.update_buffer(buffer.as_com_ref(), 1, patch.as_com_ref()).unwrap();
-    let after = device.buffer_snapshot(factory.as_com_ref(), buffer.as_com_ref()).unwrap();
-    after.bytes().read(0, &mut output).unwrap();
-    assert_eq!(output, [0, 9, 8, 0]);
-    before.bytes().read(0, &mut output).unwrap();
-    assert_eq!(output, [0; 4]);
-    assert_eq!(device.live_bytes(factory.as_com_ref()).unwrap(), 8);
+    let (_controller, factory) = client(&device, Default::default());
+    let mut owner = factory.create_dynamic_buffer(GpuBufferDesc::Index { byte_len: 4 }).unwrap();
+    let before = device.buffer_snapshot(factory.as_com_ref(), owner.as_com_ref()).unwrap();
+    assert_eq!(before.bytes().as_slice(), &[0; 4]);
+    assert_eq!(owner.upload(NcCopyFromBufferOffset::new(1, &[9, 8])), Err(RENDER_E_BUSY));
+    assert_eq!(before.bytes().as_slice(), &[0; 4]);
     drop(before);
+    owner.upload(NcCopyFromBufferOffset::new(1, &[9, 8])).unwrap();
+    let after = device.buffer_snapshot(factory.as_com_ref(), owner.as_com_ref()).unwrap();
+    assert_eq!(after.bytes().as_slice(), &[0, 9, 8, 0]);
     assert_eq!(device.live_bytes(factory.as_com_ref()).unwrap(), 4);
-    drop((after, buffer));
-    assert_eq!(device.live_bytes(factory.as_com_ref()).unwrap(), 0);
-    let image = factory
-        .create_texture(
-            GpuTextureDesc {
-                size: Size { width: 2, height: 2 },
-                format: GpuTextureFormat::Rgba8Unorm,
-                mip_count: 1,
-            },
-            none.borrow().unwrap(),
-        )
-        .unwrap();
-    let old = device.texture_snapshot(factory.as_com_ref(), image.as_com_ref()).unwrap();
-    assert!(matches!(old.pixels().unwrap(), VersionBytes::Zeroed { len: 16 }));
-    let patch = neocogi_render_core::source::Bytes::source(vec![1, 2, 3, 4]);
-    factory
-        .update_texture(image.as_com_ref(), Rect { x: 1, y: 1, width: 1, height: 1 }, patch.as_com_ref())
-        .unwrap();
-    let new = device.texture_snapshot(factory.as_com_ref(), image.as_com_ref()).unwrap();
-    let mut pixels = [8; 16];
-    new.pixels().unwrap().copy_into(&mut pixels).unwrap();
-    assert_eq!(&pixels[..12], &[0; 12]);
-    assert_eq!(&pixels[12..], &[1, 2, 3, 4]);
-    old.pixels().unwrap().copy_into(&mut pixels).unwrap();
-    assert_eq!(pixels, [0; 16]);
 }
 
 /// Optional-tag rejection uses valid aligned initialized wire, not arbitrary foreign pointers.
 #[test]
-fn optional_wire_tags_and_supplied_lengths_are_checked_before_publication() {
+fn shape_wire_tags_and_static_lengths_are_checked_before_publication() {
     let device = new_device(
         nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
             .query()
             .unwrap(),
     );
-    let (_owner, factory) = client(&device, RenderClientLimits::default());
-    let none = neocogi_render_core::source::initial(None);
-    let valid = none.borrow().unwrap();
-    // SAFETY: The generated producer owns a complete initialized wire for this exact closed type.
-    let mut wire = unsafe { valid.as_ptr().read() };
-    wire.tag = 3;
-    // SAFETY: Storage is aligned/initialized and its valid payload stays alive; only the tag is invalid.
-    let invalid = unsafe { neocogi_com::NcValueRef::<InitialGpuData>::from_raw(&wire) }.unwrap();
-    assert!(matches!(
-        factory.create_buffer(GpuBufferDesc { role: GpuBufferRole::Vertex, byte_len: 4 }, invalid),
-        Err(neocogi_com::NC_E_INVALID_TAG)
-    ));
+    let (_controller, factory) = client(&device, Default::default());
+    let (input, reads, _) = source(vec![1; 4], ReadMode::Exact);
+    let mut wire = neocogi_com::encode_inline(&GpuBufferDesc::Vertex { byte_len: 4 }).unwrap();
+    wire.tag = 255;
+    let raw = factory.as_raw();
+    let mut output = neocogi_com::ComRaw::<IGpuBufferAbi>::null();
+    // SAFETY: This is complete initialized descriptor wire and live interface/output
+    // storage. Only its discriminant is invalid; no arbitrary pointer is fabricated.
+    let status = unsafe { ((*raw.vtable).create_static_buffer)(raw.object, wire, input.as_raw(), &mut output) };
+    assert_eq!(status, neocogi_com::NC_E_INVALID_TAG);
+    assert!(output.is_null());
+    assert_eq!(reads.get(), 0);
     for len in [0, 3, 5] {
-        let (source, reads, _) = source(vec![4; len], ReadMode::Exact);
-        let supplied = neocogi_render_core::source::initial(Some(source));
-        assert!(matches!(
-            factory.create_buffer(GpuBufferDesc { role: GpuBufferRole::Vertex, byte_len: 4 }, supplied.borrow().unwrap()),
-            Err(NC_E_INVALID_ARG)
-        ));
-        assert!(matches!(
-            factory.create_texture(
-                GpuTextureDesc {
-                    size: Size { width: 1, height: 1 },
-                    format: GpuTextureFormat::Rgba8Unorm,
-                    mip_count: 1
-                },
-                supplied.borrow().unwrap()
-            ),
-            Err(NC_E_INVALID_ARG)
-        ));
+        let (input, reads, _) = source(vec![4; len], ReadMode::Exact);
+        for desc in [
+            GpuBufferDesc::Vertex { byte_len: 4 },
+            GpuBufferDesc::Texture {
+                size: Size { width: 1, height: 1 },
+                format: GpuTextureFormat::Rgba8Unorm,
+                mip_count: 1,
+            },
+        ] {
+            assert!(matches!(factory.create_static_buffer(desc, input.as_com_ref()), Err(NC_E_INVALID_ARG)));
+        }
         assert_eq!(reads.get(), 0);
         assert_eq!(device.live_bytes(factory.as_com_ref()).unwrap(), 0);
     }
@@ -942,10 +848,7 @@ fn driver_identity_is_stable_without_owning_the_driver() {
     let first_id = first.driver_identity();
     let second_id = second.driver_identity();
     let (_owner, factory) = client(&first, RenderClientLimits::default());
-    let none = neocogi_render_core::source::initial(None);
-    let resource = factory
-        .create_buffer(GpuBufferDesc { role: GpuBufferRole::Vertex, byte_len: 4 }, none.borrow().unwrap())
-        .unwrap();
+    let resource = factory.create_dynamic_buffer(GpuBufferDesc::Vertex { byte_len: 4 }).unwrap();
     assert_eq!(first_id.as_raw().object, factory.driver_identity().unwrap().as_raw().object);
     assert_eq!(first_id.as_raw().object, resource.driver_identity().unwrap().as_raw().object);
     assert_ne!(first_id.as_raw().object, second_id.as_raw().object);

@@ -110,7 +110,7 @@ impl IRenderHost for ObservedHost {
     fn prepare_texture_result(
         &self,
         resources: ComRef<'_, IRenderResourcesAbi>,
-        texture: ComRef<'_, IGpuTextureAbi>,
+        texture: ComRef<'_, IGpuBufferAbi>,
     ) -> Result<ComPtr<IRenderOutcomeAbi>, NcStatus> {
         self.host.prepare_texture_result(resources, texture)
     }

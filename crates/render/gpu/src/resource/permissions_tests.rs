@@ -97,7 +97,7 @@ fn depth_initialization_requires_clear_permission_and_a_depth_attachment() {
 
 /// Disabling updates still allows initialized creation; a denied update publishes no new version.
 #[test]
-fn resource_updates_obey_write_permission_independently_of_drawing_permissions() {
+fn uploads_obey_permission_independently_of_creation_and_drawing() {
     let device = device();
     for writable in [false, true] {
         let target = device.surface_target(RenderSurfaceKind::Framebuffer).unwrap();
@@ -109,33 +109,31 @@ fn resource_updates_obey_write_permission_independently_of_drawing_permissions()
                 ..RenderClientPermissions::none()
             },
         );
-        let buffer = resources
-            .create_buffer(
-                GpuBufferDesc { role: GpuBufferRole::Vertex, byte_len: 4 },
-                crate::source::initial_bytes(vec![1, 2, 3, 4]).borrow().unwrap(),
+        let mut immutable = resources
+            .create_static_buffer(
+                GpuBufferDesc::Vertex { byte_len: 4 },
+                crate::source::Bytes::source(vec![1, 2, 3, 4]).as_com_ref(),
             )
             .unwrap();
+        assert_eq!(immutable.upload(neocogi_com::NcCopyFromBufferOffset::new(0, &[0; 4])), Err(RENDER_E_PERMISSION));
+        let linear = resources.create_dynamic_buffer(GpuBufferDesc::Vertex { byte_len: 4 }).unwrap();
         let texture = resources
-            .create_texture(
-                GpuTextureDesc {
-                    size: Size { width: 1, height: 1 },
-                    format: GpuTextureFormat::Rgba8Unorm,
-                    mip_count: 1,
-                },
-                crate::source::initial_bytes(vec![1, 2, 3, 4]).borrow().unwrap(),
-            )
+            .create_dynamic_buffer(GpuBufferDesc::Texture {
+                size: Size { width: 1, height: 1 },
+                format: GpuTextureFormat::Rgba8Unorm,
+                mip_count: 1,
+            })
             .unwrap();
-        let patch = crate::source::Bytes::source(vec![9; 4]);
         let expected = if writable { Ok(()) } else { Err(RENDER_E_PERMISSION) };
-        assert_eq!(resources.update_buffer(buffer.as_com_ref(), 0, patch.as_com_ref()), expected);
+        assert_eq!(crate::testing::write_buffer(linear.as_com_ref(), 0, &[9; 4]), expected);
         assert_eq!(
-            resources.update_texture(texture.as_com_ref(), Rect { x: 0, y: 0, width: 1, height: 1 }, patch.as_com_ref()),
+            crate::testing::write_pixels(texture.as_com_ref(), Rect { x: 0, y: 0, width: 1, height: 1 }, &[9; 4]),
             expected
         );
-        let bytes = device.buffer_snapshot(resources.as_com_ref(), buffer.as_com_ref()).unwrap();
-        assert_eq!(bytes.bytes.as_slice().unwrap(), if writable { &[9; 4] } else { &[1, 2, 3, 4] });
+        let bytes = device.buffer_snapshot(resources.as_com_ref(), linear.as_com_ref()).unwrap();
+        assert_eq!(bytes.bytes().as_slice(), if writable { &[9; 4] } else { &[0; 4] });
         let pixels = device.texture_snapshot(resources.as_com_ref(), texture.as_com_ref()).unwrap();
-        assert_eq!(pixels.pixels().unwrap().as_slice().unwrap(), if writable { &[9; 4] } else { &[1, 2, 3, 4] });
+        assert_eq!(pixels.pixels().unwrap().as_slice(), if writable { &[9; 4] } else { &[0; 4] });
     }
 }
 
@@ -248,63 +246,30 @@ fn image_import_permission_is_independent_of_target_and_resource_update_permissi
     }
 }
 
-#[com_object(interfaces(IGpuDataSource))]
-/// Models a foreign update source whose callbacks must remain untouched when updates are forbidden.
-struct UnexpectedRead {
-    /// Shared observation outlives this COM allocation without retaining any renderer resource.
-    calls: Rc<Cell<u32>>,
-}
-impl IGpuDataSource for UnexpectedRead {
-    /// Rejecting here would mask a permission-check ordering bug, so the caller also checks the counter.
-    fn byte_count(&self) -> Result<u64, NcStatus> {
-        self.calls.set(self.calls.get() + 1);
-        Err(NC_E_INVALID_ARG)
-    }
-    /// No foreign output buffer should be requested for an operation the group cannot perform.
-    fn read(&self, _: neocogi_com::NcOutputWriter<'_, u8>) -> Result<(), NcStatus> {
-        self.calls.set(self.calls.get() + 1);
-        Err(NC_E_INVALID_ARG)
-    }
-}
-
 /// Permission denial must precede foreign reads and preserve both resource versions and their quota charges.
 #[test]
-fn forbidden_updates_do_not_call_foreign_sources_or_change_live_storage() {
+fn denied_upload_preserves_initialized_storage_and_logical_capacity() {
     let device = device();
     let target = device.surface_target(RenderSurfaceKind::Framebuffer).unwrap();
     let (_owner, resources) = group(&device, target, RenderClientPermissions::none());
-    let initial = crate::source::initial_bytes(vec![1, 2, 3, 4]);
-    let buffer = resources
-        .create_buffer(GpuBufferDesc { role: GpuBufferRole::Vertex, byte_len: 4 }, initial.borrow().unwrap())
+    let mut linear = resources.create_dynamic_buffer(GpuBufferDesc::Vertex { byte_len: 4 }).unwrap();
+    let mut texture = resources
+        .create_dynamic_buffer(GpuBufferDesc::Texture {
+            size: Size { width: 1, height: 1 },
+            format: GpuTextureFormat::Rgba8Unorm,
+            mip_count: 1,
+        })
         .unwrap();
-    let texture = resources
-        .create_texture(
-            GpuTextureDesc {
-                size: Size { width: 1, height: 1 },
-                format: GpuTextureFormat::Rgba8Unorm,
-                mip_count: 1,
-            },
-            initial.borrow().unwrap(),
-        )
-        .unwrap();
-    let calls = Rc::new(Cell::new(0));
-    let source: ComPtr<IGpuDataSourceAbi> = UnexpectedRead::from_value(UnexpectedRead { calls: calls.clone() }).query().unwrap();
     let before = device.live_bytes(resources.as_com_ref()).unwrap();
-    assert_eq!(resources.update_buffer(buffer.as_com_ref(), 0, source.as_com_ref()), Err(RENDER_E_PERMISSION));
+    assert_eq!(linear.upload(neocogi_com::NcCopyFromBufferOffset::new(0, &[0; 4])), Err(RENDER_E_PERMISSION));
     assert_eq!(
-        resources.update_texture(texture.as_com_ref(), Rect { x: 0, y: 0, width: 1, height: 1 }, source.as_com_ref()),
+        texture.upload(neocogi_com::NcCopyFromBufferOffset::new(0, &[0; 4])),
         Err(RENDER_E_PERMISSION)
     );
-    assert_eq!(calls.get(), 0);
     assert_eq!(device.live_bytes(resources.as_com_ref()).unwrap(), before);
     assert_eq!(
-        device
-            .buffer_snapshot(resources.as_com_ref(), buffer.as_com_ref())
-            .unwrap()
-            .bytes
-            .as_slice()
-            .unwrap(),
-        &[1, 2, 3, 4]
+        device.buffer_snapshot(resources.as_com_ref(), linear.as_com_ref()).unwrap().bytes().as_slice(),
+        &[0; 4]
     );
     assert_eq!(
         device
@@ -312,8 +277,7 @@ fn forbidden_updates_do_not_call_foreign_sources_or_change_live_storage() {
             .unwrap()
             .pixels()
             .unwrap()
-            .as_slice()
-            .unwrap(),
-        &[1, 2, 3, 4]
+            .as_slice(),
+        &[0; 4]
     );
 }

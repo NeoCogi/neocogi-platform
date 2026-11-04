@@ -255,7 +255,7 @@ impl IRenderHost for GraphicsHost {
     fn prepare_texture_result(
         &self,
         resources: ComRef<'_, IRenderResourcesAbi>,
-        texture: ComRef<'_, IGpuTextureAbi>,
+        texture: ComRef<'_, IGpuBufferAbi>,
     ) -> Result<ComPtr<IRenderOutcomeAbi>, NcStatus> {
         let result = self.device.execute(|state| {
             let version = self.device.logical.imported_texture_snapshot(resources, texture)?;

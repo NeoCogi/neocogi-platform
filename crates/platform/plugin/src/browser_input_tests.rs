@@ -158,7 +158,7 @@ fn browser_surface_targets() {
 /// Exercises actual browser WebGL target adaptation and the delegated safe upload boundary.
 fn canonical_browser_derivatives() {
     use glow::HasContext;
-    use neocogi_render_core::abi::{GpuTextureDesc, GpuTextureFormat};
+    use neocogi_render_core::abi::GpuTextureFormat;
     use neocogi_render_core::{FrameInfo, RendererBackend, RendererFrame};
     use neocogi_render_core::prelude::{Dimensioni, color};
     let document = web_sys::window().unwrap().document().unwrap();
@@ -292,21 +292,23 @@ fn canonical_browser_derivatives() {
             None => sampled::assert_zero_storage_pixels(&pixels),
         }
     }
-    let image = resources
-        .create_texture(
-            GpuTextureDesc {
-                size: Size { width: 1, height: 1 },
-                format: GpuTextureFormat::Rgba8Unorm,
-                mip_count: 1,
-            },
-            neocogi_render_core::source::initial(None).borrow().unwrap(),
-        )
+    let mut image = resources
+        .create_dynamic_buffer(GpuBufferDesc::Texture {
+            size: Size { width: 1, height: 1 },
+            format: GpuTextureFormat::Rgba8Unorm,
+            mip_count: 1,
+        })
         .unwrap();
     let version = gpu.imported_texture_snapshot(resources.as_com_ref(), image.as_com_ref()).unwrap();
     renderer.prepare_texture(version.clone()).unwrap();
     lose_test_context(&native);
     assert!(renderer.make_current().is_err(), "actual WebGL loss invalidates the physical owner");
     assert!(renderer.prepare_texture(version).is_err(), "a Ready image cannot bypass terminal context loss");
+    assert_eq!(
+        image.upload(neocogi_com::NcCopyFromBufferOffset::new(0, &[0; 4])),
+        Err(neocogi_render_core::abi::RENDER_E_BACKEND),
+        "uploads must observe actual WebGL loss"
+    );
 }
 
 // Synthetic DOM events exercise translation deterministically. Pointer capture itself requires

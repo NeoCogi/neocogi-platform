@@ -17,7 +17,6 @@ type BufferVersion = crate::resource::BufferVersion<Backend>;
 type TextureVersion = crate::resource::TextureVersion<Backend>;
 type SamplerVersion = crate::resource::SamplerVersion<Backend>;
 type PipelineVersion = crate::resource::PipelineVersion<Backend>;
-type UniformData = crate::command::UniformData<Backend>;
 type Draw = crate::command::Draw<Backend>;
 type Block = crate::record::Block<Backend>;
 type Command = crate::command::Command<Backend>;
@@ -35,11 +34,13 @@ impl NativeResources for Backend {
     type Image = Image;
     type Sampler = Sampler;
     type Pipeline = Pipeline;
-    type Uniform = Buffer;
     type PipelineKey = bool;
     type Preparation<'a> = Preparation<'a>;
     fn identity(core: &Core) -> &neocogi_render_core::source::DriverIdentity {
         core.identity()
+    }
+    fn storage_available(core: &Core) -> Result<(), String> {
+        core.current()
     }
     fn core<'a>(preparation: &'a Preparation<'_>) -> &'a Rc<Core> {
         &preparation.executor.core
@@ -57,11 +58,64 @@ impl NativeResources for Backend {
     fn buffer(source: &BufferVersion, preparation: &mut Preparation<'_>) -> Result<Rc<Buffer>, String> {
         preparation.executor.create_buffer(source)
     }
+    /// BufferSubData preserves the same native name and fixed storage allocation.
+    fn update_buffer(source: &BufferVersion, native: &Rc<Buffer>, preparation: &mut Preparation<'_>) -> Result<(), String> {
+        let executor = &mut preparation.executor;
+        executor.core.current()?;
+        executor.uploads.try_reserve(1).map_err(|error| error.to_string())?;
+        executor.uploads.push(Upload::Buffer { _resource: native.clone() });
+        let target = match source.desc().role() {
+            GpuBufferRole::Vertex => glow::ARRAY_BUFFER,
+            GpuBufferRole::Index => glow::ELEMENT_ARRAY_BUFFER,
+            GpuBufferRole::Uniform => glow::UNIFORM_BUFFER,
+            _ => return Err("invalid linear role".into()),
+        };
+        let bytes = source.bytes().as_slice();
+        // SAFETY: The owning context is current and common admission ended all
+        // older logical/native use before these fixed-range writes.
+        unsafe {
+            executor.gl.bind_vertex_array(Some(executor.array));
+            executor.gl.bind_buffer(target, Some(native.raw));
+            executor.gl.buffer_sub_data_u8_slice(target, 0, bytes);
+            executor.gl.bind_vertex_array(None);
+        }
+        executor.check()
+    }
+    /// Pixel replacement writes existing image storage; earlier captures forbid entry.
+    fn update_image(source: &TextureVersion, native: &Rc<Image>, preparation: &mut Preparation<'_>) -> Result<(), String> {
+        let executor = &mut preparation.executor;
+        executor.core.current()?;
+        executor.uploads.try_reserve(1).map_err(|error| error.to_string())?;
+        executor.uploads.push(Upload::Image {
+            _image: native.clone(),
+            _receipt: Some(source.receipt()),
+        });
+        let bytes = source
+            .pixels()
+            .map(|bytes| bytes.as_slice())
+            .ok_or("immutable imported image cannot be updated")?;
+        let size = source.desc().size;
+        // SAFETY: The full initialized RGBA extent matches this existing image,
+        // and concrete completion/capture ownership ended before slot reuse.
+        unsafe {
+            executor.gl.bind_texture(glow::TEXTURE_2D, Some(native.raw));
+            executor.gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 1);
+            executor.gl.tex_sub_image_2d(
+                glow::TEXTURE_2D,
+                0,
+                0,
+                0,
+                size.width,
+                size.height,
+                glow::RGBA,
+                glow::UNSIGNED_BYTE,
+                glow::PixelUnpackData::Slice(Some(bytes)),
+            );
+        }
+        executor.check()
+    }
     fn sampler(source: &SamplerVersion, preparation: &mut Preparation<'_>) -> Result<Rc<Sampler>, String> {
         preparation.executor.create_sampler(source)
-    }
-    fn uniform(source: &UniformData, preparation: &mut Preparation<'_>) -> Result<Rc<Buffer>, String> {
-        preparation.executor.create_uniform(source)
     }
     fn pipeline(source: &PipelineVersion, key: &bool, preparation: &mut Preparation<'_>) -> Result<Rc<Pipeline>, String> {
         preparation.executor.create_pipeline(source, *key)
@@ -85,7 +139,7 @@ impl NativeResources for Backend {
         executor.create_image(
             desc.size,
             format,
-            source.pixels().ok_or("missing pixel contents")?.as_slice(),
+            Some(source.pixels().ok_or("missing pixel contents")?.as_slice()),
             Some(source.receipt()),
             true,
         )
@@ -265,8 +319,8 @@ struct PreparedDraw {
     index: Option<(Rc<Buffer>, GpuIndexFormat, u64)>,
     /// Image/sampler pairs retain per-import use accounting independently of physical sharing.
     textures: Vec<(u32, Rc<Image>, Rc<Sampler>, BackingCharge)>,
-    /// Exact immutable copied uniform backing per native slot.
-    uniforms: Vec<(u32, Rc<Buffer>)>,
+    /// Exact captured persistent uniform backing and its selected byte range.
+    uniforms: Vec<(u32, Rc<Buffer>, u64, u64)>,
     /// Already checked direct primitive range.
     range: DrawRange,
     /// Flattened host-bounded viewport mapping.
@@ -459,7 +513,12 @@ impl Executor {
         let mut uniforms = Vec::new();
         uniforms.try_reserve_exact(draw.uniforms.len()).map_err(|error| error.to_string())?;
         for binding in &draw.uniforms {
-            uniforms.push((unit(binding.stage, binding.slot), binding.data.native(&mut preparation)?));
+            uniforms.push((
+                unit(binding.stage, binding.slot),
+                binding.data.native(&mut preparation)?,
+                binding.data.offset(),
+                binding.data.byte_len(),
+            ));
         }
         Ok(PreparedDraw {
             pipeline,
@@ -492,49 +551,21 @@ impl Executor {
             });
             self.uploads.push(Upload::Buffer { _resource: value.clone() });
             self.gl.bind_vertex_array(Some(self.array));
-            let target = if source.desc().role == GpuBufferRole::Index {
-                glow::ELEMENT_ARRAY_BUFFER
-            } else {
-                glow::ARRAY_BUFFER
+            let target = match source.desc().role() {
+                GpuBufferRole::Vertex => glow::ARRAY_BUFFER,
+                GpuBufferRole::Index => glow::ELEMENT_ARRAY_BUFFER,
+                GpuBufferRole::Uniform => glow::UNIFORM_BUFFER,
+                _ => return Err("texture role cannot allocate a native linear buffer".into()),
             };
             self.gl.bind_buffer(target, Some(value.raw));
-            if let Some(bytes) = source.bytes().as_slice() {
-                self.gl.buffer_data_u8_slice(target, bytes, glow::STATIC_DRAW);
-            } else {
-                self.gl.buffer_data_size(target, source.bytes().len() as i32, glow::STATIC_DRAW);
-                self.check()?;
-                let zero = &super::ZERO_BYTES;
-                for offset in (0..source.bytes().len()).step_by(zero.len()) {
-                    self.gl
-                        .buffer_sub_data_u8_slice(target, offset as i32, &zero[..(source.bytes().len() - offset).min(zero.len())]);
-                }
-            }
+            let hint = match source.usage() {
+                GpuBufferUsage::Static => glow::STATIC_DRAW,
+                GpuBufferUsage::Dynamic => glow::DYNAMIC_DRAW,
+                GpuBufferUsage::Streamed => glow::STREAM_DRAW,
+                _ => return Err("invalid buffer usage".into()),
+            };
+            self.gl.buffer_data_u8_slice(target, source.bytes().as_slice(), hint);
             self.gl.bind_vertex_array(None);
-            self.check()?;
-            Ok(value)
-        }
-    }
-    /// Uniform payloads use the same actual GL buffer owner with private std140 end padding.
-    fn create_uniform(&mut self, source: &UniformData) -> Result<Rc<Buffer>, String> {
-        let mut bytes = Vec::new();
-        let length = source.bytes().len().div_ceil(16) * 16;
-        bytes.try_reserve_exact(length).map_err(|error| error.to_string())?;
-        bytes.extend_from_slice(source.bytes());
-        bytes.resize(length, 0);
-        self.uploads.try_reserve(1).map_err(|error| error.to_string())?;
-        // SAFETY: The same checked current context owns allocation, binding and initialization.
-        unsafe {
-            let value = Rc::new(Buffer {
-                allocation: Some(BufferAllocation {
-                    core: self.core.clone(),
-                    raw: self.gl.create_buffer()?,
-                    _charge: source.receipt(),
-                }),
-                retired: self.sender(),
-            });
-            self.uploads.push(Upload::Buffer { _resource: value.clone() });
-            self.gl.bind_buffer(glow::UNIFORM_BUFFER, Some(value.raw));
-            self.gl.buffer_data_u8_slice(glow::UNIFORM_BUFFER, &bytes, glow::STATIC_DRAW);
             self.check()?;
             Ok(value)
         }
@@ -847,8 +878,8 @@ impl Executor {
                 gl.bind_texture(glow::TEXTURE_2D, Some(texture.raw));
                 gl.bind_sampler(*unit, Some(sampler.raw));
             }
-            for (unit, uniform) in &draw.uniforms {
-                gl.bind_buffer_base(glow::UNIFORM_BUFFER, *unit, Some(uniform.raw));
+            for (unit, uniform, offset, len) in &draw.uniforms {
+                gl.bind_buffer_range(glow::UNIFORM_BUFFER, *unit, Some(uniform.raw), *offset as i32, *len as i32);
             }
             match draw.range {
                 DrawRange::Vertices { first, count, instances } => gl.draw_arrays_instanced(glow::TRIANGLES, first as i32, count as i32, instances as i32),
@@ -959,3 +990,7 @@ fn vertex_format(value: GpuVertexFormat) -> (i32, u32, bool) {
         _ => (4, glow::UNSIGNED_BYTE, true),
     }
 }
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[path = "mapping_tests.rs"]
+mod mapping_tests;

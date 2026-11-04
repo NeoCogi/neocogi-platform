@@ -3,8 +3,7 @@ use crate::{
     GpuDevice,
     native::NativeResources,
     resource::{BackingCharge, BufferVersion, TextureVersion, SamplerVersion, PipelineVersion},
-    command::UniformData,
-    abi::Size,
+    abi::*,
 };
 use neocogi_render_core::source::{DriverIdentity, new_driver_identity};
 use std::{cell::Cell, rc::Rc};
@@ -21,6 +20,51 @@ pub struct Core {
     fail_next: Cell<bool>,
     /// Authoritative terminal device-loss observation for Ready reuse tests.
     available: Cell<bool>,
+}
+
+/// Copies a fixture range through the production synchronous buffer ABI.
+pub fn write_buffer(mut buffer: neocogi_com::ComRef<'_, IGpuBufferAbi>, offset: u64, bytes: &[u8]) -> Result<(), neocogi_com::NcStatus> {
+    buffer.upload(neocogi_com::NcCopyFromBufferOffset::new(offset, bytes))
+}
+
+/// Fixture-only rectangle composition above the flat row-major byte transfer API.
+/// A single upload publishes the completed image, including preserving dynamic pixels.
+pub fn write_pixels(mut buffer: neocogi_com::ComRef<'_, IGpuBufferAbi>, rect: Rect, bytes: &[u8]) -> Result<(), neocogi_com::NcStatus> {
+    let info = buffer.info()?;
+    let GpuBufferDesc::Texture { size, .. } = info.desc else { return Err(neocogi_com::NC_E_INVALID_ARG); };
+    if rect.x < 0 || rect.y < 0 || rect.width <= 0 || rect.height <= 0
+        || i64::from(rect.x) + i64::from(rect.width) > i64::from(size.width)
+        || i64::from(rect.y) + i64::from(rect.height) > i64::from(size.height) {
+        return Err(neocogi_com::NC_E_OUT_OF_RANGE);
+    }
+    let row = rect.width as usize * 4;
+    if row * rect.height as usize != bytes.len() { return Err(neocogi_com::NC_E_INVALID_ARG); }
+    let mut pixels = neocogi_com::NcOutputBuffer::new();
+    let mut image = vec![0; info.desc.byte_len()?];
+    if info.usage == GpuBufferUsage::Dynamic {
+        buffer.read(pixels.output(0, image.len()))?;
+        image.copy_from_slice(pixels.as_slice());
+    }
+    let pitch = size.width as usize * 4;
+    for y in 0..rect.height as usize {
+        let first = (rect.y as usize + y) * pitch + rect.x as usize * 4;
+        image[first..first + row].copy_from_slice(&bytes[y * row..(y + 1) * row]);
+    }
+    buffer.upload(neocogi_com::NcCopyFromBufferOffset::new(0, &image))
+}
+
+/// Keeps the public uniform owner explicit until the consuming fixture draw captures it.
+pub fn bind_uniform(
+    resources: neocogi_com::ComRef<'_, IRenderResourcesAbi>,
+    view: &mut IRenderViewClient,
+    stage: GpuShaderStage,
+    slot: u32,
+    bytes: &[u8],
+) -> Result<neocogi_com::ComBox<IGpuBufferAbi>, neocogi_com::NcStatus> {
+    let source = neocogi_render_core::source::Bytes::source(bytes.to_vec());
+    let buffer = resources.create_static_buffer(GpuBufferDesc::Uniform { byte_len: bytes.len() as u64 }, source.as_com_ref())?;
+    view.bind_uniform_buffer(stage, slot, buffer.as_com_ref(), 0, bytes.len() as u64)?;
+    Ok(buffer)
 }
 impl Core {
     /// Creates a distinct explicitly selected virtual driver with no native resources.
@@ -133,11 +177,17 @@ impl NativeResources for Backend {
     type Image = Image;
     type Sampler = Storage;
     type Pipeline = Pipeline;
-    type Uniform = Storage;
     type PipelineKey = u8;
     type Preparation<'a> = Preparation<'a>;
     fn identity(core: &Core) -> &DriverIdentity {
         &core.identity
+    }
+    fn storage_available(core: &Core) -> Result<(), String> {
+        if core.available.get() {
+            Ok(())
+        } else {
+            Err("virtual graphics core is unavailable".into())
+        }
     }
     fn core<'a>(preparation: &'a Preparation<'_>) -> &'a Rc<Core> {
         preparation.core
@@ -161,6 +211,12 @@ impl NativeResources for Backend {
             core: preparation.core.clone(),
             _receipt: source.receipt(),
         }))
+    }
+    fn update_buffer(_: &BufferVersion<Self>, _: &Rc<Storage>, preparation: &mut Preparation<'_>) -> Result<(), String> {
+        Self::check(preparation)
+    }
+    fn update_image(_: &TextureVersion<Self>, _: &Rc<Image>, preparation: &mut Preparation<'_>) -> Result<(), String> {
+        Self::check(preparation)
     }
     fn sampler(source: &SamplerVersion<Self>, preparation: &mut Preparation<'_>) -> Result<Rc<Storage>, String> {
         preparation.core.allocate()?;
@@ -188,20 +244,13 @@ impl NativeResources for Backend {
             _receipts: source.receipts(),
         }))
     }
-    fn uniform(source: &UniformData<Self>, preparation: &mut Preparation<'_>) -> Result<Rc<Storage>, String> {
-        preparation.core.allocate()?;
-        Ok(Rc::new(Storage {
-            core: preparation.core.clone(),
-            _receipt: source.receipt(),
-        }))
-    }
 }
 /// Explicit fixture constructor used by common CPU tests; production always supplies a real core.
 pub fn device(compiler: neocogi_com::ComPtr<neocogi_shader_core::abi::ShaderCompilerAbi>) -> GpuDevice<Backend> {
     GpuDevice::new(Core::new(), compiler)
 }
 
-/// Real COM shader/image fixtures shared by native and browser acceptance.
-pub mod sampled;
 /// Canonical derivative inputs and recorders shared by native and browser acceptance.
 pub mod derivatives;
+/// Real COM shader/image fixtures shared by native and browser acceptance.
+pub mod sampled;

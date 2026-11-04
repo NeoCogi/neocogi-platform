@@ -1,7 +1,6 @@
 //! Concrete backend families and resource-owned native memoization, entirely inside Rust.
 use crate::{
     abi::Size,
-    command::UniformData,
     resource::{BufferVersion, TextureVersion, SamplerVersion, PipelineVersion},
 };
 use neocogi_render_core::source::DriverIdentity;
@@ -21,8 +20,6 @@ pub trait NativeResources: Sized + 'static {
     type Sampler: 'static;
     /// Linked target-compatible native pipeline; never owns its parent version.
     type Pipeline: 'static;
-    /// Initialized native storage for one immutable copied uniform payload.
-    type Uniform: 'static;
     /// Renderer-owned attachment signature, not a shader compiler input or public selector.
     type PipelineKey: Clone + Eq;
     /// Exclusive concrete driver access; only this backend can construct its preparation capability.
@@ -32,6 +29,8 @@ pub trait NativeResources: Sized + 'static {
 
     /// Retained opaque identity minted exactly once for the actual compatible native core.
     fn identity(core: &Self::Core) -> &DriverIdentity;
+    /// Rejects terminal physical-device/context loss before CPU transfers.
+    fn storage_available(core: &Self::Core) -> Result<(), String>;
     /// Actual native core selected by this exclusive preparation transaction.
     fn core<'a>(preparation: &'a Self::Preparation<'_>) -> &'a Rc<Self::Core>;
     /// Checks authoritative native health before either creation or Ready reuse.
@@ -42,14 +41,17 @@ pub trait NativeResources: Sized + 'static {
     fn image_size(image: &Self::Image) -> Size;
     /// Creates/initializes a candidate, retaining actual unpublished owners for any issued uploads.
     fn buffer(source: &BufferVersion<Self>, preparation: &mut Self::Preparation<'_>) -> Result<Rc<Self::Buffer>, String>;
+    /// Refreshes the same idle allocation after a published upload. No older
+    /// logical capture or native prepared/completion owner may still access it.
+    fn update_buffer(source: &BufferVersion<Self>, native: &Rc<Self::Buffer>, preparation: &mut Self::Preparation<'_>) -> Result<(), String>;
     /// Creates an image or captures an authenticated import; import-use receipts remain independent.
     fn image(source: &TextureVersion<Self>, preparation: &mut Self::Preparation<'_>) -> Result<Rc<Self::Image>, String>;
+    /// Refreshes existing idle image storage; imports and immutable data never call this.
+    fn update_image(source: &TextureVersion<Self>, native: &Rc<Self::Image>, preparation: &mut Self::Preparation<'_>) -> Result<(), String>;
     /// Creates immutable sampling state on the matching native core.
     fn sampler(source: &SamplerVersion<Self>, preparation: &mut Self::Preparation<'_>) -> Result<Rc<Self::Sampler>, String>;
     /// Builds one native target variant. Validation scopes must finish before returning success.
     fn pipeline(source: &PipelineVersion<Self>, key: &Self::PipelineKey, preparation: &mut Self::Preparation<'_>) -> Result<Rc<Self::Pipeline>, String>;
-    /// Initializes the exact copied payload and retains its command receipt through native use.
-    fn uniform(source: &UniformData<Self>, preparation: &mut Self::Preparation<'_>) -> Result<Rc<Self::Uniform>, String>;
 }
 
 /// Resource-local native state. Only immutable payload versions may contain this memoization.
@@ -72,6 +74,27 @@ impl<T> Default for NativeSlot<T> {
     }
 }
 impl<T> NativeSlot<T> {
+    /// Last-owner physical proof is separate from the logical slot's Rc ownership.
+    pub(crate) fn idle(&self) -> bool {
+        match self.state.try_borrow() {
+            Ok(state) => match &*state {
+                State::Unprepared => true,
+                State::Ready(value) => Rc::strong_count(value) == 1 && Rc::weak_count(value) == 0,
+            },
+            Err(_) => false,
+        }
+    }
+
+    /// A completed authoring write refreshes capacity without replacing its handle.
+    /// New slots need no refresh because their first realization reads current bytes.
+    pub(crate) fn refresh(&self, update: impl FnOnce(&Rc<T>) -> Result<(), String>) -> Result<(), String> {
+        let state = self.state.try_borrow().map_err(|_| "native resource is busy")?;
+        match &*state {
+            State::Unprepared => Ok(()),
+            State::Ready(value) if Rc::strong_count(value) == 1 && Rc::weak_count(value) == 0 => update(value),
+            State::Ready(_) => Err("native resource still has prepared or submitted owners".into()),
+        }
+    }
     /// Backend-owned constructors run outside the cell borrow under exclusive preparation.
     pub(crate) fn realize(&self, create: impl FnOnce() -> Result<Rc<T>, String>) -> Result<Rc<T>, String> {
         match &*self.state.try_borrow().map_err(|_| "native resource is busy")? {

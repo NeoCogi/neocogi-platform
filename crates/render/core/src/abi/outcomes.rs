@@ -205,7 +205,7 @@ pub fn shader_creation_result(result: Result<ComBox<IGpuShaderAbi>, RenderError>
 /// Exclusive carrier for a prepared logical texture import or an owned failure.
 struct TextureImport {
     /// Untaken imported resources retain their own normal quota/native ownership.
-    outcome: Outcome<ComBox<IGpuTextureAbi>>,
+    outcome: Outcome<ComBox<IGpuBufferAbi>>,
 }
 impl IRenderOutcome for TextureImport {
     /// Return only this operation's success/failure discriminator.
@@ -219,12 +219,12 @@ impl IRenderOutcome for TextureImport {
 }
 impl ITextureImportResult for TextureImport {
     /// Transfer the exclusive imported resource once.
-    fn take_texture(&mut self) -> Result<ComBox<IGpuTextureAbi>, NcStatus> {
+    fn take_texture(&mut self) -> Result<ComBox<IGpuBufferAbi>, NcStatus> {
         self.outcome.take()
     }
 }
 /// Packages a texture import without retaining a shared diagnostic slot.
-pub fn texture_import_result(result: Result<ComBox<IGpuTextureAbi>, RenderError>) -> ComBox<ITextureImportResultAbi> {
+pub fn texture_import_result(result: Result<ComBox<IGpuBufferAbi>, RenderError>) -> ComBox<ITextureImportResultAbi> {
     TextureImport::into_local_box(TextureImport { outcome: Outcome::new(result) })
         .into_interface()
         .unwrap_or_else(|(status, _)| panic!("texture result interface: {status}"))
@@ -328,7 +328,7 @@ impl IRenderHostClient {
         &self,
         resources: neocogi_com::ComRef<'_, IRenderResourcesAbi>,
         image: neocogi_com::ComRef<'_, ITextureAbi>,
-    ) -> Result<ComBox<IGpuTextureAbi>, RenderError> {
+    ) -> Result<ComBox<IGpuBufferAbi>, RenderError> {
         let mut report = self
             .import_texture_result(resources, image)
             .map_err(|status| RenderError::from(status).context("import texture"))?;
@@ -341,7 +341,7 @@ impl IRenderHostClient {
     pub fn prepare_texture(
         &self,
         resources: neocogi_com::ComRef<'_, IRenderResourcesAbi>,
-        texture: neocogi_com::ComRef<'_, IGpuTextureAbi>,
+        texture: neocogi_com::ComRef<'_, IGpuBufferAbi>,
     ) -> Result<(), RenderError> {
         let report = self
             .prepare_texture_result(resources, texture)

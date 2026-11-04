@@ -25,7 +25,6 @@ type BufferVersion = crate::resource::BufferVersion<Backend>;
 type TextureVersion = crate::resource::TextureVersion<Backend>;
 type SamplerVersion = crate::resource::SamplerVersion<Backend>;
 type PipelineVersion = crate::resource::PipelineVersion<Backend>;
-type UniformData = crate::command::UniformData<Backend>;
 /// Statically selected concrete Vulkan resource family.
 pub struct Backend;
 /// Exclusive native construction capability; render-pass compatibility comes only from the host.
@@ -41,11 +40,13 @@ impl NativeResources for Backend {
     type Image = Texture;
     type Sampler = Sampler;
     type Pipeline = Pipeline;
-    type Uniform = Buffer;
     type PipelineKey = Signature;
     type Preparation<'a> = Preparation<'a>;
     fn identity(core: &Core) -> &neocogi_render_core::source::DriverIdentity {
         &core.identity
+    }
+    fn storage_available(core: &Core) -> Result<(), String> {
+        core.check()
     }
     fn core<'a>(preparation: &'a Preparation<'_>) -> &'a Rc<Core> {
         &preparation.executor.core
@@ -66,11 +67,17 @@ impl NativeResources for Backend {
     fn buffer(source: &BufferVersion, preparation: &mut Preparation<'_>) -> Result<Rc<Buffer>, String> {
         preparation.executor.buffer(source)
     }
+    /// Exclusive logical/native slot admission permits updating this mapped capacity.
+    fn update_buffer(source: &BufferVersion, native: &Rc<Buffer>, preparation: &mut Preparation<'_>) -> Result<(), String> {
+        Self::check(preparation)?;
+        native.allocation.overwrite(source.bytes().len(), Some(source.bytes().as_slice()))
+    }
+    /// Images retain their actual handle and reusable upload allocation.
+    fn update_image(source: &TextureVersion, native: &Rc<Texture>, preparation: &mut Preparation<'_>) -> Result<(), String> {
+        preparation.executor.update_image(source, native)
+    }
     fn sampler(source: &SamplerVersion, preparation: &mut Preparation<'_>) -> Result<Rc<Sampler>, String> {
         preparation.executor.sampler(source)
-    }
-    fn uniform(source: &UniformData, preparation: &mut Preparation<'_>) -> Result<Rc<Buffer>, String> {
-        preparation.executor.uniform(source)
     }
     fn pipeline(source: &PipelineVersion, key: &Signature, preparation: &mut Preparation<'_>) -> Result<Rc<Pipeline>, String> {
         preparation.executor.pipeline(source, preparation.pass, *key)
@@ -79,15 +86,16 @@ impl NativeResources for Backend {
         if let Some(image) = source.imported_image() {
             return Ok(image.clone());
         }
-        preparation.executor.create_image(
+        preparation.executor.create_buffer_image(
             source.desc().size,
             if source.desc().format == GpuTextureFormat::Rgba8Srgb {
                 vk::Format::R8G8B8A8_SRGB
             } else {
                 vk::Format::R8G8B8A8_UNORM
             },
-            source.pixels().and_then(|p| p.as_slice()),
+            source.pixels().map(|p| p.as_slice()),
             Some(source.receipt()),
+            source.usage(),
         )
     }
 }
@@ -375,10 +383,6 @@ struct Allocation {
     size: u64,
     /// Native buffer capacity may exceed the next immutable version's logical range.
     capacity: u64,
-    /// Actual VkDeviceMemory extent bounds retained idle physical storage.
-    memory_bytes: u64,
-    /// Reuse requires the same native usage capabilities.
-    usage: vk::BufferUsageFlags,
     /// Host-coherent memory needs no explicit flush before submission.
     coherent: bool,
 }
@@ -426,8 +430,6 @@ impl Allocation {
                 memory,
                 size,
                 capacity: size,
-                memory_bytes: requirements.size,
-                usage,
                 coherent: core.memory.memory_types[kind as usize].property_flags.contains(coherent),
             };
             value.initialize(len, bytes)?;
@@ -438,6 +440,14 @@ impl Allocation {
     /// Reinitializes storage only after every previous native owner and queue use has ended.
     /// Clearing the entire capacity prevents a later shorter version from exposing old bytes.
     fn initialize(&mut self, len: usize, bytes: Option<&[u8]>) -> Result<(), String> {
+        self.overwrite(len, bytes)?;
+        self.size = Self::padded_size(len)?;
+        Ok(())
+    }
+
+    /// Writes fixed physical capacity after common logical/native exclusivity
+    /// admission. No Rust reference to mapped data escapes this allocation.
+    fn overwrite(&self, len: usize, bytes: Option<&[u8]>) -> Result<(), String> {
         let size = Self::padded_size(len)?;
         if size > self.capacity || bytes.is_some_and(|bytes| bytes.len() != len) {
             return Err("native buffer extent mismatch".into());
@@ -456,7 +466,6 @@ impl Allocation {
                     .map_err(|error| self.core.failure("flush graphics buffer", error))?;
             }
         }
-        self.size = size;
         Ok(())
     }
 }
@@ -468,51 +477,9 @@ impl Drop for Allocation {
     }
 }
 
-/// Upper bounds apply to actual native memory, independently of logical client byte quotas.
-const IDLE_BUFFER_BYTES: u64 = 4 * 1024 * 1024;
-/// Small buffers must not turn the byte bound into an excessive native allocation count.
-const IDLE_BUFFER_COUNT: usize = 64;
-
-/// Executor-owned reusable capacity has no version, client receipt, producer or Core back-edge.
-#[derive(Default)]
-struct BufferPool {
-    /// Only last-owner packets can enter this exclusive idle collection.
-    idle: Vec<Allocation>,
-    /// Sum of actual VkDeviceMemory extents retained in idle.
-    bytes: u64,
-}
-impl BufferPool {
-    /// Takes the smallest compatible allocation; callers initialize it before publication.
-    fn take(&mut self, size: u64, usage: vk::BufferUsageFlags) -> Option<Allocation> {
-        let index = self
-            .idle
-            .iter()
-            .enumerate()
-            .filter(|(_, value)| value.capacity >= size && value.usage == usage)
-            .min_by_key(|(_, value)| value.capacity)
-            .map(|(index, _)| index)?;
-        let value = self.idle.swap_remove(index);
-        self.bytes -= value.memory_bytes;
-        Some(value)
-    }
-    /// Caches only bounded physical capacity, dropping excess allocations without failing retirement.
-    fn put(&mut self, value: Allocation) {
-        if self.idle.len() == IDLE_BUFFER_COUNT || value.memory_bytes > IDLE_BUFFER_BYTES - self.bytes || self.idle.try_reserve(1).is_err() {
-            return;
-        }
-        self.bytes += value.memory_bytes;
-        self.idle.push(value);
-    }
-    /// Release idle storage on allocation misses, native failure and executor shutdown.
-    fn clear(&mut self) {
-        self.idle.clear();
-        self.bytes = 0;
-    }
-}
-
 /// Sender-free packet retains immutable initialized storage until every native use ends.
 pub struct BufferAllocation {
-    /// Exclusive initialized storage is destroyed or returned to the bounded allocator on retirement.
+    /// Persistent initialized storage is destroyed after its final native owner retires.
     allocation: Allocation,
     /// Shared original reservation, with no source-version or domain reference.
     _charge: BackingCharge,
@@ -524,7 +491,7 @@ pub(in crate::backends::vulkan) struct Image {
     _memory: Memory,
     /// Parent dispatch has no renderer/cache/domain reverse edge.
     core: Rc<Core>,
-    /// Single-mip immutable image storage.
+    /// Single-mip fixed image allocation.
     pub(in crate::backends::vulkan) raw: vk::Image,
     /// Read-only sampling or host-owned attachment view.
     pub(in crate::backends::vulkan) view: vk::ImageView,
@@ -614,6 +581,8 @@ pub struct TextureAllocation {
     size: Size,
     /// Generic allocation charge; per-import use reservations stay outside this image.
     _charge: Option<BackingCharge>,
+    /// Dynamic/streamed images retain one mapped native upload allocation per slot.
+    upload: Option<Rc<Allocation>>,
 }
 notifying!(Texture, TextureAllocation);
 /// Native sampling packet owns physical-count accounting and an opaque logical reservation.
@@ -790,7 +759,7 @@ struct PreparedDraw {
     /// Actual image/sampler accounting stays alive behind sampled descriptors.
     _textures: Vec<SampledBinding>,
     /// Copied uniform payload accounting stays alive behind buffer descriptors.
-    _uniforms: Vec<(u32, u32, Rc<Buffer>)>,
+    _uniforms: Vec<(u32, u32, Rc<Buffer>, u64, u64)>,
     /// Checked primitive/instance ranges.
     range: DrawRange,
     /// Host-bounded mapping and independent raster clip.
@@ -835,9 +804,13 @@ struct Transfer {
     /// Fence remains owned even if the first wait returns an error.
     fence: vk::Fence,
     /// Host-visible upload source must outlive its queued copy.
-    _staging: Allocation,
+    _staging: Rc<Allocation>,
     /// Destination survives any failed preparation without a COM/device-facade back-reference.
     _image: Rc<Image>,
+    /// Rewrites retain the published slot owner as well as its raw image. This
+    /// blocks another compatible executor from refreshing the same staging or
+    /// destination while submission/completion remains uncertain.
+    _published: Option<Rc<Texture>>,
     /// Generic allocations retain accounting; ordinary native images have no client-domain charge.
     _receipt: Option<BackingCharge>,
     /// Original block capacity follows a failed preparatory upload through uncertain completion.
@@ -865,8 +838,6 @@ pub(in crate::backends::vulkan) struct Executor {
     retired_rx: Receiver<Retirement>,
     /// Native completion retains private backing/receipts without retaining client domain authority.
     submitted: Vec<Submitted>,
-    /// Bounded reusable storage owns only idle physical capacity, never immutable versions.
-    buffers: BufferPool,
     /// Descriptor capacity follows the same final-owner and completion boundary as buffers.
     pools: DescriptorPools,
     /// Usually empty because initialization waits before returning; errors retain uncertain use.
@@ -897,7 +868,6 @@ impl Executor {
             retired_tx,
             retired_rx,
             submitted: Vec::new(),
-            buffers: BufferPool::default(),
             pools: DescriptorPools::default(),
             transfers: Vec::new(),
             health: Health::Active,
@@ -1059,7 +1029,13 @@ impl Executor {
         }
         let mut uniforms = Vec::new();
         for binding in &draw.uniforms {
-            uniforms.push((uniform_group(binding.stage), binding.slot, binding.data.native(&mut preparation)?));
+            uniforms.push((
+                uniform_group(binding.stage),
+                binding.slot,
+                binding.data.native(&mut preparation)?,
+                binding.data.offset(),
+                binding.data.byte_len(),
+            ));
         }
         let groups = unsafe {
             self.core
@@ -1090,11 +1066,8 @@ impl Executor {
                 self.core.device.update_descriptor_sets(&writes, &[]);
             }
         }
-        for (group, slot, uniform) in &uniforms {
-            let buffer = [vk::DescriptorBufferInfo::default()
-                .buffer(uniform.allocation.raw)
-                .offset(0)
-                .range(uniform.allocation.size)];
+        for (group, slot, uniform, offset, len) in &uniforms {
+            let buffer = [vk::DescriptorBufferInfo::default().buffer(uniform.allocation.raw).offset(*offset).range(*len)];
             unsafe {
                 self.core.device.update_descriptor_sets(
                     &[vk::WriteDescriptorSet::default()
@@ -1121,20 +1094,13 @@ impl Executor {
 
     /// Host-visible initialization has no queued transfer, while its opaque receipt follows storage.
     fn buffer(&mut self, source: &BufferVersion) -> Result<Rc<Buffer>, String> {
-        let usage = if source.desc().role == GpuBufferRole::Index {
-            vk::BufferUsageFlags::INDEX_BUFFER
-        } else {
-            vk::BufferUsageFlags::VERTEX_BUFFER
+        let usage = match source.desc().role() {
+            GpuBufferRole::Vertex => vk::BufferUsageFlags::VERTEX_BUFFER,
+            GpuBufferRole::Index => vk::BufferUsageFlags::INDEX_BUFFER,
+            GpuBufferRole::Uniform => vk::BufferUsageFlags::UNIFORM_BUFFER,
+            _ => return Err("texture role cannot allocate a native linear buffer".into()),
         };
-        let allocation = self.buffer_allocation(source.bytes().len(), source.bytes().as_slice(), usage)?;
-        Ok(Rc::new(Buffer {
-            owner: Some(BufferAllocation { allocation, _charge: source.receipt() }),
-            retired: self.retired_tx.clone(),
-        }))
-    }
-    /// Copied uniforms use the same native storage ownership as vertex/index bytes.
-    fn uniform(&mut self, source: &UniformData) -> Result<Rc<Buffer>, String> {
-        let allocation = self.buffer_allocation(source.bytes().len(), Some(source.bytes()), vk::BufferUsageFlags::UNIFORM_BUFFER)?;
+        let allocation = self.buffer_allocation(source.bytes().len(), Some(source.bytes().as_slice()), usage)?;
         Ok(Rc::new(Buffer {
             owner: Some(BufferAllocation { allocation, _charge: source.receipt() }),
             retired: self.retired_tx.clone(),
@@ -1143,11 +1109,6 @@ impl Executor {
     /// Reuses only exclusive last-owner storage. A miss releases idle capacity before allocation
     /// so the cache cannot manufacture a device-allocation-count failure for an otherwise valid request.
     fn buffer_allocation(&mut self, len: usize, bytes: Option<&[u8]>, usage: vk::BufferUsageFlags) -> Result<Allocation, String> {
-        if let Some(mut allocation) = self.buffers.take(Allocation::padded_size(len)?, usage) {
-            allocation.initialize(len, bytes)?;
-            return Ok(allocation);
-        }
-        self.buffers.clear();
         Allocation::new(&self.core, len, bytes, usage)
     }
 
@@ -1183,7 +1144,12 @@ impl Executor {
     /// Wrap actual same-core native pixels without retaining any public COM image or source version.
     pub(in crate::backends::vulkan) fn own_image(&self, native: Rc<Image>, size: Size, charge: Option<BackingCharge>) -> Rc<Texture> {
         Rc::new(Texture {
-            owner: Some(TextureAllocation { native, size, _charge: charge }),
+            owner: Some(TextureAllocation {
+                native,
+                size,
+                _charge: charge,
+                upload: None,
+            }),
             retired: self.retired_tx.clone(),
         })
     }
@@ -1198,26 +1164,78 @@ impl Executor {
         let native = self.upload_image(size, format, pixels, charge.clone())?;
         Ok(self.own_image(native, size, charge))
     }
+    /// Fixed texture-buffer storage retains a reusable native upload allocation
+    /// only for writable resources; immutable uploads release it after completion.
+    fn create_buffer_image(
+        &mut self,
+        size: Size,
+        format: vk::Format,
+        pixels: Option<&[u8]>,
+        charge: Option<BackingCharge>,
+        usage: GpuBufferUsage,
+    ) -> Result<Rc<Texture>, String> {
+        if self.unusable() {
+            return Err("Vulkan graphics executor is unavailable".into());
+        }
+        self.collect()?;
+        let native = Image::allocate(
+            &self.core,
+            size,
+            format,
+            vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
+            vk::ImageAspectFlags::COLOR,
+        )?;
+        let staging = Rc::new(Allocation::new(
+            &self.core,
+            rgba_bytes(size).map_err(|error| error.to_string())?,
+            pixels,
+            vk::BufferUsageFlags::TRANSFER_SRC,
+        )?);
+        self.upload_image_storage(native.clone(), staging.clone(), size, false, charge.clone(), None)?;
+        Ok(Rc::new(Texture {
+            owner: Some(TextureAllocation {
+                native,
+                size,
+                _charge: charge,
+                upload: (usage != GpuBufferUsage::Static).then_some(staging),
+            }),
+            retired: self.retired_tx.clone(),
+        }))
+    }
+
+    /// Reuses both the sampled image and its mapped upload capacity after every
+    /// previous capture/prepared/fence owner ends. A failure retains uncertain use.
+    fn update_image(&mut self, source: &TextureVersion, native: &Rc<Texture>) -> Result<(), String> {
+        if self.unusable() {
+            return Err("Vulkan graphics executor is unavailable".into());
+        }
+        let upload = native.upload.as_ref().ok_or("immutable texture has no writable upload storage")?;
+        let pixels = source.pixels().map(|bytes| bytes.as_slice()).ok_or("imported image cannot be updated")?;
+        upload.overwrite(pixels.len(), Some(pixels))?;
+        self.upload_image_storage(
+            native.native.clone(),
+            upload.clone(),
+            source.desc().size,
+            true,
+            Some(source.receipt()),
+            Some(native.clone()),
+        )
+    }
+
     /// Only actual native backings clone a producer; source versions and Core own none.
     pub(in crate::backends::vulkan) fn sender(&self) -> Sender<Retirement> {
         self.retired_tx.clone()
     }
-    /// Final-owner packets have no remaining captured or submitted use. Recycle their exclusive
-    /// buffer capacity, refunding the ended immutable version while retaining physical accounting.
-    /// Failed executors destroy every packet and idle allocation instead of offering reuse.
+    /// Final-owner packets have no remaining captured or submitted use. Destroy resource
+    /// storage before refunding its reservation; only descriptor pools retain idle capacity.
+    /// Failed executors destroy every packet and idle descriptor pool.
     fn drain(&mut self) {
         let reuse = !self.unusable();
         if !reuse {
-            self.buffers.clear();
             self.pools.clear();
         }
         while let Ok(packet) = self.retired_rx.try_recv() {
             match packet {
-                Retirement::Buffer(value) if reuse => {
-                    let BufferAllocation { allocation, _charge } = value;
-                    self.buffers.put(allocation);
-                    drop(_charge);
-                }
                 Retirement::Pool(pool) if reuse => self.pools.put(pool),
                 packet => packet.discard(),
             }
@@ -1237,15 +1255,40 @@ impl Executor {
             return Err("Vulkan graphics executor is unavailable".into());
         }
         self.collect()?;
-        let core = self.core.clone();
-        let device = &core.device;
         let native = Image::allocate(
-            &core,
+            &self.core,
             size,
             format,
             vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
             vk::ImageAspectFlags::COLOR,
         )?;
+        let staging = Rc::new(Allocation::new(
+            &self.core,
+            rgba_bytes(size).map_err(|error| error.to_string())?,
+            pixels,
+            vk::BufferUsageFlags::TRANSFER_SRC,
+        )?);
+        self.upload_image_storage(native.clone(), staging, size, false, receipt, None)?;
+        Ok(native)
+    }
+
+    /// Copies from already initialized reusable upload capacity. The transfer
+    /// owns concrete source/destination memory before submission can become uncertain.
+    fn upload_image_storage(
+        &mut self,
+        native: Rc<Image>,
+        staging: Rc<Allocation>,
+        size: Size,
+        initialized: bool,
+        receipt: Option<BackingCharge>,
+        published: Option<Rc<Texture>>,
+    ) -> Result<(), String> {
+        if self.unusable() {
+            return Err("Vulkan graphics executor is unavailable".into());
+        }
+        self.collect()?;
+        let core = self.core.clone();
+        let device = &core.device;
         let extent = vk::Extent3D {
             width: size.width as u32,
             height: size.height as u32,
@@ -1255,12 +1298,6 @@ impl Executor {
             .aspect_mask(vk::ImageAspectFlags::COLOR)
             .level_count(1)
             .layer_count(1);
-        let staging = Allocation::new(
-            &core,
-            rgba_bytes(size).map_err(|error| error.to_string())?,
-            pixels,
-            vk::BufferUsageFlags::TRANSFER_SRC,
-        )?;
         let command = unsafe {
             device.allocate_command_buffers(
                 &vk::CommandBufferAllocateInfo::default()
@@ -1296,15 +1333,27 @@ impl Executor {
             };
             device.cmd_pipeline_barrier(
                 *command.get(),
-                vk::PipelineStageFlags::TOP_OF_PIPE,
+                if initialized {
+                    vk::PipelineStageFlags::VERTEX_SHADER | vk::PipelineStageFlags::FRAGMENT_SHADER
+                } else {
+                    vk::PipelineStageFlags::TOP_OF_PIPE
+                },
                 vk::PipelineStageFlags::TRANSFER,
                 vk::DependencyFlags::empty(),
                 &[],
                 &[],
                 &[transition(
-                    vk::ImageLayout::UNDEFINED,
+                    if initialized {
+                        vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
+                    } else {
+                        vk::ImageLayout::UNDEFINED
+                    },
                     vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-                    vk::AccessFlags::empty(),
+                    if initialized {
+                        vk::AccessFlags::SHADER_READ
+                    } else {
+                        vk::AccessFlags::empty()
+                    },
                     vk::AccessFlags::TRANSFER_WRITE,
                 )],
             );
@@ -1340,6 +1389,7 @@ impl Executor {
             fence,
             _staging: staging,
             _image: native.clone(),
+            _published: published,
             _receipt: receipt,
             _capacity: Vec::new(),
         });
@@ -1368,7 +1418,7 @@ impl Executor {
             return Err(self.core.failure("complete graphics image upload", error));
         }
         self.transfers.pop();
-        Ok(native)
+        Ok(())
     }
 
     /// Host acquisition must also reject a failed executor, including frames without client blocks.

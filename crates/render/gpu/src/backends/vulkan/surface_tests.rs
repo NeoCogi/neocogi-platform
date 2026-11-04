@@ -382,16 +382,13 @@ fn reconstruction_failure_rejects_every_native_entry_and_preserves_finalizer_pha
             let owner = sampled::block(&gpu, &resources, root, Size { width: 1, height: 1 }, &[255; 4]);
             let block = gpu.block_snapshot(owner.as_com_ref()).unwrap();
             let image = resources
-                .create_texture(
-                    GpuTextureDesc {
+                .create_static_buffer(
+                    GpuBufferDesc::Texture {
                         size: Size { width: 1, height: 1 },
                         format: GpuTextureFormat::Rgba8Unorm,
                         mip_count: 1,
                     },
-                    neocogi_render_core::source::supplied(Bytes::source(vec![255; 4]).as_com_ref())
-                        .unwrap()
-                        .borrow()
-                        .unwrap(),
+                    Bytes::source(vec![255; 4]).as_com_ref(),
                 )
                 .unwrap();
             let snapshot = gpu.texture_snapshot(resources.as_com_ref(), image.as_com_ref()).unwrap();

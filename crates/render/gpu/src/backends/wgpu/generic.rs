@@ -26,7 +26,6 @@ type BufferVersion = crate::resource::BufferVersion<Backend>;
 type TextureVersion = crate::resource::TextureVersion<Backend>;
 type SamplerVersion = crate::resource::SamplerVersion<Backend>;
 type PipelineVersion = crate::resource::PipelineVersion<Backend>;
-type UniformData = crate::command::UniformData<Backend>;
 /// Statically selected native WGPU resource family, never an erased payload or COM extension.
 pub struct Backend;
 /// Exclusive native construction capability, not publicly constructible from a resource owner.
@@ -40,11 +39,13 @@ impl NativeResources for Backend {
     type Image = Image;
     type Sampler = Sampler;
     type Pipeline = Pipeline;
-    type Uniform = Buffer;
     type PipelineKey = (wgpu::TextureFormat, bool);
     type Preparation<'a> = Preparation<'a>;
     fn identity(core: &Core) -> &neocogi_render_core::source::DriverIdentity {
         &core.identity
+    }
+    fn storage_available(core: &Core) -> Result<(), String> {
+        core.check()
     }
     fn core<'a>(preparation: &'a Preparation<'_>) -> &'a Rc<Core> {
         &preparation.executor.core
@@ -62,13 +63,64 @@ impl NativeResources for Backend {
         let core = preparation.executor.core.clone();
         core.scoped(|| preparation.executor.buffer(source))
     }
+    /// Queue writes transfer upload bytes into the same persistent target buffer.
+    fn update_buffer(source: &BufferVersion, native: &Rc<Buffer>, preparation: &mut Preparation<'_>) -> Result<(), String> {
+        let executor = &mut preparation.executor;
+        executor.uploads.try_reserve(1).map_err(|error| error.to_string())?;
+        executor.uploads.push(Upload::Buffer { _resource: native.clone() });
+        let bytes = source.bytes().as_slice();
+        executor.core.scoped(|| {
+            let full = bytes.len() / 4 * 4;
+            if full != 0 {
+                executor.core.queue.write_buffer(&native.raw, 0, &bytes[..full]);
+            }
+            if full != bytes.len() {
+                let mut tail = [0u8; 4];
+                tail[..bytes.len() - full].copy_from_slice(&bytes[full..]);
+                executor.core.queue.write_buffer(&native.raw, full as u64, &tail);
+            }
+            Ok(())
+        })
+    }
+    /// Retains the original texture and receipt through the executor's next submission.
+    fn update_image(source: &TextureVersion, native: &Rc<Image>, preparation: &mut Preparation<'_>) -> Result<(), String> {
+        let executor = &mut preparation.executor;
+        executor.uploads.try_reserve(1).map_err(|error| error.to_string())?;
+        executor.uploads.push(Upload::Image {
+            _resource: native.clone(),
+            _receipt: Some(source.receipt()),
+        });
+        let bytes = source
+            .pixels()
+            .map(|bytes| bytes.as_slice())
+            .ok_or("immutable imported image cannot be updated")?;
+        let size = source.desc().size;
+        executor.core.scoped(|| {
+            executor.core.queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &native._texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                bytes,
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(size.width as u32 * 4),
+                    rows_per_image: Some(size.height as u32),
+                },
+                wgpu::Extent3d {
+                    width: size.width as u32,
+                    height: size.height as u32,
+                    depth_or_array_layers: 1,
+                },
+            );
+            Ok(())
+        })
+    }
     fn sampler(source: &SamplerVersion, preparation: &mut Preparation<'_>) -> Result<Rc<Sampler>, String> {
         let core = preparation.executor.core.clone();
         core.scoped(|| preparation.executor.sampler(source))
-    }
-    fn uniform(source: &UniformData, preparation: &mut Preparation<'_>) -> Result<Rc<Buffer>, String> {
-        let core = preparation.executor.core.clone();
-        core.scoped(|| preparation.executor.uniform(source))
     }
     fn pipeline(source: &PipelineVersion, key: &Self::PipelineKey, preparation: &mut Preparation<'_>) -> Result<Rc<Pipeline>, String> {
         let core = preparation.executor.core.clone();
@@ -91,7 +143,7 @@ impl NativeResources for Backend {
             } else {
                 wgpu::TextureFormat::Rgba8Unorm
             },
-            source.pixels().and_then(|p| p.as_slice()),
+            source.pixels().map(|p| p.as_slice()),
             Some(source.receipt()),
             false,
         )
@@ -268,8 +320,8 @@ struct PreparedDraw {
     groups: Vec<wgpu::BindGroup>,
     /// Retains actual image/sampler charges through completion, not merely native bind-group handles.
     _textures: Vec<SampledBinding>,
-    /// Retains copied uniform payload charges through completion.
-    _uniforms: Vec<(u32, u32, Rc<Buffer>)>,
+    /// Retains persistent uniform allocations and their charges through completion.
+    _uniforms: Vec<(u32, u32, Rc<Buffer>, u64, u64)>,
     /// Checked direct triangle ranges.
     range: DrawRange,
     /// Viewport mapping is independent of its raster clip.
@@ -309,6 +361,12 @@ enum Upload {
 }
 
 impl Executor {
+    /// Native regression construction retains the same exclusive executor borrow.
+    #[cfg(test)]
+    pub(in crate::backends::wgpu) fn test_preparation(&mut self) -> Preparation<'_> {
+        Preparation { executor: self }
+    }
+
     /// Existing driver receives owned packets; the shared physical core owns neither endpoint.
     pub(in crate::backends::wgpu) fn new(core: Rc<Core>) -> Self {
         let (retired_tx, retired_rx) = mpsc::channel();
@@ -478,21 +536,13 @@ impl Executor {
 
     /// Retains the actual unpublished native candidate before the first queued write.
     fn buffer(&mut self, source: &BufferVersion) -> Result<Rc<Buffer>, String> {
-        let usage = if source.desc().role == GpuBufferRole::Index {
-            wgpu::BufferUsages::INDEX
-        } else {
-            wgpu::BufferUsages::VERTEX
+        let usage = match source.desc().role() {
+            GpuBufferRole::Vertex => wgpu::BufferUsages::VERTEX,
+            GpuBufferRole::Index => wgpu::BufferUsages::INDEX,
+            GpuBufferRole::Uniform => wgpu::BufferUsages::UNIFORM,
+            _ => return Err("texture role cannot allocate a native linear buffer".into()),
         };
-        self.storage(source.bytes().len(), source.bytes().as_slice(), usage, source.receipt())
-    }
-    /// Uniform padding remains native-only; original immutable payload accounting follows storage.
-    fn uniform(&mut self, source: &UniformData) -> Result<Rc<Buffer>, String> {
-        self.storage(
-            source.bytes().len().div_ceil(16) * 16,
-            Some(source.bytes()),
-            wgpu::BufferUsages::UNIFORM,
-            source.receipt(),
-        )
+        self.storage(source.bytes().len(), Some(source.bytes().as_slice()), usage, source.receipt())
     }
     /// New WGPU storage has defined zero contents; write only the supplied prefix and at most 3 pad bytes.
     fn storage(&mut self, len: usize, bytes: Option<&[u8]>, usage: wgpu::BufferUsages, charge: BackingCharge) -> Result<Rc<Buffer>, String> {
@@ -646,7 +696,15 @@ impl Executor {
         let uniforms: Vec<_> = draw
             .uniforms
             .iter()
-            .map(|binding| Ok((uniform_group(binding.stage), binding.slot, binding.data.native(&mut preparation)?)))
+            .map(|binding| {
+                Ok((
+                    uniform_group(binding.stage),
+                    binding.slot,
+                    binding.data.native(&mut preparation)?,
+                    binding.data.offset(),
+                    binding.data.byte_len(),
+                ))
+            })
             .collect::<Result<_, String>>()?;
         let vertices = draw
             .vertex_buffers
@@ -683,11 +741,15 @@ impl Executor {
                         });
                     }
                 }
-                for (stage, slot, uniform) in &uniforms {
+                for (stage, slot, uniform, offset, len) in &uniforms {
                     if *stage == group {
                         entries.push(wgpu::BindGroupEntry {
                             binding: *slot,
-                            resource: uniform.raw.as_entire_binding(),
+                            resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                                buffer: &uniform.raw,
+                                offset: *offset,
+                                size: NonZeroU64::new(*len),
+                            }),
                         });
                     }
                 }

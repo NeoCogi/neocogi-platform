@@ -38,19 +38,17 @@ pub struct SampledBinding<B: crate::native::NativeResources> {
     pub sampler: Rc<SamplerVersion<B>>,
 }
 
-/// Copied uniform bytes can be shared by successive draws until another push changes them.
+/// Exact range of persistent uniform-buffer storage captured by one draw.
 pub struct UniformData<B: crate::native::NativeResources> {
-    /// Fixes compatible native instance before the payload's first use.
-    pub(crate) core: Rc<B::Core>,
-    /// Resource-local native upload, private to backend-owned realization.
-    pub(crate) native: crate::native::NativeSlot<B::Uniform>,
-    /// Exact portable reflected byte layout; native final padding is separate.
-    pub(crate) bytes: Vec<u8>,
-    /// Follows actual copied payload ownership, including native in-flight storage.
-    pub(crate) _charge: PendingCharge,
+    /// Immutable completed-write capture; the public owner remains independently releasable.
+    pub(crate) buffer: Rc<BufferVersion<B>>,
+    /// Portable aligned byte base inside the fixed allocation.
+    pub(crate) offset: usize,
+    /// Exact reflected range consumed by the shader.
+    pub(crate) len: usize,
 }
 
-/// One stage/slot's exact copied uniform bytes.
+/// One stage/slot's validated persistent uniform-buffer range.
 pub struct UniformBinding<B: crate::native::NativeResources> {
     /// Vertex or fragment stage.
     pub stage: GpuShaderStage,
@@ -147,20 +145,20 @@ impl<B: crate::native::NativeResources> Command<B> {
 }
 
 impl<B: crate::native::NativeResources> UniformData<B> {
-    /// Borrows the charged, immutable uniform payload captured during admission.
+    /// Reads the validated CPU authoring range used for shader admission/testing.
     pub fn bytes(&self) -> &[u8] {
-        &self.bytes
+        &self.buffer.bytes().as_slice()[self.offset..self.offset + self.len]
     }
-}
-
-impl<B: crate::native::NativeResources> UniformData<B> {
-    /// Exact copied-payload charge, independent of a domain or source-version owner.
-    pub fn receipt(&self) -> BackingCharge {
-        BackingCharge::pending(self._charge.clone())
+    /// Actual native binding offset; shader data begins at this byte base.
+    pub fn offset(&self) -> u64 {
+        self.offset as u64
     }
-    /// Reuses only this payload's successfully initialized backing on its actual native core.
-    pub fn native(&self, preparation: &mut B::Preparation<'_>) -> Result<Rc<B::Uniform>, String> {
-        crate::native::check_core::<B>(&self.core, preparation)?;
-        self.native.realize(|| B::uniform(self, preparation))
+    /// Exact initialized shader range, excluding native allocation padding.
+    pub fn byte_len(&self) -> u64 {
+        self.len as u64
+    }
+    /// Uniforms use the same persistent native-buffer lifetime as other linear roles.
+    pub fn native(&self, preparation: &mut B::Preparation<'_>) -> Result<Rc<B::Buffer>, String> {
+        self.buffer.native(preparation)
     }
 }

@@ -1,0 +1,16 @@
+[package]
+name = "neocogi-typed-buffer-tests"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dev-dependencies]
+neocogi-render-core.workspace = true
+neocogi-render-gpu = { workspace = true, features = ["test-support"] }
+neocogi-com = { workspace = true, features = ["std", "macros", "runtime"] }
+neocogi-shader-compiler.workspace = true
+
+[build-dependencies]
+neocogi-platform-build.workspace = true
+syn.workspace = true

@@ -11,12 +11,27 @@ interface IRenderDriverBound {
 
 // Generic graphics resources and bounded CPU recording. Native objects never cross this ABI.
 #[version(1)]
-/// The immutable native binding role of a byte buffer; WebGL forbids mixing these roles.
+/// Immutable resource role; one public buffer owns either linear data or texture pixels.
 enum GpuBufferRole: u8 {
     /// Vertex or instance attribute storage.
     Vertex,
     /// Unsigned element-index storage.
     Index,
+    /// Shader uniform storage with explicitly declared portable packing.
+    Uniform,
+    /// Formatted two-dimensional sampled pixels.
+    Texture,
+}
+
+#[version(1)]
+/// Fixed creation/update policy, independent of native API memory flags.
+enum GpuBufferUsage: u8 {
+    /// Complete initial data is supplied once; uploads are forbidden.
+    Static,
+    /// Writes preserve bytes or pixels outside the selected range.
+    Dynamic,
+    /// Replacement writes select bounded reusable storage for overlapping frames.
+    Streamed,
 }
 
 #[version(1)]
@@ -204,17 +219,46 @@ enum RenderViewState: u8 {
 }
 
 #[version(1)]
-/// Fixed byte storage with a single portable native role.
-struct GpuBufferDesc {
-    /// Native binding role.
-    role: GpuBufferRole,
-    /// Exact positive length; all input bytes must be initialized.
-    byte_len: u64,
+/// Exact fixed shape; the variant determines the immutable binding role.
+enum GpuBufferDesc {
+    /// Vertex/instance attributes with an explicit pipeline-defined stride.
+    Vertex {
+        /// Fixed positive byte capacity; at most 64 MiB in the baseline profile.
+        byte_len: u64,
+    },
+    /// Index elements whose u16/u32 interpretation is selected when binding.
+    Index {
+        /// Fixed positive byte capacity; at most 64 MiB in the baseline profile.
+        byte_len: u64,
+    },
+    /// Explicit portable shader-uniform bytes.
+    Uniform {
+        /// Fixed positive byte capacity; at most 64 MiB in the baseline profile.
+        byte_len: u64,
+    },
+    /// Formatted sampled pixels; the baseline profile supports one mip level.
+    Texture {
+        /// Positive physical texel extent.
+        size: Size,
+        /// Four-byte RGBA texel interpretation.
+        format: GpuTextureFormat,
+        /// Baseline resources support exactly one mip level.
+        mip_count: u32,
+    },
 }
 
 #[version(1)]
-/// Immutable texture shape; updates create versions, never resize.
-struct GpuTextureDesc {
+/// Immutable allocation information, shared by untyped and upper-layer typed buffers.
+struct GpuBufferInfo {
+    /// Fixed resource shape; changing capacity requires a new buffer.
+    desc: GpuBufferDesc,
+    /// Static, preserving dynamic, or replacement streaming writes.
+    usage: GpuBufferUsage,
+}
+
+#[version(1)]
+/// Sampled shape retained by internal texture captures and read-only metadata.
+struct GpuTextureInfo {
     /// Positive physical texel extent.
     size: Size,
     /// Interpretation of four tightly packed channels.
@@ -372,7 +416,7 @@ struct RenderClientPermissions {
     write_depth: bool,
     /// Permit depth comparisons other than Always when the selected surface has depth.
     read_depth: bool,
-    /// Permit update_buffer and update_texture; initialized creation remains allowed without this permission.
+    /// Permit dynamic/streamed writes; immutable initialized creation remains allowed without it.
     write_resources: bool,
     /// Permit the host to import an authenticated existing image into this group's resource factory.
     import_images: bool,
@@ -381,12 +425,39 @@ struct RenderClientPermissions {
 }
 
 #[version(1)]
-/// Exclusive logical byte buffer; renderer observers never promote ownership.
-interface IGpuBuffer: IRenderDriverBound {}
+/// Exclusive persistent resource with synchronous copied transfers and fixed capacity.
+interface IGpuBuffer: IRenderDriverBound {
+    /// Returns immutable shape and usage established at creation.
+    fn info(&self) -> Result<GpuBufferInfo>;
+    /// Copies input bytes at the slice's logical byte offset before returning.
+    /// Textures use tightly packed row-major RGBA bytes, with no native row padding.
+    /// Static/imported buffers reject writes. Dynamic preserves unselected bytes;
+    /// streamed clears them. Busy leaves the published contents unchanged and
+    /// never allocates another slot. An empty upload is a checked no-op.
+    fn upload(&mut self, data: &[u8]) -> Result<()>;
+    /// Copies exactly output capacity bytes from its logical byte offset.
+    /// Reads the published CPU contents, not GPU readback; native-only imports
+    /// reject. Bounds are checked before any output is written. Empty reads at
+    /// capacity are valid. No pointer or borrow survives either transfer call.
+    fn read(&self, output: &mut [u8]) -> Result<()>;
+}
 
 #[version(1)]
-/// Exclusive sampled texture, deliberately distinct from ordinary immutable ITexture.
-interface IGpuTexture: IRenderDriverBound {}
+/// Optional upper-layer specialization; drivers never instantiate application types.
+/// The wrapper owns the original driver buffer and validates T's GPU packing.
+interface ITypedGpuBuffer<T>: IGpuBuffer {
+    /// Logical element capacity; textures count four-byte texels in row-major order.
+    fn element_count(&self) -> Result<u64>;
+    /// Explicit GPU byte stride; COM layout alone does not establish shader packing.
+    fn element_stride(&self) -> Result<u64>;
+    /// Original registered resource; inheritance does not change wrapper identity.
+    fn underlying_buffer(&self) -> Result<WeakComBox<IGpuBuffer>>;
+    /// Synchronous typed upload; the slice's logical offset counts elements.
+    fn upload_elements(&mut self, data: &[T]) -> Result<()>;
+    /// Synchronous typed read; output offset and capacity count elements.
+    /// Every requested element is copied or the call fails without publishing output.
+    fn read_elements(&self, output: &mut [T]) -> Result<()>;
+}
 
 #[version(1)]
 /// Exclusive immutable sampler state.
@@ -434,26 +505,24 @@ interface IShaderCreationResult: IRenderOutcome {
 /// Exclusive operation result retaining either an imported texture owner or an owned failure.
 interface ITextureImportResult: IRenderOutcome {
     /// Transfers the imported logical resource once; failure retains no partial public resource.
-    fn take_texture(&mut self) -> Result<ComBox<IGpuTexture>>;
+    fn take_texture(&mut self) -> Result<ComBox<IGpuBuffer>>;
 }
 
 #[version(1)]
 /// Restricted shareable factory; all created GPU resource owners are exclusive.
 interface IRenderResources: IRenderDriverBound {
-    /// Publish a complete logical buffer; native upload is later and fallible.
-    fn create_buffer(&self, desc: GpuBufferDesc, bytes: &Option<ComPtr<IGpuDataSource>>) -> Result<ComBox<IGpuBuffer>>;
-    /// Publish tightly packed logical RGBA pixels, without exposing target attachments.
-    fn create_texture(&self, desc: GpuTextureDesc, pixels: &Option<ComPtr<IGpuDataSource>>) -> Result<ComBox<IGpuTexture>>;
+    /// Creates immutable initialized storage. Supplied bytes must exactly match the shape.
+    fn create_static_buffer(&self, desc: GpuBufferDesc, data: &IGpuDataSource) -> Result<ComBox<IGpuBuffer>>;
+    /// Creates fixed initialized capacity with no caller-supplied data; writes preserve other contents.
+    fn create_dynamic_buffer(&self, desc: GpuBufferDesc) -> Result<ComBox<IGpuBuffer>>;
+    /// Creates bounded reusable capacity with no caller-supplied data; never allocates on a map miss.
+    fn create_streamed_buffer(&self, desc: GpuBufferDesc) -> Result<ComBox<IGpuBuffer>>;
     /// Create immutable portable filtering state.
     fn create_sampler(&self, desc: GpuSamplerDesc) -> Result<ComBox<IGpuSampler>>;
     /// Validate WGSL graphics profile and retain CPU artifacts for one UTF-8 entry point.
     fn create_shader_result(&self, stage: GpuShaderStage, code: &IGpuDataSource, entry: &[u8]) -> Result<ComBox<IShaderCreationResult>>;
     /// Capture live shader artifacts and validate the complete pipeline layout.
     fn create_pipeline(&self, desc: &IGpuPipelineSource, vertex: &IGpuShader, fragment: &IGpuShader) -> Result<ComBox<IGpuPipeline>>;
-    /// Atomically publish a replacement version; previously captured draws retain their versions.
-    fn update_buffer(&self, buffer: &IGpuBuffer, offset: u64, bytes: &IGpuDataSource) -> Result<()>;
-    /// Replace an exact tightly packed subrectangle in a new version.
-    fn update_texture(&self, texture: &IGpuTexture, rect: Rect, pixels: &IGpuDataSource) -> Result<()>;
 }
 
 #[version(1)]
@@ -476,9 +545,9 @@ interface IRenderView {
     /// Install an index stream with explicit little-endian element format.
     fn bind_index_buffer(&mut self, buffer: &IGpuBuffer, format: GpuIndexFormat, offset: u64) -> Result<()>;
     /// Install a sampled texture/sampler pair in a stage slot.
-    fn bind_texture(&mut self, stage: GpuShaderStage, slot: u32, texture: &IGpuTexture, sampler: &IGpuSampler) -> Result<()>;
-    /// Copy exact reflected uniform bytes; no source pointer is retained.
-    fn push_uniforms(&mut self, stage: GpuShaderStage, slot: u32, bytes: &[u8]) -> Result<()>;
+    fn bind_texture(&mut self, stage: GpuShaderStage, slot: u32, texture: &IGpuBuffer, sampler: &IGpuSampler) -> Result<()>;
+    /// Observe fixed uniform storage; draws capture its selected completed write and exact range.
+    fn bind_uniform_buffer(&mut self, stage: GpuShaderStage, slot: u32, buffer: &IGpuBuffer, offset: u64, byte_len: u64) -> Result<()>;
     /// Capture live bindings, current versions and uniforms for a non-indexed triangle draw.
     fn draw(&mut self, vertices: u32, instances: u32, first_vertex: u32) -> Result<()>;
     /// Capture and validate all indexed vertex/instance ranges; base vertex and first instance are zero.
@@ -567,7 +636,7 @@ interface IRenderHost: IRenderDriverBound {
     fn import_texture_result(&self, resources: &IRenderResources, image: &ITexture) -> Result<ComBox<ITextureImportResult>>;
     /// Complete fallible preparation of a permitted imported image before the caller publishes its resource revision.
     /// This never acquires a target or invokes a client during native execution.
-    fn prepare_texture_result(&self, resources: &IRenderResources, texture: &IGpuTexture) -> Result<ComPtr<IRenderOutcome>>;
+    fn prepare_texture_result(&self, resources: &IRenderResources, texture: &IGpuBuffer) -> Result<ComPtr<IRenderOutcome>>;
     /// Creates a narrow CPU recording broker for one host-controlled drawing traversal.
     fn recording_broker(&self) -> Result<ComPtr<IRenderViewBroker>>;
 }

@@ -6,7 +6,7 @@ import tarfile
 import tempfile
 import unittest
 
-from check_packages import SCHEMA_OWNER, inspect_archive, published_packages
+from check_packages import PRIVATE, SCHEMA_OWNER, inspect_archive, published_packages
 
 
 class ArchiveChecks(unittest.TestCase):
@@ -86,9 +86,10 @@ class ArchiveChecks(unittest.TestCase):
         ]
         metadata = {"workspace_members": [p["id"] for p in packages], "packages": packages}
         self.assertEqual(set(published_packages(metadata)), {SCHEMA_OWNER})
-        packages[1]["publish"] = ["crates-io"]
-        with self.assertRaisesRegex(ValueError, "private package"):
-            published_packages(metadata)
+        for private in PRIVATE:
+            packages[1].update(name=private, publish=["crates-io"])
+            with self.subTest(package=private), self.assertRaisesRegex(ValueError, "private package"):
+                published_packages(metadata)
         packages[1].update(name="other-library", version="0.1.0-alpha.2")
         with self.assertRaisesRegex(ValueError, "inconsistent versions"):
             published_packages(metadata)

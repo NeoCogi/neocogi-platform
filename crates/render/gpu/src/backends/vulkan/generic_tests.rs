@@ -55,16 +55,13 @@ fn uncertain_upload_status_retains_owners_until_idle_and_rejects_reuse() {
             .unwrap();
         let resources = controller.resources().unwrap();
         let image = resources
-            .create_texture(
-                GpuTextureDesc {
+            .create_static_buffer(
+                GpuBufferDesc::Texture {
                     size: Size { width: 1, height: 1 },
                     format: GpuTextureFormat::Rgba8Unorm,
                     mip_count: 1,
                 },
-                neocogi_render_core::source::supplied(Bytes::source(vec![255; 4]).as_com_ref())
-                    .unwrap()
-                    .borrow()
-                    .unwrap(),
+                Bytes::source(vec![255; 4]).as_com_ref(),
             )
             .unwrap();
         let source = gpu.texture_snapshot(resources.as_com_ref(), image.as_com_ref()).unwrap();
@@ -72,7 +69,7 @@ fn uncertain_upload_status_retains_owners_until_idle_and_rejects_reuse() {
         let error = match executor.upload_image(
             source.desc().size,
             vk::Format::R8G8B8A8_UNORM,
-            source.pixels().unwrap().as_slice(),
+            Some(source.pixels().unwrap().as_slice()),
             Some(source.receipt()),
         ) {
             Ok(_) => panic!("injected observation failure must reject the upload"),
@@ -442,11 +439,12 @@ fn pipeline_state(resources: &ComPtr<IRenderResourcesAbi>, state: GpuPipelineInf
     resources.create_pipeline(desc.as_com_ref(), vs.as_com_ref(), fs.as_com_ref()).unwrap()
 }
 /// Explicit initialized uniform bytes never borrow Rust structure storage.
-fn values(view: &mut ComBox<IRenderViewAbi>, color: [f32; 4], depth: f32) {
+fn values(resources: &ComPtr<IRenderResourcesAbi>, view: &mut ComBox<IRenderViewAbi>, color: [f32; 4], depth: f32) -> Vec<ComBox<IGpuBufferAbi>> {
     let bytes: Vec<_> = color.into_iter().chain([depth, 0., 0., 0.]).flat_map(f32::to_le_bytes).collect();
-    for stage in [GpuShaderStage::Vertex, GpuShaderStage::Fragment] {
-        view.push_uniforms(stage, 0, NcCopyFromBufferOffset::new(0, &bytes)).unwrap();
-    }
+    [GpuShaderStage::Vertex, GpuShaderStage::Fragment]
+        .into_iter()
+        .map(|stage| crate::testing::bind_uniform(resources.as_com_ref(), view, stage, 0, &bytes).unwrap())
+        .collect()
 }
 
 /// Native color AND depth readback proves confinement, reset, ordered scopes and exact DPI mapping.
@@ -479,16 +477,19 @@ fn regional_depth_and_copied_uniforms_preserve_surrounding_targets() {
         .unwrap();
     let mut view = session.view().unwrap();
     view.bind_pipeline(pipeline.as_com_ref()).unwrap();
-    values(&mut view, [1., 0., 0., 1.], 0.25);
+    let _uniforms = values(&resources, &mut view, [1., 0., 0., 1.], 0.25);
     view.draw(3, 1, 0).unwrap();
+    drop(_uniforms);
     view.push_clip(Rect { x: 14, y: 0, width: 14, height: 28 }).unwrap();
     view.clear_depth(1.).unwrap();
-    values(&mut view, [0., 0., 1., 1.], 0.75);
+    let _uniforms = values(&resources, &mut view, [0., 0., 1., 1.], 0.75);
     view.draw(3, 1, 0).unwrap();
+    drop(_uniforms);
     view.pop().unwrap();
     view.reset().unwrap();
-    values(&mut view, [1., 1., 0., 1.], 0.9);
+    let _uniforms = values(&resources, &mut view, [1., 1., 0., 1.], 0.9);
     view.draw(3, 1, 0).unwrap();
+    drop(_uniforms);
     view.finish().unwrap();
     let first = session.take_block().unwrap();
     let second = Rect { x: 10, y: 10, width: 12, height: 12 };
@@ -497,8 +498,9 @@ fn regional_depth_and_copied_uniforms_preserve_surrounding_targets() {
         .unwrap();
     let mut second_view = second_session.view().unwrap();
     second_view.bind_pipeline(pipeline.as_com_ref()).unwrap();
-    values(&mut second_view, [0., 1., 0., 1.], 0.75);
+    let _uniforms = values(&resources, &mut second_view, [0., 1., 0., 1.], 0.75);
     second_view.draw(3, 1, 0).unwrap();
+    drop(_uniforms);
     second_view.finish().unwrap();
     let second = second_session.take_block().unwrap();
     let third = Rect { x: 1, y: 1, width: 1, height: 1 };
@@ -507,8 +509,9 @@ fn regional_depth_and_copied_uniforms_preserve_surrounding_targets() {
         .unwrap();
     let mut third_view = third_session.view().unwrap();
     third_view.bind_pipeline(hidden.as_com_ref()).unwrap();
-    values(&mut third_view, [1., 0., 1., 1.], 0.5);
+    let _uniforms = values(&resources, &mut third_view, [1., 0., 1., 1.], 0.5);
     third_view.draw(3, 1, 0).unwrap();
+    drop(_uniforms);
     third_view.clear_color(0xffffffff).unwrap();
     third_view.finish().unwrap();
     let third = third_session.take_block().unwrap();
@@ -621,8 +624,9 @@ fn generated_bounds_guards_execute_on_the_native_driver() {
     for index in [2u32, 999, 0, 0] {
         bytes.extend_from_slice(&index.to_le_bytes());
     }
-    view.push_uniforms(GpuShaderStage::Fragment, 0, NcCopyFromBufferOffset::new(0, &bytes)).unwrap();
+    let _uniform = crate::testing::bind_uniform(resources.as_com_ref(), &mut view, GpuShaderStage::Fragment, 0, &bytes).unwrap();
     view.draw(3, 1, 0).unwrap();
+    drop(_uniform);
     view.finish().unwrap();
     let owner = session.take_block().unwrap();
     frame.finish().unwrap();
@@ -759,32 +763,25 @@ fn indexed_texture_case(operation: GpuBlendOp, imported: bool) {
     }
     let source = Bytes::source(vertex_bytes);
     let vertices = resources
-        .create_buffer(
-            GpuBufferDesc {
-                role: GpuBufferRole::Vertex,
-                byte_len: 48,
-            },
-            neocogi_render_core::source::supplied(source.as_com_ref()).unwrap().borrow().unwrap(),
-        )
+        .create_static_buffer(GpuBufferDesc::Vertex { byte_len: 48 }, source.as_com_ref())
         .unwrap();
     let source = Bytes::source([0u16, 1, 2, 0, 2, 3].into_iter().flat_map(u16::to_le_bytes).collect());
     let indices = resources
-        .create_buffer(
-            GpuBufferDesc { role: GpuBufferRole::Index, byte_len: 12 },
-            neocogi_render_core::source::supplied(source.as_com_ref()).unwrap().borrow().unwrap(),
-        )
+        .create_static_buffer(GpuBufferDesc::Index { byte_len: 12 }, source.as_com_ref())
         .unwrap();
-    let source = Bytes::source(vec![255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 0, 255]);
     let image = resources
-        .create_texture(
-            GpuTextureDesc {
-                size: Size { width: 2, height: 2 },
-                format: GpuTextureFormat::Rgba8Unorm,
-                mip_count: 1,
-            },
-            neocogi_render_core::source::supplied(source.as_com_ref()).unwrap().borrow().unwrap(),
-        )
+        .create_streamed_buffer(GpuBufferDesc::Texture {
+            size: Size { width: 2, height: 2 },
+            format: GpuTextureFormat::Rgba8Unorm,
+            mip_count: 1,
+        })
         .unwrap();
+    crate::testing::write_pixels(
+        image.as_com_ref(),
+        Rect { x: 0, y: 0, width: 2, height: 2 },
+        &[255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 0, 255],
+    )
+    .unwrap();
     let image = if imported {
         import_native_image(&gpu, &resources, &mut executor, image)
     } else {
@@ -803,22 +800,20 @@ fn indexed_texture_case(operation: GpuBlendOp, imported: bool) {
     view.bind_texture(GpuShaderStage::Fragment, 0, image.as_com_ref(), sampler.as_com_ref())
         .unwrap();
     let white: Vec<_> = [1.0f32; 4].into_iter().flat_map(f32::to_le_bytes).collect();
-    view.push_uniforms(GpuShaderStage::Fragment, 0, NcCopyFromBufferOffset::new(0, &white)).unwrap();
+    let _uniform = crate::testing::bind_uniform(resources.as_com_ref(), &mut view, GpuShaderStage::Fragment, 0, &white).unwrap();
     view.push_view(Rect { x: 0, y: 0, width: 4, height: 8 }).unwrap();
     view.draw_indexed(6, 1, 0).unwrap();
+    drop(_uniform);
     view.pop().unwrap();
     let image_b = if imported {
         let pixel = resources
-            .create_texture(
-                GpuTextureDesc {
+            .create_static_buffer(
+                GpuBufferDesc::Texture {
                     size: Size { width: 2, height: 2 },
                     format: GpuTextureFormat::Rgba8Unorm,
                     mip_count: 1,
                 },
-                neocogi_render_core::source::supplied(Bytes::source(vec![255; 16]).as_com_ref())
-                    .unwrap()
-                    .borrow()
-                    .unwrap(),
+                Bytes::source(vec![255; 16]).as_com_ref(),
             )
             .unwrap();
         let image_b = import_native_image(&gpu, &resources, &mut executor, pixel);
@@ -826,20 +821,14 @@ fn indexed_texture_case(operation: GpuBlendOp, imported: bool) {
             .unwrap();
         Some(image_b)
     } else {
-        resources
-            .update_texture(
-                image.as_com_ref(),
-                Rect { x: 0, y: 0, width: 2, height: 2 },
-                Bytes::source(vec![255; 16]).as_com_ref(),
-            )
-            .unwrap();
+        crate::testing::write_pixels(image.as_com_ref(), Rect { x: 0, y: 0, width: 2, height: 2 }, &[255; 16]).unwrap();
         None
     };
     let magenta: Vec<_> = [1.0f32, 0., 1., 1.].into_iter().flat_map(f32::to_le_bytes).collect();
-    view.push_uniforms(GpuShaderStage::Fragment, 0, NcCopyFromBufferOffset::new(0, &magenta))
-        .unwrap();
+    let _uniform = crate::testing::bind_uniform(resources.as_com_ref(), &mut view, GpuShaderStage::Fragment, 0, &magenta).unwrap();
     view.push_view(Rect { x: 4, y: 0, width: 4, height: 8 }).unwrap();
     view.draw_indexed(6, 1, 0).unwrap();
+    drop(_uniform);
     view.pop().unwrap();
     drop(image_b);
     view.finish().unwrap();
@@ -897,8 +886,9 @@ fn front_face_and_culling_match_canonical_winding() {
         let mut session = frame.begin_view(RenderViewRoot { client: root, target: root }, resources.as_com_ref()).unwrap();
         let mut view = session.view().unwrap();
         view.bind_pipeline(pipeline.as_com_ref()).unwrap();
-        values(&mut view, [1., 0., 0., 1.], 0.5);
+        let _uniforms = values(&resources, &mut view, [1., 0., 0., 1.], 0.5);
         view.draw(3, 1, 0).unwrap();
+        drop(_uniforms);
         view.finish().unwrap();
         let block = session.take_block().unwrap();
         frame.finish().unwrap();
@@ -941,8 +931,9 @@ fn escaped_prepared_block_keeps_only_its_cache_free_native_core_alive() {
     let mut session = frame.begin_view(RenderViewRoot { client: root, target: root }, resources.as_com_ref()).unwrap();
     let mut view = session.view().unwrap();
     view.bind_pipeline(pipeline.as_com_ref()).unwrap();
-    values(&mut view, [1., 0., 0., 1.], 0.5);
+    let _uniforms = values(&resources, &mut view, [1., 0., 0., 1.], 0.5);
     view.draw(3, 1, 0).unwrap();
+    drop(_uniforms);
     view.finish().unwrap();
     let owner = session.take_block().unwrap();
     frame.finish().unwrap();
@@ -1019,13 +1010,13 @@ fn logical_images_exceeding_native_dimensions_reject_before_native_allocation() 
     let resources = controller.resources().unwrap();
     let bytes = Bytes::source(vec![255; width as usize * 4]);
     let image = resources
-        .create_texture(
-            GpuTextureDesc {
+        .create_static_buffer(
+            GpuBufferDesc::Texture {
                 size: Size { width: width as i32, height: 1 },
                 format: GpuTextureFormat::Rgba8Unorm,
                 mip_count: 1,
             },
-            neocogi_render_core::source::supplied(bytes.as_com_ref()).unwrap().borrow().unwrap(),
+            bytes.as_com_ref(),
         )
         .unwrap();
     let snapshot = gpu.texture_snapshot(resources.as_com_ref(), image.as_com_ref()).unwrap();
@@ -1040,16 +1031,13 @@ fn logical_images_exceeding_native_dimensions_reject_before_native_allocation() 
     assert_eq!(core.memory_count.get(), 0);
     assert!(!executor.unusable());
     let valid = resources
-        .create_texture(
-            GpuTextureDesc {
+        .create_static_buffer(
+            GpuBufferDesc::Texture {
                 size: Size { width: 1, height: 1 },
                 format: GpuTextureFormat::Rgba8Unorm,
                 mip_count: 1,
             },
-            neocogi_render_core::source::supplied(Bytes::source(vec![255; 4]).as_com_ref())
-                .unwrap()
-                .borrow()
-                .unwrap(),
+            Bytes::source(vec![255; 4]).as_com_ref(),
         )
         .unwrap();
     let version = gpu.texture_snapshot(resources.as_com_ref(), valid.as_com_ref()).unwrap();
@@ -1072,11 +1060,11 @@ fn import_native_image(
     gpu: &GpuDevice,
     resources: &ComPtr<IRenderResourcesAbi>,
     executor: &mut Executor,
-    pixel: ComBox<IGpuTextureAbi>,
-) -> ComBox<IGpuTextureAbi> {
+    pixel: ComBox<IGpuBufferAbi>,
+) -> ComBox<IGpuBufferAbi> {
     let source = gpu.texture_snapshot(resources.as_com_ref(), pixel.as_com_ref()).unwrap();
     let native = executor
-        .create_image(source.desc().size, vk::Format::R8G8B8A8_UNORM, source.pixels().unwrap().as_slice(), None)
+        .create_image(source.desc().size, vk::Format::R8G8B8A8_UNORM, Some(source.pixels().unwrap().as_slice()), None)
         .unwrap();
     gpu.import_texture(resources.as_com_ref(), native).unwrap()
 }
@@ -1306,8 +1294,7 @@ fn unsubmitted_variants_reuse_native_objects_and_reject_other_cores() {
         executor.collect().unwrap();
         assert_eq!(gpu.live_bytes(resources.as_com_ref()).unwrap(), 0);
         assert_eq!(gpu.recording_usage(resources.as_com_ref()).unwrap(), (0, 0));
-        // Only bounded allocator capacity may remain; no source, version or receipt survives.
-        executor.buffers.clear();
+        // Retiring final native owners releases every resource allocation.
         assert_eq!(core.live_allocations(), baseline);
     }
 }
@@ -1332,15 +1319,7 @@ fn observed_device_loss_rejects_previously_realized_native_storage() {
         )
         .unwrap();
     let resources = domain.resources().unwrap();
-    let buffer = resources
-        .create_buffer(
-            GpuBufferDesc {
-                role: GpuBufferRole::Vertex,
-                byte_len: 16,
-            },
-            neocogi_render_core::source::initial(None).borrow().unwrap(),
-        )
-        .unwrap();
+    let buffer = resources.create_dynamic_buffer(GpuBufferDesc::Vertex { byte_len: 16 }).unwrap();
     let source = gpu.buffer_snapshot(resources.as_com_ref(), buffer.as_com_ref()).unwrap();
     let native = source
         .native(&mut Preparation {
@@ -1366,127 +1345,6 @@ fn observed_device_loss_rejects_previously_realized_native_storage() {
     drop((source, buffer, native));
     assert!(executor.collect().is_err());
     assert_eq!(core.live_allocations(), 0, "terminal admission must still drain safe native retirement");
-}
-
-/// Reuse begins only after final native ownership ends, resets all bytes, refunds the ended
-/// version, and cannot prevent new allocations at a device-wide allocation-count boundary.
-#[test]
-#[ignore = "requires a native Vulkan device"]
-fn retired_buffers_reuse_exclusive_capacity_without_retaining_versions_or_charges() {
-    let mut core = core();
-    Rc::get_mut(&mut core).unwrap().limits.max_memory_allocation_count = 2;
-    let mut executor = Executor::new(core.clone()).unwrap();
-    let gpu = GpuDevice::new(
-        core.clone(),
-        nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
-            .query()
-            .unwrap(),
-    );
-    let domain = gpu
-        .create_client(
-            Default::default(),
-            gpu.surface_target(neocogi_render_core::abi::RenderSurfaceKind::Framebuffer).unwrap(),
-            Default::default(),
-        )
-        .unwrap();
-    let resources = domain.resources().unwrap();
-    let create = |len: usize, fill: u8, role| {
-        resources
-            .create_buffer(
-                GpuBufferDesc { role, byte_len: len as u64 },
-                neocogi_render_core::source::initial_bytes(vec![fill; len]).borrow().unwrap(),
-            )
-            .unwrap()
-    };
-    let owner = create(32, 0xA5, GpuBufferRole::Vertex);
-    let version = gpu.buffer_snapshot(resources.as_com_ref(), owner.as_com_ref()).unwrap();
-    let first = version
-        .native(&mut Preparation {
-            executor: &mut executor,
-            pass: vk::RenderPass::null(),
-        })
-        .unwrap();
-    let handle = first.allocation.raw;
-    drop((version, owner));
-    executor.collect().unwrap();
-    assert!(
-        executor.buffers.idle.is_empty(),
-        "another native owner forbids reuse, including a completion owner"
-    );
-    assert_eq!(gpu.live_bytes(resources.as_com_ref()).unwrap(), 32);
-
-    let owner = create(32, 0xB6, GpuBufferRole::Vertex);
-    let version = gpu.buffer_snapshot(resources.as_com_ref(), owner.as_com_ref()).unwrap();
-    let second = version
-        .native(&mut Preparation {
-            executor: &mut executor,
-            pass: vk::RenderPass::null(),
-        })
-        .unwrap();
-    assert_ne!(handle, second.allocation.raw);
-    assert_eq!(core.live_allocations(), 2);
-    drop(first);
-    executor.collect().unwrap();
-    assert_eq!(executor.buffers.idle.len(), 1);
-    assert_eq!(gpu.live_bytes(resources.as_com_ref()).unwrap(), 32);
-
-    let shorter = create(16, 0xC7, GpuBufferRole::Vertex);
-    let shorter_version = gpu.buffer_snapshot(resources.as_com_ref(), shorter.as_com_ref()).unwrap();
-    let reused = shorter_version
-        .native(&mut Preparation {
-            executor: &mut executor,
-            pass: vk::RenderPass::null(),
-        })
-        .unwrap();
-    assert_eq!(reused.allocation.raw, handle);
-    assert_eq!(reused.allocation.size, 16);
-    assert_eq!(reused.allocation.capacity, 32);
-    // SAFETY: The first version has no owners or submitted use; the new mapping is initialized.
-    let bytes = unsafe { std::slice::from_raw_parts(reused.allocation.memory.pointer.as_ptr(), 32) };
-    assert_eq!(&bytes[..16], &[0xC7; 16]);
-    assert_eq!(&bytes[16..], &[0; 16], "shorter versions cannot expose the previous tail");
-    assert_eq!(gpu.live_bytes(resources.as_com_ref()).unwrap(), 48);
-    drop((second, owner, version, reused, shorter, shorter_version));
-    executor.collect().unwrap();
-    assert_eq!(gpu.live_bytes(resources.as_com_ref()).unwrap(), 0);
-    assert_eq!(executor.buffers.idle.len(), 2);
-    assert_eq!(core.live_allocations(), 2);
-
-    // Different usage misses the pool. Idle capacity must not exhaust the native limit.
-    let index = create(16, 0xD8, GpuBufferRole::Index);
-    let version = gpu.buffer_snapshot(resources.as_com_ref(), index.as_com_ref()).unwrap();
-    let native = version
-        .native(&mut Preparation {
-            executor: &mut executor,
-            pass: vk::RenderPass::null(),
-        })
-        .unwrap();
-    assert!(executor.buffers.idle.is_empty());
-    assert_eq!(core.live_allocations(), 1);
-    drop((native, version, index));
-    executor.collect().unwrap();
-    drop(executor);
-    assert_eq!(core.live_allocations(), 0, "the executor owns every cached allocation");
-}
-
-/// Both native count and actual native byte bounds apply, and excess storage is destroyed.
-#[test]
-#[ignore = "requires a native Vulkan device"]
-fn idle_buffer_capacity_is_bounded_by_native_bytes_and_count() {
-    let core = core();
-    let mut pool = BufferPool::default();
-    for _ in 0..IDLE_BUFFER_COUNT + 1 {
-        pool.put(Allocation::new(&core, 16, None, vk::BufferUsageFlags::VERTEX_BUFFER).unwrap());
-    }
-    assert!(pool.bytes <= IDLE_BUFFER_BYTES);
-    assert_eq!(pool.idle.len(), IDLE_BUFFER_COUNT);
-    assert_eq!(core.live_allocations(), IDLE_BUFFER_COUNT as u32);
-    pool.clear();
-    assert_eq!(core.live_allocations(), 0);
-    pool.put(Allocation::new(&core, IDLE_BUFFER_BYTES as usize + 1, None, vk::BufferUsageFlags::VERTEX_BUFFER).unwrap());
-    assert!(pool.idle.is_empty());
-    assert_eq!(pool.bytes, 0);
-    assert_eq!(core.live_allocations(), 0);
 }
 
 /// Pool reset waits for every prepared clone and completion owner, then real replay rewrites
@@ -1607,4 +1465,157 @@ fn native_buffer_padding_rejects_unrepresentable_host_lengths() {
         assert_eq!(Allocation::padded_size(len).unwrap(), expected);
     }
     assert!(Allocation::padded_size(usize::MAX).is_err());
+}
+
+/// A writable public object keeps its VkBuffer, VkImage and upload allocation across writes.
+/// Native clones block CPU admission even after the recorded source snapshot is released.
+#[test]
+#[ignore = "requires a native Vulkan device"]
+fn uploaded_buffers_and_textures_reuse_their_own_native_allocations() {
+    let core = core();
+    let mut executor = Executor::new(core.clone()).unwrap();
+    let gpu = GpuDevice::new(
+        core.clone(),
+        nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
+            .query()
+            .unwrap(),
+    );
+    let domain = gpu
+        .create_client(
+            Default::default(),
+            gpu.surface_target(RenderSurfaceKind::Framebuffer).unwrap(),
+            Default::default(),
+        )
+        .unwrap();
+    let resources = domain.resources().unwrap();
+    let buffer = resources.create_dynamic_buffer(GpuBufferDesc::Uniform { byte_len: 32 }).unwrap();
+    let image = resources
+        .create_dynamic_buffer(GpuBufferDesc::Texture {
+            size: Size { width: 2, height: 2 },
+            format: GpuTextureFormat::Rgba8Unorm,
+            mip_count: 1,
+        })
+        .unwrap();
+    let mut handles = None;
+    for fill in 1..=8u8 {
+        crate::testing::write_buffer(buffer.as_com_ref(), 0, &[fill; 16]).unwrap();
+        crate::testing::write_pixels(image.as_com_ref(), Rect { x: 0, y: 0, width: 2, height: 2 }, &[fill; 16]).unwrap();
+        let source = gpu.buffer_snapshot(resources.as_com_ref(), buffer.as_com_ref()).unwrap();
+        let pixels = gpu.texture_snapshot(resources.as_com_ref(), image.as_com_ref()).unwrap();
+        let native = source
+            .native(&mut Preparation {
+                executor: &mut executor,
+                pass: vk::RenderPass::null(),
+            })
+            .unwrap();
+        let texture = pixels
+            .native(&mut Preparation {
+                executor: &mut executor,
+                pass: vk::RenderPass::null(),
+            })
+            .unwrap();
+        let upload = texture.upload.as_ref().unwrap();
+        let current = (native.allocation.raw, texture.native.raw, upload.raw);
+        assert_eq!(*handles.get_or_insert(current), current);
+        assert_eq!(core.live_allocations(), 3);
+        // SAFETY: Synchronous upload completion has ended all device accesses, and
+        // these initialized persistent mappings retain their native owners here.
+        let bytes = unsafe { std::slice::from_raw_parts(native.allocation.memory.pointer.as_ptr(), 32) };
+        assert_eq!(&bytes[..16], &[fill; 16]);
+        assert_eq!(&bytes[16..], &[0; 16]);
+        // SAFETY: The successful transfer waits before returning this upload owner.
+        assert_eq!(unsafe { std::slice::from_raw_parts(upload.memory.pointer.as_ptr(), 16) }, &[fill; 16]);
+        drop((source, pixels));
+        assert_eq!(crate::testing::write_buffer(buffer.as_com_ref(), 0, &[fill; 4]), Err(RENDER_E_BUSY));
+        assert_eq!(crate::testing::write_buffer(image.as_com_ref(), 0, &[fill; 4]), Err(RENDER_E_BUSY));
+        drop((native, texture));
+        crate::testing::write_buffer(buffer.as_com_ref(), 0, &[fill; 4]).unwrap();
+        crate::testing::write_buffer(image.as_com_ref(), 0, &[fill; 4]).unwrap();
+    }
+    drop((buffer, image));
+    executor.collect().unwrap();
+    assert_eq!(core.live_allocations(), 0);
+    assert_eq!(gpu.live_bytes(resources.as_com_ref()).unwrap(), 0);
+}
+
+/// A failed rewrite pins the published slot, not just its raw inner allocation.
+/// Another same-core executor must not overwrite staging until final idle retirement.
+#[test]
+#[ignore = "requires a native Vulkan graphics adapter"]
+fn uncertain_texture_rewrites_exclude_uploads_and_other_compatible_executors() {
+    for failure in [UploadFailure::Submit, UploadFailure::Wait] {
+        let core = core();
+        let mut executor = Executor::new(core.clone()).unwrap();
+        let gpu = GpuDevice::new(
+            core.clone(),
+            nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
+                .query()
+                .unwrap(),
+        );
+        let domain = gpu
+            .create_client(
+                Default::default(),
+                gpu.surface_target(RenderSurfaceKind::Framebuffer).unwrap(),
+                Default::default(),
+            )
+            .unwrap();
+        let resources = domain.resources().unwrap();
+        let image = resources
+            .create_dynamic_buffer(GpuBufferDesc::Texture {
+                size: Size { width: 2, height: 2 },
+                format: GpuTextureFormat::Rgba8Unorm,
+                mip_count: 1,
+            })
+            .unwrap();
+        let rect = Rect { x: 0, y: 0, width: 2, height: 2 };
+        crate::testing::write_pixels(image.as_com_ref(), rect, &[1; 16]).unwrap();
+        let first = gpu.texture_snapshot(resources.as_com_ref(), image.as_com_ref()).unwrap();
+        let native = first
+            .native(&mut Preparation {
+                executor: &mut executor,
+                pass: vk::RenderPass::null(),
+            })
+            .unwrap();
+        let handle = native.native.raw;
+        drop((first, native));
+        crate::testing::write_pixels(image.as_com_ref(), rect, &[2; 16]).unwrap();
+        let changed = gpu.texture_snapshot(resources.as_com_ref(), image.as_com_ref()).unwrap();
+        executor.upload_failure = Some(failure);
+        assert!(
+            changed
+                .native(&mut Preparation {
+                    executor: &mut executor,
+                    pass: vk::RenderPass::null()
+                })
+                .is_err()
+        );
+        assert_eq!(executor.transfers.len(), 1);
+        let mut compatible = Executor::new(core.clone()).unwrap();
+        assert!(
+            changed
+                .native(&mut Preparation {
+                    executor: &mut compatible,
+                    pass: vk::RenderPass::null()
+                })
+                .is_err()
+        );
+        drop(changed);
+        assert_eq!(crate::testing::write_buffer(image.as_com_ref(), 0, &[2; 16]), Err(RENDER_E_BUSY));
+        // Failed-executor destruction waits for actual device idle before releasing
+        // the exact published owner and its uncertain command/staging aggregate.
+        drop(executor);
+        crate::testing::write_buffer(image.as_com_ref(), 0, &[2; 16]).unwrap();
+        let changed = gpu.texture_snapshot(resources.as_com_ref(), image.as_com_ref()).unwrap();
+        let native = changed
+            .native(&mut Preparation {
+                executor: &mut compatible,
+                pass: vk::RenderPass::null(),
+            })
+            .unwrap();
+        assert_eq!(native.native.raw, handle);
+        drop((native, changed, image));
+        compatible.collect().unwrap();
+        assert_eq!(core.live_allocations(), 0);
+        assert_eq!(gpu.live_bytes(resources.as_com_ref()).unwrap(), 0);
+    }
 }

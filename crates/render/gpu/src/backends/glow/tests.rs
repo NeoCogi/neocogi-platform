@@ -5,7 +5,7 @@ use neocogi_render_core::{abi::Size, prelude::color};
 use glow::{Framebuffer, VertexArray, Texture, Sampler, Buffer};
 
 /// SDL initialization is process-wide and rejects concurrent owners on different test threads.
-static NATIVE_SESSION: std::sync::Mutex<()> = std::sync::Mutex::new(());
+pub(super) static NATIVE_SESSION: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// Owns application-side objects used to leave deliberately hostile persistent GL state.
 struct ForeignState {
@@ -316,8 +316,9 @@ fn native_completion_owns_resource_and_command_charges() {
             .unwrap();
         let mut view = session.view().unwrap();
         view.bind_pipeline(pipeline.as_com_ref()).unwrap();
-        view.push_uniforms(GpuShaderStage::Vertex, 0, NcCopyFromBufferOffset::new(0, &[0; 16])).unwrap();
+        let _uniform = crate::testing::bind_uniform(resources.as_com_ref(), &mut view, GpuShaderStage::Vertex, 0, &[0; 16]).unwrap();
         view.draw(3, 1, 0).unwrap();
+        drop(_uniform);
         view.finish().unwrap();
         let owner = session.take_block().unwrap();
         recording.finish().unwrap();
@@ -434,8 +435,9 @@ fn dynamic_shader_indices_cannot_escape_uniform_or_private_storage() {
     for index in [2u32, 999, 0, 0] {
         bytes.extend_from_slice(&index.to_le_bytes());
     }
-    view.push_uniforms(GpuShaderStage::Fragment, 0, NcCopyFromBufferOffset::new(0, &bytes)).unwrap();
+    let _uniform = crate::testing::bind_uniform(resources.as_com_ref(), &mut view, GpuShaderStage::Fragment, 0, &bytes).unwrap();
     view.draw(3, 1, 0).unwrap();
+    drop(_uniform);
     view.finish().unwrap();
     let owner = session.take_block().unwrap();
     recording.finish().unwrap();
@@ -671,7 +673,7 @@ fn owned_outputs_retire_attachments_without_rewriting_shared_images() {
 }
 
 /// Reads immutable pixels using a temporary host-owned read attachment.
-fn read_image(gl: &glow::Context, image: &Image, width: i32, height: i32) -> Vec<u8> {
+pub(super) fn read_image(gl: &glow::Context, image: &Image, width: i32, height: i32) -> Vec<u8> {
     let mut pixels = vec![19; (width * height * 4) as usize];
     // SAFETY: image belongs to this selected live context and output covers its exact RGBA extent.
     unsafe {

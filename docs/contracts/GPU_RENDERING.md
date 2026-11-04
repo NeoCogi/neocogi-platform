@@ -32,22 +32,21 @@ use registered canonical allocation addresses, never a caller's owner number,
 downcast or shared-owner promotion.
 
 Bindings weakly observe public resources. Each draw checks current liveness and
-captures exact immutable backing versions, complete bindings, copied uniforms
+captures exact slot contents, complete bindings, persistent uniform ranges
 and bounded view/clip state. Owner expiry prevents later capture, while already
 recorded work retains its backing through GPU completion. Pipelines retain shader
 artifacts independently of public shader owners. Weak expiry is not a callback
 or proof of GPU completion. Retirement releases only storage whose actual owners
 and completion requirements are satisfied.
 
-Initial buffer and sampled-image contents use the checked borrowed optional value
-`&Option<ComPtr<IGpuDataSource>>` in NCIDL. `None` means descriptor-sized zero
-contents, not undefined memory. It reserves the full extent without a CPU zero
-vector. `Some` supplies exactly the required bytes; empty/short/long sources reject.
-Updates and shader source remain required inputs. Use `source::initial` or
-`source::initial_bytes` and borrow the generated `InitialGpuData` alias for Rust
-calls. That alias derives from the actual generated method rather than a copied
-specialization UUID. Receiver-owned source references and their foreign Release
-calls end before final admission and publication.
+Static buffer creation requires an exact `&IGpuDataSource`; mutable creation takes
+only its descriptor. Empty, short and long static sources reject. Ordinary
+immutable `ITextureFactory` image creation retains its checked optional initial
+source: `None` initializes zeros, while `Some` supplies exactly the image bytes.
+The Rust `InitialGpuData` alias and `source::initial`/`initial_bytes` helpers serve
+that ordinary image API only. The alias derives from its generated method rather
+than a copied specialization UUID. Receiver-owned source references and their
+foreign Release calls end before final admission and publication.
 
 Driver-bound resources, factories and renderer/surface capabilities expose the
 same opaque `IRenderDriverIdentity` for one compatible native driver instance.
@@ -65,16 +64,81 @@ public release does not promise immediate refunds. Native transaction exits also
 maintain completed work on success and failure, including preparation without a
 target. This changes neither CPU-frame abort nor actual GPU-completion rules.
 
+`IRenderResources` creates a single exclusive `IGpuBuffer` object for Vertex,
+Index, Uniform or Texture data. `create_static_buffer(desc, data)` requires exact
+initial contents and forbids uploads. `create_dynamic_buffer(desc)` and
+`create_streamed_buffer(desc)` take only a shape/capacity and initialize storage
+to zero. All declarations remain version 1 during alpha; the replaced optional
+buffer data, update methods, separate GPU texture interface and copied per-draw
+uniform methods are removed.
+
+Dynamic buffers reserve one preserving slot. Streamed buffers reserve three
+replacement slots, covering two queued frames plus a CPU writer. Slot count is
+an explicit bounded baseline policy, not an idle pool of arbitrary objects. A
+streamed write zeroes all unselected bytes/pixels, including shorter update tails.
+Every slot's full logical capacity is charged once at creation; no mapping
+scratch area or unbounded idle pool is reserved. Native destination
+storage is realized lazily once per slot and refreshed in place. Capacity changes
+require creating a new public buffer; ordinary writes do not create one.
+
+`IGpuBuffer.upload(data: &[u8])` copies bytes synchronously at the slice argument's
+logical byte offset. `read(output: &mut [u8])` fills exactly the requested output
+capacity from its logical byte offset. These are the existing COM input/output
+slice conventions, with no SDK intrinsic or returned pointer. Reads copy the
+published CPU-authored contents, including static initial bytes and zero-filled
+mutable storage; they do not initiate GPU readback. GPU-only imported images
+reject reads and uploads with Permission. Textures expose tightly packed row-major
+RGBA bytes, without native tiling or row padding. Higher layers compose rectangles
+using that layout.
+
+All offset/length arithmetic is checked before mutation or output. Empty transfers
+at capacity are valid; empty uploads are no-ops and do not need an idle slot.
+Static buffers and groups without write permission reject uploads, including empty
+ones. A nonempty upload succeeds only when an eligible slot has no recorded,
+prepared or submitted owners. Rust weak snapshot observers also exclude reuse
+because they could upgrade to readers; public COM weak bindings alone do not pin
+slots. Busy returns immediately, leaves every published byte unchanged and keeps
+recording/reads available. Host maintenance releases completed native owners before
+a retry. There is no persistent public transfer state to cancel or poll.
+
+GL/WebGL use SubData/TexSubImage; WGPU uses queue writes into the same native
+storage. Vulkan refreshes persistent mapped buffers or copies reusable staging
+into the same image. Native transfers remain fallible preparation work. CPU upload
+success publishes the CPU contents; native preparation may subsequently fail.
+No caller pointer, reference or output destination survives a transfer call.
+
+The upper-layer `TypedGpuBufferFactory` takes `ComPtr<IRenderResourcesAbi>`. It
+asks that ordinary untyped factory for storage and returns `TypedGpuBuffer<T>`
+with checked element capacity, stride and index/texel constraints. Application
+vertex definitions and vertex factories belong above this layer. The unsafe
+`GpuElement` proof requires initialized unrestricted exact shader bytes, without
+padding or ownership. Typed Rust `upload(first, values)` and `read(first, output)`
+interpret first in elements, with checked conversion to driver byte offsets.
+An application exporting COM can specialize the NCIDL
+`ITypedGpuBuffer<T>: IGpuBuffer` template using `upload_elements` and `read_elements`;
+COM layout alone does not prove shader packing. Its `underlying_buffer()` returns
+the original registered resource observer: COM inheritance does not turn a
+wrapper's address into authenticated driver identity. Rust binding uses
+`as_gpu_buffer()` for that same original resource.
+
+Uniforms are persistent Uniform-role buffers. A draw binds a checked nonempty
+range through `bind_uniform_buffer(stage, slot, buffer, offset, byte_len)`.
+Portable offsets are multiples of 256 bytes; the reflected block size must
+match the selected range, which is at most 16 KiB. Draws retain the selected slot,
+including its charge and native allocation, without copying fresh uniform bytes.
+GFX retains streamed geometry chunks and one frame-size uniform across frames;
+clients retain one uniform buffer for each independently rewritten draw value.
+
 Creation and update publish complete CPU logical resources/versions. Native
 allocation, driver compilation and upload remain fallible preparation work.
 Failure there rejects the frame and leaves the logical version retryable; it
 cannot silently roll version B back to A or rewrite previously captured A draws.
 
-Ordinary immutable `ITexture` images remain separate from exclusive `IGpuTexture`
-resources. The trusted graphics host may import an authenticated ordinary image
+Ordinary immutable `ITexture` images can be imported as static Texture-role
+`IGpuBuffer` resources. The trusted graphics host may import an authenticated ordinary image
 into a group created with `import_images` enabled. The restricted resource factory
 alone does not expose imports. The imported resource exposes no conversion back to
-`ITexture`, native key or renderer capability, and cannot be updated through the factory.
+`ITexture`, native key or renderer capability, and cannot be uploaded to.
 
 At the Rust backend boundary, native images are opaque owned values. Every safe
 `RendererBackend::create_texture(size, pixels)` validates the actual RGBA slice
@@ -274,11 +338,9 @@ pipelines before target acquisition. Native allocations retain only the physical
 device core and opaque shared accounting. Submitted blocks remain owned through their
 graphics fence, including presentation failure. Memory and sampler counts are
 checked device-wide, including host images and UI allocations, and are refunded
-only after native destruction. The executor may retain at most 64 idle host-visible
-buffer allocations and 4 MiB of their actual native memory. This capacity has no
-resource identity or client reservation; it remains counted against native limits.
-An allocation miss releases idle capacity before requesting new native memory.
-The same final-prepared-owner rule permits at most 32 idle descriptor pools and
+only after native destruction. Buffer allocations belong to persistent resource slots,
+not a global idle allocation pool. Final retirement destroys that storage. The
+final-prepared-owner rule still permits at most 32 idle descriptor pools and
 8192 sets, uniform buffers, sampled images and samplers of total retained capacity
 each. Checkout resets a compatible pool before
 publishing any new set handle; matching covers set, uniform, image and sampler
@@ -309,7 +371,9 @@ submission share one scoped queue boundary that installs exact owners before
 submit. A submit error may have consumed pending writes: it marks the compatible
 core unavailable and retains uncertain owners until final idle/loss teardown.
 Another facade cannot reuse that core's Ready slots to bypass failed initialization.
-Vulkan installs its transfer owner before submission. An uncertain submit or wait
+Vulkan installs its transfer owner before submission. Rewrites also retain the
+published slot owner, preventing compatible executors from refreshing its same
+staging or image before uncertain use has retired. An uncertain submit or wait
 result makes that executor terminal and retains commands, staging, destination and
 accounting until proven idle or device loss at teardown. A failure status alone
 never permits releasing potentially queued storage or reusing that executor.
@@ -358,15 +422,11 @@ Maintenance observes completion, releases its owners and drains retirement packe
 It runs before CPU admission, on frame exits, failures, abandonment and shutdown.
 Idle releases wait for maintenance; a disconnected send returns the same owned
 packet for safe late destruction. Image, sampler and pipeline storage is destroyed
-before its final reservation refunds. A Vulkan buffer's final-owner packet may
-instead transfer exclusive storage to the executor's bounded idle allocator after
-all immutable-version and submission ownership ends. Its ended logical byte charge
-then refunds; physical memory remains counted until actual destruction. Before a
-new version can use that storage, the complete capacity is cleared and initialized,
-with explicit visibility for noncoherent memory. Each allocation stays mapped until
-native destruction, and no mapping pointer escapes the concrete allocator. Terminal
-failure and executor shutdown destroy idle capacity. This pool contains neither
-version identity nor client authority and creates no Core/driver ownership cycle.
+before its final reservation refunds. Persistent buffer slots retain their native
+allocation while the public buffer is alive. A slot becomes writable only after
+all logical captures and native prepared/submitted owners release it. Vulkan
+allocations stay mapped until native destruction; writes flush noncoherent memory
+before reuse. Their pointers never cross the public buffer ABI.
 Metadata alone cannot retain the physical core.
 
 WGPU presentation construction, resize and lost/outdated recovery use one checked

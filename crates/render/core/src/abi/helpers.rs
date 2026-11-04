@@ -30,6 +30,54 @@ pub const RENDER_E_BACKEND: NcStatus = NcStatus::from_code(-1005);
 /// The resource group's immutable creation permissions forbid this operation.
 pub const RENDER_E_PERMISSION: NcStatus = NcStatus::from_code(-1006);
 
+impl GpuBufferDesc {
+    /// Builds a linear shape from a selected binding role; textures require dimensions.
+    pub fn linear(role: GpuBufferRole, byte_len: u64) -> Result<Self, NcStatus> {
+        match role {
+            GpuBufferRole::Vertex => Ok(Self::Vertex { byte_len }),
+            GpuBufferRole::Index => Ok(Self::Index { byte_len }),
+            GpuBufferRole::Uniform => Ok(Self::Uniform { byte_len }),
+            _ => Err(NC_E_INVALID_ARG),
+        }
+    }
+    /// Derives binding authority from the shape, avoiding a contradictory role field.
+    pub fn role(self) -> GpuBufferRole {
+        match self {
+            Self::Vertex { .. } => GpuBufferRole::Vertex,
+            Self::Index { .. } => GpuBufferRole::Index,
+            Self::Uniform { .. } => GpuBufferRole::Uniform,
+            Self::Texture { .. } => GpuBufferRole::Texture,
+        }
+    }
+
+    /// Returns the checked unpadded upload length; native storage may require alignment.
+    pub fn byte_len(self) -> Result<usize, NcStatus> {
+        let len = match self {
+            Self::Vertex { byte_len } | Self::Index { byte_len } | Self::Uniform { byte_len } => {
+                usize::try_from(byte_len).map_err(|_| neocogi_com::NC_E_OUT_OF_RANGE)?
+            }
+            Self::Texture { size, format, mip_count } => {
+                if mip_count != 1 || !matches!(format, GpuTextureFormat::Rgba8Unorm | GpuTextureFormat::Rgba8Srgb) {
+                    return Err(NC_E_INVALID_ARG);
+                }
+                rgba_bytes(size)?
+            }
+        };
+        if len == 0 || len > MAX_IMAGE_BYTES {
+            return Err(neocogi_com::NC_E_OUT_OF_RANGE);
+        }
+        Ok(len)
+    }
+
+    /// Extracts sampled-image metadata without interpreting linear buffers as pixels.
+    pub fn texture_info(self) -> Option<GpuTextureInfo> {
+        match self {
+            Self::Texture { size, format, mip_count } => Some(GpuTextureInfo { size, format, mip_count }),
+            Self::Vertex { .. } | Self::Index { .. } | Self::Uniform { .. } => None,
+        }
+    }
+}
+
 impl Default for RenderClientLimits {
     /// Finite domain defaults; related widgets sharing a factory share these quotas.
     fn default() -> Self {

@@ -27,6 +27,8 @@ pub mod prelude {
 
 /// Shared IDL bindings and their Rust conveniences.
 pub mod abi;
+/// Typed factories and mapped element access above the untyped resource driver.
+pub mod buffer;
 /// Shared IDL bindings and their Rust conveniences.
 pub mod platform;
 /// Owned upload producers shared by clients and GFX without linking renderer implementation.

@@ -98,10 +98,10 @@ fn emissive_materials_render_their_factor_and_texture_independently_of_environme
             .unwrap();
         let native = nc_platform::testing::window(compiler, "emissive material regression", size).unwrap();
         let target = Target::new(native.window).unwrap();
-        let graphics = Graphics::new(&scene, prepare_materials(&scene).unwrap(), &lighting.environment, &target.resources).unwrap();
+        let mut graphics = Graphics::new(&scene, prepare_materials(&scene).unwrap(), &lighting.environment, &target.resources).unwrap();
         let (center, radius) = scene.bounds();
         let camera = Camera::new(center, radius, size);
-        target.render(&scene, &graphics, &camera, 0., &lighting, 1).unwrap();
+        target.render(&scene, &mut graphics, &camera, 0., &lighting, 1).unwrap();
         let pixels = native.probe.pixels().unwrap();
         let offset = ((size.height / 2 * size.width + size.width / 2) * 4) as usize;
         results.push(<[u8; 4]>::try_from(&pixels[offset..offset + 4]).unwrap());
@@ -176,13 +176,14 @@ fn models_render_animate_and_respond_to_arcball_pan_zoom() {
         let native = nc_platform::testing::window(compiler, model, SIZE).unwrap();
         let target = Target::new(native.window).unwrap();
         let window = &target.window;
-        let graphics = Graphics::new(&scene, prepare_materials(&scene).unwrap(), &lighting.environment, &target.resources).expect("validated sample pipeline");
+        let mut graphics =
+            Graphics::new(&scene, prepare_materials(&scene).unwrap(), &lighting.environment, &target.resources).expect("validated sample pipeline");
         let (center, radius) = scene.bounds();
         let mut camera = Camera::new(center, radius, window.size().unwrap());
         let mut invocation = 0;
         let mut draw = |camera: &Camera, lighting: &Lighting, time: f32| {
             invocation += 1;
-            target.render(&scene, &graphics, camera, time, lighting, invocation).unwrap();
+            target.render(&scene, &mut graphics, camera, time, lighting, invocation).unwrap();
             native.probe.pixels().unwrap()
         };
         lighting.background = Background::Hidden;
@@ -344,7 +345,13 @@ fn hdr_interpolation_probe() {
     target
         .submit(1, |view| {
             view.bind_pipeline(pipeline.as_com_ref())?;
-            view.push_uniforms(GpuShaderStage::Fragment, 1, NcCopyFromBufferOffset::new(0, &data.uniforms(1., 1.)))?;
+            let uniform = TypedGpuBufferFactory::new(target.resources.clone()).create_static(
+                TypedGpuBufferDesc::Uniform {
+                    element_count: u64::from(environment::UNIFORM_BYTES),
+                },
+                &data.uniforms(1., 1.),
+            )?;
+            view.bind_uniform_buffer(GpuShaderStage::Fragment, 1, uniform.as_gpu_buffer(), 0, u64::from(environment::UNIFORM_BYTES))?;
             view.bind_texture(GpuShaderStage::Fragment, 1, image.as_com_ref(), sampler.as_com_ref())?;
             view.draw(3, 1, 0)
         })
@@ -391,10 +398,10 @@ fn scene_render_failure_keeps_native_texture_reason_after_target_destruction() {
             .unwrap();
         let native = nc_platform::testing::window(compiler, "retained scene error", SIZE).unwrap();
         let target = Target::new(native.window).unwrap();
-        let graphics = Graphics::new(&scene, prepare_materials(&scene).unwrap(), &lighting.environment, &target.resources).unwrap();
+        let mut graphics = Graphics::new(&scene, prepare_materials(&scene).unwrap(), &lighting.environment, &target.resources).unwrap();
         let (center, radius) = scene.bounds();
         let camera = Camera::new(center, radius, SIZE);
-        target.render(&scene, &graphics, &camera, 0., &lighting, 1).unwrap_err()
+        target.render(&scene, &mut graphics, &camera, 0., &lighting, 1).unwrap_err()
     };
     assert_eq!(error.status, RENDER_E_BACKEND);
     let displayed = format!("DamagedHelmet: {error}");

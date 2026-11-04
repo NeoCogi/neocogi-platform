@@ -15,7 +15,8 @@ use environment::Environment;
 use material::{MaterialAtlas, Tile};
 use neocogi_com::{ComBox, ComPtr, NcCopyFromBufferOffset, NcStatus, com_object};
 use neocogi_render_core::{abi::*, platform::*};
-use neocogi_render_core::source::{Bytes, PipelineDesc, initial_bytes};
+use neocogi_render_core::source::{Bytes, PipelineDesc};
+use neocogi_render_core::buffer::{TypedGpuBuffer, TypedGpuBufferDesc, TypedGpuBufferFactory};
 use scene::{MAX_JOINTS, Scene, VERTEX_STRIDE, floats, matrix_bytes};
 use std::{
     cell::RefCell,
@@ -95,7 +96,7 @@ struct Lighting {
 /// Immutable texture and region metadata for one imported material.
 struct GpuMaterial {
     /// Exclusive owner of its four full-resolution map tiles (including packed AO).
-    texture: ComBox<IGpuTextureAbi>,
+    texture: ComBox<IGpuBufferAbi>,
     /// Explicit pixel rectangles, copied with each primitive's material parameters.
     tiles: [Tile; 4],
 }
@@ -111,9 +112,19 @@ struct Graphics {
     /// One exclusive atlas per imported material, including the default material.
     materials: Vec<GpuMaterial>,
     /// RGBE radiance tiles and the linear BRDF lookup share a single sampled image.
-    environment: ComBox<IGpuTextureAbi>,
+    environment: ComBox<IGpuBufferAbi>,
     /// Nearest sampling is required before shader-side decode and bilinear interpolation.
     sampler: ComBox<IGpuSamplerAbi>,
+    /// Camera and environment values retain independent bounded upload slots.
+    camera: TypedGpuBuffer<u8>,
+    /// Background has a different camera matrix and therefore its own storage.
+    sky: TypedGpuBuffer<u8>,
+    /// Shared by all material draws and the optional background.
+    lighting: TypedGpuBuffer<u8>,
+    /// Each primitive is updated once per frame, never between its own captures.
+    skins: Vec<TypedGpuBuffer<u8>>,
+    /// Per-primitive material/camera packing, independent of the backend driver.
+    parameters: Vec<TypedGpuBuffer<u8>>,
 }
 
 /// Resolves all scene material references before entering native resource creation.
@@ -266,7 +277,20 @@ impl Graphics {
         }
         .source()?;
         let sky_pipeline = resources.create_pipeline(sky_description.as_com_ref(), sky_vs.as_com_ref(), sky_fs.as_com_ref())?;
+        let factory = TypedGpuBufferFactory::new(resources.clone());
+        let uniform = |size| factory.create_streamed(TypedGpuBufferDesc::Uniform { element_count: size });
+        let skins = (0..scene.primitives.len())
+            .map(|_| uniform((MAX_JOINTS * 64) as u64))
+            .collect::<Result<_, _>>()?;
+        let parameters = (0..scene.primitives.len())
+            .map(|_| uniform(u64::from(material::UNIFORM_BYTES)))
+            .collect::<Result<_, _>>()?;
         Ok(Self {
+            camera: uniform(64)?,
+            sky: uniform(64)?,
+            lighting: uniform(u64::from(environment::UNIFORM_BYTES))?,
+            skins,
+            parameters,
             pipeline,
             sky_pipeline,
             meshes,
@@ -277,23 +301,27 @@ impl Graphics {
     }
 
     /// Copies this frame's camera/material/palette uniforms and records indexed depth-tested draws.
-    fn record(&self, scene: &Scene, camera: &Camera, seconds: f32, lighting: &Lighting, view: &mut ComBox<IRenderViewAbi>) -> Result<(), NcStatus> {
+    fn record(&mut self, scene: &Scene, camera: &Camera, seconds: f32, lighting: &Lighting, view: &mut ComBox<IRenderViewAbi>) -> Result<(), NcStatus> {
         if lighting.background == Background::Environment {
             self.record_sky(camera, lighting, view)?;
+        } else {
+            self.lighting.upload(0, &lighting.environment.uniforms(lighting.exposure, lighting.intensity))?;
         }
         let pose = scene.pose(seconds);
         view.bind_pipeline(self.pipeline.as_com_ref())?;
         self.bind_environment(lighting, view)?;
         let mut frame = Vec::with_capacity(64);
         matrix_bytes(&mut frame, camera.view_projection());
-        view.push_uniforms(GpuShaderStage::Vertex, 0, NcCopyFromBufferOffset::new(0, &frame))?;
-        for (primitive, mesh) in scene.primitives.iter().zip(&self.meshes) {
+        self.camera.upload(0, &frame)?;
+        view.bind_uniform_buffer(GpuShaderStage::Vertex, 0, self.camera.as_gpu_buffer(), 0, 64)?;
+        for (index, (primitive, mesh)) in scene.primitives.iter().zip(&self.meshes).enumerate() {
             let palette = scene.palette(primitive, &pose);
             let mut skin = Vec::with_capacity(MAX_JOINTS * 64);
             for index in 0..MAX_JOINTS {
                 matrix_bytes(&mut skin, palette.get(index).copied().unwrap_or_else(rs_math3d::Mat4f::identity));
             }
-            view.push_uniforms(GpuShaderStage::Vertex, 1, NcCopyFromBufferOffset::new(0, &skin))?;
+            self.skins[index].upload(0, &skin)?;
+            view.bind_uniform_buffer(GpuShaderStage::Vertex, 1, self.skins[index].as_gpu_buffer(), 0, skin.len() as u64)?;
             let material = &scene.materials[primitive.material];
             let mut parameters = Vec::with_capacity(material::UNIFORM_BYTES as usize);
             floats(&mut parameters, material.base);
@@ -312,7 +340,8 @@ impl Graphics {
             for tile in gpu_material.tiles {
                 floats(&mut parameters, [tile.x as f32, tile.y as f32, tile.width as f32, tile.height as f32]);
             }
-            view.push_uniforms(GpuShaderStage::Fragment, 0, NcCopyFromBufferOffset::new(0, &parameters))?;
+            self.parameters[index].upload(0, &parameters)?;
+            view.bind_uniform_buffer(GpuShaderStage::Fragment, 0, self.parameters[index].as_gpu_buffer(), 0, parameters.len() as u64)?;
             view.bind_texture(GpuShaderStage::Fragment, 0, gpu_material.texture.as_com_ref(), self.sampler.as_com_ref())?;
             view.bind_vertex_buffer(0, mesh.vertices.as_com_ref(), 0)?;
             view.bind_index_buffer(mesh.indices.as_com_ref(), GpuIndexFormat::U32, 0)?;
@@ -324,37 +353,44 @@ impl Graphics {
 
 impl Graphics {
     /// Binds the same environment and uniform settings for mesh and background rendering.
-    fn bind_environment(&self, lighting: &Lighting, view: &mut ComBox<IRenderViewAbi>) -> Result<(), NcStatus> {
-        let bytes = lighting.environment.uniforms(lighting.exposure, lighting.intensity);
-        view.push_uniforms(GpuShaderStage::Fragment, 1, NcCopyFromBufferOffset::new(0, &bytes))?;
+    fn bind_environment(&self, _lighting: &Lighting, view: &mut ComBox<IRenderViewAbi>) -> Result<(), NcStatus> {
+        view.bind_uniform_buffer(
+            GpuShaderStage::Fragment,
+            1,
+            self.lighting.as_gpu_buffer(),
+            0,
+            u64::from(environment::UNIFORM_BYTES),
+        )?;
         view.bind_texture(GpuShaderStage::Fragment, 1, self.environment.as_com_ref(), self.sampler.as_com_ref())
     }
 
     /// Draws a depth-preserving full-screen environment at infinity, before mesh geometry.
-    fn record_sky(&self, camera: &Camera, lighting: &Lighting, view: &mut ComBox<IRenderViewAbi>) -> Result<(), NcStatus> {
-        view.bind_pipeline(self.sky_pipeline.as_com_ref())?;
-        self.bind_environment(lighting, view)?;
+    fn record_sky(&mut self, camera: &Camera, lighting: &Lighting, view: &mut ComBox<IRenderViewAbi>) -> Result<(), NcStatus> {
+        self.lighting.upload(0, &lighting.environment.uniforms(lighting.exposure, lighting.intensity))?;
         let mut rays = Vec::with_capacity(64);
         matrix_bytes(&mut rays, camera.sky_matrix());
-        view.push_uniforms(GpuShaderStage::Vertex, 0, NcCopyFromBufferOffset::new(0, &rays))?;
+        self.sky.upload(0, &rays)?;
+        view.bind_pipeline(self.sky_pipeline.as_com_ref())?;
+        self.bind_environment(lighting, view)?;
+        view.bind_uniform_buffer(GpuShaderStage::Vertex, 0, self.sky.as_gpu_buffer(), 0, 64)?;
         view.draw(3, 1, 0)
     }
 }
 
 /// Publishes complete initialized buffer bytes; the caller retains the returned exclusive owner.
 fn buffer(resources: &ComPtr<IRenderResourcesAbi>, role: GpuBufferRole, bytes: Vec<u8>) -> Result<ComBox<IGpuBufferAbi>, NcStatus> {
-    resources.create_buffer(GpuBufferDesc { role, byte_len: bytes.len() as u64 }, initial_bytes(bytes).borrow()?)
+    resources.create_static_buffer(GpuBufferDesc::linear(role, bytes.len() as u64)?, Bytes::source(bytes).as_com_ref())
 }
 
 /// Uploads one tightly packed UNORM image. Color conversion belongs to the example shader.
-fn texture(resources: &ComPtr<IRenderResourcesAbi>, size: Size, pixels: Vec<u8>) -> Result<ComBox<IGpuTextureAbi>, NcStatus> {
-    resources.create_texture(
-        GpuTextureDesc {
+fn texture(resources: &ComPtr<IRenderResourcesAbi>, size: Size, pixels: Vec<u8>) -> Result<ComBox<IGpuBufferAbi>, NcStatus> {
+    resources.create_static_buffer(
+        GpuBufferDesc::Texture {
             size,
             format: GpuTextureFormat::Rgba8Unorm,
             mip_count: 1,
         },
-        initial_bytes(pixels).borrow()?,
+        Bytes::source(pixels).as_com_ref(),
     )
 }
 
@@ -392,7 +428,7 @@ impl Target {
     }
 
     /// Records one complete contribution and synchronously submits through public contracts.
-    fn render(&self, scene: &Scene, graphics: &Graphics, camera: &Camera, seconds: f32, lighting: &Lighting, invocation: u64) -> Result<(), RenderError> {
+    fn render(&self, scene: &Scene, graphics: &mut Graphics, camera: &Camera, seconds: f32, lighting: &Lighting, invocation: u64) -> Result<(), RenderError> {
         self.submit(invocation, |view| graphics.record(scene, camera, seconds, lighting, view))
     }
 
@@ -512,7 +548,7 @@ pub fn run(model: &str) -> scene::Result<()> {
         let window = platform.create_window(NcCopyFromBufferOffset::new(0, title.as_bytes()), SIZE)?;
         let target = Target::new(window)?;
         let window = &target.window;
-        let graphics = Graphics::new(&scene, materials, &lighting.environment, &target.resources)?;
+        let mut graphics = Graphics::new(&scene, materials, &lighting.environment, &target.resources)?;
         let (center, radius) = scene.bounds();
         let mut camera = Camera::new(center, radius, window.size()?);
         let events = Rc::new(RefCell::new(Vec::new()));
@@ -562,7 +598,7 @@ pub fn run(model: &str) -> scene::Result<()> {
             let size = window.size()?;
             camera.resize(size);
             if size.width > 0 && size.height > 0 {
-                target.render(&scene, &graphics, &camera, options.time.unwrap_or(seconds), &lighting, rendered + 1)?;
+                target.render(&scene, &mut graphics, &camera, options.time.unwrap_or(seconds), &lighting, rendered + 1)?;
                 rendered += 1;
                 if options.frames.is_some_and(|limit| rendered >= limit) {
                     break;

@@ -10,7 +10,7 @@ use crate::{
     resource::{self, *},
     scope::ViewStack,
 };
-use neocogi_com::{com_object, ComBox, ComPtr, ComRef, NcCopyFromBufferOffset, NcStatus, WeakLocalBox, NC_E_INVALID_ARG, NC_E_OUT_OF_MEMORY, NC_E_OUT_OF_RANGE};
+use neocogi_com::{com_object, ComBox, ComPtr, ComRef, NcStatus, WeakLocalBox, NC_E_INVALID_ARG, NC_E_OUT_OF_MEMORY, NC_E_OUT_OF_RANGE};
 use std::{
     cell::{Cell, RefCell},
     collections::HashMap,
@@ -418,9 +418,23 @@ struct BoundTexture<B: crate::native::NativeResources> {
     /// Stage-local sampled pair slot.
     slot: u32,
     /// Checked weak sampled texture construction proof.
-    texture: WeakLocalBox<TextureObject<B>>,
+    texture: WeakLocalBox<BufferObject<B>>,
     /// Checked weak sampler construction proof.
     sampler: WeakLocalBox<SamplerObject<B>>,
+}
+
+/// Uniform buffer observation does not retain its public owner before a draw.
+struct BoundUniform<B: crate::native::NativeResources> {
+    /// Consuming programmable stage and stage-local slot.
+    stage: GpuShaderStage,
+    /// Validated stage-local uniform index.
+    slot: u32,
+    /// Actual registered buffer; wrappers pass their underlying driver resource.
+    object: WeakLocalBox<BufferObject<B>>,
+    /// Aligned fixed-allocation byte base.
+    offset: usize,
+    /// Exact reflected shader byte extent.
+    len: usize,
 }
 
 /// Ordinary owned mutable recording state, detached from the shared slot during operations.
@@ -435,8 +449,8 @@ struct Recorder<B: crate::native::NativeResources> {
     index: Option<BoundIndex<B>>,
     /// At most four sampled slots per stage.
     textures: Vec<BoundTexture<B>>,
-    /// At most four copied uniform slots per stage.
-    uniforms: Vec<UniformBinding<B>>,
+    /// At most four weak uniform-buffer bindings per stage.
+    uniforms: Vec<BoundUniform<B>>,
     /// Commands already contain immutable resource versions and flattened bounds.
     commands: Vec<Command<B>>,
     /// Set only by a balanced successful finish.
@@ -451,7 +465,7 @@ impl<B: crate::native::NativeResources> Recorder<B> {
     fn new(root: RenderViewRoot, domain: &Rc<Domain<B>>) -> Result<Self, NcStatus> {
         let bytes = std::mem::size_of::<Self>()
             + domain.account.limits.stack_depth as usize * std::mem::size_of::<crate::scope::ViewState>()
-            + 8 * (std::mem::size_of::<BoundVertex<B>>() + std::mem::size_of::<BoundTexture<B>>() + std::mem::size_of::<UniformBinding<B>>());
+            + 8 * (std::mem::size_of::<BoundVertex<B>>() + std::mem::size_of::<BoundTexture<B>>() + std::mem::size_of::<BoundUniform<B>>());
         let base = domain.account.pending(bytes)?;
         let stack = ViewStack::new(root, domain.account.limits.stack_depth)?;
         let mut result = Self {
@@ -514,9 +528,9 @@ impl<B: crate::native::NativeResources> Recorder<B> {
                 let bound = self.index.as_ref().ok_or(RENDER_E_STATE)?;
                 let buffer = bound.object.with(|buffer| {
                     same_domain(&core.domain, &buffer.domain)?;
-                    Ok::<_, NcStatus>(buffer.current.clone())
+                    buffer.linear().cloned()
                 })??;
-                if buffer.desc.role != GpuBufferRole::Index {
+                if buffer.desc.role() != GpuBufferRole::Index {
                     return Err(NC_E_INVALID_ARG);
                 }
                 let size = index_size(bound.format)?;
@@ -564,9 +578,9 @@ impl<B: crate::native::NativeResources> Recorder<B> {
             let bound = self.vertices.iter().find(|bound| bound.slot == layout.slot).ok_or(RENDER_E_STATE)?;
             let buffer = bound.object.with(|buffer| {
                 same_domain(&core.domain, &buffer.domain)?;
-                Ok::<_, NcStatus>(buffer.current.clone())
+                buffer.linear().cloned()
             })??;
-            if buffer.desc.role != GpuBufferRole::Vertex || bound.offset % 4 != 0 {
+            if buffer.desc.role() != GpuBufferRole::Vertex || bound.offset % 4 != 0 {
                 return Err(NC_E_INVALID_ARG);
             }
             let element_count = if count == 0 || instances == 0 {
@@ -608,13 +622,21 @@ impl<B: crate::native::NativeResources> Recorder<B> {
                         .iter()
                         .find(|bound| bound.stage == binding.stage && bound.slot == binding.slot)
                         .ok_or(RENDER_E_STATE)?;
-                    if bound.data.bytes.len() != binding.byte_len as usize {
+                    if bound.len != binding.byte_len as usize {
                         return Err(NC_E_INVALID_ARG);
                     }
+                    let buffer = bound.object.with(|buffer| {
+                        same_domain(&core.domain, &buffer.domain)?;
+                        buffer.linear().cloned()
+                    })??;
                     uniforms.push(UniformBinding {
                         stage: bound.stage,
                         slot: bound.slot,
-                        data: bound.data.clone(),
+                        data: Rc::new(UniformData {
+                            buffer,
+                            offset: bound.offset,
+                            len: bound.len,
+                        }),
                     });
                 }
                 GpuBindingKind::SampledTexture => {
@@ -625,7 +647,7 @@ impl<B: crate::native::NativeResources> Recorder<B> {
                         .ok_or(RENDER_E_STATE)?;
                     let texture = bound.texture.with(|texture| {
                         same_domain(&core.domain, &texture.domain)?;
-                        Ok::<_, NcStatus>(texture.current.clone())
+                        texture.texture().cloned()
                     })??;
                     let sampler = bound.sampler.with(|sampler| {
                         same_domain(&core.domain, &sampler.domain)?;
@@ -790,7 +812,8 @@ impl<B: crate::native::NativeResources> IRenderView for View<B> {
             let object = resource::observe(&core.domain.device.inner.buffers, buffer.as_raw().object as usize)?;
             object.with(|buffer| {
                 same_domain(&core.domain, &buffer.domain)?;
-                if buffer.current.desc.role != GpuBufferRole::Vertex || offset > buffer.current.bytes.len() as u64 {
+                let current = buffer.linear()?;
+                if current.desc.role() != GpuBufferRole::Vertex || offset > current.bytes.len() as u64 {
                     return Err(NC_E_INVALID_ARG);
                 }
                 Ok(())
@@ -813,7 +836,8 @@ impl<B: crate::native::NativeResources> IRenderView for View<B> {
             let object = resource::observe(&core.domain.device.inner.buffers, buffer.as_raw().object as usize)?;
             object.with(|buffer| {
                 same_domain(&core.domain, &buffer.domain)?;
-                if buffer.current.desc.role != GpuBufferRole::Index || offset > buffer.current.bytes.len() as u64 {
+                let current = buffer.linear()?;
+                if current.desc.role() != GpuBufferRole::Index || offset > current.bytes.len() as u64 {
                     return Err(NC_E_INVALID_ARG);
                 }
                 Ok(())
@@ -827,14 +851,17 @@ impl<B: crate::native::NativeResources> IRenderView for View<B> {
         &mut self,
         stage: GpuShaderStage,
         slot: u32,
-        texture: ComRef<'_, IGpuTextureAbi>,
+        texture: ComRef<'_, IGpuBufferAbi>,
         sampler: ComRef<'_, IGpuSamplerAbi>,
     ) -> Result<(), NcStatus> {
         self.mutate(|core, recorder| {
             stage_slot(stage, slot)?;
-            let texture = resource::observe(&core.domain.device.inner.textures, texture.as_raw().object as usize)?;
+            let texture = resource::observe(&core.domain.device.inner.buffers, texture.as_raw().object as usize)?;
             let sampler = resource::observe(&core.domain.device.inner.samplers, sampler.as_raw().object as usize)?;
-            texture.with(|texture| same_domain(&core.domain, &texture.domain))??;
+            texture.with(|texture| {
+                same_domain(&core.domain, &texture.domain)?;
+                texture.texture().map(|_| ())
+            })??;
             sampler.with(|sampler| same_domain(&core.domain, &sampler.domain))??;
             let next = BoundTexture { stage, slot, texture, sampler };
             if let Some(bound) = recorder.textures.iter_mut().find(|bound| bound.stage == stage && bound.slot == slot) {
@@ -845,26 +872,28 @@ impl<B: crate::native::NativeResources> IRenderView for View<B> {
             Ok(())
         })
     }
-    /// Exact reflected size is checked by a consuming draw; bytes and capacity are charged now.
-    fn push_uniforms(&mut self, stage: GpuShaderStage, slot: u32, input: NcCopyFromBufferOffset<'_, u8>) -> Result<(), NcStatus> {
+    /// Weak uniform binding is resolved at each draw; mapped resources cannot be captured.
+    fn bind_uniform_buffer(&mut self, stage: GpuShaderStage, slot: u32, buffer: ComRef<'_, IGpuBufferAbi>, offset: u64, byte_len: u64) -> Result<(), NcStatus> {
         self.mutate(|core, recorder| {
             stage_slot(stage, slot)?;
-            if input.offset() != 0 || input.is_empty() || input.len() > 16 * 1024 {
+            if byte_len == 0 || byte_len > 16 * 1024 || !offset.is_multiple_of(256) {
                 return Err(NC_E_INVALID_ARG);
             }
-            let charge = core.domain.account.pending(input.len() + std::mem::size_of::<UniformData<B>>())?;
-            let mut bytes = Vec::new();
-            bytes.try_reserve_exact(input.len()).map_err(|_| NC_E_OUT_OF_MEMORY)?;
-            bytes.extend_from_slice(input.as_slice());
-            let next = UniformBinding {
+            let object = resource::observe(&core.domain.device.inner.buffers, buffer.as_raw().object as usize)?;
+            object.with(|buffer| {
+                same_domain(&core.domain, &buffer.domain)?;
+                let current = buffer.linear()?;
+                if current.desc.role() != GpuBufferRole::Uniform || offset.checked_add(byte_len).filter(|end| *end <= current.bytes.len() as u64).is_none() {
+                    return Err(NC_E_INVALID_ARG);
+                }
+                Ok(())
+            })??;
+            let next = BoundUniform {
                 stage,
                 slot,
-                data: Rc::new(UniformData {
-                    core: core.domain.device.inner.core.clone(),
-                    native: Default::default(),
-                    bytes,
-                    _charge: charge,
-                }),
+                object,
+                offset: offset as usize,
+                len: byte_len as usize,
             };
             if let Some(bound) = recorder.uniforms.iter_mut().find(|bound| bound.stage == stage && bound.slot == slot) {
                 *bound = next;

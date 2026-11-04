@@ -2,7 +2,7 @@
 use super::*;
 use crate::testing::device as new_device;
 type GpuDevice = crate::GpuDevice<crate::testing::Backend>;
-use neocogi_com::{ComInlineValue, NcOutputWriter, NC_E_DROPPED};
+use neocogi_com::{NcCopyFromBufferOffset, ComInlineValue, NcOutputWriter, NC_E_DROPPED};
 
 #[com_object(interfaces(IGpuDataSource))]
 /// Independently callable exact byte producer, without access to renderer internals.
@@ -172,10 +172,7 @@ fn client(device: &GpuDevice, limits: RenderClientLimits) -> (ComBox<IRenderClie
 fn buffer(factory: &ComPtr<IRenderResourcesAbi>, role: GpuBufferRole, data: Vec<u8>) -> ComBox<IGpuBufferAbi> {
     let len = data.len();
     factory
-        .create_buffer(
-            GpuBufferDesc { role, byte_len: len as u64 },
-            neocogi_render_core::source::supplied(bytes(data).as_com_ref()).unwrap().borrow().unwrap(),
-        )
+        .create_static_buffer(GpuBufferDesc::linear(role, len as u64).unwrap(), bytes(data).as_com_ref())
         .unwrap()
 }
 /// Client-side explicit f32 layout; no generated struct is reinterpreted.
@@ -349,7 +346,7 @@ fn draws_snapshot_versions_in_order_and_finished_owner_drop_preserves_the_block(
     );
     let (_controller, factory) = client(&device, RenderClientLimits::default());
     let pipeline = vertex_pipeline(&factory);
-    let vertices = buffer(&factory, GpuBufferRole::Vertex, floats(&[0.0; 9]));
+    let vertices = factory.create_streamed_buffer(GpuBufferDesc::Vertex { byte_len: 36 }).unwrap();
     let broker = device.broker();
     let mut frame = broker.begin_frame().unwrap();
     let mut session = frame.begin_view(root(), factory.as_com_ref()).unwrap();
@@ -357,8 +354,8 @@ fn draws_snapshot_versions_in_order_and_finished_owner_drop_preserves_the_block(
     view.bind_pipeline(pipeline.as_com_ref()).unwrap();
     view.bind_vertex_buffer(0, vertices.as_com_ref(), 0).unwrap();
     view.draw(3, 1, 0).unwrap();
-    let replacement = bytes(floats(&[0.25]));
-    factory.update_buffer(vertices.as_com_ref(), 0, replacement.as_com_ref()).unwrap();
+    let replacement = floats(&[0.25]);
+    crate::testing::write_buffer(vertices.as_com_ref(), 0, &replacement).unwrap();
     view.draw(3, 1, 0).unwrap();
     view.finish().unwrap();
     assert_eq!(session.state().unwrap(), RenderViewState::Committed);
@@ -376,8 +373,8 @@ fn draws_snapshot_versions_in_order_and_finished_owner_drop_preserves_the_block(
         panic!("second generic draw")
     };
     assert!(!Rc::ptr_eq(&a.vertex_buffers[0].buffer, &b.vertex_buffers[0].buffer));
-    assert_eq!(&a.vertex_buffers[0].buffer.bytes.as_slice().unwrap()[..4], &0.0f32.to_le_bytes());
-    assert_eq!(&b.vertex_buffers[0].buffer.bytes.as_slice().unwrap()[..4], &0.25f32.to_le_bytes());
+    assert_eq!(&a.vertex_buffers[0].buffer.bytes.as_slice()[..4], &0.0f32.to_le_bytes());
+    assert_eq!(&b.vertex_buffers[0].buffer.bytes.as_slice()[..4], &0.25f32.to_le_bytes());
     assert_eq!(a.viewport.x, 10);
     assert_eq!(a.viewport.width, 100);
 }
@@ -884,18 +881,13 @@ struct Out { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32> 
     );
     let vertices = buffer(&factory, GpuBufferRole::Vertex, floats(&[0.0; 9]));
     let texture = factory
-        .create_texture(
-            GpuTextureDesc {
-                size: Size { width: 1, height: 1 },
-                format: GpuTextureFormat::Rgba8Unorm,
-                mip_count: 1,
-            },
-            neocogi_render_core::source::supplied(bytes(vec![255; 4]).as_com_ref())
-                .unwrap()
-                .borrow()
-                .unwrap(),
-        )
+        .create_streamed_buffer(GpuBufferDesc::Texture {
+            size: Size { width: 1, height: 1 },
+            format: GpuTextureFormat::Rgba8Unorm,
+            mip_count: 1,
+        })
         .unwrap();
+    crate::testing::write_pixels(texture.as_com_ref(), Rect { x: 0, y: 0, width: 1, height: 1 }, &[255; 4]).unwrap();
     let sampler = factory.create_sampler(GpuSamplerDesc::default()).unwrap();
     let mut frame = device.broker().begin_frame().unwrap();
     let mut session = frame.begin_view(root(), factory.as_com_ref()).unwrap();
@@ -905,13 +897,11 @@ struct Out { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32> 
     view.bind_texture(GpuShaderStage::Fragment, 0, texture.as_com_ref(), sampler.as_com_ref())
         .unwrap();
     let a = floats(&[1.0; 4]);
-    view.push_uniforms(GpuShaderStage::Fragment, 0, NcCopyFromBufferOffset::new(0, &a)).unwrap();
+    let _uniform_a = crate::testing::bind_uniform(factory.as_com_ref(), &mut view, GpuShaderStage::Fragment, 0, &a).unwrap();
     view.draw(3, 1, 0).unwrap();
-    factory
-        .update_texture(texture.as_com_ref(), Rect { x: 0, y: 0, width: 1, height: 1 }, bytes(vec![0; 4]).as_com_ref())
-        .unwrap();
+    crate::testing::write_pixels(texture.as_com_ref(), Rect { x: 0, y: 0, width: 1, height: 1 }, &[0; 4]).unwrap();
     let b = floats(&[0.5; 4]);
-    view.push_uniforms(GpuShaderStage::Fragment, 0, NcCopyFromBufferOffset::new(0, &b)).unwrap();
+    let _uniform_b = crate::testing::bind_uniform(factory.as_com_ref(), &mut view, GpuShaderStage::Fragment, 0, &b).unwrap();
     view.draw(3, 1, 0).unwrap();
     view.finish().unwrap();
     let owner = session.take_block().unwrap();
@@ -922,9 +912,9 @@ struct Out { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32> 
     let Command::Draw(second) = &block.commands[2] else {
         panic!("second sampled draw")
     };
-    assert_eq!(first.uniforms[0].data.bytes.as_slice(), a);
-    assert_eq!(second.uniforms[0].data.bytes.as_slice(), b);
-    assert_eq!(first.textures[0].texture.pixels().unwrap().as_slice().unwrap(), [255; 4]);
-    assert_eq!(second.textures[0].texture.pixels().unwrap().as_slice().unwrap(), [0; 4]);
+    assert_eq!(first.uniforms[0].data.bytes(), a);
+    assert_eq!(second.uniforms[0].data.bytes(), b);
+    assert_eq!(first.textures[0].texture.pixels().unwrap().as_slice(), [255; 4]);
+    assert_eq!(second.textures[0].texture.pixels().unwrap().as_slice(), [0; 4]);
     frame.finish().unwrap();
 }

@@ -11,7 +11,7 @@ import tempfile
 import tomllib
 
 ROOT = Path(__file__).resolve().parents[1]
-PRIVATE = {"neocogi-platform-examples", "neocogi-example-plugins", "neocogi-browser-tests"}
+PRIVATE = {"neocogi-typed-buffer-tests", "neocogi-platform-examples", "neocogi-example-plugins", "neocogi-browser-tests"}
 SCHEMA_OWNER = "neocogi-platform-build"
 
 

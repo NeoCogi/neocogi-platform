@@ -69,11 +69,12 @@ fn pipeline(resources: &ComPtr<IRenderResourcesAbi>, mask: u8) -> ComBox<IGpuPip
 }
 
 /// Explicit little-endian bytes, independent of semantic Rust structure layout.
-fn values(view: &mut ComBox<IRenderViewAbi>, color: [f32; 4], depth: f32) {
+fn values(resources: &ComPtr<IRenderResourcesAbi>, view: &mut ComBox<IRenderViewAbi>, color: [f32; 4], depth: f32) -> Vec<ComBox<IGpuBufferAbi>> {
     let bytes: Vec<_> = color.into_iter().chain([depth, 0., 0., 0.]).flat_map(f32::to_le_bytes).collect();
-    for stage in [GpuShaderStage::Vertex, GpuShaderStage::Fragment] {
-        view.push_uniforms(stage, 0, NcCopyFromBufferOffset::new(0, &bytes)).unwrap();
-    }
+    [GpuShaderStage::Vertex, GpuShaderStage::Fragment]
+        .into_iter()
+        .map(|stage| crate::testing::bind_uniform(resources.as_com_ref(), view, stage, 0, &bytes).unwrap())
+        .collect()
 }
 
 /// Full-screen shader geometry stays confined by the host root, regardless of clip reset.
@@ -106,16 +107,19 @@ fn regional_depth_clears_ordered_views_and_completion_keep_their_contracts() {
         .unwrap();
     let mut view = session.view().unwrap();
     view.bind_pipeline(pipeline.as_com_ref()).unwrap();
-    values(&mut view, [1., 0., 0., 1.], 0.25);
+    let _uniforms = values(&resources, &mut view, [1., 0., 0., 1.], 0.25);
     view.draw(3, 1, 0).unwrap();
+    drop(_uniforms);
     view.push_clip(Rect { x: 28, y: 0, width: 28, height: 56 }).unwrap();
     view.clear_depth(1.).unwrap();
-    values(&mut view, [0., 0., 1., 1.], 0.75);
+    let _uniforms = values(&resources, &mut view, [0., 0., 1., 1.], 0.75);
     view.draw(3, 1, 0).unwrap();
+    drop(_uniforms);
     view.pop().unwrap();
     view.reset().unwrap();
-    values(&mut view, [1., 1., 0., 1.], 0.9);
+    let _uniforms = values(&resources, &mut view, [1., 1., 0., 1.], 0.9);
     view.draw(3, 1, 0).unwrap();
+    drop(_uniforms);
     view.finish().unwrap();
     let first = session.take_block().unwrap();
     let second_root = Rect { x: 20, y: 20, width: 24, height: 24 };
@@ -124,8 +128,9 @@ fn regional_depth_clears_ordered_views_and_completion_keep_their_contracts() {
         .unwrap();
     let mut second_view = second.view().unwrap();
     second_view.bind_pipeline(pipeline.as_com_ref()).unwrap();
-    values(&mut second_view, [0., 1., 0., 1.], 0.75);
+    let _uniforms = values(&resources, &mut second_view, [0., 1., 0., 1.], 0.75);
     second_view.draw(3, 1, 0).unwrap();
+    drop(_uniforms);
     second_view.finish().unwrap();
     let second_owner = second.take_block().unwrap();
     let third_root = Rect { x: 1, y: 1, width: 2, height: 2 };
@@ -134,8 +139,9 @@ fn regional_depth_clears_ordered_views_and_completion_keep_their_contracts() {
         .unwrap();
     let mut third_view = third.view().unwrap();
     third_view.bind_pipeline(hidden.as_com_ref()).unwrap();
-    values(&mut third_view, [1., 0., 1., 1.], 0.5);
+    let _uniforms = values(&resources, &mut third_view, [1., 0., 1., 1.], 0.5);
     third_view.draw(3, 1, 0).unwrap();
+    drop(_uniforms);
     third_view.clear_color(0xffffffff).unwrap();
     third_view.finish().unwrap();
     let third_owner = third.take_block().unwrap();
@@ -228,7 +234,7 @@ fn regional_depth_clears_ordered_views_and_completion_keep_their_contracts() {
     assert!(pollster::block_on(outer.pop()).is_none());
 }
 
-/// Explicit vertex/index bytes, sampled-image updates and copied uniforms survive owner expiry.
+/// Explicit vertex/index bytes, sampled-image maps and uniform-buffer captures survive owner expiry.
 #[test]
 #[ignore = "requires a native WGPU adapter, including a software adapter"]
 fn indexed_textures_and_uniform_versions_execute_without_public_owners() {
@@ -351,32 +357,25 @@ fn indexed_texture_case(operation: GpuBlendOp, imported: bool) {
     }
     let source = Bytes::source(vertex_bytes);
     let vertices = resources
-        .create_buffer(
-            GpuBufferDesc {
-                role: GpuBufferRole::Vertex,
-                byte_len: 48,
-            },
-            neocogi_render_core::source::supplied(source.as_com_ref()).unwrap().borrow().unwrap(),
-        )
+        .create_static_buffer(GpuBufferDesc::Vertex { byte_len: 48 }, source.as_com_ref())
         .unwrap();
     let source = Bytes::source([0u16, 1, 2, 0, 2, 3].into_iter().flat_map(u16::to_le_bytes).collect());
     let indices = resources
-        .create_buffer(
-            GpuBufferDesc { role: GpuBufferRole::Index, byte_len: 12 },
-            neocogi_render_core::source::supplied(source.as_com_ref()).unwrap().borrow().unwrap(),
-        )
+        .create_static_buffer(GpuBufferDesc::Index { byte_len: 12 }, source.as_com_ref())
         .unwrap();
-    let source = Bytes::source(vec![255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 0, 255]);
     let image = resources
-        .create_texture(
-            GpuTextureDesc {
-                size: Size { width: 2, height: 2 },
-                format: GpuTextureFormat::Rgba8Unorm,
-                mip_count: 1,
-            },
-            neocogi_render_core::source::supplied(source.as_com_ref()).unwrap().borrow().unwrap(),
-        )
+        .create_streamed_buffer(GpuBufferDesc::Texture {
+            size: Size { width: 2, height: 2 },
+            format: GpuTextureFormat::Rgba8Unorm,
+            mip_count: 1,
+        })
         .unwrap();
+    crate::testing::write_pixels(
+        image.as_com_ref(),
+        Rect { x: 0, y: 0, width: 2, height: 2 },
+        &[255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 0, 255],
+    )
+    .unwrap();
     let image = if imported {
         import_native_image(&gpu, &resources, &mut executor, image)
     } else {
@@ -395,22 +394,20 @@ fn indexed_texture_case(operation: GpuBlendOp, imported: bool) {
     view.bind_texture(GpuShaderStage::Fragment, 0, image.as_com_ref(), sampler.as_com_ref())
         .unwrap();
     let white: Vec<_> = [1.0f32; 4].into_iter().flat_map(f32::to_le_bytes).collect();
-    view.push_uniforms(GpuShaderStage::Fragment, 0, NcCopyFromBufferOffset::new(0, &white)).unwrap();
+    let _uniform = crate::testing::bind_uniform(resources.as_com_ref(), &mut view, GpuShaderStage::Fragment, 0, &white).unwrap();
     view.push_view(Rect { x: 0, y: 0, width: 4, height: 8 }).unwrap();
     view.draw_indexed(6, 1, 0).unwrap();
+    drop(_uniform);
     view.pop().unwrap();
     let image_b = if imported {
         let pixel = resources
-            .create_texture(
-                GpuTextureDesc {
+            .create_static_buffer(
+                GpuBufferDesc::Texture {
                     size: Size { width: 2, height: 2 },
                     format: GpuTextureFormat::Rgba8Unorm,
                     mip_count: 1,
                 },
-                neocogi_render_core::source::supplied(Bytes::source(vec![255; 16]).as_com_ref())
-                    .unwrap()
-                    .borrow()
-                    .unwrap(),
+                Bytes::source(vec![255; 16]).as_com_ref(),
             )
             .unwrap();
         let image_b = import_native_image(&gpu, &resources, &mut executor, pixel);
@@ -418,20 +415,14 @@ fn indexed_texture_case(operation: GpuBlendOp, imported: bool) {
             .unwrap();
         Some(image_b)
     } else {
-        resources
-            .update_texture(
-                image.as_com_ref(),
-                Rect { x: 0, y: 0, width: 2, height: 2 },
-                Bytes::source(vec![255; 16]).as_com_ref(),
-            )
-            .unwrap();
+        crate::testing::write_pixels(image.as_com_ref(), Rect { x: 0, y: 0, width: 2, height: 2 }, &[255; 16]).unwrap();
         None
     };
     let magenta: Vec<_> = [1.0f32, 0., 1., 1.].into_iter().flat_map(f32::to_le_bytes).collect();
-    view.push_uniforms(GpuShaderStage::Fragment, 0, NcCopyFromBufferOffset::new(0, &magenta))
-        .unwrap();
+    let _uniform = crate::testing::bind_uniform(resources.as_com_ref(), &mut view, GpuShaderStage::Fragment, 0, &magenta).unwrap();
     view.push_view(Rect { x: 4, y: 0, width: 4, height: 8 }).unwrap();
     view.draw_indexed(6, 1, 0).unwrap();
+    drop(_uniform);
     view.pop().unwrap();
     drop(image_b);
     view.finish().unwrap();
@@ -677,28 +668,16 @@ fn partial_preparation_failure_keeps_resource_versions_charged_through_upload_co
         .unwrap();
         let pipeline = resources.create_pipeline(desc.as_com_ref(), vs.as_com_ref(), fs.as_com_ref()).unwrap();
         let vertices = resources
-            .create_buffer(
-                GpuBufferDesc {
-                    role: GpuBufferRole::Vertex,
-                    byte_len: 36,
-                },
-                neocogi_render_core::source::supplied(Bytes::source(vec![0; 36]).as_com_ref())
-                    .unwrap()
-                    .borrow()
-                    .unwrap(),
-            )
+            .create_static_buffer(GpuBufferDesc::Vertex { byte_len: 36 }, Bytes::source(vec![0; 36]).as_com_ref())
             .unwrap();
         let image = resources
-            .create_texture(
-                GpuTextureDesc {
+            .create_static_buffer(
+                GpuBufferDesc::Texture {
                     size: Size { width: 2, height: 2 },
                     format: GpuTextureFormat::Rgba8Unorm,
                     mip_count: 1,
                 },
-                neocogi_render_core::source::supplied(Bytes::source(vec![255; 16]).as_com_ref())
-                    .unwrap()
-                    .borrow()
-                    .unwrap(),
+                Bytes::source(vec![255; 16]).as_com_ref(),
             )
             .unwrap();
         let image = if imported {
@@ -717,9 +696,9 @@ fn partial_preparation_failure_keeps_resource_versions_charged_through_upload_co
         view.bind_vertex_buffer(0, vertices.as_com_ref(), 0).unwrap();
         view.bind_texture(GpuShaderStage::Fragment, 0, image.as_com_ref(), sampler.as_com_ref())
             .unwrap();
-        view.push_uniforms(GpuShaderStage::Fragment, 0, NcCopyFromBufferOffset::new(0, &[0; 16]))
-            .unwrap();
+        let _uniform = crate::testing::bind_uniform(resources.as_com_ref(), &mut view, GpuShaderStage::Fragment, 0, &[0; 16]).unwrap();
         view.draw(3, 1, 0).unwrap();
+        drop(_uniform);
         view.finish().unwrap();
         let owner = session.take_block().unwrap();
         recording.finish().unwrap();
@@ -741,16 +720,13 @@ fn partial_preparation_failure_keeps_resource_versions_charged_through_upload_co
         // Scoped validation errors leave this executor usable. A fresh valid image
         // must not observe a leaked scope or a poisoned native cache from the failure.
         let retry = resources
-            .create_texture(
-                GpuTextureDesc {
+            .create_static_buffer(
+                GpuBufferDesc::Texture {
                     size: Size { width: 1, height: 1 },
                     format: GpuTextureFormat::Rgba8Unorm,
                     mip_count: 1,
                 },
-                neocogi_render_core::source::supplied(Bytes::source(vec![255; 4]).as_com_ref())
-                    .unwrap()
-                    .borrow()
-                    .unwrap(),
+                Bytes::source(vec![255; 4]).as_com_ref(),
             )
             .unwrap();
         executor
@@ -769,14 +745,14 @@ fn import_native_image(
     gpu: &GpuDevice,
     resources: &ComPtr<IRenderResourcesAbi>,
     executor: &mut crate::backends::wgpu::generic::Executor,
-    pixel: ComBox<IGpuTextureAbi>,
-) -> ComBox<IGpuTextureAbi> {
+    pixel: ComBox<IGpuBufferAbi>,
+) -> ComBox<IGpuBufferAbi> {
     let source = gpu.texture_snapshot(resources.as_com_ref(), pixel.as_com_ref()).unwrap();
     let image = executor
         .image(
             source.desc().size,
             wgpu::TextureFormat::Rgba8Unorm,
-            source.pixels().unwrap().as_slice(),
+            Some(source.pixels().unwrap().as_slice()),
             None,
             false,
         )
@@ -917,13 +893,13 @@ fn initialization_submission_is_scoped_and_invalidates_all_compatible_facades_on
         .unwrap();
     let resources = domain.resources().unwrap();
     let image = resources
-        .create_texture(
-            GpuTextureDesc {
+        .create_static_buffer(
+            GpuBufferDesc::Texture {
                 size: Size { width: 1, height: 1 },
                 format: GpuTextureFormat::Rgba8Unorm,
                 mip_count: 1,
             },
-            neocogi_render_core::source::initial_bytes(vec![255; 4]).borrow().unwrap(),
+            neocogi_render_core::source::Bytes::source(vec![255; 4]).as_com_ref(),
         )
         .unwrap();
     let source = gpu.texture_snapshot(resources.as_com_ref(), image.as_com_ref()).unwrap();
@@ -952,4 +928,59 @@ fn initialization_submission_is_scoped_and_invalidates_all_compatible_facades_on
     );
     drop(executor);
     assert_eq!(gpu.live_bytes(resources.as_com_ref()).unwrap(), 0);
+}
+
+/// Queue writes refresh the same native destinations after completed upload owners release them.
+#[test]
+#[ignore = "requires a native WGPU adapter, including a software adapter"]
+fn uploaded_resource_slots_keep_native_storage_across_queue_updates() {
+    let (native, queue) = device();
+    let scope = native.push_error_scope(wgpu::ErrorFilter::Validation);
+    let mut executor = crate::backends::wgpu::generic::Executor::new(Core::new(native.clone(), queue));
+    let gpu = GpuDevice::new(
+        executor.core.clone(),
+        nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
+            .query()
+            .unwrap(),
+    );
+    let domain = gpu
+        .create_client(
+            Default::default(),
+            gpu.surface_target(RenderSurfaceKind::Framebuffer).unwrap(),
+            Default::default(),
+        )
+        .unwrap();
+    let resources = domain.resources().unwrap();
+    let buffer = resources.create_dynamic_buffer(GpuBufferDesc::Vertex { byte_len: 17 }).unwrap();
+    let image = resources
+        .create_dynamic_buffer(GpuBufferDesc::Texture {
+            size: Size { width: 2, height: 2 },
+            format: GpuTextureFormat::Rgba8Unorm,
+            mip_count: 1,
+        })
+        .unwrap();
+    let mut expected = None;
+    for fill in 1..=8u8 {
+        crate::testing::write_buffer(buffer.as_com_ref(), 0, &[fill; 17]).unwrap();
+        crate::testing::write_pixels(image.as_com_ref(), Rect { x: 0, y: 0, width: 2, height: 2 }, &[fill; 16]).unwrap();
+        let source = gpu.buffer_snapshot(resources.as_com_ref(), buffer.as_com_ref()).unwrap();
+        let pixels = gpu.texture_snapshot(resources.as_com_ref(), image.as_com_ref()).unwrap();
+        let backing = source.native(&mut executor.test_preparation()).unwrap();
+        let texture = pixels.native(&mut executor.test_preparation()).unwrap();
+        let identity = (Rc::as_ptr(&backing), Rc::as_ptr(&texture));
+        assert_eq!(*expected.get_or_insert(identity), identity);
+        drop((source, pixels));
+        assert_eq!(crate::testing::write_buffer(buffer.as_com_ref(), 0, &[fill; 4]), Err(RENDER_E_BUSY));
+        assert_eq!(crate::testing::write_buffer(image.as_com_ref(), 0, &[fill; 4]), Err(RENDER_E_BUSY));
+        drop((backing, texture));
+        executor.submit(None, Vec::new(), Vec::new(), Vec::new()).unwrap();
+        native.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+        executor.collect().unwrap();
+        crate::testing::write_buffer(buffer.as_com_ref(), 0, &[fill; 4]).unwrap();
+        crate::testing::write_buffer(image.as_com_ref(), 0, &[fill; 4]).unwrap();
+    }
+    drop((buffer, image));
+    executor.collect().unwrap();
+    assert_eq!(gpu.live_bytes(resources.as_com_ref()).unwrap(), 0);
+    assert!(pollster::block_on(scope.pop()).is_none());
 }

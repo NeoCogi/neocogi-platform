@@ -1047,6 +1047,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "neocogi-typed-buffer-tests"
+version = "0.1.0-alpha.1"
+dependencies = [
+ "neocogi-com",
+ "neocogi-platform-build",
+ "neocogi-render-core",
+ "neocogi-render-gpu",
+ "neocogi-shader-compiler",
+ "syn 2.0.119",
+]
+
+[[package]]
 name = "num-traits"
 version = "0.2.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"

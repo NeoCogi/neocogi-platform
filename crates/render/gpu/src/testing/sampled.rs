@@ -68,15 +68,13 @@ fn block_fragment<B: neocogi_render_gpu::native::NativeResources>(
     .unwrap();
     let pipeline = resources.create_pipeline(desc.as_com_ref(), vs.as_com_ref(), fs.as_com_ref()).unwrap();
     let texture = resources
-        .create_texture(
-            GpuTextureDesc {
+        .create_static_buffer(
+            GpuBufferDesc::Texture {
                 size,
                 format: GpuTextureFormat::Rgba8Unorm,
                 mip_count: 1,
             },
-            neocogi_render_core::source::initial(pixels.map(|pixels| Bytes::source(pixels.to_vec())))
-                .borrow()
-                .unwrap(),
+            Bytes::source(pixels.map_or_else(|| vec![0; (size.width * size.height * 4) as usize], |pixels| pixels.to_vec())).as_com_ref(),
         )
         .unwrap();
     let sampler = resources.create_sampler(GpuSamplerDesc::default()).unwrap();
@@ -175,19 +173,8 @@ pub fn zero_storage_block<B: neocogi_render_gpu::native::NativeResources>(
     .source()
     .unwrap();
     let pipeline = resources.create_pipeline(desc.as_com_ref(), vs.as_com_ref(), fs.as_com_ref()).unwrap();
-    let none = neocogi_render_core::source::initial(None);
-    let vertices = resources
-        .create_buffer(
-            GpuBufferDesc {
-                role: GpuBufferRole::Vertex,
-                byte_len: 48,
-            },
-            none.borrow().unwrap(),
-        )
-        .unwrap();
-    let indices = resources
-        .create_buffer(GpuBufferDesc { role: GpuBufferRole::Index, byte_len: 6 }, none.borrow().unwrap())
-        .unwrap();
+    let vertices = resources.create_streamed_buffer(GpuBufferDesc::Vertex { byte_len: 48 }).unwrap();
+    let indices = resources.create_streamed_buffer(GpuBufferDesc::Index { byte_len: 6 }).unwrap();
     let root = Rect { x: 0, y: 0, width: 8, height: 8 };
     let mut frame = gpu.broker().begin_frame().unwrap();
     let mut session = frame.begin_view(RenderViewRoot { client: root, target: root }, resources.as_com_ref()).unwrap();
@@ -202,10 +189,8 @@ pub fn zero_storage_block<B: neocogi_render_gpu::native::NativeResources>(
     view.draw_indexed(3, 1, 0).unwrap();
     view.pop().unwrap();
     let red: Vec<_> = [1f32, 0., 0., 1.].into_iter().cycle().take(12).flat_map(f32::to_le_bytes).collect();
-    resources.update_buffer(vertices.as_com_ref(), 0, Bytes::source(red).as_com_ref()).unwrap();
-    resources
-        .update_buffer(indices.as_com_ref(), 0, Bytes::source(vec![0, 0, 1, 0, 2, 0]).as_com_ref())
-        .unwrap();
+    crate::testing::write_buffer(vertices.as_com_ref(), 0, &red).unwrap();
+    crate::testing::write_buffer(indices.as_com_ref(), 0, &[0, 0, 1, 0, 2, 0]).unwrap();
     view.push_view(Rect { x: 4, y: 0, width: 4, height: 8 }).unwrap();
     view.draw_indexed(3, 1, 0).unwrap();
     view.pop().unwrap();

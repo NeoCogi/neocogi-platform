@@ -13,12 +13,12 @@ fn main() {
         .iter()
         .find_map(|item| {
             let syn::Item::Trait(interface) = item else { return None };
-            if interface.ident != "IRenderResources" {
+            if interface.ident != "ITextureFactory" {
                 return None;
             }
             interface.items.iter().find_map(|item| {
                 let syn::TraitItem::Fn(method) = item else { return None };
-                if method.sig.ident != "create_buffer" {
+                if method.sig.ident != "create_texture_result" {
                     return None;
                 }
                 let syn::FnArg::Typed(argument) = method.sig.inputs.last()? else {

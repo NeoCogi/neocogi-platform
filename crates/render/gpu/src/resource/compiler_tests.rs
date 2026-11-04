@@ -109,12 +109,7 @@ impl Probe {
             if let Some(factory) = self.factory.borrow().as_ref().and_then(|weak| weak.upgrade().unwrap()) {
                 let bytes = crate::source::Bytes::source(vec![0; 4]);
                 assert_eq!(
-                    factory
-                        .create_buffer(
-                            GpuBufferDesc { role: GpuBufferRole::Vertex, byte_len: 4 },
-                            neocogi_render_core::source::supplied(bytes.as_com_ref()).unwrap().borrow().unwrap()
-                        )
-                        .err(),
+                    factory.create_static_buffer(GpuBufferDesc::Vertex { byte_len: 4 }, bytes.as_com_ref()).err(),
                     Some(RENDER_E_BUSY)
                 );
             }

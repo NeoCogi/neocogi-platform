@@ -3,9 +3,12 @@
 //! Registry mutation needs interior mutability because shareable factory methods
 //! can be called through independently compiled COM clients. Only short local
 //! registry borrows are taken; no such borrow spans a foreign reader or destructor.
+mod buffer;
+pub(crate) use buffer::BufferObject;
+
 use crate::{
     abi::*,
-    budget::{Account, ByteCharge, PendingCharge, ResourceCharge},
+    budget::{Account, ByteCharge, ResourceCharge},
     shader::Shader,
 };
 use neocogi_com::{
@@ -19,8 +22,8 @@ use std::{
     rc::{Rc, Weak},
 };
 
-/// Maximum storage for a single logical vertex/index byte buffer.
-pub const MAX_BUFFER_BYTES: usize = 64 * 1024 * 1024;
+/// Shared maximum logical slot capacity for linear buffers and texture pixels.
+pub const MAX_BUFFER_BYTES: usize = MAX_IMAGE_BYTES;
 /// Bounded one-way output reads keep codec scratch separate from owned payload admission.
 pub const SOURCE_CHUNK: usize = 64 * 1024;
 
@@ -44,8 +47,6 @@ pub(crate) struct Device<B: crate::native::NativeResources> {
     pub(crate) core: Rc<B::Core>,
     /// Exclusive buffer objects constructed by this device.
     pub(crate) buffers: RefCell<Registry<BufferObject<B>>>,
-    /// Exclusive texture objects constructed by this device.
-    pub(crate) textures: RefCell<Registry<TextureObject<B>>>,
     /// Exclusive sampler objects constructed by this device.
     pub(crate) samplers: RefCell<Registry<SamplerObject<B>>>,
     /// Exclusive shader objects constructed by this device.
@@ -136,7 +137,6 @@ impl<B: crate::native::NativeResources> GpuDevice<B> {
                 compiler,
                 core,
                 buffers: RefCell::new(HashMap::new()),
-                textures: RefCell::new(HashMap::new()),
                 samplers: RefCell::new(HashMap::new()),
                 shaders: RefCell::new(HashMap::new()),
                 pipelines: RefCell::new(HashMap::new()),
@@ -229,7 +229,7 @@ impl<B: crate::native::NativeResources> GpuDevice<B> {
     /// The actual allocation, not caller-reported metadata, determines compatible core and extent.
     /// Missing permission returns `RENDER_E_PERMISSION`; incompatible image cores return `RENDER_E_OWNER`.
     /// The imported version retains the native image and its own quota receipt, never its public COM owner.
-    pub fn import_texture(&self, factory: ComRef<'_, IRenderResourcesAbi>, image: Rc<B::Image>) -> Result<ComBox<IGpuTextureAbi>, NcStatus> {
+    pub fn import_texture(&self, factory: ComRef<'_, IRenderResourcesAbi>, image: Rc<B::Image>) -> Result<ComBox<IGpuBufferAbi>, NcStatus> {
         let _operation = self.operation()?;
         let domain = self.domain(factory)?;
         if !domain.permissions.import_images {
@@ -238,7 +238,7 @@ impl<B: crate::native::NativeResources> GpuDevice<B> {
         if !Rc::ptr_eq(&self.inner.core, B::image_core(image.as_ref())) {
             return Err(RENDER_E_OWNER);
         }
-        let desc = GpuTextureDesc {
+        let desc = GpuTextureInfo {
             size: B::image_size(image.as_ref()),
             format: GpuTextureFormat::Rgba8Unorm,
             mip_count: 1,
@@ -251,11 +251,10 @@ impl<B: crate::native::NativeResources> GpuDevice<B> {
             desc,
             contents: TextureContents::Imported { image },
             charge: Rc::new(domain.account.bytes(len)?),
+            dirty: Cell::new(false),
+            usage: GpuBufferUsage::Static,
         });
-        publish(
-            &self.inner.textures,
-            TextureObject::into_local_box(TextureObject { domain, current, _owner: owner }),
-        )
+        BufferObject::imported(domain, current, owner)
     }
 
     /// Resolves a texture for the trusted host's eager preparation path.
@@ -264,7 +263,7 @@ impl<B: crate::native::NativeResources> GpuDevice<B> {
     pub fn imported_texture_snapshot(
         &self,
         factory: ComRef<'_, IRenderResourcesAbi>,
-        texture: ComRef<'_, IGpuTextureAbi>,
+        texture: ComRef<'_, IGpuBufferAbi>,
     ) -> Result<Rc<TextureVersion<B>>, NcStatus> {
         let _operation = self.operation()?;
         if !self.domain(factory)?.permissions.import_images {
@@ -290,40 +289,49 @@ macro_rules! snapshot_method {
         }
     };
 }
-snapshot_method!(buffer_snapshot, IGpuBufferAbi, buffers, BufferVersion);
-snapshot_method!(texture_snapshot, IGpuTextureAbi, textures, TextureVersion);
+impl<B: NativeResources> GpuDevice<B> {
+    /// Captures the selected completed write of an authenticated linear resource.
+    pub fn buffer_snapshot(&self, factory: ComRef<'_, IRenderResourcesAbi>, resource: ComRef<'_, IGpuBufferAbi>) -> Result<Rc<BufferVersion<B>>, NcStatus> {
+        let domain = self.domain(factory)?;
+        observe(&self.inner.buffers, resource.as_raw().object as usize)?.with(|buffer| {
+            same_domain(&domain, &buffer.domain)?;
+            buffer.linear().cloned()
+        })?
+    }
+    /// Texture-role buffers share the same registration and provenance boundary.
+    pub fn texture_snapshot(&self, factory: ComRef<'_, IRenderResourcesAbi>, resource: ComRef<'_, IGpuBufferAbi>) -> Result<Rc<TextureVersion<B>>, NcStatus> {
+        let domain = self.domain(factory)?;
+        observe(&self.inner.buffers, resource.as_raw().object as usize)?.with(|buffer| {
+            same_domain(&domain, &buffer.domain)?;
+            buffer.texture().cloned()
+        })?
+    }
+}
 snapshot_method!(sampler_snapshot, IGpuSamplerAbi, samplers, SamplerVersion);
 snapshot_method!(shader_snapshot, IGpuShaderAbi, shaders, ShaderVersion);
 snapshot_method!(pipeline_snapshot, IGpuPipelineAbi, pipelines, PipelineVersion);
 
-/// Immutable initialized contents with allocation-only zeros represented without a CPU payload.
-/// Logical bounds and quotas apply equally to both variants; native readers must initialize zeros.
+/// Initialized CPU contents, immutable for the lifetime of every captured slot.
 pub enum VersionBytes {
-    /// Descriptor-sized transparent/zero contents, without a full CPU zero vector.
-    Zeroed {
-        /// Admitted logical byte count.
-        len: usize,
-    },
-    /// Complete initialized bytes supplied or atomically materialized by an update.
+    /// Static initial data; this allocation is never writable after publication.
     Owned(Vec<u8>),
+    /// Fixed initialized authoring/upload capacity reused after all captures end.
+    Upload(buffer::UploadBytes),
 }
 impl VersionBytes {
-    /// Admitted logical size independent of whether bytes were materialized.
+    /// Admitted logical size, excluding allocation padding.
     pub fn len(&self) -> usize {
-        match self {
-            Self::Zeroed { len } => *len,
-            Self::Owned(bytes) => bytes.len(),
-        }
+        self.as_slice().len()
     }
     /// Whether the logical extent is empty.
     pub fn is_empty(&self) -> bool {
-        self.len() == 0
+        self.as_slice().is_empty()
     }
-    /// Materialized bytes, or None when the complete logical extent is zero.
-    pub fn as_slice(&self) -> Option<&[u8]> {
+    /// All buffer slots have initialized bytes; native imports have separate contents.
+    pub fn as_slice(&self) -> &[u8] {
         match self {
-            Self::Zeroed { .. } => None,
-            Self::Owned(bytes) => Some(bytes),
+            Self::Owned(bytes) => bytes,
+            Self::Upload(bytes) => bytes.bytes(),
         }
     }
     /// Copies the complete defined contents into an already admitted output allocation.
@@ -331,49 +339,27 @@ impl VersionBytes {
         if output.len() != self.len() {
             return Err(NC_E_INVALID_ARG);
         }
-        match self {
-            Self::Zeroed { .. } => output.fill(0),
-            Self::Owned(bytes) => output.copy_from_slice(bytes),
-        }
+        output.copy_from_slice(self.as_slice());
         Ok(())
     }
-    /// Reads a small checked byte interval without materializing zero storage.
+    /// Reads a bounded byte interval without allocating another payload.
     pub fn read(&self, offset: usize, output: &mut [u8]) -> Result<(), NcStatus> {
         let end = offset.checked_add(output.len()).filter(|end| *end <= self.len()).ok_or(NC_E_OUT_OF_RANGE)?;
-        match self {
-            Self::Zeroed { .. } => output.fill(0),
-            Self::Owned(bytes) => output.copy_from_slice(&bytes[offset..end]),
-        }
+        output.copy_from_slice(&self.as_slice()[offset..end]);
         Ok(())
     }
 }
 
-/// Opaque shared accounting that native owners can retain but cannot manufacture or reopen.
+/// Shared device-free reservation retained by actual native use and retirement.
 #[derive(Clone)]
 pub struct BackingCharge {
-    /// One authoritative receipt; moving/cloning this token never reserves another charge.
-    _receipt: Charge,
-}
-/// Byte and command receipts have distinct ledgers but share ordinary last-owner release.
-#[derive(Clone)]
-enum Charge {
-    /// Full resource/version extent, independent of public-owner count.
-    Bytes { _receipt: Rc<ByteCharge> },
-    /// Exact copied uniform/command capacity, independent of domain/native authority.
-    Pending { _receipt: PendingCharge },
+    /// Cloning this token shares one original byte admission.
+    _receipt: Rc<ByteCharge>,
 }
 impl BackingCharge {
-    /// Only admitted immutable versions can construct a resource receipt.
+    /// Only admitted resource storage can create a native receipt.
     fn bytes(receipt: Rc<ByteCharge>) -> Self {
-        Self {
-            _receipt: Charge::Bytes { _receipt: receipt },
-        }
-    }
-    /// Only the recorder can construct a copied-payload receipt.
-    pub(crate) fn pending(receipt: PendingCharge) -> Self {
-        Self {
-            _receipt: Charge::Pending { _receipt: receipt },
-        }
+        Self { _receipt: receipt }
     }
 }
 
@@ -383,7 +369,11 @@ pub struct BufferVersion<B: NativeResources> {
     pub(crate) core: Rc<B::Core>,
     /// Immutable role and logical extent.
     pub(crate) desc: GpuBufferDesc,
-    /// Defined contents, including compact allocation-only zeros.
+    /// Native allocation policy is fixed independently of the role.
+    pub(crate) usage: GpuBufferUsage,
+    /// A completed write refreshes existing native storage before its next use.
+    dirty: Cell<bool>,
+    /// Initialized fixed contents, immutable while any draw or native owner retains this slot.
     pub(crate) bytes: VersionBytes,
     /// Native memoization is private and may only publish backend-validated candidates.
     native: NativeSlot<B::Buffer>,
@@ -395,7 +385,11 @@ pub struct TextureVersion<B: NativeResources> {
     /// Driver compatibility/lifetime independent of logical domain admission.
     pub(crate) core: Rc<B::Core>,
     /// Complete admitted logical sampled-image shape.
-    pub(crate) desc: GpuTextureDesc,
+    pub(crate) desc: GpuTextureInfo,
+    /// Native image update policy matches the public texture-role buffer.
+    pub(crate) usage: GpuBufferUsage,
+    /// Complete authored pixels changed after the previous concrete upload.
+    dirty: Cell<bool>,
     /// Import keeps no public image COM capability, numeric key, or renderer facade.
     contents: TextureContents<B>,
     /// First imported use also crosses backend initialization/accounting admission.
@@ -403,9 +397,9 @@ pub struct TextureVersion<B: NativeResources> {
     /// Per-import reservation stays with that import/use, never globally on a shared image.
     charge: Rc<ByteCharge>,
 }
-/// Authoritative immutable texture contents; native imports are not writable storage.
+/// Authoritative slot contents; captures freeze pixel storage and imports are always read-only.
 enum TextureContents<B: NativeResources> {
-    /// Complete initialized pixel values; an update atomically replaces the entire version.
+    /// Complete initialized pixels; writes require exclusive idle-slot ownership.
     Pixels(VersionBytes),
     /// Construction-proven same-core image; no public image lease or facade back-edge.
     Imported {
@@ -414,7 +408,7 @@ enum TextureContents<B: NativeResources> {
     },
 }
 impl<B: NativeResources> TextureVersion<B> {
-    /// Imported images have no CPU contents and reject factory mutation.
+    /// Imported images have no CPU contents and reject uploads and CPU reads.
     pub fn pixels(&self) -> Option<&VersionBytes> {
         match &self.contents {
             TextureContents::Pixels(bytes) => Some(bytes),
@@ -491,8 +485,30 @@ macro_rules! native_resource {
         }
     };
 }
-native_resource!(BufferVersion, Buffer, buffer);
-native_resource!(TextureVersion, Image, image);
+impl<B: NativeResources> BufferVersion<B> {
+    /// Refreshes idle fixed storage before cloning a prepared native owner.
+    pub fn native(&self, preparation: &mut B::Preparation<'_>) -> Result<Rc<B::Buffer>, String> {
+        check_core::<B>(&self.core, preparation)?;
+        if self.dirty.get() {
+            self.native.refresh(|native| B::update_buffer(self, native, preparation))?;
+        }
+        let native = self.native.realize(|| B::buffer(self, preparation))?;
+        self.dirty.set(false);
+        Ok(native)
+    }
+}
+impl<B: NativeResources> TextureVersion<B> {
+    /// Image handles are stable; only an exclusively reused slot can refresh pixels.
+    pub fn native(&self, preparation: &mut B::Preparation<'_>) -> Result<Rc<B::Image>, String> {
+        check_core::<B>(&self.core, preparation)?;
+        if self.dirty.get() {
+            self.native.refresh(|native| B::update_image(self, native, preparation))?;
+        }
+        let native = self.native.realize(|| B::image(self, preparation))?;
+        self.dirty.set(false);
+        Ok(native)
+    }
+}
 native_resource!(SamplerVersion, Sampler, sampler);
 impl<B: NativeResources> BufferVersion<B> {
     /// Device-free shared reservation for actual native buffer use and disposal.
@@ -564,8 +580,6 @@ macro_rules! resource_object {
         }
     };
 }
-resource_object!(BufferObject, IGpuBuffer, BufferVersion);
-resource_object!(TextureObject, IGpuTexture, TextureVersion);
 resource_object!(SamplerObject, IGpuSampler, SamplerVersion);
 resource_object!(ShaderObject, IGpuShader, ShaderVersion);
 resource_object!(PipelineObject, IGpuPipeline, PipelineVersion);
@@ -665,19 +679,8 @@ fn read_bytes(source: ComRef<'_, IGpuDataSourceAbi>, len: usize, mut write: impl
     Ok(())
 }
 
-/// Role separation is mandatory even on native APIs that permit mixed bindings.
-fn buffer_desc(desc: GpuBufferDesc) -> Result<usize, NcStatus> {
-    if !matches!(desc.role, GpuBufferRole::Vertex | GpuBufferRole::Index) {
-        return Err(NC_E_INVALID_ARG);
-    }
-    usize::try_from(desc.byte_len)
-        .ok()
-        .filter(|len| *len > 0 && *len <= MAX_BUFFER_BYTES)
-        .ok_or(NC_E_OUT_OF_RANGE)
-}
-
 /// Baseline sampled textures have one tightly packed RGBA8 mip, no target usage.
-fn texture_desc(desc: GpuTextureDesc) -> Result<usize, NcStatus> {
+fn texture_desc(desc: GpuTextureInfo) -> Result<usize, NcStatus> {
     if desc.mip_count != 1 || !matches!(desc.format, GpuTextureFormat::Rgba8Unorm | GpuTextureFormat::Rgba8Srgb) {
         return Err(NC_E_INVALID_ARG);
     }
@@ -704,62 +707,20 @@ impl<B: crate::native::NativeResources> IRenderDriverBound for Factory<B> {
     }
 }
 impl<B: crate::native::NativeResources> IRenderResources for Factory<B> {
-    /// Whole-version quota admission precedes bulk reads; public owner is transferred last.
-    fn create_buffer(&self, desc: GpuBufferDesc, source: neocogi_com::NcValueRef<'_, InitialGpuData>) -> Result<ComBox<IGpuBufferAbi>, NcStatus> {
+    /// Complete immutable input is validated and copied before owner publication.
+    fn create_static_buffer(&self, desc: GpuBufferDesc, source: ComRef<'_, IGpuDataSourceAbi>) -> Result<ComBox<IGpuBufferAbi>, NcStatus> {
         let _operation = self.domain.device.operation()?;
-        self.domain.open()?;
-        let len = buffer_desc(desc)?;
-        let owner = self.domain.account.resource()?;
-        let charge = self.domain.account.bytes(len)?;
-        let bytes = match neocogi_render_core::source::read_initial(source, len)? {
-            Some(bytes) => VersionBytes::Owned(bytes),
-            None => VersionBytes::Zeroed { len },
-        };
-        self.domain.open()?;
-        let current = Rc::new(BufferVersion {
-            core: self.domain.device.inner.core.clone(),
-            native: NativeSlot::default(),
-            desc,
-            bytes,
-            _charge: Rc::new(charge),
-        });
-        publish(
-            &self.domain.device.inner.buffers,
-            BufferObject::into_local_box(BufferObject {
-                domain: self.domain.clone(),
-                current,
-                _owner: owner,
-            }),
-        )
+        BufferObject::create(&self.domain, desc, GpuBufferUsage::Static, Some(source))
     }
-
-    /// Publishes immutable pixels independently from ordinary shared ITexture capabilities.
-    fn create_texture(&self, desc: GpuTextureDesc, source: neocogi_com::NcValueRef<'_, InitialGpuData>) -> Result<ComBox<IGpuTextureAbi>, NcStatus> {
+    /// Dynamic allocation reserves fixed initialized upload capacity once.
+    fn create_dynamic_buffer(&self, desc: GpuBufferDesc) -> Result<ComBox<IGpuBufferAbi>, NcStatus> {
         let _operation = self.domain.device.operation()?;
-        self.domain.open()?;
-        let len = texture_desc(desc)?;
-        let owner = self.domain.account.resource()?;
-        let charge = self.domain.account.bytes(len)?;
-        let bytes = match neocogi_render_core::source::read_initial(source, len)? {
-            Some(bytes) => VersionBytes::Owned(bytes),
-            None => VersionBytes::Zeroed { len },
-        };
-        self.domain.open()?;
-        let current = Rc::new(TextureVersion {
-            core: self.domain.device.inner.core.clone(),
-            native: NativeSlot::default(),
-            desc,
-            contents: TextureContents::Pixels(bytes),
-            charge: Rc::new(charge),
-        });
-        publish(
-            &self.domain.device.inner.textures,
-            TextureObject::into_local_box(TextureObject {
-                domain: self.domain.clone(),
-                current,
-                _owner: owner,
-            }),
-        )
+        BufferObject::create(&self.domain, desc, GpuBufferUsage::Dynamic, None)
+    }
+    /// Streaming reserves every slot before publication; map exhaustion remains Pending.
+    fn create_streamed_buffer(&self, desc: GpuBufferDesc) -> Result<ComBox<IGpuBufferAbi>, NcStatus> {
+        let _operation = self.domain.device.operation()?;
+        BufferObject::create(&self.domain, desc, GpuBufferUsage::Streamed, None)
     }
 
     /// Filtering/addressing state contains no resource lookup or native callback.
@@ -869,110 +830,6 @@ impl<B: crate::native::NativeResources> IRenderResources for Factory<B> {
     ) -> Result<ComBox<IGpuPipelineAbi>, NcStatus> {
         crate::pipeline::create(&self.domain, source, vertex, fragment)
     }
-
-    /// Rejects missing update permission before querying either the target or foreign byte source.
-    /// Copies the previous immutable version, then publishes under the resource writer gate after
-    /// the last callback. Denial or failure leaves the current version and recorded snapshots intact.
-    fn update_buffer(&self, buffer: ComRef<'_, IGpuBufferAbi>, offset: u64, source: ComRef<'_, IGpuDataSourceAbi>) -> Result<(), NcStatus> {
-        let _operation = self.domain.device.operation()?;
-        self.domain.open()?;
-        if !self.domain.permissions.write_resources {
-            return Err(RENDER_E_PERMISSION);
-        }
-        let mut observer = observe(&self.domain.device.inner.buffers, buffer.as_raw().object as usize)?;
-        let previous = observer.with(|buffer| {
-            same_domain(&self.domain, &buffer.domain)?;
-            Ok(buffer.current.clone())
-        })??;
-        let count = usize::try_from(source.byte_count()?).map_err(|_| NC_E_OUT_OF_RANGE)?;
-        let start = usize::try_from(offset).map_err(|_| NC_E_OUT_OF_RANGE)?;
-        let end = start.checked_add(count).filter(|end| *end <= previous.bytes.len()).ok_or(NC_E_OUT_OF_RANGE)?;
-        let charge = self.domain.account.bytes(previous.bytes.len())?;
-        let mut bytes = zeroed(previous.bytes.len())?;
-        previous.bytes.copy_into(&mut bytes)?;
-        read_bytes(source, count, |offset, chunk| {
-            bytes[start + offset..start + offset + chunk.len()].copy_from_slice(chunk)
-        })?;
-        debug_assert!(end <= bytes.len());
-        let current = Rc::new(BufferVersion {
-            core: self.domain.device.inner.core.clone(),
-            native: NativeSlot::default(),
-            desc: previous.desc,
-            bytes: VersionBytes::Owned(bytes),
-            _charge: Rc::new(charge),
-        });
-        let retired = observer.with_mut(|buffer| {
-            same_domain(&self.domain, &buffer.domain)?;
-            if !Rc::ptr_eq(&buffer.current, &previous) {
-                return Err(RENDER_E_BUSY);
-            }
-            Ok(std::mem::replace(&mut buffer.current, current))
-        })??;
-        drop(retired);
-        Ok(())
-    }
-
-    /// Rejects missing update permission before querying either the target or foreign byte source.
-    /// Copies a bounded row-aware patch with at most one 64KiB foreign output region at a time.
-    /// Imported immutable images have no editable byte backing; failure publishes no new version.
-    fn update_texture(&self, texture: ComRef<'_, IGpuTextureAbi>, rect: Rect, source: ComRef<'_, IGpuDataSourceAbi>) -> Result<(), NcStatus> {
-        let _operation = self.domain.device.operation()?;
-        self.domain.open()?;
-        if !self.domain.permissions.write_resources {
-            return Err(RENDER_E_PERMISSION);
-        }
-        let mut observer = observe(&self.domain.device.inner.textures, texture.as_raw().object as usize)?;
-        let previous = observer.with(|texture| {
-            same_domain(&self.domain, &texture.domain)?;
-            Ok(texture.current.clone())
-        })??;
-        if rect.x < 0
-            || rect.y < 0
-            || rect.width <= 0
-            || rect.height <= 0
-            || i64::from(rect.x) + i64::from(rect.width) > i64::from(previous.desc.size.width)
-            || i64::from(rect.y) + i64::from(rect.height) > i64::from(previous.desc.size.height)
-        {
-            return Err(NC_E_OUT_OF_RANGE);
-        }
-        let previous_bytes = previous.pixels().ok_or(NC_E_INVALID_ARG)?;
-        let count = rgba_bytes(Size { width: rect.width, height: rect.height })?;
-        if source.byte_count()? != count as u64 {
-            return Err(NC_E_INVALID_ARG);
-        }
-        let charge = self.domain.account.bytes(previous_bytes.len())?;
-        let mut bytes = zeroed(previous_bytes.len())?;
-        previous_bytes.copy_into(&mut bytes)?;
-        let row = rect.width as usize * 4;
-        let stride = previous.desc.size.width as usize * 4;
-        read_bytes(source, count, |offset, chunk| {
-            let mut consumed = 0;
-            while consumed < chunk.len() {
-                let source_offset = offset + consumed;
-                let column = source_offset % row;
-                let wanted = (row - column).min(chunk.len() - consumed);
-                let destination = (rect.y as usize + source_offset / row) * stride + rect.x as usize * 4 + column;
-                bytes[destination..destination + wanted].copy_from_slice(&chunk[consumed..consumed + wanted]);
-                consumed += wanted;
-            }
-        })?;
-        let current = Rc::new(TextureVersion {
-            core: self.domain.device.inner.core.clone(),
-            native: NativeSlot::default(),
-            desc: previous.desc,
-            contents: TextureContents::Pixels(VersionBytes::Owned(bytes)),
-            charge: Rc::new(charge),
-        });
-        let retired = observer.with_mut(|texture| {
-            same_domain(&self.domain, &texture.domain)?;
-            if !Rc::ptr_eq(&texture.current, &previous) {
-                return Err(RENDER_E_BUSY);
-            }
-            Ok(std::mem::replace(&mut texture.current, current))
-        })??;
-        drop(retired);
-        Ok(())
-    }
 }
 
 /// Constructs one fully validated immutable pipeline after all foreign descriptor reads.
@@ -1003,6 +860,10 @@ mod compiler_tests;
 mod permissions_tests;
 
 impl<B: crate::native::NativeResources> BufferVersion<B> {
+    /// Fixed creation/update policy used by native allocation hints.
+    pub fn usage(&self) -> GpuBufferUsage {
+        self.usage
+    }
     /// Reads the admitted desc without granting mutation authority.
     pub fn desc(&self) -> GpuBufferDesc {
         self.desc
@@ -1014,8 +875,12 @@ impl<B: crate::native::NativeResources> BufferVersion<B> {
 }
 
 impl<B: crate::native::NativeResources> TextureVersion<B> {
+    /// Fixed image upload policy determines retained reusable staging capacity.
+    pub fn usage(&self) -> GpuBufferUsage {
+        self.usage
+    }
     /// Reads the admitted desc without granting mutation authority.
-    pub fn desc(&self) -> GpuTextureDesc {
+    pub fn desc(&self) -> GpuTextureInfo {
         self.desc
     }
 }

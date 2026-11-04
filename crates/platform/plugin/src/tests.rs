@@ -4,8 +4,8 @@ use super::*;
 use neocogi_com::ComBox;
 use neocogi_render_gpu::source::{Bytes, PipelineDesc};
 
-mod surface_targets;
 mod owned_errors;
+mod surface_targets;
 #[cfg(feature = "glow")]
 mod view_geometry;
 mod window_lifetime;
@@ -75,9 +75,9 @@ impl IRenderStream for Stream {
         assert_eq!(
             self.input
                 .editing
-                .create_buffer(
-                    GpuBufferDesc { role: GpuBufferRole::Vertex, byte_len: 4 },
-                    neocogi_render_core::source::initial_bytes(vec![0; 4]).borrow().unwrap()
+                .create_static_buffer(
+                    GpuBufferDesc::Vertex { byte_len: 4 },
+                    neocogi_render_core::source::Bytes::source(vec![0; 4]).as_com_ref()
                 )
                 .err(),
             Some(RENDER_E_BUSY)
@@ -226,18 +226,14 @@ fn native_order_ownership_reentry_and_final_release() {
     let background = factory
         .create_texture(
             Size { width: 1, height: 1 },
-            neocogi_render_core::source::initial_bytes((NcCopyFromBufferOffset::new(0, &[0, 255, 0, 255])).as_slice().to_vec())
-                .borrow()
-                .unwrap(),
+            neocogi_render_core::source::initial_bytes([0, 255, 0, 255].to_vec()).borrow().unwrap(),
         )
         .map_err(|error| error.status)
         .unwrap();
     let spare = factory
         .create_texture(
             Size { width: 1, height: 1 },
-            neocogi_render_core::source::initial_bytes((NcCopyFromBufferOffset::new(0, &[0; 4])).as_slice().to_vec())
-                .borrow()
-                .unwrap(),
+            neocogi_render_core::source::initial_bytes([0; 4].to_vec()).borrow().unwrap(),
         )
         .map_err(|error| error.status)
         .unwrap();
@@ -285,9 +281,7 @@ fn native_order_ownership_reentry_and_final_release() {
     let foreign_texture = foreign_factory
         .create_texture(
             Size { width: 1, height: 1 },
-            neocogi_render_core::source::initial_bytes((NcCopyFromBufferOffset::new(0, &[0; 4])).as_slice().to_vec())
-                .borrow()
-                .unwrap(),
+            neocogi_render_core::source::initial_bytes([0; 4].to_vec()).borrow().unwrap(),
         )
         .map_err(|error| error.status)
         .unwrap();
