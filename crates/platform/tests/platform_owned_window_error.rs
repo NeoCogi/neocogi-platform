@@ -25,10 +25,7 @@ fn native_window_construction_error_is_owned_by_its_call() {
         );
         return;
     }
-    let compiler = neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-        .query()
-        .unwrap();
-    let platform: ComPtr<PlatformAbi> = neocogi_platform::platform::PlatformObject::from_value(neocogi_platform::platform::PlatformObject::new(compiler))
+    let platform: ComPtr<PlatformAbi> = neocogi_platform::platform::PlatformObject::from_value(neocogi_platform::platform::PlatformObject::new())
         .query()
         .unwrap();
     let error = platform

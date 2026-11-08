@@ -11,7 +11,7 @@ use std::{cell::Cell, rc::Rc};
 /// Counter/fault state only: no resource owners, submissions, channel endpoints or UI authority.
 pub struct Core {
     /// Explicit immutable format for compiler transfer regressions.
-    target: crate::shader::ShaderTarget,
+    target: crate::render::shader::ShaderTarget,
     /// One retained identity for the virtual compatible device.
     identity: DriverIdentity,
     /// Number of successfully constructed virtual native allocations.
@@ -79,10 +79,10 @@ pub fn bind_uniform(
 impl Core {
     /// Creates a distinct explicitly selected virtual driver with no native resources.
     pub fn new() -> Rc<Self> {
-        Self::with_target(crate::shader::ShaderTarget::Wgsl)
+        Self::with_target(crate::render::shader::ShaderTarget::Wgsl)
     }
     /// Creates a virtual core for exactly one requested shader artifact family.
-    pub fn with_target(target: crate::shader::ShaderTarget) -> Rc<Self> {
+    pub fn with_target(target: crate::render::shader::ShaderTarget) -> Rc<Self> {
         Rc::new(Self {
             target,
             identity: new_driver_identity(),
@@ -187,7 +187,7 @@ impl Drop for Pipeline {
     }
 }
 impl NativeResources for Backend {
-    fn shader_target(core: &Core) -> crate::shader::ShaderTarget {
+    fn shader_target(core: &Core) -> crate::render::shader::ShaderTarget {
         core.target
     }
     type Core = Core;
@@ -264,8 +264,8 @@ impl NativeResources for Backend {
     }
 }
 /// Explicit fixture constructor used by common CPU tests; production always supplies a real core.
-pub fn device(compiler: neocogi_com::ComPtr<neocogi_platform::shader::abi::ShaderCompilerAbi>) -> GpuDevice<Backend> {
-    GpuDevice::new(Core::new(), compiler)
+pub fn device(compiler: neocogi_com::ComPtr<neocogi_platform::render::abi::ShaderCompilerAbi>) -> GpuDevice<Backend> {
+    GpuDevice::with_compiler(Core::new(), compiler)
 }
 
 /// Canonical derivative inputs and recorders shared by native and browser acceptance.
@@ -274,6 +274,9 @@ pub mod derivatives;
 pub mod sampled;
 
 /// Explicit target fixture; it never selects a compiler fallback or native graphics backend.
-pub fn device_with_target(compiler: neocogi_com::ComPtr<crate::shader::abi::ShaderCompilerAbi>, target: crate::shader::ShaderTarget) -> GpuDevice<Backend> {
-    GpuDevice::new(Core::with_target(target), compiler)
+pub fn device_with_target(
+    compiler: neocogi_com::ComPtr<crate::render::abi::ShaderCompilerAbi>,
+    target: crate::render::shader::ShaderTarget,
+) -> GpuDevice<Backend> {
+    GpuDevice::with_compiler(Core::with_target(target), compiler)
 }

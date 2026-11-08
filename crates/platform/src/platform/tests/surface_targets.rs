@@ -27,11 +27,7 @@ fn color_permissions() -> RenderClientPermissions {
 
 /// Construct through the actual platform, preserving the production native device and public identities.
 fn window() -> crate::platform::testing::NativeWindow {
-    crate::platform::testing::window(
-        neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-            .query()
-            .unwrap(),
-        "explicit surface target",
+    crate::platform::testing::window("explicit surface target",
         SIZE,
     )
     .unwrap()
@@ -369,11 +365,7 @@ impl IRenderDriverBound for ForgedSurface {
 #[ignore = "requires a native display; GL also supports SDL_VIDEODRIVER=offscreen"]
 fn group_creation_authenticates_surface_ownership_and_attachment_permissions() {
     let _session = native_session();
-    let platform = PlatformObject::new(
-        neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-            .query()
-            .unwrap(),
-    );
+    let platform = PlatformObject::new();
     let local: ComPtr<IPlatformWindowAbi> = WindowObject::from_value(platform.window("local surface", SIZE).unwrap()).query().unwrap();
     let foreign: ComPtr<IPlatformWindowAbi> = WindowObject::from_value(platform.window("other device", SIZE).unwrap()).query().unwrap();
     let surfaces: ComPtr<IRenderSurfaceFactoryAbi> = local.graphics_host().unwrap().query().unwrap();

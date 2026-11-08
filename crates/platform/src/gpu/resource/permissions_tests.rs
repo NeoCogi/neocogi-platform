@@ -7,9 +7,11 @@ type Device = GpuDevice<testing::Backend>;
 /// Each fixture has its own native identity and the actual portable compiler provider.
 fn device() -> Device {
     testing::device(
-        neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-            .query()
-            .unwrap(),
+        neocogi_platform::render::compiler::CompilerObject::from_value(
+            neocogi_platform::render::compiler::CompilerObject::new(neocogi_platform::render::shader::ShaderTarget::Wgsl).unwrap(),
+        )
+        .query()
+        .unwrap(),
     )
 }
 
@@ -207,9 +209,11 @@ fn target_identity_group_ownership_and_closure_are_independent() {
     assert_eq!(block.admit_target(&other_image), Err(RENDER_E_OWNER));
     assert_eq!(block.admit_framebuffer(), Err(RENDER_E_OWNER));
     let foreign = testing::device(
-        neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-            .query()
-            .unwrap(),
+        neocogi_platform::render::compiler::CompilerObject::from_value(
+            neocogi_platform::render::compiler::CompilerObject::new(neocogi_platform::render::shader::ShaderTarget::Wgsl).unwrap(),
+        )
+        .query()
+        .unwrap(),
     );
     assert!(matches!(
         foreign.create_client(Default::default(), image.clone(), RenderClientPermissions::none()),

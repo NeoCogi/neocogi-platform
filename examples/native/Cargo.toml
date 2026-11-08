@@ -9,7 +9,7 @@ description = "Native graphics examples with explicit static or shared-library p
 
 [features]
 default = ["static", "glow"]
-static = ["dep:provider", "provider/platform", "provider/shader-compiler"]
+static = ["dep:provider", "provider/platform"]
 dynamic = ["dep:neocogi-example-plugins"]
 glow = ["provider?/glow", "neocogi-example-plugins?/glow"]
 vulkan = ["provider?/vulkan", "neocogi-example-plugins?/vulkan"]

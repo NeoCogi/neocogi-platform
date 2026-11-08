@@ -42,7 +42,7 @@ impl<B: NativeResources> Clone for GpuDevice<B> {
 /// Registries hold only construction-proven weak observers, never resource owners.
 pub(crate) struct Device<B: crate::gpu::native::NativeResources> {
     /// Required compiler capability, acquired once by the renderer assembly.
-    compiler: ComPtr<neocogi_platform::shader::abi::ShaderCompilerAbi>,
+    compiler: ComPtr<neocogi_platform::render::abi::ShaderCompilerAbi>,
     /// Actual compatible native instance retained without any renderer or submission owner.
     pub(crate) core: Rc<B::Core>,
     /// Exclusive buffer objects constructed by this device.
@@ -130,8 +130,24 @@ impl<B: crate::gpu::native::NativeResources> Drop for Operation<B> {
 }
 
 impl<B: crate::gpu::native::NativeResources> GpuDevice<B> {
-    /// Creates no native object and retains no UI or client capability.
-    pub fn new(core: Rc<B::Core>, compiler: ComPtr<neocogi_platform::shader::abi::ShaderCompilerAbi>) -> Self {
+    /// Owns a compiler fixed to this backend; callers cannot choose output per request.
+    #[cfg(any(test, feature = "shader-compiler"))]
+    pub fn new(core: Rc<B::Core>) -> Result<Self, NcStatus> {
+        use crate::render::compiler::CompilerObject;
+        let compiler = CompilerObject::from_value(CompilerObject::new(B::shader_target(&core))?).query()?;
+        Ok(Self::from_compiler(core, compiler))
+    }
+
+    /// Acceptance-only injection exercises malformed foreign reports through real ABI calls.
+    /// Production construction always uses the renderer's own fixed-format compiler.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn with_compiler(core: Rc<B::Core>, compiler: ComPtr<neocogi_platform::render::abi::ShaderCompilerAbi>) -> Self {
+        Self::from_compiler(core, compiler)
+    }
+
+    /// Retains one compiler for the device lifetime; no registry lookup occurs per shader.
+    #[cfg(any(test, feature = "shader-compiler"))]
+    fn from_compiler(core: Rc<B::Core>, compiler: ComPtr<neocogi_platform::render::abi::ShaderCompilerAbi>) -> Self {
         Self {
             inner: Rc::new(Device {
                 compiler,
@@ -442,7 +458,7 @@ pub struct SamplerVersion<B: NativeResources> {
 pub struct ShaderVersion<B: NativeResources> {
     /// Fixes the resource's creating native instance even before pipeline realization.
     pub(crate) core: Rc<B::Core>,
-    /// Portable validated code, native artifacts and reflection copied from the compiler plugin.
+    /// Validated code and reflection copied from the renderer-owned compiler.
     pub(crate) artifact: Shader,
     /// Native pipelines retain only the opaque receipt, not this source version.
     _charge: Rc<ByteCharge>,
@@ -786,19 +802,15 @@ impl<B: crate::gpu::native::NativeResources> IRenderResources for Factory<B> {
                 let mut provider_charge = self.domain.account.bytes(cap)?;
                 let target = B::shader_target(&self.domain.device.inner.core);
                 let result = self.domain.device.inner.compiler.compile_result(
-                    neocogi_platform::shader::abi::ShaderCompileRequest {
-                        stage,
-                        target,
-                        max_output_bytes: cap as u64,
-                    },
+                    neocogi_platform::render::abi::ShaderCompileRequest { stage, max_output_bytes: cap as u64 },
                     NcCopyFromBufferOffset::new(0, &bytes),
                     NcCopyFromBufferOffset::new(0, &expected[..entry.len()]),
                 );
                 drop(bytes);
                 drop(input_charge);
                 let report = result?;
-                neocogi_platform::shader::check_compilation(&report)?;
-                let prepared = neocogi_platform::shader::PreparedShader::new(report, stage, target, &expected[..entry.len()], cap)?;
+                neocogi_platform::render::shader::check_compilation(&report)?;
+                let prepared = neocogi_platform::render::shader::PreparedShader::new(report, stage, target, &expected[..entry.len()], cap)?;
                 provider_charge.shrink(prepared.byte_len())?;
                 let charge = self.domain.account.bytes(prepared.byte_len())?;
                 let artifact = prepared.copy()?;

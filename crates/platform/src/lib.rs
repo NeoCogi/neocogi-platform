@@ -12,9 +12,6 @@ extern crate alloc;
 #[cfg(feature = "build-support")]
 #[path = "../build_support/mod.rs"]
 pub mod build;
-/// Optional Naga-backed CPU compiler and its independently registered COM descriptor.
-#[cfg(any(test, feature = "shader-compiler"))]
-pub mod compiler;
 /// Typed resources, command recording and additive concrete backend implementations.
 pub mod gpu;
 /// Optional SDL/DOM hosting with one explicitly selected graphics backend.
@@ -22,5 +19,3 @@ pub mod gpu;
 pub mod platform;
 /// Backend-neutral graphics/window contracts, upload sources and Rust conveniences.
 pub mod render;
-/// Portable shader contracts, reflection and bounded artifact readers.
-pub mod shader;

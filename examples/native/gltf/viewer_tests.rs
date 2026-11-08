@@ -93,10 +93,7 @@ fn emissive_materials_render_their_factor_and_texture_independently_of_environme
         (Some([0.25, 0., 0.]), Some([255; 4])),
     ] {
         let scene = emissive_scene(factor, pixel);
-        let compiler = neocogi_platform_examples::sdk::compiler::CompilerObject::from_value(neocogi_platform_examples::sdk::compiler::CompilerObject)
-            .query()
-            .unwrap();
-        let native = neocogi_platform_examples::sdk::platform::testing::window(compiler, "emissive material regression", size).unwrap();
+        let native = neocogi_platform_examples::sdk::platform::testing::window("emissive material regression", size).unwrap();
         let target = Target::new(native.window).unwrap();
         let mut graphics = Graphics::new(&scene, prepare_materials(&scene).unwrap(), &lighting.environment, &target.resources).unwrap();
         let (center, radius) = scene.bounds();
@@ -170,10 +167,7 @@ fn models_render_animate_and_respond_to_arcball_pan_zoom() {
     };
     for model in ["DamagedHelmet", "BrainStem"] {
         let scene = Scene::load(&PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!("gltf/assets/{model}.glb"))).unwrap();
-        let compiler = neocogi_platform_examples::sdk::compiler::CompilerObject::from_value(neocogi_platform_examples::sdk::compiler::CompilerObject)
-            .query()
-            .unwrap();
-        let native = neocogi_platform_examples::sdk::platform::testing::window(compiler, model, SIZE).unwrap();
+        let native = neocogi_platform_examples::sdk::platform::testing::window(model, SIZE).unwrap();
         let target = Target::new(native.window).unwrap();
         let window = &target.window;
         let mut graphics =
@@ -286,10 +280,7 @@ fn models_render_animate_and_respond_to_arcball_pan_zoom() {
 /// is 4.5; filtering their exponent bytes first would produce a different pixel value.
 #[cfg(all(feature = "test-support", feature = "glow"))]
 fn hdr_interpolation_probe() {
-    let compiler = neocogi_platform_examples::sdk::compiler::CompilerObject::from_value(neocogi_platform_examples::sdk::compiler::CompilerObject)
-        .query()
-        .unwrap();
-    let native = neocogi_platform_examples::sdk::platform::testing::window(compiler, "RGBE interpolation", SIZE).unwrap();
+    let native = neocogi_platform_examples::sdk::platform::testing::window("RGBE interpolation", SIZE).unwrap();
     let target = Target::new(native.window).unwrap();
     let region = environment::Region { x: 0, y: 0, width: 2, height: 1 };
     let data = Environment {
@@ -393,10 +384,7 @@ fn scene_render_failure_keeps_native_texture_reason_after_target_destruction() {
             intensity: 0.,
             background: Background::Hidden,
         };
-        let compiler = neocogi_platform_examples::sdk::compiler::CompilerObject::from_value(neocogi_platform_examples::sdk::compiler::CompilerObject)
-            .query()
-            .unwrap();
-        let native = neocogi_platform_examples::sdk::platform::testing::window(compiler, "retained scene error", SIZE).unwrap();
+        let native = neocogi_platform_examples::sdk::platform::testing::window("retained scene error", SIZE).unwrap();
         let target = Target::new(native.window).unwrap();
         let mut graphics = Graphics::new(&scene, prepare_materials(&scene).unwrap(), &lighting.environment, &target.resources).unwrap();
         let (center, radius) = scene.bounds();

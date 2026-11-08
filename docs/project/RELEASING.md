@@ -3,7 +3,7 @@
 The release target is **0.1.0-alpha.2**. Exactly two packages are published:
 
 1. `neocogi-platform`: reusable Rust SDK, contracts, optional providers and build support.
-2. `neocogi-platform-dylib`: thin final platform/compiler shared-library roots.
+2. `neocogi-platform-dylib`: thin final platform shared libraries including renderer-owned compilation.
 
 The four existing example/test packages remain `publish = false`. This supersedes
 the eleven-package release layout. Internal implementation modules, schema helpers
@@ -17,9 +17,8 @@ The SDK archive owns the nine authored NCIDL files, the schema helper, build.rs,
 implementation modules and focused tests. Its own build.rs uses the helper's
 source directly; downstream generation uses an SDK build dependency with
 `build-support`. Runtime defaults enable neither generation/staging dependencies
-nor SDL, Naga or a graphics backend. The shim archive includes both final link
-roots as backend-named library examples, selected together by `--examples` and
-the matching backend feature.
+nor SDL, Naga or a graphics backend. The shim archive includes each platform as a backend-named library example;
+`--examples` and the matching backend feature select one final library.
 All packages include their README and combined license notices.
 
 Run:
@@ -52,8 +51,8 @@ Rust and have no proc-macro tracking or Cargo artifact-dependency requirement.
 Before dynamic acceptance, run `cargo build -p neocogi-platform-dylib --no-default-features --features glow --examples`
 (or vulkan/wgpu), then build/run applications with the same target/profile and
 selected dynamic backend. Copy the executable with its `lib` and optional assets
-folders. Load the compiler before the platform; COM identities and dependencies
-are unchanged. See [native staging](../contracts/NATIVE_LAYOUT.md).
+folders. Load only the selected platform; its renderer owns compilation and
+has no external compiler plugin dependency. See [native staging](../contracts/NATIVE_LAYOUT.md).
 
 Run relevant native/browser acceptance and review the actual archives before
 publication. Publication remains a separate explicit action. Publish the SDK
@@ -64,12 +63,13 @@ COM/host/IDL dependencies remain the published exact `0.1.0` versions. A success
 Shader qualification must include isolated `shader-wgsl`, `shader-spirv` and
 `shader-glsl` compiler graphs. GPU features forward the selected target, and no
 release compiler should enable all outputs implicitly. Stage the backend-suffixed
-compiler and platform pair together. Shader request/report ABI signatures changed;
-rebuild generated consumers and both providers for this release.
+platform library including its compiler. Requests never select an output; results
+identify it for backend validation. Rebuild generated consumers and platforms for
+this alpha contract replacement; all NCIDL versions remain 1.
 
 Minimal output ABI regressions run `cargo test -p neocogi-platform
 --no-default-features --features shader-compiler,shader-wgsl --test shader_targets`
 (and shader-spirv/shader-glsl), plus a shader-compiler-only build that rejects all
-formats. They deliberately omit test-support so its WGSL fixture cannot mask
+output configurations. They deliberately omit test-support so its WGSL fixture cannot mask
 unavailable outputs. Poisoned unselected getters prove import copies only its
 selected representation; a missing selected getter propagates without fallback.

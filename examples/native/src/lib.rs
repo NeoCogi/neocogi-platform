@@ -64,10 +64,9 @@ pub fn acquire_platform()
     let runtime = unsafe { neocogi_com::Runtime::__from_host_api(neocogi_com_host::initialize_process()) }?;
     #[cfg(feature = "static")]
     {
-        // SAFETY: Both descriptor graphs and implementation code are linked for
-        // process lifetime. Registration/acquisition follows the same dependency order.
+        // SAFETY: The platform descriptor graph and implementation code are linked for
+        // process lifetime. Its render devices own shader compilation directly.
         unsafe {
-            runtime.register_plugin_descriptor(neocogi_platform_examples::sdk::compiler::plugin_descriptor())?;
             runtime.register_plugin_descriptor(neocogi_platform_examples::sdk::platform::plugin_descriptor())?;
         }
         runtime

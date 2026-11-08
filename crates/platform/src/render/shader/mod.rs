@@ -2,16 +2,9 @@
 #![deny(missing_docs)]
 use neocogi_platform::render::abi::GpuShaderStage;
 pub use abi::{ShaderScalar, ShaderInterpolation, ShaderSampling, ShaderTarget};
-/// Generated versioned CPU compiler contracts.
-#[allow(
-    clippy::len_without_is_empty,
-    reason = "IDL collections expose len/get; checking zero needs no additional ABI call"
-)]
-pub mod abi {
-    include!(env!("IDL_NEOCOGI_SHADER"));
-}
-/// Required CPU provider identity for renderer activation.
-pub const SHADER_COMPILER_PLUGIN_ID: neocogi_com::NcGuid = neocogi_com::guid_from_qualified_name("neocogi.shader.compiler");
+// The renderer namespace owns the generated compiler contracts; this module owns
+// only Rust snapshots, reflection and bounded readers of those same ABI definitions.
+use crate::render::abi;
 /// Maximum source bytes admitted before parsing.
 pub const MAX_SHADER_BYTES: usize = 1024 * 1024;
 /// Selected code plus entry-point payload limit; input and reflection have separate bounds.

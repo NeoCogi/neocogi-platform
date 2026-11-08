@@ -17,12 +17,7 @@ fn uploaded_resource_slots_keep_native_names_across_uploads() {
     // SAFETY: This unique context and its actual parent window become Core-owned.
     let core = unsafe { Core::from_sdl(gl.clone(), window, context) }.unwrap();
     let mut executor = Executor::new(core.clone()).unwrap();
-    let gpu = crate::gpu::GpuDevice::<Backend>::new(
-        core,
-        neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-            .query()
-            .unwrap(),
-    );
+    let gpu = crate::gpu::GpuDevice::<Backend>::new(core).unwrap();
     let domain = gpu
         .create_client(
             Default::default(),

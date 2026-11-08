@@ -155,11 +155,7 @@ fn framebuffer_group(
 #[ignore = "requires a native SDL display; use SDL_VIDEODRIVER=offscreen for Glow or a native display for Vulkan/WGPU"]
 fn native_order_ownership_reentry_and_final_release() {
     let _session = native_session();
-    let platform = PlatformObject::new(
-        neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-            .query()
-            .unwrap(),
-    );
+    let platform = PlatformObject::new();
     let native = platform.window("COM GPU acceptance", SIZE).unwrap();
     let device = Rc::downgrade(&native.device);
     let unknown = WindowObject::from_value(native);
@@ -471,11 +467,7 @@ impl IGpuDataSource for InitialReentry {
 #[ignore = "requires a native renderer; run with SDL_VIDEODRIVER=offscreen for GL"]
 fn ordinary_image_source_reentry_cannot_acquire_the_native_renderer() {
     let _session = native_session();
-    let platform = PlatformObject::new(
-        neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-            .query()
-            .unwrap(),
-    );
+    let platform = PlatformObject::new();
     let native = platform.window("initial source reentry", SIZE).unwrap();
     let window = WindowObject::from_value(native);
     let renderer: ComPtr<IRendererAbi> = window.query().unwrap();

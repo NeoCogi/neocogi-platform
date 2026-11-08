@@ -33,10 +33,10 @@ cargo run --profile min-size -p neocogi-platform-examples --bin gltf_brainstem -
 ~~~
 
 Both commands must use the same profile and target. The first builds the selected
-backend's two named Cargo library examples; the second automatically stages them
+backend's named Cargo platform library example; the second automatically stages it
 from that profile's `examples/` directory into `lib/`. Only Cargo and Rust are
 needed for building and staging libraries.
-Startup checks the complete compiler/platform pair and returns an owned error with
+Startup checks the platform library and returns an owned error with
 the matching preparation command when a file is missing. This check runs before
 model import and HDR lighting preparation. It never starts Cargo from a build script
 or application. Existing library validation still follows the SDK loader policy.
@@ -53,17 +53,17 @@ is shared by the executable and the real linked/shared-library regression test.
 
 ## Ownership and deployment
 
-Static assembly registers linked compiler then platform descriptors and acquires
-the typed root through the SDK. Dynamic assembly uses final cdylib artifacts explicitly prepared by
+Static assembly registers the platform descriptor and acquires its typed root
+through the SDK. The renderer creates and owns its fixed-format compiler.
+Dynamic assembly uses final cdylib artifacts explicitly prepared by
 `cargo build --examples`; `neocogi-example-plugins` stages their exact named outputs,
-loads the compiler first, loads the platform, then acquires its typed root.
+loads the platform, then acquires its typed root.
 Only final dylib roots export discovery; normal provider implementations are not
-Rust dependencies of a dynamic executable. There is no linked compiler fallback.
+Rust dependencies of a dynamic executable. The compiler is internal to the selected renderer.
 
 The application owns its one process-lived SDK host in both modes. Plugin code
 and metadata remain mapped under the SDK's existing loader policy. Missing
-libraries/dependencies fail through that policy; wrong compiler roots reject
-before native device construction. No new renderer ABI or native-handle exchange
+platform libraries fail through that policy. No new renderer ABI or native-handle exchange
 is introduced.
 
 Run build with the same mode/backend as run. For a debug deployment, copy the
@@ -97,7 +97,7 @@ SDL_VIDEODRIVER=offscreen cargo test --locked -p neocogi-platform-examples --no-
 Use dynamic,vulkan or dynamic,wgpu with a display for the last command.
 Ordinary deployment tests copy and rename actual executables/libraries, remove
 Cargo loader paths, and acquire through COM without a GPU. Isolated children
-exercise missing libraries, missing compiler dependencies and incompatible roots.
+exercise missing platform libraries and prove activation needs no compiler plugin.
 Opt-in deployment acceptance renders all three real examples after relocation.
 Static GL pixel acceptance retains animation, arcball, material/HDR and skybox
 checks. Dependency regressions use the selected Cargo tree and verify that dynamic

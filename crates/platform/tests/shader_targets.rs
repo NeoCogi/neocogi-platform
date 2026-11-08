@@ -1,9 +1,10 @@
 //! Real minimal compiler builds: no test-support feature may enable another output.
+use neocogi_platform::render::abi::*;
 use neocogi_com::{com_object, ComPtr, NcCopyFromBufferOffset, NcStatus, INcStringAbi, INcBytesAbi, NC_OK, NC_E_INVALID_ARG, NC_E_LOAD_FAILED};
 use neocogi_platform::{
-    compiler::CompilerObject,
+    render::compiler::CompilerObject,
     render::abi::GpuShaderStage,
-    shader::{self, abi::*, PreparedShader, ShaderCode, ShaderTarget},
+    render::shader::{self, PreparedShader, ShaderCode, ShaderTarget},
 };
 
 /// Portable layout with one selected uniform and one unused declaration.
@@ -11,21 +12,21 @@ const SOURCE: &str = "struct U { value:vec4<f32> } @group(1) @binding(0) var<uni
 
 /// This test is built separately for each output feature, including no outputs.
 fn supported(target: ShaderTarget) -> bool {
-    match target {
-        ShaderTarget::Wgsl => cfg!(feature = "shader-wgsl"),
-        ShaderTarget::SpirV => cfg!(feature = "shader-spirv"),
-        ShaderTarget::GlslEs300 => cfg!(feature = "shader-glsl"),
-        _ => false,
-    }
+    [
+        (ShaderTarget::Wgsl, cfg!(feature = "shader-wgsl")),
+        (ShaderTarget::SpirV, cfg!(feature = "shader-spirv")),
+        (ShaderTarget::GlslEs300, cfg!(feature = "shader-glsl")),
+    ]
+    .into_iter()
+    .any(|(format, enabled)| target == format && enabled)
 }
 
-/// Invokes the real generated ABI on the stateless implementation.
+/// Invokes the real generated ABI on a compiler with immutable renderer configuration.
 fn compile(target: ShaderTarget) -> ComPtr<IShaderCompilationAbi> {
-    let root: ComPtr<ShaderCompilerAbi> = CompilerObject::from_value(CompilerObject).query().unwrap();
+    let root: ComPtr<ShaderCompilerAbi> = CompilerObject::from_value(CompilerObject::new(target).unwrap()).query().unwrap();
     root.compile_result(
         ShaderCompileRequest {
             stage: GpuShaderStage::Vertex,
-            target,
             max_output_bytes: 4194304,
         },
         NcCopyFromBufferOffset::new(0, SOURCE.as_bytes()),
@@ -38,15 +39,11 @@ fn compile(target: ShaderTarget) -> ComPtr<IShaderCompilationAbi> {
 #[test]
 fn compiled_formats_match_explicit_output_features() {
     for target in [ShaderTarget::Wgsl, ShaderTarget::SpirV, ShaderTarget::GlslEs300] {
-        let report = compile(target);
         if !supported(target) {
-            assert_eq!(report.status().unwrap(), shader::SHADER_E_TARGET_UNAVAILABLE.code());
-            assert_eq!(report.target().unwrap_err(), shader::SHADER_E_TARGET_UNAVAILABLE);
-            assert_eq!(report.wgsl().unwrap_err(), shader::SHADER_E_TARGET_UNAVAILABLE);
-            assert_eq!(report.spirv().unwrap_err(), shader::SHADER_E_TARGET_UNAVAILABLE);
-            assert_eq!(report.glsl().unwrap_err(), shader::SHADER_E_TARGET_UNAVAILABLE);
+            assert!(matches!(CompilerObject::new(target), Err(shader::SHADER_E_TARGET_UNAVAILABLE)));
             continue;
         }
+        let report = compile(target);
         assert_eq!(report.status().unwrap(), NC_OK.code());
         let info = report.info().unwrap();
         assert_eq!(report.target().unwrap(), target);
@@ -81,7 +78,7 @@ fn compiled_formats_match_explicit_output_features() {
 }
 
 /// Every unused code getter is poisoned; import must query exactly the selected representation.
-#[com_object(interfaces(neocogi_platform::shader::abi::IShaderCompilation))]
+#[com_object(interfaces(neocogi_platform::render::abi::IShaderCompilation))]
 struct ReportProbe {
     /// Actual successful report retains one independently owned code object.
     inner: ComPtr<IShaderCompilationAbi>,

@@ -28,7 +28,7 @@ pub trait NativeResources: Sized + 'static {
         Self: 'a;
 
     /// Immutable device format selected before foreign compilation; no callback may change it.
-    fn shader_target(core: &Self::Core) -> crate::shader::ShaderTarget;
+    fn shader_target(core: &Self::Core) -> crate::render::shader::ShaderTarget;
 
     /// Retained opaque identity minted exactly once for the actual compatible native core.
     fn identity(core: &Self::Core) -> &DriverIdentity;

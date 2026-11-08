@@ -5,7 +5,7 @@ use schema::{Module, build, sources};
 
 /// Generate this package's namespaces from its declared build dependency.
 fn main() {
-    let modules = sources(&[Module::Renderer, Module::Platform, Module::Shader])
+    let modules = sources(&[Module::Renderer, Module::Platform])
         .and_then(build)
         .expect("generate renderer/platform bindings");
     let renderer = modules.iter().find(|module| module.module_name == "neocogi.renderer").expect("renderer module");

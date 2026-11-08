@@ -238,5 +238,8 @@ fn generated_graphics_artifacts_guard_dynamic_array_access() {
 /// Exercises GL emission independently of the validation-only WGSL convenience.
 #[cfg(feature = "shader-glsl")]
 fn compile_glsl(stage: GpuShaderStage, source: &str, entry: &str) -> Result<Shader, String> {
-    Compiler::compile_bounded(stage, ShaderTarget::GlslEs300, source, entry, MAX_SHADER_ARTIFACT_BYTES).map_err(|error| error.to_string())
+    Compiler::new(ShaderTarget::GlslEs300)
+        .unwrap()
+        .compile_bounded(stage, source, entry, MAX_SHADER_ARTIFACT_BYTES)
+        .map_err(|error| error.to_string())
 }

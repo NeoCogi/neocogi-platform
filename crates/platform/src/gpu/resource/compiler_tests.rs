@@ -1,24 +1,26 @@
 //! Hostile-but-ABI-valid provider probes exercise the actual COM transfer rather
 //! than the unrelated counted GPU input-source protocol.
 use super::*;
-/// Binary transfer probes explicitly request SPIR-V without adding a graphics backend.
+/// Binary transfer probes use a SPIR-V backend family without adding a native GPU.
 fn new_device(compiler: ComPtr<ShaderCompilerAbi>) -> GpuDevice {
     crate::gpu::testing::device_with_target(compiler, ShaderTarget::SpirV)
 }
 type GpuDevice = crate::gpu::GpuDevice<crate::gpu::testing::Backend>;
-use neocogi_platform::shader::abi::*;
+use neocogi_platform::render::abi::*;
 use neocogi_com::{INcStringAbi, INcBytesAbi, NcBytes};
 /// Valid source with a small deterministic artifact.
 const SOURCE: &str = "@vertex fn vs()->@builtin(position) vec4<f32>{return vec4<f32>(0.,0.,0.,1.);}";
 
-use neocogi_platform::shader::testing as admission;
+use neocogi_platform::render::shader::testing as admission;
 
 /// A rejected module publishes no GPU resource and leaves quota and operation admission usable.
 #[test]
 fn inactive_profile_violations_reject_through_the_resource_factory() {
-    let compiler = neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-        .query()
-        .unwrap();
+    let compiler = neocogi_platform::render::compiler::CompilerObject::from_value(
+        neocogi_platform::render::compiler::CompilerObject::new(neocogi_platform::render::shader::ShaderTarget::SpirV).unwrap(),
+    )
+    .query()
+    .unwrap();
     let gpu = new_device(compiler);
     let controller = gpu
         .create_client(
@@ -68,7 +70,7 @@ enum Fault {
     Binary,
     /// Wrong selected stage in optional metadata.
     Stage,
-    /// Independent target getter disagrees with the device request.
+    /// Independent target getter disagrees with the device's immutable format.
     Target,
     /// Optional code count disagrees with the selected export.
     CodeCount,
@@ -125,9 +127,9 @@ impl Probe {
     }
 }
 /// Proxy compiler still invokes the real validator/emitter through COM.
-#[com_object(interfaces(neocogi_platform::shader::abi::ShaderCompiler))]
+#[com_object(interfaces(neocogi_platform::render::abi::ShaderCompiler))]
 struct CompilerProxy {
-    /// Real stateless provider root.
+    /// Real compiler fixed to the backend format.
     inner: ComPtr<ShaderCompilerAbi>,
     /// Shared observations only.
     probe: Rc<Probe>,
@@ -145,7 +147,7 @@ impl ShaderCompiler for CompilerProxy {
     }
 }
 /// Complete report forwarding keeps each fault isolated to an observable valid ABI call.
-#[com_object(interfaces(neocogi_platform::shader::abi::IShaderCompilation))]
+#[com_object(interfaces(neocogi_platform::render::abi::IShaderCompilation))]
 struct ReportProxy {
     /// Real immutable report.
     inner: ComPtr<IShaderCompilationAbi>,
@@ -258,9 +260,11 @@ fn fixture(fault: Fault, limit: u64) -> (GpuDevice, ComBox<IRenderClientDomainAb
         calls: Cell::new(0),
         release_bytes: Cell::new(0),
     });
-    let inner = neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-        .query()
-        .unwrap();
+    let inner = neocogi_platform::render::compiler::CompilerObject::from_value(
+        neocogi_platform::render::compiler::CompilerObject::new(neocogi_platform::render::shader::ShaderTarget::SpirV).unwrap(),
+    )
+    .query()
+    .unwrap();
     let root = CompilerProxy::from_value(CompilerProxy { inner, probe: probe.clone() }).query().unwrap();
     let device = new_device(root);
     let domain = device
@@ -517,7 +521,7 @@ unsafe extern "C" fn export_copy(this: *mut core::ffi::c_void, offset: u64, len:
 }
 
 /// Malformed metadata remains initialized and ABI-valid, exercising value validation.
-#[com_object(interfaces(neocogi_platform::shader::abi::IShaderLocations))]
+#[com_object(interfaces(neocogi_platform::render::abi::IShaderLocations))]
 struct LocationsProbe {
     /// Chosen bounded or oversized value case.
     fault: Fault,
@@ -538,7 +542,7 @@ impl IShaderLocations for LocationsProbe {
     }
 }
 /// Independent item owns only numeric wire values, including open-enum unknown tags.
-#[com_object(interfaces(neocogi_platform::shader::abi::IShaderLocation))]
+#[com_object(interfaces(neocogi_platform::render::abi::IShaderLocation))]
 struct LocationProbe {
     /// One finite metadata intervention.
     fault: Fault,

@@ -45,7 +45,7 @@ jobs:
           xvfb-run -a cargo test --locked -p neocogi-platform --features ${{ matrix.backend }},test-support --lib gpu::backends::${{ matrix.backend }}:: -- --include-ignored --test-threads=1
       - name: Backend acceptance
         run: |
-          xvfb-run -a cargo test --locked -p neocogi-platform --lib --test platform_compiler_activation --no-default-features --features platform,shader-compiler,${{ matrix.backend }} -- --include-ignored --test-threads=1
+          xvfb-run -a cargo test --locked -p neocogi-platform --lib --test platform_compiler_activation --no-default-features --features platform,${{ matrix.backend }} -- --include-ignored --test-threads=1
       - name: Standalone graphics application
         run: |
           xvfb-run -a cargo run --locked -p neocogi-platform-examples --bin triangle --no-default-features --features static,${{ matrix.backend }} -- 3

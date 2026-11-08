@@ -148,12 +148,7 @@ fn independent_texture_frames_preserve_pixels_and_native_surface_configuration()
     let empty = renderer.create_texture(size, None).unwrap();
     assert_eq!(pixels(&renderer, &empty), [0; 4]);
     let source = [255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 0, 255];
-    let gpu = crate::gpu::GpuDevice::new(
-        renderer.core(),
-        neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-            .query()
-            .unwrap(),
-    );
+    let gpu = crate::gpu::GpuDevice::new(renderer.core()).unwrap();
     let domain = gpu
         .create_client(
             Default::default(),

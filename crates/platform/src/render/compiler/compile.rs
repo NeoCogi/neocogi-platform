@@ -6,12 +6,14 @@
 //! fragment uniforms 3. Each sampled pair uses texture=2*slot, sampler=2*slot+1.
 
 use neocogi_platform::render::abi::GpuShaderStage;
-use neocogi_platform::shader::{Shader, ShaderCode, ShaderTarget, IoLocation, IoShape, Uniform, SampledTexture, ShaderScalar, ShaderInterpolation, ShaderSampling};
+use neocogi_platform::render::shader::{
+    Shader, ShaderCode, ShaderTarget, IoLocation, IoShape, Uniform, SampledTexture, ShaderScalar, ShaderInterpolation, ShaderSampling,
+};
 mod images;
 
 use naga::{AddressSpace, Binding, Handle, ScalarKind, ShaderStage, Type, TypeInner};
 
-use neocogi_platform::shader::{MAX_SHADER_BYTES, MAX_SHADER_ARTIFACT_BYTES};
+use neocogi_platform::render::shader::{MAX_SHADER_BYTES, MAX_SHADER_ARTIFACT_BYTES};
 
 /// Factory errors keep malformed programs, exhausted output quota and allocation failure distinct.
 #[derive(Debug)]
@@ -43,14 +45,17 @@ impl std::fmt::Display for CompileError {
         match self {
             Self::Invalid(message) => output.write_str(message),
             Self::Limit => output.write_str("shader artifact byte budget exceeded"),
-            Self::Unavailable => output.write_str("requested shader target is not enabled in this compiler build"),
+            Self::Unavailable => output.write_str("shader compiler output is not enabled in this build"),
             Self::Allocation => output.write_str("shader artifact allocation failed"),
         }
     }
 }
 
-/// Private stateless translation engine; only the COM provider publishes outputs.
-pub(crate) struct Compiler;
+/// Immutable renderer configuration; requests cannot change its admitted output format.
+pub(crate) struct Compiler {
+    /// Selected once by the renderer, before any source is compiled.
+    target: ShaderTarget,
+}
 
 /// GLSL expansion cannot grow an unrestricted String before domain artifact admission.
 #[cfg(feature = "shader-glsl")]
@@ -98,12 +103,13 @@ impl Compiler {
     /// Test convenience uses the portable WGSL target unless a test selects another explicitly.
     #[cfg(test)]
     pub fn compile(stage: GpuShaderStage, source: &str, entry: &str) -> Result<Shader, String> {
-        Self::compile_bounded(stage, ShaderTarget::Wgsl, source, entry, MAX_SHADER_ARTIFACT_BYTES).map_err(|error| error.to_string())
+        Self::new(ShaderTarget::Wgsl)
+            .and_then(|compiler| compiler.compile_bounded(stage, source, entry, MAX_SHADER_ARTIFACT_BYTES))
+            .map_err(|error| error.to_string())
     }
 
-    /// Validates the complete portable module, then emits exactly the requested artifact.
-    /// The output cap covers entry plus selected code; intermediate IR is scratch, not retained output.
-    pub(crate) fn compile_bounded(stage: GpuShaderStage, target: ShaderTarget, source: &str, entry: &str, budget: usize) -> Result<Shader, CompileError> {
+    /// Bind a compiler to one available output; reject unavailable configurations before compilation.
+    pub(crate) fn new(target: ShaderTarget) -> Result<Self, CompileError> {
         if !matches!(target, ShaderTarget::Wgsl | ShaderTarget::SpirV | ShaderTarget::GlslEs300) {
             return Err("unknown shader target".into());
         }
@@ -116,6 +122,13 @@ impl Compiler {
         if !enabled {
             return Err(CompileError::Unavailable);
         }
+        Ok(Self { target })
+    }
+
+    /// Validate the whole module and emit the renderer's fixed format, retaining no scratch IR.
+    /// The output cap covers only the entry and emitted code.
+    pub(crate) fn compile_bounded(&self, stage: GpuShaderStage, source: &str, entry: &str, budget: usize) -> Result<Shader, CompileError> {
+        let target = self.target;
         if source.is_empty() || source.len() > MAX_SHADER_BYTES || entry.is_empty() || entry.len() > 128 {
             return Err("shader source or entry length exceeds the graphics profile".into());
         }

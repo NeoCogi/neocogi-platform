@@ -58,10 +58,12 @@ impl PlatformObject {
         drop(owner);
         let gpu = gpu::Gpu::new(&host.video, title, size).map_err(|error| RenderError::new(PLATFORM_E_BACKEND, error))?;
         let window = gpu.window();
+        // Compiler composition must succeed before this window gains an input route.
+        let logical = neocogi_platform::gpu::GpuDevice::new(gpu.core())?;
         host.queues.borrow_mut().insert(window.id(), VecDeque::new());
         let device = Rc::new(Device {
             success: operation_result(Ok(())),
-            logical: neocogi_platform::gpu::GpuDevice::new(gpu.core(), self.compiler.clone()),
+            logical,
             render: RefCell::new(Some(RenderState { gpu, prepared: Prepared::default() })),
             textures: Rc::default(),
             surfaces: RefCell::default(),
@@ -88,11 +90,7 @@ mod tests {
     /// Invalid envelope values reject before SDL/window/device construction.
     #[test]
     fn invalid_window_requests_do_not_initialize_native_services() {
-        let local = PlatformObject::into_local(PlatformObject::new(
-            neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-                .query()
-                .unwrap(),
-        ));
+        let local = PlatformObject::into_local(PlatformObject::new());
         let platform = local.query::<PlatformAbi>().unwrap();
         for size in [Size { width: 0, height: 8 }, Size { width: 8, height: -1 }] {
             assert_eq!(

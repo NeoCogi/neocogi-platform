@@ -103,12 +103,7 @@ fn canonical_signed_derivatives_match_window_and_texture_pixels() {
         8,
     )
     .unwrap();
-    let gpu = crate::gpu::GpuDevice::new(
-        renderer.core(),
-        neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-            .query()
-            .unwrap(),
-    );
+    let gpu = crate::gpu::GpuDevice::new(renderer.core()).unwrap();
     let domain = gpu
         .create_client(
             Default::default(),
@@ -186,12 +181,7 @@ fn ui_draws_clears_and_uploads_survive_application_gl_state() {
         8,
     )
     .unwrap();
-    let gpu = crate::gpu::GpuDevice::new(
-        renderer.core(),
-        neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-            .query()
-            .unwrap(),
-    );
+    let gpu = crate::gpu::GpuDevice::new(renderer.core()).unwrap();
     let domain = gpu
         .create_client(
             Default::default(),
@@ -265,12 +255,7 @@ fn native_completion_owns_resource_and_command_charges() {
     .unwrap();
     let info = FrameInfo::try_new(Dimensioni::new(8, 8), color(0, 0, 0, 255)).unwrap();
     for phase in 0..3 {
-        let device = GpuDevice::new(
-            renderer.core(),
-            neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-                .query()
-                .unwrap(),
-        );
+        let device = GpuDevice::new(renderer.core()).unwrap();
         let controller = device
             .create_client(
                 RenderClientLimits::default(),
@@ -378,12 +363,7 @@ fn dynamic_shader_indices_cannot_escape_uniform_or_private_storage() {
         8,
     )
     .unwrap();
-    let gpu = GpuDevice::new(
-        renderer.core(),
-        neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-            .query()
-            .unwrap(),
-    );
+    let gpu = GpuDevice::new(renderer.core()).unwrap();
     let controller = gpu
         .create_client(
             RenderClientLimits::default(),
@@ -476,12 +456,7 @@ fn fragment_identifiers_containing_builtin_names_compile_and_render() {
         8,
     )
     .unwrap();
-    let gpu = GpuDevice::new(
-        renderer.core(),
-        neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-            .query()
-            .unwrap(),
-    );
+    let gpu = GpuDevice::new(renderer.core()).unwrap();
     let controller = gpu
         .create_client(
             RenderClientLimits::default(),
@@ -599,12 +574,7 @@ fn independent_logical_devices_keep_distinct_native_resources() {
     let mut snapshots = Vec::new();
     let root = crate::gpu::abi::Rect { x: 0, y: 0, width: 8, height: 8 };
     for rgba in [[255, 0, 0, 255], [0, 0, 255, 255]] {
-        let gpu = crate::gpu::GpuDevice::new(
-            renderer.core(),
-            neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-                .query()
-                .unwrap(),
-        );
+        let gpu = crate::gpu::GpuDevice::new(renderer.core()).unwrap();
         let domain = gpu
             .create_client(
                 Default::default(),
@@ -711,12 +681,7 @@ fn absent_initial_images_are_native_zero_without_a_cpu_zero_payload() {
         4,
     )
     .unwrap();
-    let device = GpuDevice::new(
-        renderer.core(),
-        neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-            .query()
-            .unwrap(),
-    );
+    let device = GpuDevice::new(renderer.core()).unwrap();
     let owner = device
         .create_client(
             RenderClientLimits::default(),
@@ -776,12 +741,7 @@ fn late_native_owners_preserve_their_context_and_next_driver_reselects_its_own()
     let weak_a = Rc::downgrade(&core_a);
     let metadata_a = core_a.identity().clone();
     let mut renderer_a = GLRenderer::new(core_a, 4, 4).unwrap();
-    let gpu_a = crate::gpu::GpuDevice::new(
-        renderer_a.core(),
-        neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-            .query()
-            .unwrap(),
-    );
+    let gpu_a = crate::gpu::GpuDevice::new(renderer_a.core()).unwrap();
     let domain_a = gpu_a
         .create_client(
             Default::default(),
@@ -806,12 +766,7 @@ fn late_native_owners_preserve_their_context_and_next_driver_reselects_its_own()
     let core_b = unsafe { Core::from_sdl(gl_b.clone(), window_b, context_b) }.unwrap();
     assert_ne!(metadata_a.as_raw().object, core_b.identity().as_raw().object);
     let mut renderer_b = GLRenderer::new(core_b, 4, 4).unwrap();
-    let gpu_b = crate::gpu::GpuDevice::new(
-        renderer_b.core(),
-        neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-            .query()
-            .unwrap(),
-    );
+    let gpu_b = crate::gpu::GpuDevice::new(renderer_b.core()).unwrap();
     let domain_b = gpu_b
         .create_client(
             Default::default(),
@@ -857,12 +812,7 @@ fn unsubmitted_target_variants_release_the_source_and_all_charges() {
     let gl = Rc::new(unsafe { glow::Context::from_loader_function(|name| video.gl_get_proc_address(name).cast()) });
     let core = unsafe { Core::from_sdl(gl, window, context) }.unwrap();
     let mut renderer = GLRenderer::new(core, 8, 8).unwrap();
-    let gpu = crate::gpu::GpuDevice::new(
-        renderer.core(),
-        neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-            .query()
-            .unwrap(),
-    );
+    let gpu = crate::gpu::GpuDevice::new(renderer.core()).unwrap();
     let domain = gpu
         .create_client(
             Default::default(),
@@ -933,12 +883,7 @@ fn exact_texel_reads_keep_coordinate_bounds_on_both_targets() {
         8,
     )
     .unwrap();
-    let gpu = crate::gpu::GpuDevice::new(
-        renderer.core(),
-        neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-            .query()
-            .unwrap(),
-    );
+    let gpu = crate::gpu::GpuDevice::new(renderer.core()).unwrap();
     let domain = gpu
         .create_client(
             Default::default(),

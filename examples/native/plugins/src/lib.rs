@@ -6,9 +6,9 @@ pub use neocogi_platform as sdk;
 
 mod artifacts;
 
-/// Compiler then backend-specific platform filenames staged by the package build script.
+/// Backend-specific platform library staged by the package build script.
 #[cfg(not(target_arch = "wasm32"))]
-pub const LIBRARIES: [&str; 2] = artifacts::libraries(
+pub const LIBRARIES: [&str; 1] = artifacts::libraries(
     artifacts::selected_backend(),
     if cfg!(target_os = "windows") {
         artifacts::System::Windows
@@ -26,7 +26,7 @@ pub fn acquire(
 ) -> Result<neocogi_com::ComPtr<neocogi_platform::render::platform::PlatformAbi>, neocogi_platform::render::abi::RenderError> {
     let executable = std::env::current_exe().map_err(|_| neocogi_com::NC_E_INVALID_ARG)?;
     let directory = executable.parent().ok_or(neocogi_com::NC_E_INVALID_ARG)?.join("lib");
-    // Check the complete pair before mutating the process-lived plugin catalog.
+    // Check the platform library before mutating the process-lived plugin catalog.
     // Missing development artifacts are recoverable application errors; trusted
     // existing libraries retain the SDK's validation and fail-fatal loader policy.
     for filename in LIBRARIES {
@@ -42,13 +42,9 @@ pub fn acquire(
             ));
         }
     }
-    // SAFETY: The application deliberately ships these trusted Cargo-built final
-    // roots. The SDK validates dependencies and pins their code for process lifetime.
-    unsafe {
-        runtime.load_plugin_library(directory.join(LIBRARIES[0]));
-    }
-    // SAFETY: Same trusted artifact/lifetime obligation; the compiler is registered first.
-    let platform = unsafe { runtime.load_plugin_library(directory.join(LIBRARIES[1])) };
+    // SAFETY: The application deliberately ships this trusted Cargo-built final root.
+    // The SDK validates its descriptor and pins implementation code for process lifetime.
+    let platform = unsafe { runtime.load_plugin_library(directory.join(LIBRARIES[0])) };
     runtime.acquire_plugin_root(platform).map_err(Into::into)
 }
 

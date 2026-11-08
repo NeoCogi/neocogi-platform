@@ -1,20 +1,20 @@
 //! Independently generated COM calls verify format selection, ownership and exact quotas.
 use neocogi_com::{ComPtr, INcBytesComPtrExt, INcStringComPtrExt, NcCopyFromBufferOffset, NC_OK, NC_E_INVALID_ARG, NC_E_NOINTERFACE, NC_E_OUT_OF_RANGE};
 use neocogi_platform::{
-    compiler::CompilerObject,
+    render::compiler::CompilerObject,
     render::abi::GpuShaderStage,
-    shader::{self, PreparedShader, ShaderTarget},
+    render::shader::{self, PreparedShader, ShaderTarget},
 };
 
 /// A separately compiled projection negotiates by ABI identity, never a Rust object cast.
 #[allow(dead_code, clippy::len_without_is_empty, reason = "independent len/get ABI caller")]
 mod client {
-    include!(env!("IDL_NEOCOGI_SHADER"));
+    include!(env!("IDL_NEOCOGI_RENDERER"));
 }
 
 const SOURCE: &str = "struct U { value:vec4<f32> } @group(1) @binding(0) var<uniform> u:U; @vertex fn vs(@location(0) p:vec2<f32>)->@builtin(position) vec4<f32> {return vec4<f32>(p,0.25,1.0)+u.value;}";
 
-/// Build flags determine availability, while every individual request selects one representation.
+/// Build flags determine availability, while each compiler instance retains its renderer-selected representation.
 fn targets() -> Vec<ShaderTarget> {
     let mut values = vec![ShaderTarget::Wgsl];
     if cfg!(feature = "shader-spirv") {
@@ -28,11 +28,10 @@ fn targets() -> Vec<ShaderTarget> {
 
 /// Keeps independent generated request values distinct from the implementation's Rust types.
 fn compile(stage: GpuShaderStage, target: ShaderTarget, source: &str, entry: &str, cap: u64) -> ComPtr<client::IShaderCompilationAbi> {
-    let root: ComPtr<client::ShaderCompilerAbi> = CompilerObject::from_value(CompilerObject).query().unwrap();
+    let root: ComPtr<client::ShaderCompilerAbi> = CompilerObject::from_value(CompilerObject::new(target).unwrap()).query().unwrap();
     root.compile_result(
         client::ShaderCompileRequest {
-            stage,
-            target: client::ShaderTarget::from_raw(target.raw()),
+            stage: client::GpuShaderStage::from_raw(stage.raw()),
             max_output_bytes: cap,
         },
         NcCopyFromBufferOffset::new(0, source.as_bytes()),
@@ -128,7 +127,7 @@ fn exact_selected_payload_limit_and_bounded_snapshot() {
     for target in targets() {
         let report = compile(GpuShaderStage::Vertex, target, SOURCE, "vs", 4194304);
         let info = report.info().unwrap();
-        let report = report.query::<shader::abi::IShaderCompilationAbi>().unwrap();
+        let report = report.query::<neocogi_platform::render::abi::IShaderCompilationAbi>().unwrap();
         let other = if target == ShaderTarget::Wgsl {
             ShaderTarget::SpirV
         } else {
@@ -155,22 +154,19 @@ fn exact_selected_payload_limit_and_bounded_snapshot() {
     }
 }
 
-/// Disabled known targets reject explicitly; invalid wire enum values never enter provider code.
+/// Output selection belongs to construction; malformed wire stages still reject before dispatch.
 #[test]
-fn unavailable_targets_and_unknown_wire_tags_reject() {
-    for target in [ShaderTarget::SpirV, ShaderTarget::GlslEs300] {
+fn unavailable_configurations_and_unknown_wire_stages_reject() {
+    for target in [ShaderTarget::Wgsl, ShaderTarget::SpirV, ShaderTarget::GlslEs300] {
         if !targets().contains(&target) {
-            let report = compile(GpuShaderStage::Vertex, target, SOURCE, "vs", 4194304);
-            assert_eq!(report.status().unwrap(), shader::SHADER_E_TARGET_UNAVAILABLE.code());
-            assert_eq!(report.wgsl().unwrap_err(), shader::SHADER_E_TARGET_UNAVAILABLE);
-            assert_eq!(report.target().unwrap_err(), shader::SHADER_E_TARGET_UNAVAILABLE);
+            assert!(matches!(CompilerObject::new(target), Err(shader::SHADER_E_TARGET_UNAVAILABLE)));
         }
     }
-    let root: ComPtr<client::ShaderCompilerAbi> = CompilerObject::from_value(CompilerObject).query().unwrap();
+    assert!(matches!(CompilerObject::new(ShaderTarget::from_raw(255)), Err(NC_E_INVALID_ARG)));
+    let root: ComPtr<client::ShaderCompilerAbi> = CompilerObject::from_value(CompilerObject::new(ShaderTarget::Wgsl).unwrap()).query().unwrap();
     let result = root.compile_result(
         client::ShaderCompileRequest {
-            stage: GpuShaderStage::Vertex,
-            target: client::ShaderTarget::from_raw(255),
+            stage: client::GpuShaderStage::from_raw(255),
             max_output_bytes: 4194304,
         },
         NcCopyFromBufferOffset::new(0, SOURCE.as_bytes()),
@@ -197,10 +193,9 @@ fn rejection_is_complete_and_diagnostics_are_per_call() {
             drop(report);
             assert!(!diagnostic.to_string_bounded(4096).unwrap().is_empty());
         }
-        let root: ComPtr<shader::abi::ShaderCompilerAbi> = CompilerObject::from_value(CompilerObject).query().unwrap();
-        let request = shader::abi::ShaderCompileRequest {
+        let root: ComPtr<neocogi_platform::render::abi::ShaderCompilerAbi> = CompilerObject::from_value(CompilerObject::new(target).unwrap()).query().unwrap();
+        let request = neocogi_platform::render::abi::ShaderCompileRequest {
             stage: GpuShaderStage::Vertex,
-            target,
             max_output_bytes: 4194304,
         };
         let error = root

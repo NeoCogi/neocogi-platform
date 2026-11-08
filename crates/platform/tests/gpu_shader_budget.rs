@@ -57,10 +57,12 @@ const EXPANDING: &str = r#"
 #[test]
 fn generated_output_obeys_remaining_domain_quota_before_large_allocation() {
     let device = neocogi_platform::gpu::testing::device_with_target(
-        neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-            .query()
-            .unwrap(),
-        neocogi_platform::shader::ShaderTarget::GlslEs300,
+        neocogi_platform::render::compiler::CompilerObject::from_value(
+            neocogi_platform::render::compiler::CompilerObject::new(neocogi_platform::render::shader::ShaderTarget::GlslEs300).unwrap(),
+        )
+        .query()
+        .unwrap(),
+        neocogi_platform::render::shader::ShaderTarget::GlslEs300,
     );
     let domain = device
         .create_client(
@@ -83,25 +85,25 @@ fn generated_output_obeys_remaining_domain_quota_before_large_allocation() {
     // rather than merely observing the status returned after an unbounded String grows.
     assert!(largest <= 256 * 1024, "compiler requested {largest} bytes before quota rejection");
     assert_eq!(device.live_bytes(factory.as_com_ref()).unwrap(), 0);
-    let root: neocogi_com::ComPtr<neocogi_platform::shader::abi::ShaderCompilerAbi> =
-        neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-            .query()
-            .unwrap();
+    let root: neocogi_com::ComPtr<neocogi_platform::render::abi::ShaderCompilerAbi> = neocogi_platform::render::compiler::CompilerObject::from_value(
+        neocogi_platform::render::compiler::CompilerObject::new(neocogi_platform::render::shader::ShaderTarget::GlslEs300).unwrap(),
+    )
+    .query()
+    .unwrap();
     let report = root
         .compile(
-            neocogi_platform::shader::abi::ShaderCompileRequest {
+            neocogi_platform::render::abi::ShaderCompileRequest {
                 stage: GpuShaderStage::Fragment,
-                target: neocogi_platform::shader::ShaderTarget::GlslEs300,
                 max_output_bytes: 4194304,
             },
             NcCopyFromBufferOffset::new(0, EXPANDING.as_bytes()),
             NcCopyFromBufferOffset::new(0, b"fs"),
         )
         .unwrap();
-    let artifact = neocogi_platform::shader::PreparedShader::new(
+    let artifact = neocogi_platform::render::shader::PreparedShader::new(
         report,
         GpuShaderStage::Fragment,
-        neocogi_platform::shader::ShaderTarget::GlslEs300,
+        neocogi_platform::render::shader::ShaderTarget::GlslEs300,
         b"fs",
         4194304,
     )

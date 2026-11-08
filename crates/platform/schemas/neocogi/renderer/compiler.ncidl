@@ -1,6 +1,3 @@
-extern neocogi.renderer;
-use neocogi.renderer::GpuShaderStage;
-
 #[version(1)]
 /// Portable 32-bit location scalar families.
 enum ShaderScalar: u8 {
@@ -50,7 +47,7 @@ enum ShaderSampling: u8 {
 }
 
 #[version(1)]
-/// One requested output; successful compilation never exports other formats.
+/// Actual compiler output; the receiving backend validates this format.
 enum ShaderTarget: u8 {
     /// Original validated source for WGPU's checked native translation.
     Wgsl,
@@ -65,8 +62,6 @@ enum ShaderTarget: u8 {
 struct ShaderCompileRequest {
     /// Selected vertex or fragment stage.
     stage: GpuShaderStage,
-    /// Exact requested backend artifact format.
-    target: ShaderTarget,
     /// Maximum selected artifact plus entry-point payload bytes.
     max_output_bytes: u64,
 }
@@ -132,7 +127,7 @@ struct ShaderSampledTextureInfo {
 }
 
 #[version(1)]
-/// Stateless CPU-only portable compiler; native driver realization stays fallible.
+/// Renderer-owned CPU compiler with immutable output configuration; native realization stays fallible.
 interface ShaderCompiler {
     /// Returns a complete success or a rejected report; no partial artifacts.
     fn compile_result(&self, request: ShaderCompileRequest, source: &[u8], entry: &[u8]) -> Result<ComPtr<IShaderCompilation>>;

@@ -153,15 +153,15 @@ pub(crate) fn create<B: crate::gpu::native::NativeResources>(
 /// Returns packed size/alignment and shader interpretation for an admitted attribute format.
 pub(crate) fn vertex_format(format: GpuVertexFormat) -> Result<(u32, u32, IoShape), NcStatus> {
     let (components, size, align, kind) = match format {
-        GpuVertexFormat::Float32 => (1, 4, 4, neocogi_platform::shader::ShaderScalar::Float32),
-        GpuVertexFormat::Float32x2 => (2, 8, 4, neocogi_platform::shader::ShaderScalar::Float32),
-        GpuVertexFormat::Float32x3 => (3, 12, 4, neocogi_platform::shader::ShaderScalar::Float32),
-        GpuVertexFormat::Float32x4 => (4, 16, 4, neocogi_platform::shader::ShaderScalar::Float32),
-        GpuVertexFormat::Uint32 => (1, 4, 4, neocogi_platform::shader::ShaderScalar::Uint32),
-        GpuVertexFormat::Uint32x2 => (2, 8, 4, neocogi_platform::shader::ShaderScalar::Uint32),
-        GpuVertexFormat::Uint32x3 => (3, 12, 4, neocogi_platform::shader::ShaderScalar::Uint32),
-        GpuVertexFormat::Uint32x4 => (4, 16, 4, neocogi_platform::shader::ShaderScalar::Uint32),
-        GpuVertexFormat::Unorm8x4 => (4, 4, 4, neocogi_platform::shader::ShaderScalar::Float32),
+        GpuVertexFormat::Float32 => (1, 4, 4, neocogi_platform::render::shader::ShaderScalar::Float32),
+        GpuVertexFormat::Float32x2 => (2, 8, 4, neocogi_platform::render::shader::ShaderScalar::Float32),
+        GpuVertexFormat::Float32x3 => (3, 12, 4, neocogi_platform::render::shader::ShaderScalar::Float32),
+        GpuVertexFormat::Float32x4 => (4, 16, 4, neocogi_platform::render::shader::ShaderScalar::Float32),
+        GpuVertexFormat::Uint32 => (1, 4, 4, neocogi_platform::render::shader::ShaderScalar::Uint32),
+        GpuVertexFormat::Uint32x2 => (2, 8, 4, neocogi_platform::render::shader::ShaderScalar::Uint32),
+        GpuVertexFormat::Uint32x3 => (3, 12, 4, neocogi_platform::render::shader::ShaderScalar::Uint32),
+        GpuVertexFormat::Uint32x4 => (4, 16, 4, neocogi_platform::render::shader::ShaderScalar::Uint32),
+        GpuVertexFormat::Unorm8x4 => (4, 4, 4, neocogi_platform::render::shader::ShaderScalar::Float32),
         _ => return Err(NC_E_INVALID_ARG),
     };
     Ok((size, align, IoShape { kind, components }))

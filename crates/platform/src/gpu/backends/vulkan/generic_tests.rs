@@ -40,12 +40,7 @@ fn uncertain_upload_status_retains_owners_until_idle_and_rejects_reuse() {
         target.render_color(&mut executor, Vec::new(), Size { width: 8, height: 8 }, [0.25, 0.5, 0.75, 1.]);
         let previous = target.read(&target.pixels);
         let baseline = core.memory_count.get();
-        let gpu = GpuDevice::new(
-            executor.core.clone(),
-            neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-                .query()
-                .unwrap(),
-        );
+        let gpu = GpuDevice::new(executor.core.clone()).unwrap();
         let controller = gpu
             .create_client(
                 RenderClientLimits::default(),
@@ -454,12 +449,7 @@ fn regional_depth_and_copied_uniforms_preserve_surrounding_targets() {
     let core = core();
     let mut target = Target::new(core.clone(), 64, 64);
     let mut executor = Executor::new(core.clone()).unwrap();
-    let gpu = GpuDevice::new(
-        executor.core.clone(),
-        neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-            .query()
-            .unwrap(),
-    );
+    let gpu = GpuDevice::new(executor.core.clone()).unwrap();
     let controller = gpu
         .create_client(
             RenderClientLimits::default(),
@@ -568,12 +558,7 @@ fn generated_bounds_guards_execute_on_the_native_driver() {
     let core = core();
     let mut target = Target::new(core.clone(), 8, 8);
     let mut executor = Executor::new(core).unwrap();
-    let gpu = GpuDevice::new(
-        executor.core.clone(),
-        neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-            .query()
-            .unwrap(),
-    );
+    let gpu = GpuDevice::new(executor.core.clone()).unwrap();
     let controller = gpu
         .create_client(
             RenderClientLimits::default(),
@@ -656,12 +641,7 @@ fn indexed_texture_case(operation: GpuBlendOp, imported: bool) {
     let core = core();
     let mut target = Target::new(core.clone(), 8, 8);
     let mut executor = Executor::new(core).unwrap();
-    let gpu = GpuDevice::new(
-        executor.core.clone(),
-        neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-            .query()
-            .unwrap(),
-    );
+    let gpu = GpuDevice::new(executor.core.clone()).unwrap();
     let controller = if imported {
         gpu.create_client(
             RenderClientLimits::default(),
@@ -860,12 +840,7 @@ fn front_face_and_culling_match_canonical_winding() {
     let core = core();
     let mut target = Target::new(core.clone(), 8, 8);
     let mut executor = Executor::new(core).unwrap();
-    let gpu = GpuDevice::new(
-        executor.core.clone(),
-        neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-            .query()
-            .unwrap(),
-    );
+    let gpu = GpuDevice::new(executor.core.clone()).unwrap();
     let controller = gpu
         .create_client(
             RenderClientLimits::default(),
@@ -911,12 +886,7 @@ fn escaped_prepared_block_keeps_only_its_cache_free_native_core_alive() {
     let weak = Rc::downgrade(&core);
     let target = Target::new(core.clone(), 8, 8);
     let mut executor = Executor::new(core.clone()).unwrap();
-    let gpu = GpuDevice::new(
-        executor.core.clone(),
-        neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-            .query()
-            .unwrap(),
-    );
+    let gpu = GpuDevice::new(executor.core.clone()).unwrap();
     let controller = gpu
         .create_client(
             RenderClientLimits::default(),
@@ -994,12 +964,7 @@ fn logical_images_exceeding_native_dimensions_reject_before_native_allocation() 
         assert!(core.image_extent(vk::Format::R8G8B8A8_UNORM, width, 1, vk::ImageUsageFlags::SAMPLED).is_err());
         return;
     }
-    let gpu = GpuDevice::new(
-        executor.core.clone(),
-        neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-            .query()
-            .unwrap(),
-    );
+    let gpu = GpuDevice::new(executor.core.clone()).unwrap();
     let controller = gpu
         .create_client(
             RenderClientLimits::default(),
@@ -1107,12 +1072,7 @@ fn private_output_uses_production_pass_upload_and_completion_paths() {
         }),
         retired: executor.sender(),
     });
-    let gpu = GpuDevice::new(
-        executor.core.clone(),
-        neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-            .query()
-            .unwrap(),
-    );
+    let gpu = GpuDevice::new(executor.core.clone()).unwrap();
     let domain = gpu
         .create_client(
             Default::default(),
@@ -1244,12 +1204,7 @@ fn unsubmitted_variants_reuse_native_objects_and_reject_other_cores() {
         color: vk::Format::R8G8B8A8_UNORM,
         depth: None,
     };
-    let gpu = GpuDevice::new(
-        core.clone(),
-        neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-            .query()
-            .unwrap(),
-    );
+    let gpu = GpuDevice::new(core.clone()).unwrap();
     let domain = gpu
         .create_client(
             Default::default(),
@@ -1305,12 +1260,7 @@ fn unsubmitted_variants_reuse_native_objects_and_reject_other_cores() {
 fn observed_device_loss_rejects_previously_realized_native_storage() {
     let core = core();
     let mut executor = Executor::new(core.clone()).unwrap();
-    let gpu = GpuDevice::new(
-        core.clone(),
-        neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-            .query()
-            .unwrap(),
-    );
+    let gpu = GpuDevice::new(core.clone()).unwrap();
     let domain = gpu
         .create_client(
             Default::default(),
@@ -1355,12 +1305,7 @@ fn descriptor_capacity_reuses_only_after_final_prepared_and_completion_ownership
     let core = core();
     let mut executor = Executor::new(core.clone()).unwrap();
     let mut target = Target::new(core.clone(), 8, 8);
-    let gpu = GpuDevice::new(
-        core.clone(),
-        neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-            .query()
-            .unwrap(),
-    );
+    let gpu = GpuDevice::new(core.clone()).unwrap();
     let domain = gpu
         .create_client(
             Default::default(),
@@ -1474,12 +1419,7 @@ fn native_buffer_padding_rejects_unrepresentable_host_lengths() {
 fn uploaded_buffers_and_textures_reuse_their_own_native_allocations() {
     let core = core();
     let mut executor = Executor::new(core.clone()).unwrap();
-    let gpu = GpuDevice::new(
-        core.clone(),
-        neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-            .query()
-            .unwrap(),
-    );
+    let gpu = GpuDevice::new(core.clone()).unwrap();
     let domain = gpu
         .create_client(
             Default::default(),
@@ -1546,12 +1486,7 @@ fn uncertain_texture_rewrites_exclude_uploads_and_other_compatible_executors() {
     for failure in [UploadFailure::Submit, UploadFailure::Wait] {
         let core = core();
         let mut executor = Executor::new(core.clone()).unwrap();
-        let gpu = GpuDevice::new(
-            core.clone(),
-            neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-                .query()
-                .unwrap(),
-        );
+        let gpu = GpuDevice::new(core.clone()).unwrap();
         let domain = gpu
             .create_client(
                 Default::default(),

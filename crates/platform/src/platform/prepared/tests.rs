@@ -79,7 +79,7 @@ const ROOT: Rect = Rect { x: 0, y: 0, width: 10, height: 10 };
 #[test]
 fn prepared_blocks_preserve_order_and_release_resources_on_clear() {
     let device = neocogi_platform::gpu::testing::device(
-        neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
+        neocogi_platform::render::compiler::CompilerObject::from_value(neocogi_platform::render::compiler::CompilerObject::new(neocogi_platform::render::shader::ShaderTarget::Wgsl).unwrap())
             .query()
             .unwrap(),
     );
@@ -111,7 +111,7 @@ fn prepared_blocks_preserve_order_and_release_resources_on_clear() {
 #[test]
 fn envelope_limits_precede_stream_callbacks() {
     let device = neocogi_platform::gpu::testing::device(
-        neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
+        neocogi_platform::render::compiler::CompilerObject::from_value(neocogi_platform::render::compiler::CompilerObject::new(neocogi_platform::render::shader::ShaderTarget::Wgsl).unwrap())
             .query()
             .unwrap(),
     );
@@ -136,12 +136,12 @@ fn envelope_limits_precede_stream_callbacks() {
 #[test]
 fn short_foreign_and_outside_blocks_clear_the_entire_preparation() {
     let device = neocogi_platform::gpu::testing::device(
-        neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
+        neocogi_platform::render::compiler::CompilerObject::from_value(neocogi_platform::render::compiler::CompilerObject::new(neocogi_platform::render::shader::ShaderTarget::Wgsl).unwrap())
             .query()
             .unwrap(),
     );
     let other = neocogi_platform::gpu::testing::device(
-        neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
+        neocogi_platform::render::compiler::CompilerObject::from_value(neocogi_platform::render::compiler::CompilerObject::new(neocogi_platform::render::shader::ShaderTarget::Wgsl).unwrap())
             .query()
             .unwrap(),
     );
@@ -179,7 +179,7 @@ fn short_foreign_and_outside_blocks_clear_the_entire_preparation() {
 #[test]
 fn all_domains_are_rechecked_after_the_last_foreign_call() {
     let device = neocogi_platform::gpu::testing::device(
-        neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
+        neocogi_platform::render::compiler::CompilerObject::from_value(neocogi_platform::render::compiler::CompilerObject::new(neocogi_platform::render::shader::ShaderTarget::Wgsl).unwrap())
             .query()
             .unwrap(),
     );

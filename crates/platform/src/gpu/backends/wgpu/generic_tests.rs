@@ -84,12 +84,7 @@ fn regional_depth_clears_ordered_views_and_completion_keep_their_contracts() {
     let (native, queue) = device();
     let outer = native.push_error_scope(wgpu::ErrorFilter::Validation);
     let mut executor = crate::gpu::backends::wgpu::generic::Executor::new(Core::new(native.clone(), queue.clone()));
-    let gpu = GpuDevice::new(
-        executor.core.clone(),
-        neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-            .query()
-            .unwrap(),
-    );
+    let gpu = GpuDevice::new(executor.core.clone()).unwrap();
     let controller = gpu
         .create_client(
             RenderClientLimits::default(),
@@ -250,12 +245,7 @@ fn indexed_texture_case(operation: GpuBlendOp, imported: bool) {
     let (native, queue) = device();
     let outer = native.push_error_scope(wgpu::ErrorFilter::Validation);
     let mut executor = crate::gpu::backends::wgpu::generic::Executor::new(Core::new(native.clone(), queue.clone()));
-    let gpu = GpuDevice::new(
-        executor.core.clone(),
-        neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-            .query()
-            .unwrap(),
-    );
+    let gpu = GpuDevice::new(executor.core.clone()).unwrap();
     let controller = if imported {
         gpu.create_client(
             RenderClientLimits::default(),
@@ -516,12 +506,7 @@ fn clear_block(gpu: &GpuDevice, resources: &ComPtr<IRenderResourcesAbi>) -> ComB
 fn abandoned_preparation_retains_upload_capacity_until_completion() {
     let (native, queue) = device();
     let mut executor = crate::gpu::backends::wgpu::generic::Executor::new(Core::new(native.clone(), queue.clone()));
-    let gpu = GpuDevice::new(
-        executor.core.clone(),
-        neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-            .query()
-            .unwrap(),
-    );
+    let gpu = GpuDevice::new(executor.core.clone()).unwrap();
     let controller = gpu
         .create_client(
             RenderClientLimits::default(),
@@ -555,12 +540,7 @@ fn native_buffer_creation_failure_returns_error_without_panicking_or_leaking_sco
     });
     let outer = native.push_error_scope(wgpu::ErrorFilter::Validation);
     let mut executor = crate::gpu::backends::wgpu::generic::Executor::new(Core::new(native.clone(), queue.clone()));
-    let gpu = GpuDevice::new(
-        executor.core.clone(),
-        neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-            .query()
-            .unwrap(),
-    );
+    let gpu = GpuDevice::new(executor.core.clone()).unwrap();
     let controller = gpu
         .create_client(
             RenderClientLimits::default(),
@@ -599,12 +579,7 @@ fn partial_preparation_failure_keeps_resource_versions_charged_through_upload_co
         });
         let outer = native.push_error_scope(wgpu::ErrorFilter::Validation);
         let mut executor = crate::gpu::backends::wgpu::generic::Executor::new(Core::new(native.clone(), queue.clone()));
-        let gpu = GpuDevice::new(
-            executor.core.clone(),
-            neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-                .query()
-                .unwrap(),
-        );
+        let gpu = GpuDevice::new(executor.core.clone()).unwrap();
         let controller = gpu
             .create_client(
                 RenderClientLimits::default(),
@@ -767,12 +742,7 @@ fn import_native_image(
 fn imported_preparation_flushes_initialization_before_refunding_native_storage() {
     let (native, queue) = device();
     let mut executor = crate::gpu::backends::wgpu::generic::Executor::new(Core::new(native.clone(), queue.clone()));
-    let gpu = GpuDevice::new(
-        executor.core.clone(),
-        neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-            .query()
-            .unwrap(),
-    );
+    let gpu = GpuDevice::new(executor.core.clone()).unwrap();
     let controller = gpu
         .create_client(
             RenderClientLimits { live_bytes: 8, ..Default::default() },
@@ -823,12 +793,7 @@ fn imported_preparation_flushes_initialization_before_refunding_native_storage()
 fn native_slots_reuse_variants_reject_other_devices_and_release_without_submission() {
     let (native, queue) = device();
     let mut executor = crate::gpu::backends::wgpu::generic::Executor::new(Core::new(native.clone(), queue.clone()));
-    let gpu = GpuDevice::new(
-        executor.core.clone(),
-        neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-            .query()
-            .unwrap(),
-    );
+    let gpu = GpuDevice::new(executor.core.clone()).unwrap();
     let domain = gpu
         .create_client(
             Default::default(),
@@ -878,12 +843,7 @@ fn initialization_submission_is_scoped_and_invalidates_all_compatible_facades_on
     let (native, queue) = device();
     let core = Core::new(native.clone(), queue);
     let mut executor = crate::gpu::backends::wgpu::generic::Executor::new(core.clone());
-    let gpu = GpuDevice::new(
-        core.clone(),
-        neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-            .query()
-            .unwrap(),
-    );
+    let gpu = GpuDevice::new(core.clone()).unwrap();
     let domain = gpu
         .create_client(
             Default::default(),
@@ -937,12 +897,7 @@ fn uploaded_resource_slots_keep_native_storage_across_queue_updates() {
     let (native, queue) = device();
     let scope = native.push_error_scope(wgpu::ErrorFilter::Validation);
     let mut executor = crate::gpu::backends::wgpu::generic::Executor::new(Core::new(native.clone(), queue));
-    let gpu = GpuDevice::new(
-        executor.core.clone(),
-        neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-            .query()
-            .unwrap(),
-    );
+    let gpu = GpuDevice::new(executor.core.clone()).unwrap();
     let domain = gpu
         .create_client(
             Default::default(),

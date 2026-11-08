@@ -21,7 +21,7 @@ impl IInputSink for TextSink {
 #[ignore = "requires native SDL; run with SDL_VIDEODRIVER=offscreen for GL"]
 fn retained_graphics_release_public_window_input_routes() {
     let _session = native_session();
-    let platform = PlatformObject::new(neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject).query().unwrap());
+    let platform = PlatformObject::new();
     let native = platform.window("graphics-only lifetime", SIZE).unwrap();
     let id = native.device.window.id();
     let weak = Rc::downgrade(&native.device);

@@ -46,11 +46,7 @@ fn surface_clear(host: &ComPtr<IRenderHostAbi>, group: &neocogi_com::ComBox<IRen
 fn browser_surface_targets() {
     use glow::HasContext;
     let size = Size { width: 8, height: 8 };
-    let platform = PlatformObject::new(
-        neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-            .query()
-            .unwrap(),
-    );
+    let platform = PlatformObject::new();
     let object = platform.window("browser target contract", size).unwrap();
     object.device.window.style().set_css_text("width:8px;height:8px");
     let gl = object.device.access().unwrap().state().gpu.core().dispatch().clone();
@@ -182,12 +178,7 @@ fn canonical_browser_derivatives() {
         ));
     }
     renderer.create_texture(size, Some(&[0; 4])).unwrap();
-    let gpu = neocogi_platform::gpu::GpuDevice::new(
-        renderer.core(),
-        neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-            .query()
-            .unwrap(),
-    );
+    let gpu = neocogi_platform::gpu::GpuDevice::new(renderer.core()).unwrap();
     let domain = gpu
         .create_client(
             Default::default(),

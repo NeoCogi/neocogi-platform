@@ -34,8 +34,8 @@ pub struct Preparation<'a> {
     executor: &'a mut Executor,
 }
 impl NativeResources for Backend {
-    fn shader_target(_core: &Self::Core) -> crate::shader::ShaderTarget {
-        crate::shader::ShaderTarget::Wgsl
+    fn shader_target(_core: &Self::Core) -> crate::render::shader::ShaderTarget {
+        crate::render::shader::ShaderTarget::Wgsl
     }
     type Core = Core;
     type Buffer = Buffer;

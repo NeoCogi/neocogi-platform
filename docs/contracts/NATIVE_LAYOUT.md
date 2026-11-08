@@ -1,17 +1,18 @@
 # Native application staging
 
-`neocogi-platform-dylib` supplies two independent COM discovery roots. Build them
+`neocogi-platform-dylib` supplies one platform shared library per backend, including
+its renderer-owned shader compiler. Build the selected library
 with `cargo build -p neocogi-platform-dylib --no-default-features --features glow --examples`
-(or vulkan/wgpu). Cargo selects the two backend-named library examples through their
-required features. The application build script stages these exact filenames from
+(or vulkan/wgpu). Cargo selects the backend-named platform library example through their
+required features. The application build script stages this exact filename from
 the same Cargo profile's `examples/` directory. It never invokes Cargo, and dynamic
 executables have no provider dependency.
-The compiler stages as `libnc_shader_compiler_{backend}.so`, followed by the selected
-`libnc_platform_{backend}.so` (target-specific suffix/prefix on macOS/Windows).
+The library stages as `libnc_platform_{backend}.so` (target-specific suffix/prefix
+on macOS/Windows). No independent compiler library is deployed or loaded.
 Use the same backend/profile/target/output selection as the application. The compiler
 contains only that backend's required output support; formats never fall back to
 another representation. Missing libraries
-remain errors; there is no linked compiler/backend fallback.
+remain errors; there is no alternative backend fallback.
 
 Resource staging and output policy live in `neocogi_platform::build::layout`,
 available through the SDK's `build-support` feature on a build dependency.
@@ -93,8 +94,8 @@ package qualification exercises a real consumer build script on stable Rust.
 
 ## Missing development artifacts
 
-Dynamic examples preflight both executable-relative library paths before registering
-either provider. Missing/inaccessible files return an owned `RenderError` with
+Dynamic examples preflight the executable-relative platform library path before loading
+its provider. Missing/inaccessible files return an owned `RenderError` with
 `NC_E_LOAD_FAILED`, the actual missing path and a backend/profile preparation command.
 The build-script hint records only Cargo's profile name, without embedding private
 build paths. `debug` maps to Cargo's `dev` profile. For min-size Vulkan, run

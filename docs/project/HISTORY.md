@@ -1,3 +1,15 @@
+# Renderer-owned shader compilation
+
+Shader declarations now belong to `neocogi.renderer` and `render::abi`, with Rust
+snapshots and readers in `render::shader`. The renderer owns its compiler as
+`render::compiler`; there is no
+external compiler plugin or shared library. Each device binds compilation to its
+backend format once. Requests contain stage and output limit only; results retain
+the target so backends reject incompatible artifacts. Native deployments ship one
+backend-specific platform library. All NCIDL versions remain 1 during alpha;
+consumers and providers rebuild together when contracts change. This supersedes
+the external compiler and request-target arrangements described in older entries.
+
 # Native builds with ordinary Cargo
 
 Dynamic examples now use two standard Cargo commands: build the shim package's

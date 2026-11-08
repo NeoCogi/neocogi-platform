@@ -70,9 +70,11 @@ mod tests {
     #[test]
     fn application_specialization_transfers_real_storage_and_exposes_its_driver_owner() {
         let gpu = neocogi_platform::gpu::testing::device(
-            neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-                .query()
-                .unwrap(),
+            neocogi_platform::render::compiler::CompilerObject::from_value(
+                neocogi_platform::render::compiler::CompilerObject::new(neocogi_platform::render::shader::ShaderTarget::Wgsl).unwrap(),
+            )
+            .query()
+            .unwrap(),
         );
         let domain = gpu
             .create_client(

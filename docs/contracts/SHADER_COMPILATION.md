@@ -1,21 +1,24 @@
 # Portable shader compilation, version 1
 
-`neocogi.shader.compiler` is a synchronous CPU-only COM provider. A renderer
-requires and acquires `ShaderCompiler` during activation, before SDL, DOM or GPU
-construction. Native dynamic packaging stages `nc_shader_compiler` before the
-renderer; monolith and WebGL assemblies register the same provider statically.
-Missing dependencies or incompatible roots fail activation. The renderer has no
-linked compiler fallback, widget-facing compiler getter or per-draw lookup.
+Shader compilation belongs to the renderer. Each device constructs and retains
+one `render::compiler::CompilerObject` fixed to its native backend's output format.
+The typed `ShaderCompiler` interface is an internal composition boundary; there is
+no separately registered compiler plugin, shared library or per-draw registry lookup.
+The platform shared library includes its renderer and compiler together.
 
-The namespace lives in `crates/platform/schemas/neocogi/shader`. The SDK shader module supplies
-the generated ABI, plain reflection and bounded readers without Naga. The
-provider's private implementation owns Naga. It uses the SDK render module's existing
-`GpuShaderStage`, preserving the one-way contract dependency.
+The declarations join the existing `neocogi.renderer` namespace in
+`crates/platform/schemas/neocogi/renderer/compiler.ncidl`. `render::abi` supplies
+the generated contracts; `render::shader` supplies plain reflection and bounded
+readers without Naga. The former shader namespace and `Module::Shader` selector
+are removed; build scripts request `Module::Renderer` and include `IDL_NEOCOGI_RENDERER`. The
+renderer compiler's private implementation owns Naga. Stage, request and result
+types now share one generated renderer ABI.
 
 ## Outcomes and owned exports
 
 The Rust `compile(request, source, entry)` facade accepts canonical UTF-8 WGSL, a selected entry,
-one explicit `ShaderTarget` and a selected-output byte cap. There is one supported read-only graphics
+a stage and an output byte cap. `ShaderCompileRequest` never contains a target;
+output selection is immutable compiler configuration. There is one supported read-only graphics
 contract, documented in [GPU rendering](GPU_RENDERING.md). The compiler has no
 viewport, surface, Window/Texture, target height or arbitrary profile selector.
 
@@ -25,7 +28,7 @@ owns its status and message before the call returns. Raw COM clients use
 
 A report is either complete success or rejection with an original failing status
 and diagnostic. Success requires parsing, whole-module admission/validation,
-selected-stage/entry agreement and emission of the one requested artifact within
+selected-stage/entry agreement and emission of the renderer-selected artifact within
 quota. Forbidden unused declarations and other entries cannot bypass admission.
 WGPU's native checked translation and native linking/allocation stay fallible.
 
@@ -44,30 +47,32 @@ selected collections.
 
 ## Selected target and build features
 
-| Device | Requested target | Compiler output features | Naga features |
+| Device | Fixed compiler target | Compiler output features | Naga features |
 | --- | --- | --- | --- |
 | Vulkan | `SpirV` | `shader-spirv` | `wgsl-in,spv-out` |
 | GLES3 / WebGL2 | `GlslEs300` | `shader-glsl` | `wgsl-in,spv-out,spv-in,glsl-out` |
 | WGPU | `Wgsl` | `shader-wgsl` | `wgsl-in` |
 
-The backend forwards the corresponding output feature without enabling the optional
-compiler. A standalone CPU provider selects `shader-compiler` and output features
-without SDL, a Vulkan loader or WGPU. Output features are additive, so an explicitly
-multi-target compiler supports their union, but each request returns one format.
+Each backend enables the renderer compiler and its corresponding output feature.
+CPU-only tools can select `shader-compiler` plus output features without SDL, a
+Vulkan loader or WGPU, then construct a fixed-format compiler instance. Features
+are additive, allowing different renderer instances in one Rust program to use
+different outputs; each compiler instance always returns its one configured format.
 `test-support` includes WGSL for CPU fixtures and does not enable either native writer.
 Naga defaults are disabled; no WGSL emitter is required. WGPU's own native drivers
 can independently enable Naga writers through Cargo feature unification.
 
-The device's immutable native resource family chooses its target once before the
-foreign compiler call. Public resource clients cannot substitute another target.
-A known format absent from the compiler build produces a rejected report with
-`SHADER_E_TARGET_UNAVAILABLE`; unknown enum tags reject at the generated ABI boundary.
-There is no output substitution or fallback to the request source.
+The device's immutable native resource family chooses the compiler format at
+construction. `GpuDevice::new(core)` owns that composition; normal callers cannot
+inject another compiler. Test-support exposes typed injection for hostile report
+regressions. Configuring a disabled output returns `SHADER_E_TARGET_UNAVAILABLE`
+before compilation; invalid configuration tags reject. Compilation requests cannot
+change the output. There is no output substitution or fallback to the source.
 
 A successful report has an independent `target()` getter and exactly one code
 export: `wgsl()`, `spirv()` or `glsl()`. Other code getters return `NC_E_NOINTERFACE`.
 `ShaderInfo.target` and `code_byte_count` summarize those same objects, replacing the
-former three mandatory format lengths. An importer authenticates the requested
+former three mandatory format lengths. An importer authenticates its backend
 target against both getters and the actual selected export. It does not acquire,
 copy or retain unselected formats. Rust snapshots use `ShaderCode::{Wgsl,SpirV,GlslEs300}`.
 
@@ -84,9 +89,9 @@ failures remain outer errors. Invalid source, output bounds and fallible reserva
 retain distinct statuses. Diagnostics are per-report, capped at 4096 UTF-8 bytes;
 infallible SDK/Naga allocation aborts are not promised to become diagnostics.
 
-This is a breaking pre-release shader request/report ABI change. Rebuild SDK
-consumers and both providers together; plugin qualified names and registration
-order remain unchanged. No compatibility path retains the three-output contract.
+During alpha all NCIDL versions remain 1. Rebuild generated SDK consumers and
+platform providers together after this contract replacement. The old request
+target field and external compiler plugin have no compatibility path.
 
 Code getters return immutable `INcString`/`INcBytes` objects. Inputs, outputs,
 uniforms and sampled pairs return explicitly named typed collections, each with
@@ -96,13 +101,13 @@ release; an item survives collection release and retains no unrelated code.
 `info()` is an optional summary of those same objects, never a prerequisite:
 
 ```rust,ignore
-// request.target selects exactly one format; this example selects WGSL.
+// This compiler instance was constructed for WGSL; requests do not select a format.
 let report = compiler.compile(request, NcCopyFromBufferOffset::new(0, source), NcCopyFromBufferOffset::new(0, entry))?;
 let uniforms = report.uniforms()?;
 for index in 0..uniforms.len()? {
     let uniform = uniforms.get(index)?;
     let layout = uniform.info()?;
-    // Native GL names are queried only for a GlslEs300 request.
+    // Native GL names are queried only for a GlslEs300 result.
     // Both layout and name are usable without consulting report.info().
 }
 let validated_wgsl = report.wgsl()?;

@@ -169,11 +169,11 @@ Canonical fragment/texture coordinates have their origin at the top left; signed
 Y derivatives increase downwards on both window and offscreen targets. GL/WebGL
 window adaptation normalizes `dFdy` independently of fragment-position use, including
 varying-only shaders. X derivatives and unsigned `fwidth` retain their native
-values. The device selects a compiler artifact format, while the existing native
+values. The device fixes its compiler's output format at construction, while the existing native
 program variant owns window/image coordinate, winding, depth and differential-axis adaptation.
 
-WGSL is the canonical source. The required `neocogi.shader.compiler` COM provider
-validates and returns exactly the requested format with typed portable reflection:
+WGSL is the canonical source. The renderer-owned compiler validates and returns
+its configured format with typed portable reflection; requests contain no target:
 WGSL for WGPU, GLSL ES300 for GL/WebGL, or guarded SPIR-V for Vulkan.
 The renderer imports only that artifact, rejecting target disagreement. See
 [shader compilation](SHADER_COMPILATION.md) for the complete boundary. No public native binary bypasses the

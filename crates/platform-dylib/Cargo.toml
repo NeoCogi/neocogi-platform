@@ -15,8 +15,8 @@ include = ["Cargo.toml", "README.md", "LICENSE", "src/**", "examples/**", "tests
 name = "nc_platform"
 crate-type = ["cdylib"]
 
-# Cargo's named library-example targets provide both final roots per backend.
-# required-features selects exactly the pair requested by the first cargo build.
+# Cargo's named library-example targets provide one final root per backend.
+# required-features selects exactly the library requested by the first cargo build.
 [features]
 default = ["glow"]
 glow = ["neocogi-platform/glow"]
@@ -24,18 +24,12 @@ vulkan = ["neocogi-platform/vulkan"]
 wgpu = ["neocogi-platform/wgpu"]
 
 [dependencies]
-neocogi-platform = { workspace = true, features = ["platform", "shader-compiler"] }
+neocogi-platform = { workspace = true, features = ["platform"] }
 neocogi-com = { workspace = true, features = ["std"] }
 
 [[example]]
 name = "nc_platform_glow"
 path = "examples/nc_platform_glow.rs"
-crate-type = ["cdylib"]
-required-features = ["glow"]
-
-[[example]]
-name = "nc_shader_compiler_glow"
-path = "examples/nc_shader_compiler_glow.rs"
 crate-type = ["cdylib"]
 required-features = ["glow"]
 
@@ -46,19 +40,7 @@ crate-type = ["cdylib"]
 required-features = ["vulkan"]
 
 [[example]]
-name = "nc_shader_compiler_vulkan"
-path = "examples/nc_shader_compiler_vulkan.rs"
-crate-type = ["cdylib"]
-required-features = ["vulkan"]
-
-[[example]]
 name = "nc_platform_wgpu"
 path = "examples/nc_platform_wgpu.rs"
-crate-type = ["cdylib"]
-required-features = ["wgpu"]
-
-[[example]]
-name = "nc_shader_compiler_wgpu"
-path = "examples/nc_shader_compiler_wgpu.rs"
 crate-type = ["cdylib"]
 required-features = ["wgpu"]

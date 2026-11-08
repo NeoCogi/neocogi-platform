@@ -6,9 +6,11 @@ use neocogi_platform::render::buffer::{GpuElement, TypedGpuBufferDesc, TypedGpuB
 /// Creates one explicitly selected virtual family and ordinary resource group.
 fn setup() -> (GpuDevice<Backend>, ComBox<IRenderClientDomainAbi>, ComPtr<IRenderResourcesAbi>) {
     let gpu = testing::device(
-        neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-            .query()
-            .unwrap(),
+        neocogi_platform::render::compiler::CompilerObject::from_value(
+            neocogi_platform::render::compiler::CompilerObject::new(neocogi_platform::render::shader::ShaderTarget::Wgsl).unwrap(),
+        )
+        .query()
+        .unwrap(),
     );
     let domain = gpu
         .create_client(

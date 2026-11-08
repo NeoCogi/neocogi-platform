@@ -76,18 +76,13 @@ impl Deployment {
     }
 }
 
-/// Real library loading must require the compiler artifact and exact compatible root.
+/// A single real platform library must activate with no compiler registration or extra library.
 #[test]
-fn relocated_plugins_acquire_and_dependency_failures_have_no_static_fallback() {
+fn relocated_platform_owns_compilation_and_missing_library_reports_setup() {
     let app = Deployment::new(false);
     let valid = app.run("deployment_probe", &["valid"], false);
     assert!(valid.status.success(), "{}", String::from_utf8_lossy(&valid.stderr));
     assert!(String::from_utf8_lossy(&valid.stdout).contains("Dynamic platform root acquired"));
-    let missing = app.run("deployment_probe", &["missing-compiler"], false);
-    assert!(!missing.status.success(), "platform loading must reject a missing hard dependency");
-    let wrong = app.run("deployment_probe", &["wrong-compiler"], false);
-    assert_eq!(wrong.status.code(), Some(23), "{}", String::from_utf8_lossy(&wrong.stderr));
-    assert!(String::from_utf8_lossy(&wrong.stderr).contains("Wrong compiler contract"));
     for filename in neocogi_example_plugins::LIBRARIES {
         let source = app.root.join("lib").join(filename);
         let held = app.root.join(filename);

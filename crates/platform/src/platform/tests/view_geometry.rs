@@ -21,11 +21,7 @@ impl IRenderStream for ViewStream {
 fn wide_view_edges_draw_and_recover_through_generated_com() {
     let _session = native_session();
     let size = Size { width: 32, height: 32 };
-    let native = PlatformObject::new(
-        neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-            .query()
-            .unwrap(),
-    )
+    let native = PlatformObject::new()
     .window("wide graphics arithmetic", size)
     .unwrap();
     let device = Rc::downgrade(&native.device);

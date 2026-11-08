@@ -1,4 +1,4 @@
-//! Build-time source owner for the renderer, platform and shader interfaces.
+//! Build-time source owner for the renderer and platform interfaces.
 //!
 //! Declare this package under `[build-dependencies]`. Its packaged `schemas`
 //! directory is the only authored source tree for these namespaces. Consumers
@@ -18,12 +18,10 @@ pub use neocogi_idl::cargo::{BuildError, BuildOutput, SharedSources};
 /// A namespace whose ordinary Rust definitions have one established library location.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Module {
-    /// Renderer values, resource groups and recording interfaces in render::abi.
+    /// Renderer values, compiler results, resource groups and recording in render::abi.
     Renderer,
     /// Window, input and clipboard interfaces in render::platform.
     Platform,
-    /// Compiler interfaces and artifact exports in shader.
-    Shader,
 }
 
 impl Module {
@@ -32,7 +30,6 @@ impl Module {
         match self {
             Self::Renderer => "neocogi.renderer",
             Self::Platform => "neocogi.platform",
-            Self::Shader => "neocogi.shader",
         }
     }
 
@@ -41,7 +38,6 @@ impl Module {
         match self {
             Self::Renderer => "neocogi_platform::render::abi",
             Self::Platform => "neocogi_platform::render::platform",
-            Self::Shader => "neocogi_platform::shader::abi",
         }
     }
 }
@@ -63,7 +59,7 @@ const SOURCES: &[(&str, &[u8])] = &[
         "neocogi/renderer/resources.ncidl",
         include_bytes!("../schemas/neocogi/renderer/resources.ncidl"),
     ),
-    ("neocogi/shader/compiler.ncidl", include_bytes!("../schemas/neocogi/shader/compiler.ncidl")),
+    ("neocogi/renderer/compiler.ncidl", include_bytes!("../schemas/neocogi/renderer/compiler.ncidl")),
 ];
 
 /// Adds concrete operation/path context to failures before any binding generation starts.
@@ -105,7 +101,7 @@ fn materialize(output: &Path) -> Result<PathBuf, BuildError> {
     Ok(root)
 }
 
-/// Configures local generation and imports for the three shared namespaces.
+/// Configures local generation and imports for the two shared namespaces.
 ///
 /// `local` selects independent emissions for this consumer. Other reachable
 /// namespaces use their ordinary library definitions; this matters when Rust
@@ -119,7 +115,7 @@ fn materialize(output: &Path) -> Result<PathBuf, BuildError> {
 pub fn sources(local: &[Module]) -> Result<SharedSources, BuildError> {
     let output = std::env::var_os("OUT_DIR").ok_or(BuildError::MissingEnvironment("OUT_DIR"))?;
     let mut request = SharedSources::new(materialize(Path::new(&output))?);
-    for module in [Module::Renderer, Module::Platform, Module::Shader] {
+    for module in [Module::Renderer, Module::Platform] {
         request = if local.contains(&module) {
             request.module(module.name(), module.rust_path())
         } else {
@@ -165,6 +161,7 @@ mod tests {
         let changed = root.join(SOURCES[1].0);
         fs::write(&changed, b"corrupt").unwrap();
         let stale = root.join("neocogi/shader/obsolete.ncidl");
+        fs::create_dir_all(stale.parent().unwrap()).unwrap();
         fs::write(&stale, b"obsolete declaration").unwrap();
         assert_eq!(materialize(output.path()).unwrap(), root);
         assert!(!stale.exists());

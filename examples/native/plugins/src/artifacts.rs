@@ -1,6 +1,6 @@
 //! One authoritative backend/target filename table shared by staging and runtime loading.
 
-/// Exactly one selected platform assembly, shared by both final Cargo targets.
+/// Exactly one selected platform assembly, shared by staging and runtime loading.
 #[derive(Clone, Copy)]
 pub enum Backend {
     /// GLES3 provider and its GLSL compiler.
@@ -30,35 +30,29 @@ pub const fn selected_backend() -> Backend {
         Backend::Glow
     }
 }
-/// Compiler then platform: exact names of the selected Cargo library-example targets.
-pub const fn libraries(backend: Backend, system: System) -> [&'static str; 2] {
+/// Exact name of the selected platform library; its renderer owns shader compilation.
+pub const fn libraries(backend: Backend, system: System) -> [&'static str; 1] {
     match (backend, system) {
-        (Backend::Glow, System::Windows) => ["nc_shader_compiler_glow.dll", "nc_platform_glow.dll"],
-        (Backend::Glow, System::Macos) => ["libnc_shader_compiler_glow.dylib", "libnc_platform_glow.dylib"],
-        (Backend::Glow, System::Unix) => ["libnc_shader_compiler_glow.so", "libnc_platform_glow.so"],
-        (Backend::Vulkan, System::Windows) => ["nc_shader_compiler_vulkan.dll", "nc_platform_vulkan.dll"],
-        (Backend::Vulkan, System::Macos) => ["libnc_shader_compiler_vulkan.dylib", "libnc_platform_vulkan.dylib"],
-        (Backend::Vulkan, System::Unix) => ["libnc_shader_compiler_vulkan.so", "libnc_platform_vulkan.so"],
-        (Backend::Wgpu, System::Windows) => ["nc_shader_compiler_wgpu.dll", "nc_platform_wgpu.dll"],
-        (Backend::Wgpu, System::Macos) => ["libnc_shader_compiler_wgpu.dylib", "libnc_platform_wgpu.dylib"],
-        (Backend::Wgpu, System::Unix) => ["libnc_shader_compiler_wgpu.so", "libnc_platform_wgpu.so"],
+        (Backend::Glow, System::Windows) => ["nc_platform_glow.dll"],
+        (Backend::Glow, System::Macos) => ["libnc_platform_glow.dylib"],
+        (Backend::Glow, System::Unix) => ["libnc_platform_glow.so"],
+        (Backend::Vulkan, System::Windows) => ["nc_platform_vulkan.dll"],
+        (Backend::Vulkan, System::Macos) => ["libnc_platform_vulkan.dylib"],
+        (Backend::Vulkan, System::Unix) => ["libnc_platform_vulkan.so"],
+        (Backend::Wgpu, System::Windows) => ["nc_platform_wgpu.dll"],
+        (Backend::Wgpu, System::Macos) => ["libnc_platform_wgpu.dylib"],
+        (Backend::Wgpu, System::Unix) => ["libnc_platform_wgpu.so"],
     }
 }
 #[cfg(test)]
 mod tests {
     use super::*;
-    /// Both platforms and compilers have unambiguous target/backend names with no paths.
+    /// Platform libraries have unambiguous target/backend names with no paths.
     #[test]
-    fn paired_filenames_follow_target_conventions_and_remain_backend_specific() {
+    fn platform_filenames_follow_target_conventions_and_remain_backend_specific() {
         for (backend, name) in [(Backend::Glow, "glow"), (Backend::Vulkan, "vulkan"), (Backend::Wgpu, "wgpu")] {
             for (system, prefix, suffix) in [(System::Windows, "", ".dll"), (System::Macos, "lib", ".dylib"), (System::Unix, "lib", ".so")] {
-                assert_eq!(
-                    libraries(backend, system),
-                    [
-                        format!("{prefix}nc_shader_compiler_{name}{suffix}"),
-                        format!("{prefix}nc_platform_{name}{suffix}")
-                    ]
-                );
+                assert_eq!(libraries(backend, system), [format!("{prefix}nc_platform_{name}{suffix}")]);
             }
         }
     }

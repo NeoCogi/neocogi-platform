@@ -101,9 +101,11 @@ fn client(device: &GpuDevice, limits: RenderClientLimits) -> (ComBox<IRenderClie
 #[test]
 fn permitted_image_import_shares_native_storage_without_public_com_or_group_cycles() {
     let device = new_device(
-        neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-            .query()
-            .unwrap(),
+        neocogi_platform::render::compiler::CompilerObject::from_value(
+            neocogi_platform::render::compiler::CompilerObject::new(neocogi_platform::render::shader::ShaderTarget::Wgsl).unwrap(),
+        )
+        .query()
+        .unwrap(),
     );
     let (_client, ordinary) = client(&device, RenderClientLimits::default());
     let permitted = device
@@ -164,9 +166,11 @@ fn buffer(factory: &ComPtr<IRenderResourcesAbi>, bytes: &[u8]) -> ComBox<IGpuBuf
 #[test]
 fn exclusive_buffer_creation_reads_bounded_chunks_and_exposes_no_renderer() {
     let device = new_device(
-        neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-            .query()
-            .unwrap(),
+        neocogi_platform::render::compiler::CompilerObject::from_value(
+            neocogi_platform::render::compiler::CompilerObject::new(neocogi_platform::render::shader::ShaderTarget::Wgsl).unwrap(),
+        )
+        .query()
+        .unwrap(),
     );
     let (_owner, factory) = client(&device, RenderClientLimits::default());
     let bytes: Vec<_> = (0..SOURCE_CHUNK * 2 + 17).map(|n| n as u8).collect();
@@ -190,9 +194,11 @@ fn exclusive_buffer_creation_reads_bounded_chunks_and_exposes_no_renderer() {
 #[test]
 fn weak_expiry_does_not_invalidate_snapshots_or_refund_retained_versions() {
     let device = new_device(
-        neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-            .query()
-            .unwrap(),
+        neocogi_platform::render::compiler::CompilerObject::from_value(
+            neocogi_platform::render::compiler::CompilerObject::new(neocogi_platform::render::shader::ShaderTarget::Wgsl).unwrap(),
+        )
+        .query()
+        .unwrap(),
     );
     let (_controller, factory) = client(&device, Default::default());
     let owner = factory.create_streamed_buffer(GpuBufferDesc::Vertex { byte_len: 4 }).unwrap();
@@ -218,9 +224,11 @@ fn weak_expiry_does_not_invalidate_snapshots_or_refund_retained_versions() {
 #[test]
 fn quota_admission_precedes_bulk_copy_and_retained_versions_keep_their_charge() {
     let device = new_device(
-        neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-            .query()
-            .unwrap(),
+        neocogi_platform::render::compiler::CompilerObject::from_value(
+            neocogi_platform::render::compiler::CompilerObject::new(neocogi_platform::render::shader::ShaderTarget::Wgsl).unwrap(),
+        )
+        .query()
+        .unwrap(),
     );
     let (_controller, factory) = client(
         &device,
@@ -250,9 +258,11 @@ fn quota_admission_precedes_bulk_copy_and_retained_versions_keep_their_charge() 
 #[test]
 fn failed_sources_preserve_current_buffer_and_release_candidate_charges() {
     let device = new_device(
-        neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-            .query()
-            .unwrap(),
+        neocogi_platform::render::compiler::CompilerObject::from_value(
+            neocogi_platform::render::compiler::CompilerObject::new(neocogi_platform::render::shader::ShaderTarget::Wgsl).unwrap(),
+        )
+        .query()
+        .unwrap(),
     );
     let (_controller, factory) = client(&device, Default::default());
     let owner = buffer(&factory, &[1, 2, 3, 4]);
@@ -289,14 +299,18 @@ fn different_domains_devices_and_forged_buffers_reject() {
         }
     }
     let device = new_device(
-        neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-            .query()
-            .unwrap(),
+        neocogi_platform::render::compiler::CompilerObject::from_value(
+            neocogi_platform::render::compiler::CompilerObject::new(neocogi_platform::render::shader::ShaderTarget::Wgsl).unwrap(),
+        )
+        .query()
+        .unwrap(),
     );
     let other = new_device(
-        neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-            .query()
-            .unwrap(),
+        neocogi_platform::render::compiler::CompilerObject::from_value(
+            neocogi_platform::render::compiler::CompilerObject::new(neocogi_platform::render::shader::ShaderTarget::Wgsl).unwrap(),
+        )
+        .query()
+        .unwrap(),
     );
     let (_a, factory) = client(&device, RenderClientLimits::default());
     let (_b, foreign_factory) = client(&other, RenderClientLimits::default());
@@ -318,9 +332,11 @@ fn different_domains_devices_and_forged_buffers_reject() {
 #[test]
 fn close_during_source_read_rejects_publication_and_drop_closes_shared_factories() {
     let device = new_device(
-        neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-            .query()
-            .unwrap(),
+        neocogi_platform::render::compiler::CompilerObject::from_value(
+            neocogi_platform::render::compiler::CompilerObject::new(neocogi_platform::render::shader::ShaderTarget::Wgsl).unwrap(),
+        )
+        .query()
+        .unwrap(),
     );
     let (controller, factory) = client(&device, RenderClientLimits::default());
     let account = device.domain(factory.as_com_ref()).unwrap().account.clone();
@@ -342,9 +358,11 @@ fn close_during_source_read_rejects_publication_and_drop_closes_shared_factories
 #[test]
 fn owner_removal_during_static_creation_does_not_pin_another_public_value() {
     let device = new_device(
-        neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-            .query()
-            .unwrap(),
+        neocogi_platform::render::compiler::CompilerObject::from_value(
+            neocogi_platform::render::compiler::CompilerObject::new(neocogi_platform::render::shader::ShaderTarget::Wgsl).unwrap(),
+        )
+        .query()
+        .unwrap(),
     );
     let (_controller, factory) = client(&device, Default::default());
     let owner = buffer(&factory, &[1; 4]);
@@ -365,9 +383,11 @@ fn owner_removal_during_static_creation_does_not_pin_another_public_value() {
 #[test]
 fn factory_reentry_returns_busy_and_the_outer_copy_remains_valid() {
     let device = new_device(
-        neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-            .query()
-            .unwrap(),
+        neocogi_platform::render::compiler::CompilerObject::from_value(
+            neocogi_platform::render::compiler::CompilerObject::new(neocogi_platform::render::shader::ShaderTarget::Wgsl).unwrap(),
+        )
+        .query()
+        .unwrap(),
     );
     let (_controller, factory) = client(&device, RenderClientLimits::default());
     let status = Rc::new(Cell::new(None));
@@ -384,9 +404,11 @@ fn factory_reentry_returns_busy_and_the_outer_copy_remains_valid() {
 #[test]
 fn texture_upload_preserves_pixels_outside_the_admitted_dynamic_patch() {
     let device = new_device(
-        neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-            .query()
-            .unwrap(),
+        neocogi_platform::render::compiler::CompilerObject::from_value(
+            neocogi_platform::render::compiler::CompilerObject::new(neocogi_platform::render::shader::ShaderTarget::Wgsl).unwrap(),
+        )
+        .query()
+        .unwrap(),
     );
     let (_controller, factory) = client(&device, Default::default());
     let owner = factory
@@ -412,9 +434,11 @@ fn texture_upload_preserves_pixels_outside_the_admitted_dynamic_patch() {
 #[test]
 fn malformed_shapes_and_overflowing_uploads_reject_before_state_changes() {
     let device = new_device(
-        neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-            .query()
-            .unwrap(),
+        neocogi_platform::render::compiler::CompilerObject::from_value(
+            neocogi_platform::render::compiler::CompilerObject::new(neocogi_platform::render::shader::ShaderTarget::Wgsl).unwrap(),
+        )
+        .query()
+        .unwrap(),
     );
     let (_controller, factory) = client(&device, Default::default());
     let (input, reads, _) = source(vec![0; 4], ReadMode::Exact);
@@ -446,9 +470,11 @@ fn malformed_shapes_and_overflowing_uploads_reject_before_state_changes() {
 #[test]
 fn native_backing_keeps_only_narrow_core_and_accounting_alive() {
     let device = new_device(
-        neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-            .query()
-            .unwrap(),
+        neocogi_platform::render::compiler::CompilerObject::from_value(
+            neocogi_platform::render::compiler::CompilerObject::new(neocogi_platform::render::shader::ShaderTarget::Wgsl).unwrap(),
+        )
+        .query()
+        .unwrap(),
     );
     let weak_device = Rc::downgrade(&device.inner);
     let core = device.inner.core.clone();
@@ -522,9 +548,11 @@ fn shader(factory: &ComPtr<IRenderResourcesAbi>, stage: GpuShaderStage, entry: &
 #[test]
 fn pipeline_retains_shader_artifacts_after_exclusive_shader_owners_expire() {
     let device = new_device(
-        neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-            .query()
-            .unwrap(),
+        neocogi_platform::render::compiler::CompilerObject::from_value(
+            neocogi_platform::render::compiler::CompilerObject::new(neocogi_platform::render::shader::ShaderTarget::Wgsl).unwrap(),
+        )
+        .query()
+        .unwrap(),
     );
     let (_controller, factory) = client(&device, RenderClientLimits::default());
     let vertex = shader(&factory, GpuShaderStage::Vertex, b"vs");
@@ -593,9 +621,11 @@ fn pipeline_retains_shader_artifacts_after_exclusive_shader_owners_expire() {
 #[test]
 fn incompatible_attribute_footprints_and_shader_shapes_reject() {
     let device = new_device(
-        neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-            .query()
-            .unwrap(),
+        neocogi_platform::render::compiler::CompilerObject::from_value(
+            neocogi_platform::render::compiler::CompilerObject::new(neocogi_platform::render::shader::ShaderTarget::Wgsl).unwrap(),
+        )
+        .query()
+        .unwrap(),
     );
     let (_controller, factory) = client(&device, RenderClientLimits::default());
     let vertex = shader(&factory, GpuShaderStage::Vertex, b"vs");
@@ -634,9 +664,11 @@ fn incompatible_attribute_footprints_and_shader_shapes_reject() {
 #[test]
 fn packed_color_footprint_uses_webgpu_alignment() {
     let device = new_device(
-        neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-            .query()
-            .unwrap(),
+        neocogi_platform::render::compiler::CompilerObject::from_value(
+            neocogi_platform::render::compiler::CompilerObject::new(neocogi_platform::render::shader::ShaderTarget::Wgsl).unwrap(),
+        )
+        .query()
+        .unwrap(),
     );
     let (_controller, factory) = client(&device, RenderClientLimits::default());
     let code = r#"
@@ -683,9 +715,11 @@ fn packed_color_footprint_uses_webgpu_alignment() {
 #[test]
 fn independent_shader_stages_require_matching_interpolation() {
     let device = new_device(
-        neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-            .query()
-            .unwrap(),
+        neocogi_platform::render::compiler::CompilerObject::from_value(
+            neocogi_platform::render::compiler::CompilerObject::new(neocogi_platform::render::shader::ShaderTarget::Wgsl).unwrap(),
+        )
+        .query()
+        .unwrap(),
     );
     let (_controller, factory) = client(&device, RenderClientLimits::default());
     for (vertex_interpolation, expected) in [("@interpolate(flat)", false), ("", true)] {
@@ -719,9 +753,11 @@ fn owned_versions_stay_distinct_across_drivers_updates_and_owner_release() {
     let mut metadata = Vec::new();
     for pixel in [17, 233] {
         let device = new_device(
-            neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-                .query()
-                .unwrap(),
+            neocogi_platform::render::compiler::CompilerObject::from_value(
+                neocogi_platform::render::compiler::CompilerObject::new(neocogi_platform::render::shader::ShaderTarget::Wgsl).unwrap(),
+            )
+            .query()
+            .unwrap(),
         );
         let (_owner, factory) = client(&device, Default::default());
         let core = device.inner.core.clone();
@@ -759,9 +795,11 @@ fn owned_versions_stay_distinct_across_drivers_updates_and_owner_release() {
 #[test]
 fn resource_owned_slots_retry_failures_and_check_health_on_reuse() {
     let device = new_device(
-        neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-            .query()
-            .unwrap(),
+        neocogi_platform::render::compiler::CompilerObject::from_value(
+            neocogi_platform::render::compiler::CompilerObject::new(neocogi_platform::render::shader::ShaderTarget::Wgsl).unwrap(),
+        )
+        .query()
+        .unwrap(),
     );
     let (_owner, factory) = client(&device, Default::default());
     let owner = buffer(&factory, &[1, 2, 3, 4]);
@@ -785,9 +823,11 @@ fn resource_owned_slots_retry_failures_and_check_health_on_reuse() {
 #[test]
 fn size_only_storage_is_initialized_and_dynamic_uploads_wait_for_captures() {
     let device = new_device(
-        neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-            .query()
-            .unwrap(),
+        neocogi_platform::render::compiler::CompilerObject::from_value(
+            neocogi_platform::render::compiler::CompilerObject::new(neocogi_platform::render::shader::ShaderTarget::Wgsl).unwrap(),
+        )
+        .query()
+        .unwrap(),
     );
     let (_controller, factory) = client(&device, Default::default());
     let mut owner = factory.create_dynamic_buffer(GpuBufferDesc::Index { byte_len: 4 }).unwrap();
@@ -806,9 +846,11 @@ fn size_only_storage_is_initialized_and_dynamic_uploads_wait_for_captures() {
 #[test]
 fn shape_wire_tags_and_static_lengths_are_checked_before_publication() {
     let device = new_device(
-        neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-            .query()
-            .unwrap(),
+        neocogi_platform::render::compiler::CompilerObject::from_value(
+            neocogi_platform::render::compiler::CompilerObject::new(neocogi_platform::render::shader::ShaderTarget::Wgsl).unwrap(),
+        )
+        .query()
+        .unwrap(),
     );
     let (_controller, factory) = client(&device, Default::default());
     let (input, reads, _) = source(vec![1; 4], ReadMode::Exact);
@@ -842,10 +884,11 @@ fn shape_wire_tags_and_static_lengths_are_checked_before_publication() {
 /// Compatibility metadata is retained, distinct per device and cannot keep driver authority alive.
 #[test]
 fn driver_identity_is_stable_without_owning_the_driver() {
-    let compiler: ComPtr<neocogi_platform::shader::abi::ShaderCompilerAbi> =
-        neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-            .query()
-            .unwrap();
+    let compiler: ComPtr<neocogi_platform::render::abi::ShaderCompilerAbi> = neocogi_platform::render::compiler::CompilerObject::from_value(
+        neocogi_platform::render::compiler::CompilerObject::new(neocogi_platform::render::shader::ShaderTarget::Wgsl).unwrap(),
+    )
+    .query()
+    .unwrap();
     let first = new_device(compiler.clone());
     let second = new_device(compiler);
     let weak = Rc::downgrade(&first.inner);
@@ -878,9 +921,11 @@ fn version_one_keeps_structural_query_admission() {
         type Threading = ThreadLocal;
     }
     let device = new_device(
-        neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-            .query()
-            .unwrap(),
+        neocogi_platform::render::compiler::CompilerObject::from_value(
+            neocogi_platform::render::compiler::CompilerObject::new(neocogi_platform::render::shader::ShaderTarget::Wgsl).unwrap(),
+        )
+        .query()
+        .unwrap(),
     );
     let (_owner, factory) = client(&device, RenderClientLimits::default());
     assert_eq!(factory.query::<StaleShape>().unwrap_err(), neocogi_com::NC_E_ABI_VERSION);

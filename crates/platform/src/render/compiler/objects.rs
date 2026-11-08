@@ -1,14 +1,36 @@
 //! Owned report graph: reports own exports, collections own items, items own only
 //! their own metadata/name. There are no back edges or whole-code item captures.
-use crate::compiler::compile::{Compiler, CompileError};
+use neocogi_platform::render::abi::*;
+use crate::render::compiler::compile::{Compiler, CompileError};
 use neocogi_com::{
     com_object, ComPtr, NcStatus, NcString, NcBytes, NcCopyFromBufferOffset, INcStringAbi, INcBytesAbi, NC_E_INVALID_ARG, NC_E_OUT_OF_RANGE, NC_E_OUT_OF_MEMORY,
 };
-use neocogi_platform::shader::{abi::*, Shader, ShaderCode, MAX_DIAGNOSTIC_BYTES};
+use neocogi_platform::render::shader::{Shader, ShaderCode, MAX_DIAGNOSTIC_BYTES};
 
-/// CPU-only root; no global diagnostic or session state.
-#[com_object(interfaces(neocogi_platform::shader::abi::ShaderCompiler))]
-pub struct CompilerObject;
+/// Renderer-owned fixed-format compiler; no mutable diagnostics or session state.
+#[com_object(interfaces(neocogi_platform::render::abi::ShaderCompiler))]
+pub struct CompilerObject {
+    /// Owned configuration never changes between requests or foreign callbacks.
+    compiler: Compiler,
+}
+impl CompilerObject {
+    /// Select an available output once at renderer construction, independently of any request.
+    pub fn new(target: ShaderTarget) -> Result<Self, NcStatus> {
+        Ok(Self {
+            compiler: Compiler::new(target).map_err(|error| error_status(&error))?,
+        })
+    }
+}
+
+/// Preserve configuration, quota, source-validation and allocation failures distinctly.
+fn error_status(error: &CompileError) -> NcStatus {
+    match error {
+        CompileError::Invalid(_) => NC_E_INVALID_ARG,
+        CompileError::Unavailable => neocogi_platform::render::shader::SHADER_E_TARGET_UNAVAILABLE,
+        CompileError::Limit => NC_E_OUT_OF_RANGE,
+        CompileError::Allocation => NC_E_OUT_OF_MEMORY,
+    }
+}
 impl ShaderCompiler for CompilerObject {
     fn compile_result(
         &self,
@@ -22,23 +44,13 @@ impl ShaderCompiler for CompilerObject {
             }
             let source = std::str::from_utf8(source.as_slice()).map_err(|_| CompileError::Invalid("shader is not UTF-8".into()))?;
             let entry = std::str::from_utf8(entry.as_slice()).map_err(|_| CompileError::Invalid("entry is not UTF-8".into()))?;
-            Compiler::compile_bounded(
-                request.stage,
-                request.target,
-                source,
-                entry,
-                usize::try_from(request.max_output_bytes).unwrap_or(usize::MAX),
-            )
+            self.compiler
+                .compile_bounded(request.stage, source, entry, usize::try_from(request.max_output_bytes).unwrap_or(usize::MAX))
         })();
         let outcome = match result {
             Ok(shader) => Outcome::Succeeded(Exports::new(shader)?),
             Err(error) => {
-                let status = match error {
-                    CompileError::Invalid(_) => NC_E_INVALID_ARG,
-                    CompileError::Unavailable => neocogi_platform::shader::SHADER_E_TARGET_UNAVAILABLE,
-                    CompileError::Limit => NC_E_OUT_OF_RANGE,
-                    CompileError::Allocation => NC_E_OUT_OF_MEMORY,
-                };
+                let status = error_status(&error);
                 let mut detail = error.to_string();
                 let mut end = detail.len().min(MAX_DIAGNOSTIC_BYTES);
                 while !detail.is_char_boundary(end) {
@@ -113,7 +125,7 @@ impl Exports {
             target: shader.code.target(),
             code_byte_count: shader.code.byte_len() as u64,
         };
-        let locations = |values: Vec<neocogi_platform::shader::IoLocation>, direction| -> Result<ComPtr<IShaderLocationsAbi>, NcStatus> {
+        let locations = |values: Vec<neocogi_platform::render::shader::IoLocation>, direction| -> Result<ComPtr<IShaderLocationsAbi>, NcStatus> {
             let items = values
                 .into_iter()
                 .map(|value| {
@@ -192,7 +204,7 @@ impl Exports {
     }
 }
 /// One immutable report, with exhaustive access to success versus rejection.
-#[com_object(interfaces(neocogi_platform::shader::abi::IShaderCompilation))]
+#[com_object(interfaces(neocogi_platform::render::abi::IShaderCompilation))]
 struct Report {
     /// Complete immutable outcome.
     outcome: Outcome,
@@ -261,7 +273,7 @@ impl IShaderCompilation for Report {
     }
 }
 /// Independent numeric location item.
-#[com_object(interfaces(neocogi_platform::shader::abi::IShaderLocation))]
+#[com_object(interfaces(neocogi_platform::render::abi::IShaderLocation))]
 struct Location {
     /// No parent owner.
     info: ShaderLocationInfo,
@@ -272,7 +284,7 @@ impl IShaderLocation for Location {
     }
 }
 /// Independent uniform item and native name.
-#[com_object(interfaces(neocogi_platform::shader::abi::IShaderUniform))]
+#[com_object(interfaces(neocogi_platform::render::abi::IShaderUniform))]
 struct Uniform {
     /// Copied layout.
     info: ShaderUniformInfo,
@@ -288,7 +300,7 @@ impl IShaderUniform for Uniform {
     }
 }
 /// Independent sampled-pair item and native name.
-#[com_object(interfaces(neocogi_platform::shader::abi::IShaderSampledTexture))]
+#[com_object(interfaces(neocogi_platform::render::abi::IShaderSampledTexture))]
 struct Texture {
     /// Copied slot.
     info: ShaderSampledTextureInfo,
@@ -322,11 +334,11 @@ macro_rules! collection {
         }
     };
 }
-collection!(Locations, neocogi_platform::shader::abi::IShaderLocations, IShaderLocations, IShaderLocationAbi);
-collection!(Uniforms, neocogi_platform::shader::abi::IShaderUniforms, IShaderUniforms, IShaderUniformAbi);
+collection!(Locations, neocogi_platform::render::abi::IShaderLocations, IShaderLocations, IShaderLocationAbi);
+collection!(Uniforms, neocogi_platform::render::abi::IShaderUniforms, IShaderUniforms, IShaderUniformAbi);
 collection!(
     Textures,
-    neocogi_platform::shader::abi::IShaderSampledTextures,
+    neocogi_platform::render::abi::IShaderSampledTextures,
     IShaderSampledTextures,
     IShaderSampledTextureAbi
 );

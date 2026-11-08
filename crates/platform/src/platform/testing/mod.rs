@@ -50,9 +50,9 @@ pub struct NativeProbe {
     core: Weak<<NativeBackend as NativeResources>::Core>,
 }
 
-/// Constructs the production selected backend with an explicitly supplied shader compiler.
-pub fn window(compiler: ComPtr<neocogi_platform::shader::abi::ShaderCompilerAbi>, title: &str, size: Size) -> Result<NativeWindow, RenderError> {
-    let native = PlatformObject::new(compiler).window(title, size)?;
+/// Constructs the production selected backend, including its own fixed-format compiler.
+pub fn window(title: &str, size: Size) -> Result<NativeWindow, RenderError> {
+    let native = PlatformObject::new().window(title, size)?;
     let probe = NativeProbe {
         device: Rc::downgrade(&native.device),
         core: Rc::downgrade(&native.device.access()?.state().gpu.core()),

@@ -7,11 +7,7 @@ use super::*;
 #[ignore = "requires a native SDL display; Glow permits SDL_VIDEODRIVER=offscreen"]
 fn native_operation_errors_and_success_reports_outlive_their_device() {
     let _session = native_session();
-    let platform = PlatformObject::new(
-        neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-            .query()
-            .unwrap(),
-    );
+    let platform = PlatformObject::new();
     let native = platform.window("owned native errors", SIZE).unwrap();
     let device = Rc::downgrade(&native.device);
     let window: ComPtr<IPlatformWindowAbi> = WindowObject::from_value(native).query().unwrap();

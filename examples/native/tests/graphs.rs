@@ -2,9 +2,9 @@
 #![cfg(not(target_arch = "wasm32"))]
 use std::{collections::HashSet, fs, path::Path, process::Command};
 
-/// Cargo itself must select one backend-named compiler/platform pair from the shim package.
+/// Cargo itself must select one backend-named platform library from the shim package.
 #[test]
-fn cargo_library_examples_declare_exact_backend_pairs() {
+fn cargo_library_examples_declare_exact_backend_libraries() {
     let output = Command::new(env!("CARGO"))
         .current_dir(env!("CARGO_MANIFEST_DIR"))
         .args(["metadata", "--no-deps", "--offline", "--locked", "--format-version=1"])
@@ -24,14 +24,12 @@ fn cargo_library_examples_declare_exact_backend_pairs() {
         .iter()
         .filter(|target| target["kind"] == serde_json::json!(["example"]))
         .collect();
-    assert_eq!(examples.len(), 6);
+    assert_eq!(examples.len(), 3);
     for backend in ["glow", "vulkan", "wgpu"] {
-        for role in ["platform", "shader_compiler"] {
-            let name = format!("nc_{role}_{backend}");
-            let target = examples.iter().find(|target| target["name"] == name).unwrap();
-            assert_eq!(target["crate_types"], serde_json::json!(["cdylib"]));
-            assert_eq!(target["required-features"], serde_json::json!([backend]));
-        }
+        let name = format!("nc_platform_{backend}");
+        let target = examples.iter().find(|target| target["name"] == name).unwrap();
+        assert_eq!(target["crate_types"], serde_json::json!(["cdylib"]));
+        assert_eq!(target["required-features"], serde_json::json!([backend]));
     }
 }
 

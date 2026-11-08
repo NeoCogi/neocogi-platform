@@ -45,12 +45,12 @@ SDL_VIDEODRIVER=offscreen cargo test --locked -p neocogi-platform --features pla
 
 The SDK has empty default features. Native GPU features `glow`, `vulkan` and
 `wgpu` are additive under `neocogi_platform::gpu::backends`. Enable `platform`
-with exactly one backend for SDL hosting, `shader-compiler` for the optional Naga provider, and
+with exactly one backend for SDL hosting, and
 `build-support` on build dependencies for schema generation/resource staging.
 Browser hosting uses `platform,webgl` and `wasm32-unknown-unknown`.
 CPU-only consumers need no SDL, graphics loader or compiler implementation.
-Shader outputs are selected per request: WGPU uses WGSL, Vulkan uses SPIR-V and
-GLES3/WebGL uses ES300. Backends forward `shader-wgsl`, `shader-spirv` or
+Shader output is fixed by each renderer: WGPU uses WGSL, Vulkan uses SPIR-V and
+GLES3/WebGL uses ES300. Backends enable their compiler and `shader-wgsl`, `shader-spirv` or
 `shader-glsl`; standalone compilers select these without graphics dependencies.
 
 Native examples select `static,glow` by default. Use `--no-default-features
@@ -87,8 +87,9 @@ cargo build --locked -p neocogi-platform-dylib --no-default-features --features 
 cargo run --locked -p neocogi-platform-examples --bin gltf_brainstem --no-default-features --features dynamic,glow
 ~~~
 
-The application build stages both prebuilt libraries; startup loads the compiler before
-the platform. See [native assembly and relocation](examples/native/README.md).
+The application build stages the prebuilt platform library, which includes its
+renderer-owned compiler. Requests carry no shader target; results identify it for
+backend validation. See [native assembly and relocation](examples/native/README.md).
 
 Left-drag rotates, right/middle-drag pans, and the wheel zooms. Press R to reset,
 Space to pause animation, B to toggle the skybox, or Escape to close. See the [example guide](examples/native/gltf/README.md)

@@ -30,7 +30,7 @@ impl PlatformObject {
         let window = gpu.window();
         let device = Rc::new(Device {
             success: operation_result(Ok(())),
-            logical: neocogi_platform::gpu::GpuDevice::new(gpu.core(), self.compiler.clone()),
+            logical: neocogi_platform::gpu::GpuDevice::new(gpu.core()).map_err(|status| RenderError::from(status).to_string())?,
             render: RefCell::new(Some(RenderState { gpu, prepared: Prepared::default() })),
             textures: Rc::default(),
             surfaces: RefCell::default(),

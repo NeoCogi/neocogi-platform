@@ -1,7 +1,7 @@
 //! Backend-neutral Rust integration shared by the UI runtime and renderer plugins.
 //!
 //! This crate has no plugin entry point. It owns the shared contracts, upload producers,
-//! frame values and traits, without linking a UI runtime or GPU compiler implementation.
+//! frame values and traits. Optional compiler support belongs to this renderer module.
 #![deny(missing_docs)]
 
 extern crate alloc;
@@ -25,6 +25,7 @@ pub mod prelude {
 }
 
 /// Shared IDL bindings and their Rust conveniences.
+#[allow(clippy::len_without_is_empty, reason = "IDL collections use len/get; checking zero needs no extra ABI call")]
 pub mod abi;
 /// Typed factories and mapped element access above the untyped resource driver.
 pub mod buffer;
@@ -32,3 +33,10 @@ pub mod buffer;
 pub mod platform;
 /// Owned upload producers shared by clients and GFX without linking renderer implementation.
 pub mod source;
+
+/// Renderer-owned Naga compiler with one immutable backend output format.
+#[cfg(any(test, feature = "shader-compiler"))]
+pub mod compiler;
+
+/// Portable shader snapshots, reflection and bounded compiler artifact readers.
+pub mod shader;

@@ -56,7 +56,7 @@ pub use neocogi_platform::render::source;
 /// use std::rc::Rc;
 /// use neocogi_platform::gpu::resource::ShaderVersion;
 /// fn corrupt<B:neocogi_platform::gpu::native::NativeResources>(mut snapshot: Rc<ShaderVersion<B>>) {
-///     Rc::get_mut(&mut snapshot).unwrap().artifact.code = neocogi_platform::shader::ShaderCode::Wgsl(String::new());
+///     Rc::get_mut(&mut snapshot).unwrap().artifact.code = neocogi_platform::render::shader::ShaderCode::Wgsl(String::new());
 /// }
 /// ```
 /// ```compile_fail

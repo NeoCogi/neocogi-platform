@@ -74,9 +74,11 @@ fn root() -> RenderViewRoot {
 #[test]
 fn dropping_unfinished_view_preserves_recording_until_host_expiry() {
     let device = new_device(
-        neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-            .query()
-            .unwrap(),
+        neocogi_platform::render::compiler::CompilerObject::from_value(
+            neocogi_platform::render::compiler::CompilerObject::new(neocogi_platform::render::shader::ShaderTarget::Wgsl).unwrap(),
+        )
+        .query()
+        .unwrap(),
     );
     let (_controller, factory) = client(&device, RenderClientLimits::default());
     let mut frame = device.broker().begin_frame().unwrap();
@@ -100,9 +102,11 @@ fn dropping_unfinished_view_preserves_recording_until_host_expiry() {
 #[test]
 fn cancel_and_drop_preserve_rejection_and_its_first_status() {
     let device = new_device(
-        neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-            .query()
-            .unwrap(),
+        neocogi_platform::render::compiler::CompilerObject::from_value(
+            neocogi_platform::render::compiler::CompilerObject::new(neocogi_platform::render::shader::ShaderTarget::Wgsl).unwrap(),
+        )
+        .query()
+        .unwrap(),
     );
     let (_controller, factory) = client(&device, RenderClientLimits::default());
     let mut frame = device.broker().begin_frame().unwrap();
@@ -128,9 +132,11 @@ fn cancel_and_drop_preserve_rejection_and_its_first_status() {
 #[test]
 fn healthy_cancel_is_idempotent_and_finish_survives_facade_drop() {
     let device = new_device(
-        neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-            .query()
-            .unwrap(),
+        neocogi_platform::render::compiler::CompilerObject::from_value(
+            neocogi_platform::render::compiler::CompilerObject::new(neocogi_platform::render::shader::ShaderTarget::Wgsl).unwrap(),
+        )
+        .query()
+        .unwrap(),
     );
     let (_controller, factory) = client(&device, RenderClientLimits::default());
     let mut frame = device.broker().begin_frame().unwrap();
@@ -195,9 +201,11 @@ const PROCEDURAL: &str = r#"
 #[test]
 fn color_only_groups_seal_without_depth_initialization_and_cannot_clear_depth() {
     let device = new_device(
-        neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-            .query()
-            .unwrap(),
+        neocogi_platform::render::compiler::CompilerObject::from_value(
+            neocogi_platform::render::compiler::CompilerObject::new(neocogi_platform::render::shader::ShaderTarget::Wgsl).unwrap(),
+        )
+        .query()
+        .unwrap(),
     );
     let color_only = device
         .create_client(
@@ -246,9 +254,11 @@ fn color_only_groups_seal_without_depth_initialization_and_cannot_clear_depth() 
 #[test]
 fn color_only_group_pipeline_admission_excludes_depth_state() {
     let device = new_device(
-        neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-            .query()
-            .unwrap(),
+        neocogi_platform::render::compiler::CompilerObject::from_value(
+            neocogi_platform::render::compiler::CompilerObject::new(neocogi_platform::render::shader::ShaderTarget::Wgsl).unwrap(),
+        )
+        .query()
+        .unwrap(),
     );
     let controller = device
         .create_client(
@@ -340,9 +350,11 @@ fn vertex_pipeline(factory: &ComPtr<IRenderResourcesAbi>) -> ComBox<IGpuPipeline
 #[test]
 fn draws_snapshot_versions_in_order_and_finished_owner_drop_preserves_the_block() {
     let device = new_device(
-        neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-            .query()
-            .unwrap(),
+        neocogi_platform::render::compiler::CompilerObject::from_value(
+            neocogi_platform::render::compiler::CompilerObject::new(neocogi_platform::render::shader::ShaderTarget::Wgsl).unwrap(),
+        )
+        .query()
+        .unwrap(),
     );
     let (_controller, factory) = client(&device, RenderClientLimits::default());
     let pipeline = vertex_pipeline(&factory);
@@ -383,9 +395,11 @@ fn draws_snapshot_versions_in_order_and_finished_owner_drop_preserves_the_block(
 #[test]
 fn lowered_capacity_receipts_survive_blocks_and_refund_only_after_the_last_copy() {
     let device = new_device(
-        neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-            .query()
-            .unwrap(),
+        neocogi_platform::render::compiler::CompilerObject::from_value(
+            neocogi_platform::render::compiler::CompilerObject::new(neocogi_platform::render::shader::ShaderTarget::Wgsl).unwrap(),
+        )
+        .query()
+        .unwrap(),
     );
     let (_controller, factory) = client(&device, RenderClientLimits::default());
     let mut frame = device.broker().begin_frame().unwrap();
@@ -410,9 +424,11 @@ fn lowered_capacity_receipts_survive_blocks_and_refund_only_after_the_last_copy(
 #[test]
 fn weak_bindings_do_not_keep_resource_owners_alive() {
     let device = new_device(
-        neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-            .query()
-            .unwrap(),
+        neocogi_platform::render::compiler::CompilerObject::from_value(
+            neocogi_platform::render::compiler::CompilerObject::new(neocogi_platform::render::shader::ShaderTarget::Wgsl).unwrap(),
+        )
+        .query()
+        .unwrap(),
     );
     let (_controller, factory) = client(&device, RenderClientLimits::default());
     let pipeline = vertex_pipeline(&factory);
@@ -438,9 +454,11 @@ fn weak_bindings_do_not_keep_resource_owners_alive() {
 #[test]
 fn retained_expired_views_keep_only_bounded_shells_and_cannot_reactivate() {
     let device = new_device(
-        neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-            .query()
-            .unwrap(),
+        neocogi_platform::render::compiler::CompilerObject::from_value(
+            neocogi_platform::render::compiler::CompilerObject::new(neocogi_platform::render::shader::ShaderTarget::Wgsl).unwrap(),
+        )
+        .query()
+        .unwrap(),
     );
     let (_controller, factory) = client(
         &device,
@@ -484,9 +502,11 @@ fn retained_expired_views_keep_only_bounded_shells_and_cannot_reactivate() {
 #[test]
 fn frame_drop_aborts_pending_work_and_old_finished_drop_cannot_abort_a_new_frame() {
     let device = new_device(
-        neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-            .query()
-            .unwrap(),
+        neocogi_platform::render::compiler::CompilerObject::from_value(
+            neocogi_platform::render::compiler::CompilerObject::new(neocogi_platform::render::shader::ShaderTarget::Wgsl).unwrap(),
+        )
+        .query()
+        .unwrap(),
     );
     let (_controller, factory) = client(&device, RenderClientLimits::default());
     let broker = device.broker();
@@ -513,9 +533,11 @@ fn frame_drop_aborts_pending_work_and_old_finished_drop_cannot_abort_a_new_frame
 #[test]
 fn per_frame_work_is_not_refunded_by_cancel_or_sequential_view_creation() {
     let device = new_device(
-        neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-            .query()
-            .unwrap(),
+        neocogi_platform::render::compiler::CompilerObject::from_value(
+            neocogi_platform::render::compiler::CompilerObject::new(neocogi_platform::render::shader::ShaderTarget::Wgsl).unwrap(),
+        )
+        .query()
+        .unwrap(),
     );
     let (_controller, factory) = client(
         &device,
@@ -548,9 +570,11 @@ fn per_frame_work_is_not_refunded_by_cancel_or_sequential_view_creation() {
 #[test]
 fn scoped_clears_flatten_clips_and_reset_does_not_clear_attachment_depth() {
     let device = new_device(
-        neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-            .query()
-            .unwrap(),
+        neocogi_platform::render::compiler::CompilerObject::from_value(
+            neocogi_platform::render::compiler::CompilerObject::new(neocogi_platform::render::shader::ShaderTarget::Wgsl).unwrap(),
+        )
+        .query()
+        .unwrap(),
     );
     let (_controller, factory) = client(&device, RenderClientLimits::default());
     let mut frame = device.broker().begin_frame().unwrap();
@@ -588,9 +612,11 @@ fn scoped_clears_flatten_clips_and_reset_does_not_clear_attachment_depth() {
 #[test]
 fn domain_close_drains_sealed_pending_work_and_rejects_already_harvested_admission() {
     let device = new_device(
-        neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-            .query()
-            .unwrap(),
+        neocogi_platform::render::compiler::CompilerObject::from_value(
+            neocogi_platform::render::compiler::CompilerObject::new(neocogi_platform::render::shader::ShaderTarget::Wgsl).unwrap(),
+        )
+        .query()
+        .unwrap(),
     );
     let (mut controller, factory) = client(&device, RenderClientLimits::default());
     let account = device.domain(factory.as_com_ref()).unwrap().account.clone();
@@ -626,14 +652,18 @@ fn other_device_blocks_factories_and_client_qi_cannot_recover_host_authority() {
     struct Forged;
     impl IRenderViewBlock for Forged {}
     let device = new_device(
-        neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-            .query()
-            .unwrap(),
+        neocogi_platform::render::compiler::CompilerObject::from_value(
+            neocogi_platform::render::compiler::CompilerObject::new(neocogi_platform::render::shader::ShaderTarget::Wgsl).unwrap(),
+        )
+        .query()
+        .unwrap(),
     );
     let other = new_device(
-        neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-            .query()
-            .unwrap(),
+        neocogi_platform::render::compiler::CompilerObject::from_value(
+            neocogi_platform::render::compiler::CompilerObject::new(neocogi_platform::render::shader::ShaderTarget::Wgsl).unwrap(),
+        )
+        .query()
+        .unwrap(),
     );
     let (_controller, factory) = client(&device, RenderClientLimits::default());
     let (_other_controller, foreign) = client(&other, RenderClientLimits::default());
@@ -656,9 +686,11 @@ fn other_device_blocks_factories_and_client_qi_cannot_recover_host_authority() {
 #[test]
 fn zero_instance_index_work_and_unsupported_restart_values_reject() {
     let device = new_device(
-        neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-            .query()
-            .unwrap(),
+        neocogi_platform::render::compiler::CompilerObject::from_value(
+            neocogi_platform::render::compiler::CompilerObject::new(neocogi_platform::render::shader::ShaderTarget::Wgsl).unwrap(),
+        )
+        .query()
+        .unwrap(),
     );
     let (_controller, factory) = client(
         &device,
@@ -694,9 +726,11 @@ fn zero_instance_index_work_and_unsupported_restart_values_reject() {
 fn index_range_alignment_vertex_coverage_and_invalid_depth_reject_atomically() {
     for case in 0..5 {
         let device = new_device(
-            neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-                .query()
-                .unwrap(),
+            neocogi_platform::render::compiler::CompilerObject::from_value(
+                neocogi_platform::render::compiler::CompilerObject::new(neocogi_platform::render::shader::ShaderTarget::Wgsl).unwrap(),
+            )
+            .query()
+            .unwrap(),
         );
         let (_controller, factory) = client(&device, RenderClientLimits::default());
         let pipeline = vertex_pipeline(&factory);
@@ -733,9 +767,11 @@ fn index_range_alignment_vertex_coverage_and_invalid_depth_reject_atomically() {
 fn unbalanced_stack_and_root_pop_reject_even_after_cancel() {
     for unbalanced in [false, true] {
         let device = new_device(
-            neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-                .query()
-                .unwrap(),
+            neocogi_platform::render::compiler::CompilerObject::from_value(
+                neocogi_platform::render::compiler::CompilerObject::new(neocogi_platform::render::shader::ShaderTarget::Wgsl).unwrap(),
+            )
+            .query()
+            .unwrap(),
         );
         let (_controller, factory) = client(&device, RenderClientLimits::default());
         let mut frame = device.broker().begin_frame().unwrap();
@@ -767,9 +803,11 @@ fn instance_streams_are_validated_independently_and_capture_each_binding() {
 "#;
     for valid in [false, true] {
         let device = new_device(
-            neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-                .query()
-                .unwrap(),
+            neocogi_platform::render::compiler::CompilerObject::from_value(
+                neocogi_platform::render::compiler::CompilerObject::new(neocogi_platform::render::shader::ShaderTarget::Wgsl).unwrap(),
+            )
+            .query()
+            .unwrap(),
         );
         let (_controller, factory) = client(&device, RenderClientLimits::default());
         let pipeline = make_pipeline(
@@ -845,9 +883,11 @@ struct Out { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32> 
 @fragment fn fs(input: Out) -> @location(0) vec4<f32> { return textureSample(image, image_sampler, input.uv) * tint.color; }
 "#;
     let device = new_device(
-        neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
-            .query()
-            .unwrap(),
+        neocogi_platform::render::compiler::CompilerObject::from_value(
+            neocogi_platform::render::compiler::CompilerObject::new(neocogi_platform::render::shader::ShaderTarget::Wgsl).unwrap(),
+        )
+        .query()
+        .unwrap(),
     );
     let (_controller, factory) = client(&device, RenderClientLimits::default());
     let pipeline = make_pipeline(
