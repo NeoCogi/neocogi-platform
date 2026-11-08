@@ -1,12 +1,10 @@
 //! CPU-only portable shader compiler provider. Reports and every export are immutable;
 //! no result retains the root, a renderer, a native context or a mutable session.
 #![deny(missing_docs)]
-mod compiler;
+mod compile;
 mod objects;
 /// Stateless COM root, also constructible by statically linked CPU consumers.
 pub use objects::CompilerObject;
-#[cfg(test)]
-mod tests;
 use neocogi_com::{ComPtr, NcStatus};
 use neocogi_platform::shader::abi::ShaderCompilerAbi;
 

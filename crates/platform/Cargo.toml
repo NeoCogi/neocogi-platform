@@ -76,3 +76,7 @@ required-features = ["platform", "shader-compiler"]
 [[test]]
 name = "platform_owned_window_error"
 required-features = ["platform", "shader-compiler"]
+
+[[test]]
+name = "compiler"
+required-features = ["test-support"]

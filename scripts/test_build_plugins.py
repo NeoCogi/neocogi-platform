@@ -1,6 +1,8 @@
 """Final-artifact selection and publication regressions independent of a GPU."""
 
 from pathlib import Path
+import os
+import stat
 import tempfile
 import unittest
 
@@ -39,6 +41,10 @@ class PluginArtifacts(unittest.TestCase):
             source.write_bytes(b"other")
             install(source, destination)
             self.assertEqual(destination.read_bytes(), b"other")
+            if os.name != "nt":
+                source.chmod(0o640)
+                install(source, destination)
+                self.assertEqual(stat.S_IMODE(destination.stat().st_mode), 0o640)
 
 
 if __name__ == "__main__":

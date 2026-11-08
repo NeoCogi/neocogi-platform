@@ -2,7 +2,7 @@
 #![cfg(not(target_arch = "wasm32"))]
 use std::{collections::HashSet, fs, path::Path, process::Command};
 
-/// Resolve one isolated consumer, pruning only verified artifact-only final library edges.
+/// Resolve one isolated consumer using only its selected normal Rust dependencies.
 fn graph(mode: &str, backend: &str) -> HashSet<String> {
     let directory = tempfile::tempdir().unwrap();
     fs::create_dir(directory.path().join("src")).unwrap();
@@ -35,6 +35,7 @@ fn static_and_dynamic_graphs_keep_provider_implementation_ownership_distinct() {
         for forbidden in ["neocogi-platform-plugin", "neocogi-shader-compiler", "naga", "sdl2", "wgpu", "ash"] {
             assert!(!dynamic.contains(forbidden), "{backend}: {dynamic:?}");
         }
+        assert!(dynamic.contains("neocogi-platform"));
         assert!(dynamic.contains("neocogi-example-plugins"));
         let linked = graph("static", backend);
         assert!(linked.contains("neocogi-platform"));

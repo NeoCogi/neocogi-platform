@@ -123,7 +123,15 @@ def qualify(*, allow_dirty=False, offline=False, stable=None):
         # Package manifests and build inputs are unmodified. Patches resolve only
         # unpublished internal dependencies to the exact extracted archive contents.
         run([*cargo, "build", "--workspace", "--all-targets", *common], cwd=outside)
-        run([*cargo, "test", "--lib", "-p", SCHEMA_OWNER, "--features", "build-support,test-support,platform,glow", *common], cwd=outside)
+        run([*cargo, "test", "--lib", "--test", "compiler", "-p", SCHEMA_OWNER, "--features", "build-support,test-support,platform,glow", *common], cwd=outside)
+        run([*cargo, "run", "-p", "neocogi-package-consumer", *common], cwd=outside)
+        # This exercises real Cargo invalidation after replacing the staging
+        # proc macros: missing outputs must restore, and changed authored bytes
+        # must reach both the rebuilt executable and the deployed snapshot.
+        staged = outside / "consumer/staged/asset.txt"
+        staged.unlink()
+        run([*cargo, "run", "-p", "neocogi-package-consumer", *common], cwd=outside)
+        (outside / "consumer/asset.txt").write_bytes(b"changed packaged staging input\n")
         run([*cargo, "run", "-p", "neocogi-package-consumer", *common], cwd=outside)
         if stable:
             run(["cargo", f"+{stable}", "run", "-p", "neocogi-package-consumer", *common], cwd=outside)

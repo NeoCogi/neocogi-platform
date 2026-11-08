@@ -38,7 +38,7 @@ fn main() {
     assert!(glsl.to_string().unwrap().contains("#version 300 es"));
     assert_eq!(
         std::fs::read(std::path::Path::new(env!("NEOCOGI_NATIVE_OUTPUT_DIR")).join("asset.txt")).unwrap(),
-        b"packaged staging fixture\n"
+        include_bytes!("../asset.txt")
     );
     println!("PASS: packaged sources, independent COM caller and retained shader exports");
 }

@@ -95,6 +95,22 @@ class ArchiveChecks(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "inconsistent versions"):
             published_packages(metadata)
 
+    def test_release_set_cannot_grow_or_lose_the_shim(self):
+        """Internal helper packages cannot silently return to the release graph."""
+        packages = [
+            {"id": "sdk", "name": SCHEMA_OWNER, "version": "0.1.0-alpha.2", "publish": ["crates-io"]},
+        ]
+        metadata = {"workspace_members": ["sdk"], "packages": packages}
+        with self.assertRaisesRegex(ValueError, "exactly the SDK and cdylib shim"):
+            published_packages(metadata)
+        packages.append({"id": "shim", "name": "neocogi-platform-dylib", "version": "0.1.0-alpha.2", "publish": ["crates-io"]})
+        metadata["workspace_members"].append("shim")
+        self.assertEqual(set(published_packages(metadata)), {SCHEMA_OWNER, "neocogi-platform-dylib"})
+        packages.append({"id": "helper", "name": "internal-helper", "version": "0.1.0-alpha.2", "publish": ["crates-io"]})
+        metadata["workspace_members"].append("helper")
+        with self.assertRaisesRegex(ValueError, "exactly the SDK and cdylib shim"):
+            published_packages(metadata)
+
 
 if __name__ == "__main__":
     unittest.main()

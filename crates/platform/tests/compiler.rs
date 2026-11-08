@@ -1,5 +1,6 @@
 //! Independently generated COM caller tests, including ownership after report release.
-use super::*;
+use neocogi_platform::compiler::CompilerObject;
+use neocogi_com::ComPtr;
 use neocogi_com::{INcStringComPtrExt, INcBytesComPtrExt, NcCopyFromBufferOffset, NC_OK, NC_E_INVALID_ARG, NC_E_OUT_OF_RANGE};
 use neocogi_platform::render::abi::GpuShaderStage;
 /// Separate generated ABI consumer negotiates by interface identity, not a Rust object cast.

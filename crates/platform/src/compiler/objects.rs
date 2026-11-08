@@ -1,6 +1,6 @@
 //! Owned report graph: reports own exports, collections own items, items own only
 //! their own metadata/name. There are no back edges or whole-code item captures.
-use crate::compiler::compiler::{Compiler, CompileError};
+use crate::compiler::compile::{Compiler, CompileError};
 use neocogi_com::{
     com_object, ComPtr, NcStatus, NcString, NcBytes, NcCopyFromBufferOffset, INcStringAbi, INcBytesAbi, NC_E_INVALID_ARG, NC_E_OUT_OF_RANGE, NC_E_OUT_OF_MEMORY,
 };

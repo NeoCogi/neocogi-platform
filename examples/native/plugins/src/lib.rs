@@ -1,4 +1,4 @@
-//! Cargo-selected native plugin composition; contains no normal provider Rust dependency.
+//! Executable-relative plugin loading with SDK implementation features disabled.
 #![deny(missing_docs)]
 
 /// SDK contracts; dynamic consumers enable no implementation features.

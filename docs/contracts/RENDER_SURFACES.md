@@ -152,7 +152,7 @@ cargo test --locked -p neocogi-platform --features glow,vulkan,wgpu,test-support
 
 The combined backend command needs a working display and adapters; software
 Vulkan is sufficient. Run platform acceptance separately with
-`--no-default-features --features vulkan,test-support` or `wgpu,test-support` for
+`--no-default-features --features platform,vulkan,test-support` or `platform,wgpu,test-support` for
 those providers. SDL dummy/offscreen drivers cannot create WGPU windows. The
 optional Khronos validation layer can be enabled with
 `VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation`. Browser execution is checked

@@ -36,8 +36,9 @@ archives together, rejects unexpected release packages and duplicate schema
 ownership, extracts them outside this checkout and uses only extracted contents
 for internal registry patches. It builds all targets, runs focused SDK tests and
 executes an independent generated COM consumer with retained shader exports and
-real build-script resource staging. The optional stable run validates the same
-consumer without repository nightly configuration. It does not claim all native
+real build-script resource staging, including restoration of deleted outputs and
+propagation of changed authored bytes through Cargo rebuilds. The optional stable
+run validates the same consumer without repository nightly configuration. It does not claim all native
 adapters or browser execution are qualified on stable.
 
 Native builds require SDL2 development libraries; Vulkan needs its loader.

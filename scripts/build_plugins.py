@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import stat
 import subprocess
 import tempfile
 
@@ -34,7 +35,8 @@ def shared_libraries(messages):
 def install(source, destination):
     """Keep equal files stable and atomically replace changed final libraries."""
     destination.parent.mkdir(parents=True, exist_ok=True)
-    if destination.is_file() and filecmp.cmp(source, destination, shallow=False):
+    if (destination.is_file() and stat.S_IMODE(source.stat().st_mode) == stat.S_IMODE(destination.stat().st_mode)
+            and filecmp.cmp(source, destination, shallow=False)):
         return
     with tempfile.TemporaryDirectory(prefix=".neocogi-plugin-", dir=destination.parent) as temporary:
         candidate = Path(temporary) / destination.name
