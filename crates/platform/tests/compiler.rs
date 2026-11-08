@@ -6,8 +6,8 @@ use neocogi_platform::{
     render::shader::{self, PreparedShader, ShaderTarget},
 };
 
-// The schema crate compiles these generated callers independently of the implementation.
-use neocogi_platform_schema::render::abi as client;
+// The contracts crate compiles these generated callers independently of the implementation.
+use neocogi_platform_contracts::render::abi as client;
 
 const SOURCE: &str = "struct U { value:vec4<f32> } @group(1) @binding(0) var<uniform> u:U; @vertex fn vs(@location(0) p:vec2<f32>)->@builtin(position) vec4<f32> {return vec4<f32>(p,0.25,1.0)+u.value;}";
 
@@ -23,7 +23,7 @@ fn targets() -> Vec<ShaderTarget> {
     values
 }
 
-/// Uses the schema crate's generated caller against the separate renderer implementation.
+/// Uses the contracts crate's generated caller against the separate renderer implementation.
 fn compile(stage: GpuShaderStage, target: ShaderTarget, source: &str, entry: &str, cap: u64) -> ComPtr<client::IShaderCompilationAbi> {
     let root: ComPtr<client::ShaderCompilerAbi> = CompilerObject::from_value(CompilerObject::new(target).unwrap()).query().unwrap();
     root.compile_result(

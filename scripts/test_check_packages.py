@@ -6,7 +6,7 @@ import tarfile
 import tempfile
 import unittest
 
-from check_packages import PRIVATE, SCHEMA_OWNER, inspect_archive, published_packages
+from check_packages import PRIVATE, CONTRACTS_OWNER, inspect_archive, published_packages
 
 
 class ArchiveChecks(unittest.TestCase):
@@ -21,7 +21,7 @@ class ArchiveChecks(unittest.TestCase):
             "README.md": "Package documentation",
             "LICENSE": "License notice",
         }
-        if owner == SCHEMA_OWNER:
+        if owner == CONTRACTS_OWNER:
             files.update({f"schemas/{index}.ncidl": "declaration" for index in range(9)})
         files.update(extra or {})
         output = Path(directory) / "fixture.crate"
@@ -72,22 +72,22 @@ class ArchiveChecks(unittest.TestCase):
             path, package = self.archive(directory, extra={"schemas/copy.ncidl": "duplicate"})
             with self.assertRaisesRegex(ValueError, "source ownership"):
                 inspect_archive(path, package)
-            path, package = self.archive(directory, owner=SCHEMA_OWNER)
+            path, package = self.archive(directory, owner=CONTRACTS_OWNER)
             inspect_archive(path, package)
-            path, package = self.archive(directory, owner=SCHEMA_OWNER, omit=["schemas/0.ncidl"])
+            path, package = self.archive(directory, owner=CONTRACTS_OWNER, omit=["schemas/0.ncidl"])
             with self.assertRaisesRegex(ValueError, "source ownership"):
                 inspect_archive(path, package)
 
     def test_private_publication_and_mixed_versions_reject(self):
         """Metadata policy is checked before Cargo constructs release archives."""
         packages = [
-            {"id": "build", "name": SCHEMA_OWNER, "version": "0.1.0-alpha.1", "publish": ["crates-io"]},
+            {"id": "build", "name": CONTRACTS_OWNER, "version": "0.1.0-alpha.1", "publish": ["crates-io"]},
             {"id": "sdk", "name": "neocogi-platform", "version": "0.1.0-alpha.1", "publish": ["crates-io"]},
             {"id": "shim", "name": "neocogi-platform-dylib", "version": "0.1.0-alpha.1", "publish": ["crates-io"]},
             {"id": "examples", "name": "neocogi-platform-examples", "version": "0.1.0-alpha.1", "publish": []},
         ]
         metadata = {"workspace_members": [p["id"] for p in packages], "packages": packages}
-        self.assertEqual(set(published_packages(metadata)), {SCHEMA_OWNER, "neocogi-platform", "neocogi-platform-dylib"})
+        self.assertEqual(set(published_packages(metadata)), {CONTRACTS_OWNER, "neocogi-platform", "neocogi-platform-dylib"})
         for private in PRIVATE:
             packages[-1].update(name=private, publish=["crates-io"])
             with self.subTest(package=private), self.assertRaisesRegex(ValueError, "private package"):
@@ -99,19 +99,19 @@ class ArchiveChecks(unittest.TestCase):
     def test_release_set_cannot_grow_or_lose_the_shim(self):
         """Internal helper packages cannot silently return to the release graph."""
         packages = [
-            {"id": "sdk", "name": SCHEMA_OWNER, "version": "0.1.0-alpha.2", "publish": ["crates-io"]},
+            {"id": "sdk", "name": CONTRACTS_OWNER, "version": "0.1.0-alpha.2", "publish": ["crates-io"]},
         ]
         metadata = {"workspace_members": ["sdk"], "packages": packages}
-        with self.assertRaisesRegex(ValueError, "exactly schemas, SDK and cdylib shim"):
+        with self.assertRaisesRegex(ValueError, "exactly contracts, SDK and cdylib shim"):
             published_packages(metadata)
         packages.append({"id": "implementation", "name": "neocogi-platform", "version": "0.1.0-alpha.2", "publish": ["crates-io"]})
         metadata["workspace_members"].append("implementation")
         packages.append({"id": "shim", "name": "neocogi-platform-dylib", "version": "0.1.0-alpha.2", "publish": ["crates-io"]})
         metadata["workspace_members"].append("shim")
-        self.assertEqual(set(published_packages(metadata)), {SCHEMA_OWNER, "neocogi-platform", "neocogi-platform-dylib"})
+        self.assertEqual(set(published_packages(metadata)), {CONTRACTS_OWNER, "neocogi-platform", "neocogi-platform-dylib"})
         packages.append({"id": "helper", "name": "internal-helper", "version": "0.1.0-alpha.2", "publish": ["crates-io"]})
         metadata["workspace_members"].append("helper")
-        with self.assertRaisesRegex(ValueError, "exactly schemas, SDK and cdylib shim"):
+        with self.assertRaisesRegex(ValueError, "exactly contracts, SDK and cdylib shim"):
             published_packages(metadata)
 
 

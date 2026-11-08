@@ -12,8 +12,8 @@ import tomllib
 
 ROOT = Path(__file__).resolve().parents[1]
 PRIVATE = {"neocogi-typed-buffer-tests", "neocogi-platform-examples", "neocogi-example-plugins", "neocogi-browser-tests"}
-SCHEMA_OWNER = "neocogi-platform-schema"
-RELEASE_ORDER = (SCHEMA_OWNER, "neocogi-platform", "neocogi-platform-dylib")
+CONTRACTS_OWNER = "neocogi-platform-contracts"
+RELEASE_ORDER = (CONTRACTS_OWNER, "neocogi-platform", "neocogi-platform-dylib")
 
 
 def run(arguments, *, cwd=ROOT):
@@ -36,12 +36,12 @@ def published_packages(metadata):
             raise ValueError(f"release package must explicitly select crates.io: {package['name']}")
         else:
             selected[package["name"]] = package
-    if SCHEMA_OWNER not in selected:
+    if CONTRACTS_OWNER not in selected:
         raise ValueError("shared source owner is missing from release set")
     if len({p["version"] for p in selected.values()}) != 1:
         raise ValueError("release members have inconsistent versions")
     if set(selected) != set(RELEASE_ORDER):
-        raise ValueError("release set must contain exactly schemas, SDK and cdylib shim")
+        raise ValueError("release set must contain exactly contracts, SDK and cdylib shim")
     return selected
 
 
@@ -72,7 +72,7 @@ def inspect_archive(archive, package):
                     if "path" in dependency or "git" in dependency or "workspace" in dependency:
                         raise ValueError(f"nonregistry dependency in {prefix}: {name}")
         schemas = [name for name in names if name.endswith(".ncidl")]
-        if (package["name"] == SCHEMA_OWNER and len(schemas) != 9) or (package["name"] != SCHEMA_OWNER and schemas):
+        if (package["name"] == CONTRACTS_OWNER and len(schemas) != 9) or (package["name"] != CONTRACTS_OWNER and schemas):
             raise ValueError(f"incorrect shared source ownership in {prefix}")
     return prefix
 
@@ -124,7 +124,7 @@ def qualify(*, allow_dirty=False, offline=False, stable=None):
         # Package manifests and build inputs are unmodified. Patches resolve only
         # unpublished internal dependencies to the exact extracted archive contents.
         run([*cargo, "build", "--workspace", "--all-targets", *common], cwd=outside)
-        run([*cargo, "test", "-p", SCHEMA_OWNER, "--features", "build-support,test-support", *common], cwd=outside)
+        run([*cargo, "test", "-p", CONTRACTS_OWNER, "--features", "build-support,test-support", *common], cwd=outside)
         run([*cargo, "test", "--lib", "--test", "compiler", "--test", "shader_targets", "-p", "neocogi-platform", "--features", "test-support,platform,glow,shader-spirv", *common], cwd=outside)
         run([*cargo, "run", "-p", "neocogi-package-consumer", *common], cwd=outside)
         # This exercises real Cargo invalidation after replacing the staging

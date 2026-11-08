@@ -1,7 +1,7 @@
 //! Runtime backend selection and executable-relative loading using only schema contracts.
 #![deny(missing_docs)]
 /// Canonical schema contracts; this loader has no renderer SDK dependency.
-pub use neocogi_platform_schema as sdk;
+pub use neocogi_platform_contracts as sdk;
 mod artifacts;
 /// Supported dynamic platform choices; this is application configuration, not a renderer ABI.
 pub use artifacts::Backend;

@@ -1,6 +1,6 @@
 //! Immutable portable shader contracts, plain snapshots and bounded ABI import.
 #![deny(missing_docs)]
-use neocogi_platform_schema::render::abi::GpuShaderStage;
+use neocogi_platform_contracts::render::abi::GpuShaderStage;
 pub use abi::{ShaderScalar, ShaderInterpolation, ShaderSampling, ShaderTarget};
 // The renderer namespace owns the generated compiler contracts; this module owns
 // only Rust snapshots, reflection and bounded readers of those same ABI definitions.
@@ -139,9 +139,9 @@ pub mod testing;
 
 /// Reads one compiler report without consulting shared provider state.
 /// A failing text getter cannot replace the original compilation status.
-pub fn check_compilation(report: &abi::IShaderCompilationClient) -> Result<(), neocogi_platform_schema::render::abi::RenderError> {
+pub fn check_compilation(report: &abi::IShaderCompilationClient) -> Result<(), neocogi_platform_contracts::render::abi::RenderError> {
     use neocogi_com::{INcStringComPtrExt, NcStatus};
-    use neocogi_platform_schema::render::abi::RenderError;
+    use neocogi_platform_contracts::render::abi::RenderError;
     let status = NcStatus::from_code(report.status().map_err(RenderError::from)?);
     if status.is_ok() {
         return Ok(());
@@ -163,8 +163,8 @@ impl abi::ShaderCompilerClient {
         request: abi::ShaderCompileRequest,
         source: neocogi_com::NcCopyFromBufferOffset<'_, u8>,
         entry: neocogi_com::NcCopyFromBufferOffset<'_, u8>,
-    ) -> Result<neocogi_com::ComPtr<abi::IShaderCompilationAbi>, neocogi_platform_schema::render::abi::RenderError> {
-        use neocogi_platform_schema::render::abi::RenderError;
+    ) -> Result<neocogi_com::ComPtr<abi::IShaderCompilationAbi>, neocogi_platform_contracts::render::abi::RenderError> {
+        use neocogi_platform_contracts::render::abi::RenderError;
         let report = self
             .compile_result(request, source, entry)
             .map_err(|status| RenderError::from(status).context("compile shader"))?;

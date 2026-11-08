@@ -1,7 +1,8 @@
-//! Canonical NeoCogi schemas, generated contracts and backend-neutral Rust helpers.
+//! Canonical NeoCogi contracts, shared types, limits and backend-neutral validation.
+//! Owns the authored NCIDL schemas, generated Rust bindings and optional build helpers.
 //! No renderer, Naga, SDL or graphics implementation is part of this package.
 #![deny(missing_docs)]
-extern crate self as neocogi_platform_schema;
+extern crate self as neocogi_platform_contracts;
 extern crate alloc;
 /// Consumer-owned schema generation and deterministic native resource staging.
 #[cfg(feature = "build-support")]

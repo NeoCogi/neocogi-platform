@@ -1,6 +1,6 @@
 //! Bounded import of immutable compiler exports. Callers retain their provider
 //! charge across construction, copying, errors and final destruction of this reader.
-use neocogi_platform_schema::render::abi::*;
+use neocogi_platform_contracts::render::abi::*;
 use crate::render::shader::{*};
 use neocogi_com::{ComPtr, INcStringAbi, INcBytesAbi, INcStringComPtrExt, INcBytesComPtrExt, NcStatus, NC_E_INVALID_ARG, NC_E_OUT_OF_RANGE, NC_E_OUT_OF_MEMORY};
 

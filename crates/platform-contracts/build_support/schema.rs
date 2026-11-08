@@ -37,8 +37,8 @@ impl Module {
     /// Library path used when importing ordinary Rust values from this namespace.
     fn rust_path(self) -> &'static str {
         match self {
-            Self::Renderer => "neocogi_platform_schema::render::abi",
-            Self::Platform => "neocogi_platform_schema::render::platform",
+            Self::Renderer => "neocogi_platform_contracts::render::abi",
+            Self::Platform => "neocogi_platform_contracts::render::platform",
         }
     }
 }

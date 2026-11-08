@@ -9,10 +9,10 @@ description = "Executable-relative loading of explicitly prepared NeoCogi shared
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 neocogi-com = { workspace = true, features = ["runtime"] }
-neocogi-platform-schema.workspace = true
+neocogi-platform-contracts.workspace = true
 
 [build-dependencies]
-neocogi-platform-schema = { workspace = true, features = ["build-support"] }
+neocogi-platform-contracts = { workspace = true, features = ["build-support"] }
 
 [dev-dependencies]
 tempfile.workspace = true

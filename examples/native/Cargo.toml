@@ -56,4 +56,4 @@ path = "src/bin/gltf_brainstem.rs"
 test = false
 
 [build-dependencies]
-neocogi-platform-schema = { workspace = true, features = ["build-support"] }
+neocogi-platform-contracts = { workspace = true, features = ["build-support"] }

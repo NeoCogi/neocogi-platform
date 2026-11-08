@@ -1,11 +1,11 @@
 [package]
-name = "neocogi-platform-schema"
+name = "neocogi-platform-contracts"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "NeoCogi schemas, generated renderer/platform contracts and build support"
+description = "NeoCogi renderer/platform contracts, shared types, limits, validation and build support"
 publish = ["crates-io"]
 readme = "README.md"
 include = ["Cargo.toml", "README.md", "LICENSE", "src/**", "schemas/**", "build.rs", "build_support/**", "tests/**"]

@@ -70,12 +70,12 @@ fn static_and_dynamic_graphs_keep_provider_implementation_ownership_distinct() {
     for forbidden in ["neocogi-platform", "naga", "sdl2", "wgpu", "ash"] {
         assert!(!dynamic.contains(forbidden), "{dynamic:?}");
     }
-    assert!(dynamic.contains("neocogi-platform-schema"));
+    assert!(dynamic.contains("neocogi-platform-contracts"));
     assert!(dynamic.contains("neocogi-example-plugins"));
     for backend in ["glow", "vulkan", "wgpu"] {
         let linked = graph("static", Some(backend), "normal");
         assert!(linked.contains("neocogi-platform"));
-        assert!(linked.contains("neocogi-platform-schema"));
+        assert!(linked.contains("neocogi-platform-contracts"));
         assert!(linked.contains("naga"));
         assert!(linked.contains("sdl2"));
         assert!(!linked.contains("neocogi-example-plugins"));

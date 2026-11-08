@@ -1,5 +1,5 @@
 //! Shared WGSL inputs reach independent compiler COM and GPU resource-factory callers.
-use neocogi_platform_schema::render::abi::GpuShaderStage;
+use neocogi_platform_contracts::render::abi::GpuShaderStage;
 
 /// Naga-valid module containing one ordinary selected vertex and an invalid portable entry/declaration.
 pub struct Case {

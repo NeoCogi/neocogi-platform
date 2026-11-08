@@ -1,9 +1,9 @@
-//! All schema features must remain usable without the renderer in build or runtime graphs.
+//! All contract features must remain usable without the renderer in build or runtime graphs.
 use std::{collections::HashSet, process::Command};
 
-/// The schema/build package must never acquire an implementation edge, including target-specific ones.
+/// The contracts package must never acquire an implementation edge, including target-specific ones.
 #[test]
-fn all_schema_features_exclude_renderer_shader_compiler_and_native_backends() {
+fn all_contract_features_exclude_renderer_shader_compiler_and_native_backends() {
     let output = Command::new(env!("CARGO"))
         .current_dir(env!("CARGO_MANIFEST_DIR"))
         .args([
@@ -11,7 +11,7 @@ fn all_schema_features_exclude_renderer_shader_compiler_and_native_backends() {
             "--locked",
             "--offline",
             "-p",
-            "neocogi-platform-schema",
+            "neocogi-platform-contracts",
             "--all-features",
             "--target",
             "all",
@@ -31,7 +31,7 @@ fn all_schema_features_exclude_renderer_shader_compiler_and_native_backends() {
         .map(|line| line.split_whitespace().next().unwrap())
         .collect();
     for forbidden in ["neocogi-platform", "naga", "sdl2", "ash", "wgpu", "glow"] {
-        assert!(!names.contains(forbidden), "schema package enabled {forbidden}: {names:?}");
+        assert!(!names.contains(forbidden), "contracts package enabled {forbidden}: {names:?}");
     }
     assert!(names.contains("neocogi-com"));
     assert!(names.contains("neocogi-idl"));

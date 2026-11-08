@@ -877,7 +877,7 @@ name = "neocogi-example-plugins"
 version = "0.1.0-alpha.2"
 dependencies = [
  "neocogi-com",
- "neocogi-platform-schema",
+ "neocogi-platform-contracts",
  "tempfile",
 ]
 
@@ -907,7 +907,7 @@ dependencies = [
  "naga",
  "neocogi-com",
  "neocogi-com-host",
- "neocogi-platform-schema",
+ "neocogi-platform-contracts",
  "pollster",
  "raw-window-handle",
  "rs-math3d",
@@ -918,6 +918,22 @@ dependencies = [
  "wasm-bindgen-futures",
  "web-sys",
  "wgpu",
+]
+
+[[package]]
+name = "neocogi-platform-contracts"
+version = "0.1.0-alpha.2"
+dependencies = [
+ "neocogi-com",
+ "neocogi-com-host",
+ "neocogi-idl",
+ "quote",
+ "rs-math3d",
+ "serde",
+ "serde_json",
+ "sha2",
+ "syn 2.0.119",
+ "tempfile",
 ]
 
 [[package]]
@@ -938,26 +954,10 @@ dependencies = [
  "neocogi-com-host",
  "neocogi-example-plugins",
  "neocogi-platform",
- "neocogi-platform-schema",
+ "neocogi-platform-contracts",
  "rs-math3d",
  "serde_json",
  "sha2",
- "tempfile",
-]
-
-[[package]]
-name = "neocogi-platform-schema"
-version = "0.1.0-alpha.2"
-dependencies = [
- "neocogi-com",
- "neocogi-com-host",
- "neocogi-idl",
- "quote",
- "rs-math3d",
- "serde",
- "serde_json",
- "sha2",
- "syn 2.0.119",
  "tempfile",
 ]
 
@@ -967,7 +967,7 @@ version = "0.1.0-alpha.2"
 dependencies = [
  "neocogi-com",
  "neocogi-platform",
- "neocogi-platform-schema",
+ "neocogi-platform-contracts",
  "syn 2.0.119",
 ]
 

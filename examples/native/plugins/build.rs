@@ -5,7 +5,7 @@ pub mod artifacts;
 
 /// Track exact named inputs and deployed outputs, so a later shim build invalidates cached staging.
 fn main() {
-    use neocogi_platform_schema::build::layout::{output_root, stage_library};
+    use neocogi_platform_contracts::build::layout::{output_root, stage_library};
     let anchor = PathBuf::from(std::env::var_os("OUT_DIR").expect("Cargo OUT_DIR"));
     let profile_root = output_root(Some(&anchor), None).expect("Cargo profile output root");
     let directory = profile_root.file_name().and_then(|value| value.to_str()).expect("Cargo profile name");
