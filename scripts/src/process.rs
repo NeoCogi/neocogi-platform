@@ -1,11 +1,14 @@
-//! Direct child-process execution; no shell interpolation and no retained child on timeout.
+//! Direct command execution and owned process-tree deadlines, without shell interpolation.
 use anyhow::{Context, Result, bail};
 use std::{
-    io::Read,
-    process::{Child, Command, Output, Stdio},
+    process::{Command, Output, Stdio},
     thread,
     time::{Duration, Instant},
 };
+
+#[path = "process/tree.rs"]
+mod tree;
+use tree::ProcessTree;
 
 /// Create a Rustup-dispatched Cargo command in this repository, optionally selecting a toolchain.
 pub(crate) fn cargo(toolchain: Option<&str>) -> Command {
@@ -32,98 +35,70 @@ pub(crate) fn capture(command: &mut Command) -> Result<Vec<u8>> {
     Ok(output.stdout)
 }
 
-/// A spawned browser is killed and reaped even if polling or output collection fails.
-struct OwnedChild(Child);
-impl Drop for OwnedChild {
-    fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
-}
-
-/// Drain both pipes concurrently so large diagnostic output cannot deadlock the deadline.
+/// Both output streams spool independently to owned regular files, never blocking on pipe EOF.
+/// Process supervision and output collection share one deadline; no reader thread can outlive it.
 pub(crate) fn timed_output(command: &mut Command, timeout: Duration) -> Result<Output> {
-    let mut child = OwnedChild(command.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()?);
-    let mut stdout = child.0.stdout.take().expect("piped stdout");
-    let mut stderr = child.0.stderr.take().expect("piped stderr");
-    let out = thread::spawn(move || {
-        let mut bytes = Vec::new();
-        stdout.read_to_end(&mut bytes).map(|_| bytes)
-    });
-    let err = thread::spawn(move || {
-        let mut bytes = Vec::new();
-        stderr.read_to_end(&mut bytes).map(|_| bytes)
-    });
-    let deadline = Instant::now() + timeout;
-    let status = loop {
-        if let Some(status) = child.0.try_wait()? {
-            break Some(status);
-        }
-        if Instant::now() >= deadline {
-            child.0.kill()?;
-            child.0.wait()?;
-            break None;
-        }
-        thread::sleep(Duration::from_millis(20));
-    };
-    let stdout = out.join().map_err(|_| anyhow::anyhow!("stdout reader panicked"))??;
-    let stderr = err.join().map_err(|_| anyhow::anyhow!("stderr reader panicked"))??;
-    let Some(status) = status else {
+    let deadline = Instant::now().checked_add(timeout).context("process deadline exceeds clock range")?;
+    if timeout.is_zero() {
         bail!("{command:?} timed out after {timeout:?}");
+    }
+    let mut stdout = tempfile::tempfile().context("create process stdout capture")?;
+    let mut stderr = tempfile::tempfile().context("create process stderr capture")?;
+    let child_stdout = stdout.try_clone()?;
+    let child_stderr = stderr.try_clone()?;
+    let spawned = ProcessTree::spawn(command.stdout(child_stdout).stderr(child_stderr));
+    // Command retains configured File handles after spawn. Release those copies so
+    // capture storage is owned only by this call and its supervised descendants.
+    command.stdout(Stdio::inherit()).stderr(Stdio::inherit());
+    let mut process = spawned.with_context(|| format!("start {command:?}"))?;
+    let expired = loop {
+        if Instant::now() >= deadline {
+            break true;
+        }
+        if process.finished()? {
+            break false;
+        }
+        thread::sleep(deadline.saturating_duration_since(Instant::now()).min(Duration::from_millis(20)));
     };
+    // Clean up descendants on ordinary direct-child exit too, preserving that child's status.
+    let status = process.finish().context("terminate and reap process scope")?;
+    drop(process);
+    if expired || Instant::now() >= deadline {
+        bail!("{command:?} timed out after {timeout:?}");
+    }
+    let stdout = collected(&mut stdout, command, deadline, timeout)?;
+    let stderr = collected(&mut stderr, command, deadline, timeout)?;
+    if Instant::now() >= deadline {
+        bail!("{command:?} timed out after {timeout:?}");
+    }
     Ok(Output { status, stdout, stderr })
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Rust-only subprocess fixture for pipe pressure, exit failures and deadlines.
-    #[test]
-    #[ignore = "invoked by the process regression with a private environment selector"]
-    fn fixture() {
-        match std::env::var("NEOCOGI_TOOL_PROCESS_FIXTURE").as_deref() {
-            Ok("output") => {
-                print!("{}", "x".repeat(200_000));
-                eprint!("{}", "y".repeat(200_000));
-            }
-            Ok("fail") => std::process::exit(7),
-            Ok("sleep") => thread::sleep(Duration::from_secs(30)),
-            _ => (),
+/// Read only the completed file extent, checking the same deadline between bounded chunks.
+/// Regular-file reads do not wait for inherited handles to close, unlike read_to_end on a pipe.
+fn collected(file: &mut std::fs::File, command: &Command, deadline: Instant, timeout: Duration) -> Result<Vec<u8>> {
+    use std::io::{Read, Seek};
+    file.rewind()?;
+    let mut remaining = file.metadata()?.len();
+    let mut output = Vec::new();
+    let mut chunk = [0; 8192];
+    while remaining != 0 {
+        if Instant::now() >= deadline {
+            bail!("{command:?} timed out after {timeout:?}");
         }
+        let capacity = remaining.min(chunk.len() as u64) as usize;
+        let count = match file.read(&mut chunk[..capacity]) {
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            result => result?,
+        };
+        anyhow::ensure!(count != 0, "process capture was truncated during collection");
+        output.try_reserve(count).context("reserve captured process output")?;
+        output.extend_from_slice(&chunk[..count]);
+        remaining -= count as u64;
     }
-
-    /// Both output streams must drain and nonzero status must remain observable.
-    #[test]
-    fn drains_pipes_and_preserves_status() {
-        for (mode, succeeds) in [("output", true), ("fail", false)] {
-            let mut command = Command::new(std::env::current_exe().unwrap());
-            command
-                .args(["--exact", "process::tests::fixture", "--ignored", "--nocapture"])
-                .env("NEOCOGI_TOOL_PROCESS_FIXTURE", mode);
-            let output = timed_output(&mut command, Duration::from_secs(10)).unwrap();
-            assert_eq!(output.status.success(), succeeds);
-            if succeeds {
-                assert!(output.stdout.len() >= 200_000);
-                assert!(output.stderr.len() >= 200_000);
-            }
-        }
-    }
-
-    /// A stuck browser must terminate within the owned deadline rather than report PASS.
-    #[test]
-    fn timeout_reaps_child() {
-        let mut command = Command::new(std::env::current_exe().unwrap());
-        command
-            .args(["--exact", "process::tests::fixture", "--ignored", "--nocapture"])
-            .env("NEOCOGI_TOOL_PROCESS_FIXTURE", "sleep");
-        let start = Instant::now();
-        assert!(
-            timed_output(&mut command, Duration::from_millis(100))
-                .unwrap_err()
-                .to_string()
-                .contains("timed out")
-        );
-        assert!(start.elapsed() < Duration::from_secs(5));
-    }
+    Ok(output)
 }
+
+#[cfg(test)]
+#[path = "process/tests.rs"]
+mod tests;

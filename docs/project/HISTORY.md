@@ -1,3 +1,12 @@
+# Owned browser process deadlines
+
+The Rust browser runner now owns a Unix process group or Windows job, including
+descendants that outlive their direct parent. Both output streams spool to owned
+temporary files; one deadline covers execution and bounded output collection
+without pipe-reader joins. Normal parent exit also triggers descendant cleanup
+while preserving the parent's status. Real Rust subprocess regressions cover
+timeout, early parent exit, live descendant cleanup and large diagnostics.
+
 # Persistent texture upload state
 
 Dynamic and streamed GL/WebGL texture refreshes now use the same complete unpack

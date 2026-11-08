@@ -35,6 +35,16 @@ success or failure. A load-event completion barrier uses real wall time so captu
 and worklet processing finish before DOM capture; an 80-second capture timeout
 precedes the 90-second process deadline.
 
+That deadline covers spawning, execution and collection of both diagnostic
+streams. Output spools concurrently to temporary regular files, so inherited
+handles never require waiting for pipe EOF or joining reader threads. The tool
+terminates its Unix process group or Windows job before returning, including
+when the direct child exits normally while descendants remain. Unix polling
+keeps the leader unreaped until group termination to prevent PID reuse; Windows
+assigns the child to its job atomically at creation. Windows tooling uses the
+workspace's pinned nightly Rust process-attribute API for this assignment. This
+private tooling requirement does not change the published SDK's stable support.
+
 For trimmed native debugging, generate a command file after building:
 
 ```sh

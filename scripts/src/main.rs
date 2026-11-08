@@ -1,5 +1,7 @@
 //! Cargo-run repository tools. No Python interpreter or shell command evaluation is required.
 #![deny(missing_docs)]
+// Assign Windows children to their owned job atomically during process creation.
+#![cfg_attr(windows, feature(windows_process_extensions_raw_attribute))]
 
 mod assets;
 mod browser;
