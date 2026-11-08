@@ -1,3 +1,12 @@
+# Bounded owned diagnostic storage
+
+Audio/render diagnostic normalization now bounds retained String capacity as
+well as visible UTF-8 length. A shared private scalar-safe prefix helper releases
+oversized input storage, including spare capacity behind short/empty messages.
+Distinct status policies and per-operation ownership remain unchanged. Contract
+and real COM request/report regressions cover storage, UTF-8 and retained exports.
+The bound applies after normalization; input conversion may allocate first.
+
 # Final drawable extent admission
 
 Window submission now checks actual physical backing dimensions again after

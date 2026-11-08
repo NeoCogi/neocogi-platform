@@ -499,6 +499,13 @@ code. Error text survives the report, renderer and later operations. No Rust
 String layout is exposed in the ABI. Successful unit results may reuse an
 immutable success report containing no device or target state.
 
+Failure normalization bounds both UTF-8 length and retained `String` capacity to
+4096 bytes. Oversized input allocations, including spare storage behind short or
+empty text, are released after copying a complete scalar prefix. This bound
+applies after normalization; input conversion and context/status formatting may
+allocate first. Audio uses the same private text-storage policy while retaining
+its own status normalization and lifecycle.
+
 Creation reports exclusively own their success capability until a single mutable
 `take_*` call transfers it. A consumed report rejects reuse; dropping an untaken
 result releases the resource normally. Failed reports retain readable owned error

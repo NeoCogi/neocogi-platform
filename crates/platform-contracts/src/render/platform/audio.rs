@@ -12,7 +12,7 @@ pub const AUDIO_E_STATE: NcStatus = NcStatus::from_code(-2003);
 pub const AUDIO_E_BACKEND: NcStatus = NcStatus::from_code(-2005);
 /// Maximum complete frames copied by one operation.
 pub const MAX_AUDIO_TRANSFER_FRAMES: usize = 4096;
-/// Maximum bytes owned by one immutable UTF-8 diagnostic.
+/// Maximum UTF-8 length and retained String capacity after diagnostic normalization.
 pub const MAX_AUDIO_ERROR_BYTES: usize = 4096;
 /// Minimum application-side sample rate.
 pub const MIN_AUDIO_SAMPLE_RATE: u32 = 8000;
@@ -366,15 +366,10 @@ pub struct AudioError {
     pub message: String,
 }
 impl AudioError {
-    /// Preserve scalar boundaries while bounding diagnostic allocation/retention.
+    /// Bounds retained UTF-8 length and capacity; conversion of the input may allocate first.
     pub fn new(status: NcStatus, message: impl Into<String>) -> Self {
-        let mut message = message.into();
         let status = if status.is_err() { status } else { NC_E_INVALID_ARG };
-        let mut end = message.len().min(MAX_AUDIO_ERROR_BYTES);
-        while !message.is_char_boundary(end) {
-            end -= 1;
-        }
-        message.truncate(end);
+        let message = crate::render::diagnostic::bounded_message(message.into(), MAX_AUDIO_ERROR_BYTES);
         Self { status, message }
     }
 }
@@ -480,5 +475,23 @@ mod tests {
     fn owned_diagnostics_are_bounded() {
         assert_eq!(AudioError::new(AUDIO_E_BACKEND, "é".repeat(4097)).message.len(), MAX_AUDIO_ERROR_BYTES);
         assert_eq!(AudioError::new(neocogi_com::NC_OK, "bad status").status, NC_E_INVALID_ARG);
+    }
+
+    /// Moving long text or a short value with spare storage cannot retain that oversized allocation.
+    #[test]
+    fn diagnostics_release_oversized_input_capacity() {
+        for (input, expected) in [
+            (String::new(), String::new()),
+            ("short".to_owned(), "short".to_owned()),
+            ("x".repeat(MAX_AUDIO_ERROR_BYTES + 5), "x".repeat(MAX_AUDIO_ERROR_BYTES)),
+            (format!("{}🦀", "x".repeat(MAX_AUDIO_ERROR_BYTES - 1)), "x".repeat(MAX_AUDIO_ERROR_BYTES - 1)),
+        ] {
+            let mut storage = String::with_capacity(MAX_AUDIO_ERROR_BYTES * 32);
+            storage.push_str(&input);
+            let error = AudioError::new(AUDIO_E_BACKEND, storage);
+            assert_eq!(error.status, AUDIO_E_BACKEND);
+            assert_eq!(error.message, expected);
+            assert!(error.message.capacity() <= MAX_AUDIO_ERROR_BYTES);
+        }
     }
 }

@@ -8,7 +8,7 @@ use crate::render::abi::*;
 use crate::render::platform::{IPlatformWindowAbi, IWindowCreationResult, IWindowCreationResultAbi, IWindowCreationResultVtblFor};
 use neocogi_com::{com_object, ComBox, ComPtr, INcStringAbi, INcStringComPtrExt, NcStatus, NcString, NC_E_INVALID_ARG, NC_OK};
 
-/// Maximum UTF-8 diagnostic bytes retained by one operation's published failure.
+/// Maximum UTF-8 length and retained String capacity after failure normalization.
 pub const MAX_RENDER_ERROR_BYTES: usize = 4096;
 
 /// One failed operation's status and independently owned explanation.
@@ -24,7 +24,8 @@ pub struct RenderError {
     pub message: String,
 }
 impl RenderError {
-    /// Normalizes a failure before publication, retaining only complete UTF-8 characters.
+    /// Normalizes status and bounds retained UTF-8 length/capacity before publication.
+    /// Input conversion and invalid-status formatting may allocate before normalization.
     pub fn new(status: NcStatus, message: impl Into<String>) -> Self {
         let mut message = message.into();
         let status = if status.is_err() {
@@ -33,11 +34,7 @@ impl RenderError {
             message = format!("invalid successful error status {status}: {message}");
             NC_E_INVALID_ARG
         };
-        let mut end = message.len().min(MAX_RENDER_ERROR_BYTES);
-        while !message.is_char_boundary(end) {
-            end -= 1;
-        }
-        message.truncate(end);
+        let message = crate::render::diagnostic::bounded_message(message, MAX_RENDER_ERROR_BYTES);
         Self { status, message }
     }
 
@@ -418,6 +415,49 @@ mod tests {
             assert!(error.message.contains("error text unavailable"));
             assert!(error.message.len() <= MAX_RENDER_ERROR_BYTES);
         }
+    }
+
+    /// Real COM reports preserve normalized failures after releasing oversized input storage.
+    #[test]
+    fn normalized_storage_and_com_exports_remain_bounded_and_owned() {
+        for (input, expected) in [
+            (String::new(), String::new()),
+            ("short".to_owned(), "short".to_owned()),
+            ("x".repeat(MAX_RENDER_ERROR_BYTES + 5), "x".repeat(MAX_RENDER_ERROR_BYTES)),
+            (format!("{}🦀", "x".repeat(MAX_RENDER_ERROR_BYTES - 1)), "x".repeat(MAX_RENDER_ERROR_BYTES - 1)),
+        ] {
+            let mut storage = String::with_capacity(MAX_RENDER_ERROR_BYTES * 32);
+            storage.push_str(&input);
+            let normalized = RenderError::new(RENDER_E_BACKEND, storage);
+            assert_eq!(normalized.message, expected);
+            assert!(normalized.message.capacity() <= MAX_RENDER_ERROR_BYTES);
+            let mut storage = String::with_capacity(MAX_RENDER_ERROR_BYTES * 32);
+            storage.push_str(&input);
+            // Exercise normalization at the provider boundary, including an ordinary Rust
+            // error literal whose caller did not invoke the constructor first.
+            let Outcome::Rejected(failure) = Outcome::<()>::new(Err(RenderError {
+                status: RENDER_E_BACKEND,
+                message: storage,
+            })) else {
+                panic!("expected retained provider failure");
+            };
+            assert_eq!(failure.message, expected);
+            assert!(failure.message.capacity() <= MAX_RENDER_ERROR_BYTES);
+            let report = operation_result(Err(failure));
+            let snapshot = report.message().unwrap();
+            let retained = check_outcome(&report, "bounded report").unwrap_err();
+            assert_eq!(retained.status, RENDER_E_BACKEND);
+            assert!(retained.message.capacity() <= MAX_RENDER_ERROR_BYTES);
+            if !expected.is_empty() {
+                assert_eq!(retained.message, expected);
+            }
+            drop(report);
+            assert_eq!(snapshot.to_string_bounded(MAX_RENDER_ERROR_BYTES).unwrap(), expected);
+        }
+        let invalid = RenderError::new(NC_OK, "x".repeat(MAX_RENDER_ERROR_BYTES * 32));
+        assert_eq!(invalid.status, NC_E_INVALID_ARG);
+        assert!(invalid.message.starts_with("invalid successful error status"));
+        assert!(invalid.message.capacity() <= MAX_RENDER_ERROR_BYTES);
     }
 
     /// Reports survive unrelated success, later failures and final report destruction as Rust errors.

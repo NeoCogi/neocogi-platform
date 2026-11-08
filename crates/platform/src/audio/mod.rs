@@ -23,6 +23,9 @@ mod browser;
 #[cfg(target_arch = "wasm32")]
 use browser as backend;
 
+#[cfg(test)]
+mod diagnostic_tests;
+
 /// Controls shared by concrete playback/capture owners without erasing their direction or implementation.
 trait Driver {
     /// Fixed application PCM configuration.

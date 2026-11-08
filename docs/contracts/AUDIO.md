@@ -51,6 +51,13 @@ independently owned text. A matching typed take transfers one Ready stream once;
 a wrong-direction NOINTERFACE preserves it. Playback/capture QI cannot recover the
 opposite capability. Ready streams start Paused.
 
+Diagnostic normalization limits both UTF-8 length and retained `String` capacity
+to 4096 bytes. Oversized input storage is released after copying only a complete
+scalar prefix, including when a short or empty input has excess spare capacity.
+This is a retained-storage bound; converting the caller/browser input may allocate
+before normalization. Status and text remain independently owned after request
+or device release.
+
 Streams retain SDL/browser lifetime independently of the platform root/windows.
 Cancellation/drop closes untaken devices and invalidates pending completion.
 Tracks from late permission are stopped without publication. Close is idempotent;

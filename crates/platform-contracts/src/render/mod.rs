@@ -7,6 +7,7 @@
 extern crate alloc;
 mod backend;
 mod color;
+mod diagnostic;
 mod image;
 mod texture;
 
