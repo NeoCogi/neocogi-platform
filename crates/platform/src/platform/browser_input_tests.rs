@@ -522,6 +522,7 @@ pub async fn run_platform_input_tests() {
     }
     canonical_browser_derivatives().await;
     browser_surface_targets();
+    crate::platform::extent_tests::run();
     let document = web_sys::window().unwrap().document().unwrap();
     let canvas = document.create_element("canvas").unwrap().dyn_into::<HtmlCanvasElement>().unwrap();
     canvas.set_width(200);

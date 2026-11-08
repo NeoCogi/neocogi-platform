@@ -176,21 +176,6 @@ impl Device {
         let record = self.surfaces.try_borrow().map_err(|_| RENDER_E_BUSY)?.get(&key).and_then(Weak::upgrade);
         record.ok_or(RENDER_E_OWNER)
     }
-
-    /// Window pixel dimensions remain observable without acquiring a second native frame.
-    fn drawable_size(&self) -> Result<Size, NcStatus> {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            Ok(gpu::pixel_size(&self.window))
-        }
-        #[cfg(target_arch = "wasm32")]
-        {
-            Ok(Size {
-                width: self.window.width() as i32,
-                height: self.window.height() as i32,
-            })
-        }
-    }
 }
 
 impl IRenderSurface for ImageSurface {

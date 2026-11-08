@@ -1,3 +1,12 @@
+# Final drawable extent admission
+
+Window submission now checks actual physical backing dimensions again after
+foreign stream callbacks, alongside final group/target admission. Reentrant
+browser CSS/DPR synchronization or native resizing cannot make an old-size frame
+clear/draw a differently sized target. Failure is owned InvalidArg; unchanged
+queries and the next correctly sized frame remain usable. Native/browser COM
+acceptance covers growth/shrink, sentinel pixels, final-callback ordering and recovery.
+
 # Owned browser process deadlines
 
 The Rust browser runner now owns a Unix process group or Windows job, including

@@ -31,6 +31,8 @@ are removed after execution. The headless test disables Chromium sandboxing only
 for its trusted local fixture; it does not reuse a personal browser profile.
 
 Coverage includes canonical signed derivatives on window/texture targets, exact
+post-callback drawable admission with growth/shrink, sentinel-pixel preservation
+on rejection and successful next-frame recovery, as well as
 mip-zero texel reads with adversarial coordinates, sampled and zero-initialized
 storage pixels, actual WebGL context loss, DOM composition/paste, keyboard,
 fractional wheel, pointer chords/cancellation and listener teardown. Synthetic

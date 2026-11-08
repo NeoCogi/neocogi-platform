@@ -15,7 +15,7 @@ mod window_lifetime;
 static NATIVE_SESSION: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// Serializes complete native fixture lifetimes even under the parallel harness.
-fn native_session() -> std::sync::MutexGuard<'static, ()> {
+pub(super) fn native_session() -> std::sync::MutexGuard<'static, ()> {
     NATIVE_SESSION.lock().expect("earlier native fixture panicked")
 }
 

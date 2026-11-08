@@ -37,6 +37,13 @@ Matching size or device identity does not authorize another image surface to use
 them. The window rejects image-target blocks; an image renderer rejects
 framebuffer-target blocks. Both check closed groups and selected targets after
 foreign stream/resource calls and before native execution or output allocation.
+The window also rechecks its actual drawable extent after the last foreign
+callback and before frame acquisition. If a callback resizes the backing (including
+a browser CSS/DPR synchronization through `window.size()`), an old-size submission
+returns an owned `NC_E_INVALID_ARG` failure before its clear/draw. Recording is
+never reinterpreted at a substituted extent. The callback's own resize is not
+rolled back; the next submission uses the new size. Unchanged-size queries remain
+available during preparation.
 Surface identity is authenticated through the creating device's local registration;
 an external implementation cannot substitute matching public metadata.
 

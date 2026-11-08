@@ -113,6 +113,22 @@ struct RenderAccess<'a> {
     state: Option<RenderState>,
 }
 impl Device {
+    /// Observes the actual drawable without synchronizing browser CSS or acquiring a frame.
+    /// Metadata queries and final submission admission share this owner even while render state is detached.
+    fn drawable_size(&self) -> Result<Size, NcStatus> {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            Ok(gpu::pixel_size(&self.window))
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            Ok(Size {
+                width: self.window.width() as i32,
+                height: self.window.height() as i32,
+            })
+        }
+    }
+
     /// Takes the complete native state; nested render/upload attempts cannot borrow its internals.
     fn access(&self) -> Result<RenderAccess<'_>, NcStatus> {
         let state = self.render.try_borrow_mut().map_err(|_| RENDER_E_BUSY)?.take().ok_or(RENDER_E_BUSY)?;
@@ -293,10 +309,13 @@ impl IRenderer for WindowObject {
                     .prepared
                     .read(info, stream, self)
                     .map_err(|status| RenderError::from(status).context("frame preparation"))?;
-                // The last foreign callback may close a group or replace its target.
-                // Authenticate every block before any native frame acquisition.
+                // Foreign callbacks may close groups, replace targets or synchronize a browser
+                // canvas resize. Recheck all admission inputs before any native frame acquisition.
                 for block in state.prepared.blocks() {
                     block.admit_framebuffer()?;
+                }
+                if info.size != self.device.drawable_size()? {
+                    return Err(RenderError::new(NC_E_INVALID_ARG, "window drawable size changed during frame preparation"));
                 }
                 state.gpu.render(info, &state.prepared).map_err(|error| self.device.failure(error))
             })
@@ -355,3 +374,6 @@ impl IRenderDriverBound for GraphicsHost {
 /// Owned acceptance observations, enabled explicitly and absent from normal deployment builds.
 #[cfg(any(test, feature = "test-support"))]
 pub mod testing;
+
+#[cfg(all(any(feature = "glow", feature = "webgl"), any(test, all(target_arch = "wasm32", feature = "test-support"))))]
+mod extent_tests;
