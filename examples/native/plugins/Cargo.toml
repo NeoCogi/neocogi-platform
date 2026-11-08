@@ -7,15 +7,12 @@ license.workspace = true
 repository.workspace = true
 description = "Executable-relative loading of explicitly prepared NeoCogi shared libraries"
 
-[features]
-default = ["glow"]
-glow = []
-vulkan = []
-wgpu = []
-
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 neocogi-com = { workspace = true, features = ["runtime"] }
 neocogi-platform-schema.workspace = true
 
 [build-dependencies]
 neocogi-platform-schema = { workspace = true, features = ["build-support"] }
+
+[dev-dependencies]
+tempfile.workspace = true

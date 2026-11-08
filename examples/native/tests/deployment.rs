@@ -12,6 +12,8 @@ struct Deployment {
     _directory: tempfile::TempDir,
     /// Application directory renamed after copying, so initial paths become invalid.
     root: PathBuf,
+    /// Runtime backend selected for this isolated fixture.
+    backend: neocogi_example_plugins::Backend,
 }
 impl Deployment {
     /// Copies Cargo-built final artifacts and all real example executables.
@@ -31,9 +33,10 @@ impl Deployment {
         let profile = std::env::var_os("NEOCOGI_NATIVE_OUTPUT_DIR")
             .map(PathBuf::from)
             .unwrap_or_else(|| Path::new(binaries[0]).parent().unwrap().to_path_buf());
-        for filename in neocogi_example_plugins::LIBRARIES {
-            fs::copy(profile.join("lib").join(filename), before.join("lib").join(filename)).unwrap();
-        }
+        let requested = std::env::var("NEOCOGI_TEST_BACKEND").ok();
+        let backend = neocogi_example_plugins::select_backend(requested.as_deref(), &profile.join("lib")).unwrap();
+        let filename = neocogi_example_plugins::library_filename(backend);
+        fs::copy(profile.join("lib").join(filename), before.join("lib").join(filename)).unwrap();
         if assets {
             let source = profile.join("assets/gltf");
             fs::create_dir_all(before.join("assets/gltf")).unwrap();
@@ -58,7 +61,7 @@ impl Deployment {
         }
         let root = directory.path().join("relocated");
         fs::rename(before, &root).unwrap();
-        Self { _directory: directory, root }
+        Self { _directory: directory, root, backend }
     }
     /// Launches directly with a neutral CWD and no Cargo-supplied loader search path.
     fn run(&self, binary: &str, args: &[&str], native: bool) -> Output {
@@ -83,11 +86,11 @@ fn relocated_platform_owns_compilation_and_missing_library_reports_setup() {
     let valid = app.run("deployment_probe", &["valid"], false);
     assert!(valid.status.success(), "{}", String::from_utf8_lossy(&valid.stderr));
     assert!(String::from_utf8_lossy(&valid.stdout).contains("Dynamic platform root acquired"));
-    for filename in neocogi_example_plugins::LIBRARIES {
+    for filename in [neocogi_example_plugins::library_filename(app.backend)] {
         let source = app.root.join("lib").join(filename);
         let held = app.root.join(filename);
         fs::rename(&source, &held).unwrap();
-        let result = app.run("deployment_probe", &["valid"], false);
+        let result = app.run("deployment_probe", &["--backend", app.backend.name()], false);
         assert_eq!(result.status.code(), Some(24), "missing {filename} must return an owned setup error");
         let error = String::from_utf8_lossy(&result.stderr);
         assert!(error.contains(filename));
@@ -97,7 +100,7 @@ fn relocated_platform_owns_compilation_and_missing_library_reports_setup() {
         let profile = if profile == "debug" { "dev" } else { profile };
         assert!(error.contains(&format!("--profile {profile}")), "{error}");
         for binary in ["gltf_damaged_helmet", "gltf_brainstem"] {
-            let missing = app.run(binary, &["--frames", "1"], false);
+            let missing = app.run(binary, &["--frames", "1", "--backend", app.backend.name()], false);
             assert_eq!(missing.status.code(), Some(1), "missing deployment must be a normal application error");
             let error = String::from_utf8_lossy(&missing.stderr);
             assert!(error.contains(filename) && error.contains("cargo build --profile"), "{binary}: {error}");

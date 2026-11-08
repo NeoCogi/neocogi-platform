@@ -15,14 +15,16 @@ use std::{
 /// Copy the composition's exact staged filenames beside this executable before acquisition; the SDK pins
 /// loaded code for process lifetime, so these test-owned copies retire with Cargo's target cleanup.
 #[cfg(feature = "dynamic")]
-fn stage_test_plugins() {
+fn stage_test_plugins() -> neocogi_example_plugins::Backend {
     let executable = std::env::current_exe().unwrap();
     let profile = executable.ancestors().find(|path| path.join(".cargo-lock").is_file()).unwrap().to_path_buf();
     let directory = executable.parent().unwrap().join("lib");
     std::fs::create_dir_all(&directory).unwrap();
-    for filename in neocogi_example_plugins::LIBRARIES {
-        std::fs::copy(profile.join("lib").join(filename), directory.join(filename)).unwrap();
-    }
+    let requested = std::env::var("NEOCOGI_TEST_BACKEND").ok();
+    let backend = neocogi_example_plugins::select_backend(requested.as_deref(), &profile.join("lib")).unwrap();
+    let filename = neocogi_example_plugins::library_filename(backend);
+    std::fs::copy(profile.join("lib").join(filename), directory.join(filename)).unwrap();
+    backend
 }
 
 #[com_object(interfaces(IPlatformWindow, IRenderer, IRenderClientFactory, IRenderSurfaceFactory))]
@@ -201,8 +203,10 @@ impl IRenderer for ObservedWindow {
 #[ignore = "requires a native display/adapter; Glow also permits SDL_VIDEODRIVER=offscreen"]
 fn triangle_uses_current_drawable_pixels_and_suspended_iterations_do_not_consume_frames() {
     #[cfg(feature = "dynamic")]
-    stage_test_plugins();
-    let platform = neocogi_platform_examples::acquire_platform().unwrap();
+    let requested = Some(stage_test_plugins().name());
+    #[cfg(feature = "static")]
+    let requested = None;
+    let platform = neocogi_platform_examples::acquire_platform(requested).unwrap();
     for suspended in [false, true] {
         let window = platform
             .create_window(

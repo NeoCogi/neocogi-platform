@@ -1,3 +1,12 @@
+# Runtime backend selection for dynamic examples
+
+Native dynamic examples now compile with only --features dynamic. The application
+loads the sole deployed platform library or accepts --backend glow/vulkan/wgpu
+when several are present. Build scripts stage all known prebuilt platform variants;
+changing a runtime choice does not rebuild the example. Static assemblies retain
+one backend Cargo feature. Schema APIs, version 1 contracts and renderer-owned
+shader formats are unchanged. This supersedes dynamic backend features below.
+
 # Dedicated schema and contract package
 
 `neocogi-platform-schema` now owns the nine authored schemas, generated Rust

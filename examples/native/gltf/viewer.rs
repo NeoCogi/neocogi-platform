@@ -464,6 +464,8 @@ impl Target {
 
 /// CLI values are parsed before host/window creation, including help and error handling.
 struct Options {
+    /// Optional runtime backend; absent discovers the sole deployed dynamic library.
+    backend: Option<String>,
     /// Default pinned model path, or an explicitly supplied local compatible glTF/GLB.
     asset: PathBuf,
     /// External floating-point HDR panorama; these sample model files contain no environment.
@@ -480,8 +482,10 @@ struct Options {
 impl Options {
     /// Parses the small native-only command line; malformed options never start graphics.
     fn parse(model: &str, args: impl Iterator<Item = String>) -> scene::Result<Option<Self>> {
+        let launch = neocogi_platform_examples::LaunchArguments::parse(args).map_err(|error| error.to_string())?;
         let assets = neocogi_platform_examples::assets_directory().map_err(|error| error.to_string())?;
         let mut options = Self {
+            backend: launch.backend,
             asset: assets.join(format!("{model}.glb")),
             environment: assets.join("Cannon_Exterior.hdr"),
             exposure: 1.0,
@@ -489,11 +493,11 @@ impl Options {
             frames: None,
             time: None,
         };
-        let mut args = args;
+        let mut args = launch.arguments.into_iter();
         while let Some(option) = args.next() {
             if option == "--help" {
                 println!(
-                    "{model}: [--asset PATH] [--environment HDR] [--exposure MULTIPLIER] [--no-skybox] [--frames N] [--time SECONDS]\nLeft drag: arcball rotation. Right/middle drag: pan. Wheel: zoom. R: reset. B: skybox. Space: pause. Escape: close."
+                    "{model}: [--backend NAME] [--asset PATH] [--environment HDR] [--exposure MULTIPLIER] [--no-skybox] [--frames N] [--time SECONDS]\nLeft drag: arcball rotation. Right/middle drag: pan. Wheel: zoom. R: reset. B: skybox. Space: pause. Escape: close."
                 );
                 return Ok(None);
             }
@@ -536,7 +540,7 @@ pub fn run(model: &str) -> scene::Result<()> {
     };
     // Resolve deployment before parsing models or baking HDR lighting. Help and
     // option errors above still need neither plugins nor a graphics device.
-    let platform = neocogi_platform_examples::acquire_platform().map_err(|error| format!("graphics setup: {error}"))?;
+    let platform = neocogi_platform_examples::acquire_platform(options.backend.as_deref()).map_err(|error| format!("graphics setup: {error}"))?;
     let scene = Scene::load(&options.asset)?;
     let materials = prepare_materials(&scene)?;
     let mut lighting = Lighting {

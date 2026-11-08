@@ -878,6 +878,7 @@ version = "0.1.0-alpha.2"
 dependencies = [
  "neocogi-com",
  "neocogi-platform-schema",
+ "tempfile",
 ]
 
 [[package]]

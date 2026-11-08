@@ -50,7 +50,10 @@ The executable owns the one COM host; providers receive its typed runtime.
 
 `cargo build -p neocogi-platform-dylib --no-default-features --features glow --examples`
 builds the selected platform with a backend-specific filename. The application build
-script stages that library from the profile's `examples/` directory beside applications.
+script stages all prebuilt backend libraries from the profile's `examples/`
+directory beside applications. Dynamic examples compile with only `dynamic` and
+choose a library at startup: the sole deployed backend, or an explicit --backend
+when several exist. Cargo backend features select static implementations only.
 No build script invokes Cargo. Schema-crate `build::layout` owns output policy and resource snapshots; ordinary
 build scripts replace the former nightly staging proc macros. See
 [native staging](../contracts/NATIVE_LAYOUT.md).

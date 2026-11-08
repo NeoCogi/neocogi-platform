@@ -59,7 +59,8 @@ GLES3/WebGL uses ES300. Backends enable their compiler and `shader-wgsl`, `shade
 Native examples select `static,glow` by default. Use `--no-default-features
 --features static,vulkan` or `static,wgpu` for alternatives. For dynamic assembly,
 first run `cargo build -p neocogi-platform-dylib --no-default-features --features glow --examples` (or vulkan/wgpu),
-then select `dynamic` with the same backend in the application. Pass the same
+then select only `dynamic` in the application. It discovers the sole deployed
+platform library; use `-- --backend vulkan` (or glow/wgpu) when several are present. Pass the same
 `--profile` to both commands; min-size runs require preparing `--profile min-size`. Normal Rust
 applications link the SDK; final shared-library shims expose the existing COM ABI.
 
@@ -87,7 +88,7 @@ Load shared shader/platform objects in the examples with:
 
 ~~~sh
 cargo build --locked -p neocogi-platform-dylib --no-default-features --features glow --examples
-cargo run --locked -p neocogi-platform-examples --bin gltf_brainstem --no-default-features --features dynamic,glow
+cargo run --locked -p neocogi-platform-examples --bin gltf_brainstem --no-default-features --features dynamic
 ~~~
 
 The application build stages the prebuilt platform library, which includes its

@@ -1,7 +1,7 @@
 //! Stages explicitly prebuilt Cargo library examples; this build script never runs Cargo.
 use std::path::PathBuf;
 #[path = "src/artifacts.rs"]
-mod artifacts;
+pub mod artifacts;
 
 /// Track exact named inputs and deployed outputs, so a later shim build invalidates cached staging.
 fn main() {
@@ -13,12 +13,9 @@ fn main() {
     println!("cargo::rustc-env=NEOCOGI_PLUGIN_BUILD_PROFILE={profile}");
     println!("cargo::rerun-if-env-changed=NEOCOGI_NATIVE_OUTPUT_DIR");
     let output = output_root(Some(&anchor), std::env::var_os("NEOCOGI_NATIVE_OUTPUT_DIR").map(Into::into)).expect("native deployment output");
-    let system = match std::env::var("CARGO_CFG_TARGET_OS").expect("Cargo target OS").as_str() {
-        "windows" => artifacts::System::Windows,
-        "macos" => artifacts::System::Macos,
-        _ => artifacts::System::Unix,
-    };
-    for filename in artifacts::libraries(artifacts::selected_backend(), system) {
+    let system = artifacts::System::from_os(&std::env::var("CARGO_CFG_TARGET_OS").expect("Cargo target OS"));
+    for backend in artifacts::Backend::ALL {
+        let [filename] = artifacts::libraries(backend, system);
         // These are explicitly declared public Cargo example filenames, under the
         // same Cargo-owned profile as the application. No hashes/newest-file guesses.
         let source = profile_root.join("examples").join(filename);

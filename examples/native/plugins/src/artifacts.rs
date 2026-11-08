@@ -1,7 +1,7 @@
 //! One authoritative backend/target filename table shared by staging and runtime loading.
 
-/// Exactly one selected platform assembly, shared by staging and runtime loading.
-#[derive(Clone, Copy)]
+/// Runtime platform choices, shared by staging and executable-relative discovery.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Backend {
     /// GLES3 provider and its GLSL compiler.
     Glow,
@@ -11,7 +11,7 @@ pub enum Backend {
     Wgpu,
 }
 /// Library filename convention follows the application target, not its build-script host.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum System {
     /// Windows libraries have no prefix and use the DLL suffix.
     Windows,
@@ -20,14 +20,38 @@ pub enum System {
     /// Other supported native targets use the lib prefix and so suffix.
     Unix,
 }
-/// Features are identical for this package's build script and runtime library.
-pub const fn selected_backend() -> Backend {
-    if cfg!(feature = "vulkan") {
-        Backend::Vulkan
-    } else if cfg!(feature = "wgpu") {
-        Backend::Wgpu
-    } else {
-        Backend::Glow
+impl Backend {
+    /// Every supported native library is eligible for staging and runtime discovery.
+    pub const ALL: [Self; 3] = [Self::Glow, Self::Vulkan, Self::Wgpu];
+    /// Exact public CLI value, also used by the platform build command.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Glow => "glow",
+            Self::Vulkan => "vulkan",
+            Self::Wgpu => "wgpu",
+        }
+    }
+    /// Parse user configuration without registering plugins or touching a native subsystem.
+    pub fn parse(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|backend| backend.name() == name)
+    }
+    /// Expected descriptor identity; a mislabeled file cannot silently select another backend.
+    pub const fn plugin_name(self) -> &'static str {
+        match self {
+            Self::Glow => "neocogi.platform.glow",
+            Self::Vulkan => "neocogi.platform.vulkan",
+            Self::Wgpu => "neocogi.platform.wgpu",
+        }
+    }
+}
+impl System {
+    /// Uses the application target's OS, which may differ from the build-script host.
+    pub fn from_os(os: &str) -> Self {
+        match os {
+            "windows" => Self::Windows,
+            "macos" => Self::Macos,
+            _ => Self::Unix,
+        }
     }
 }
 /// Exact name of the selected platform library; its renderer owns shader compilation.

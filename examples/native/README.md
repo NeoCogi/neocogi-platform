@@ -14,35 +14,41 @@ cargo run --locked -p neocogi-platform-examples --bin gltf_damaged_helmet
 cargo run --locked -p neocogi-platform-examples --bin gltf_brainstem
 ~~~
 
-Select exactly one assembly and one backend. To load shared objects:
+Static builds select one assembly and backend feature. Dynamic examples need only
+`--features dynamic`; select the library at runtime with `--backend NAME` when
+several are deployed. To load shared objects:
 
 ~~~sh
 cargo build --locked -p neocogi-platform-dylib --no-default-features --features glow --examples
-cargo run --locked -p neocogi-platform-examples --bin triangle --no-default-features --features dynamic,glow -- 3
+cargo run --locked -p neocogi-platform-examples --bin triangle --no-default-features --features dynamic -- 3
 cargo build --locked -p neocogi-platform-dylib --no-default-features --features vulkan --examples
-cargo run --locked -p neocogi-platform-examples --bin gltf_damaged_helmet --no-default-features --features dynamic,vulkan -- --frames 3
+cargo run --locked -p neocogi-platform-examples --bin gltf_damaged_helmet --no-default-features --features dynamic -- --backend vulkan --frames 3
 cargo build --locked -p neocogi-platform-dylib --no-default-features --features wgpu --examples
-cargo run --locked -p neocogi-platform-examples --bin gltf_brainstem --no-default-features --features dynamic,wgpu -- --frames 3 --time 1
+cargo run --locked -p neocogi-platform-examples --bin gltf_brainstem --no-default-features --features dynamic -- --backend wgpu --frames 3 --time 1
 ~~~
 
 For a min-size dynamic build, prepare the same profile before running:
 
 ~~~sh
 cargo build --profile min-size -p neocogi-platform-dylib --no-default-features --features vulkan --examples
-cargo run --profile min-size -p neocogi-platform-examples --bin gltf_brainstem --no-default-features --features vulkan,dynamic
+cargo run --profile min-size -p neocogi-platform-examples --bin gltf_brainstem --no-default-features --features dynamic
 ~~~
 
 Both commands must use the same profile and target. The first builds the selected
-backend's named Cargo platform library example; the second automatically stages it
-from that profile's `examples/` directory into `lib/`. Only Cargo and Rust are
+backend's named Cargo platform library example; the second automatically stages
+all available backend-named platform libraries from that profile's `examples/`
+directory into `lib/`. With one deployed library, no runtime option is needed.
+With several, append `-- --backend vulkan` (or glow/wgpu). The same dynamic
+executable can load any of them without recompilation. Only Cargo and Rust are
 needed for building and staging libraries.
 Startup checks the platform library and returns an owned error with
 the matching preparation command when a file is missing. This check runs before
 model import and HDR lighting preparation. It never starts Cargo from a build script
 or application. Existing library validation still follows the SDK loader policy.
 
-Use static,vulkan or static,wgpu for linked alternatives. Cargo features select
-the backend at build time; this does not add runtime renderer switching.
+Use static,vulkan or static,wgpu for linked alternatives. Backend Cargo features
+are only valid for static assembly. Dynamic selection occurs once during startup;
+each acquired renderer/device retains its immutable backend and shader format.
 SDL offscreen works for Glow. Vulkan/WGPU require a native display/adapter.
 
 The triangle's 320×240 size is an initial window request. Each frame queries the
@@ -72,7 +78,7 @@ and metadata remain mapped under the SDK's existing loader policy. Missing
 platform libraries fail through that policy. No new renderer ABI or native-handle exchange
 is introduced.
 
-Run build with the same mode/backend as run. For a debug deployment, copy the
+Build and run use the same assembly; only static builds select a backend feature. For a debug deployment, copy the
 selected executable from target/debug together with lib/ and assets/gltf/ into
 a fresh application directory. Release/min-size use their corresponding output
 profile. Executables load lib beside themselves and locate artwork in
@@ -94,14 +100,16 @@ See [glTF controls, rendering and asset terms](gltf/README.md) and
 ~~~sh
 cargo test --locked -p neocogi-platform-examples
 cargo test --locked -p neocogi-platform-examples --test triangle -- --include-ignored --test-threads=1
-cargo test --locked -p neocogi-platform-examples --no-default-features --features dynamic,glow --test triangle -- --include-ignored --test-threads=1
-cargo test --locked -p neocogi-platform-examples --no-default-features --features dynamic,glow --test graphs --test deployment
+cargo test --locked -p neocogi-platform-examples --no-default-features --features dynamic --test triangle -- --include-ignored --test-threads=1
+cargo test --locked -p neocogi-platform-examples --no-default-features --features dynamic --test graphs --test deployment
 SDL_VIDEODRIVER=offscreen cargo test --locked -p neocogi-platform-examples --test gltf_viewer --features test-support -- --include-ignored --test-threads=1
-SDL_VIDEODRIVER=offscreen cargo test --locked -p neocogi-platform-examples --no-default-features --features dynamic,glow --test deployment -- --include-ignored --test-threads=1
+SDL_VIDEODRIVER=offscreen cargo test --locked -p neocogi-platform-examples --no-default-features --features dynamic --test deployment -- --include-ignored --test-threads=1
 ~~~
 
-Use dynamic,vulkan or dynamic,wgpu with a display for the last command.
-Ordinary deployment tests copy and rename actual executables/libraries, remove
+For Vulkan/WGPU acceptance, build that library and set NEOCOGI_TEST_BACKEND=vulkan
+or wgpu while running the same dynamic-only tests with a native display.
+NEOCOGI_TEST_BACKEND is an acceptance-test selector when several libraries are
+built in the same profile; application selection uses --backend. Ordinary deployment tests copy and rename actual executables/libraries, remove
 Cargo loader paths, and acquire through COM without a GPU. Isolated children
 exercise missing platform libraries and prove activation needs no compiler plugin.
 Opt-in deployment acceptance renders all three real examples after relocation.

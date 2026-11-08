@@ -54,7 +54,10 @@ Rust and have no proc-macro tracking or Cargo artifact-dependency requirement.
 
 Before dynamic acceptance, run `cargo build -p neocogi-platform-dylib --no-default-features --features glow --examples`
 (or vulkan/wgpu), then build/run applications with the same target/profile and
-selected dynamic backend. Copy the executable with its `lib` and optional assets
+dynamic assembly. Runtime backend selection uses --backend, independently of the
+example executable's features. Qualify the same dynamic-only executable with
+multiple separately built backend libraries and verify ambiguous/missing choices
+reject before asset/HDR work. Copy the executable with its `lib` and optional assets
 folders. Load only the selected platform; its renderer owns compilation and
 has no external compiler plugin dependency. See [native staging](../contracts/NATIVE_LAYOUT.md).
 
