@@ -1,3 +1,13 @@
+# Native builds with ordinary Cargo
+
+Dynamic examples now use two standard Cargo commands: build the shim package's
+backend-named library examples, then build/run the application with the same
+backend/profile/target. The application's Rust build script stages the exact
+prebuilt pair and tracks inputs and deployed outputs for rebuilds. The Python
+plugin builder is removed. Missing libraries return a profile-specific Cargo
+preparation command before model import or HDR processing. See NATIVE_LAYOUT.md
+and the native example README for the current invocation.
+
 # Backend-specific shader artifacts
 
 The shader request now selects WGSL, SPIR-V or GLSL ES300, and success owns only

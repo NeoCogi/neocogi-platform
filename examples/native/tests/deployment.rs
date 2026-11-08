@@ -93,8 +93,21 @@ fn relocated_plugins_acquire_and_dependency_failures_have_no_static_fallback() {
         let held = app.root.join(filename);
         fs::rename(&source, &held).unwrap();
         let result = app.run("deployment_probe", &["valid"], false);
-        assert!(!result.status.success(), "missing {filename} must not select a linked provider");
-        assert!(String::from_utf8_lossy(&result.stderr).contains(filename));
+        assert_eq!(result.status.code(), Some(24), "missing {filename} must return an owned setup error");
+        let error = String::from_utf8_lossy(&result.stderr);
+        assert!(error.contains(filename));
+        assert!(error.contains("cargo build --profile"));
+        let binary = Path::new(env!("CARGO_BIN_EXE_deployment_probe"));
+        let profile = binary.parent().unwrap().file_name().unwrap().to_str().unwrap();
+        let profile = if profile == "debug" { "dev" } else { profile };
+        assert!(error.contains(&format!("--profile {profile}")), "{error}");
+        for binary in ["gltf_damaged_helmet", "gltf_brainstem"] {
+            let missing = app.run(binary, &["--frames", "1"], false);
+            assert_eq!(missing.status.code(), Some(1), "missing deployment must be a normal application error");
+            let error = String::from_utf8_lossy(&missing.stderr);
+            assert!(error.contains(filename) && error.contains("cargo build --profile"), "{binary}: {error}");
+            assert!(!error.contains("Preparing HDR") && !String::from_utf8_lossy(&missing.stdout).contains("Preparing HDR"));
+        }
         fs::rename(held, source).unwrap();
     }
     for binary in ["gltf_damaged_helmet", "gltf_brainstem"] {

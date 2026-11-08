@@ -2,6 +2,39 @@
 #![cfg(not(target_arch = "wasm32"))]
 use std::{collections::HashSet, fs, path::Path, process::Command};
 
+/// Cargo itself must select one backend-named compiler/platform pair from the shim package.
+#[test]
+fn cargo_library_examples_declare_exact_backend_pairs() {
+    let output = Command::new(env!("CARGO"))
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .args(["metadata", "--no-deps", "--offline", "--locked", "--format-version=1"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let metadata: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let shim = metadata["packages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|package| package["name"] == "neocogi-platform-dylib")
+        .unwrap();
+    let examples: Vec<_> = shim["targets"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|target| target["kind"] == serde_json::json!(["example"]))
+        .collect();
+    assert_eq!(examples.len(), 6);
+    for backend in ["glow", "vulkan", "wgpu"] {
+        for role in ["platform", "shader_compiler"] {
+            let name = format!("nc_{role}_{backend}");
+            let target = examples.iter().find(|target| target["name"] == name).unwrap();
+            assert_eq!(target["crate_types"], serde_json::json!(["cdylib"]));
+            assert_eq!(target["required-features"], serde_json::json!([backend]));
+        }
+    }
+}
+
 /// Resolve one isolated consumer using only its selected normal Rust dependencies.
 fn graph(mode: &str, backend: &str) -> HashSet<String> {
     let directory = tempfile::tempdir().unwrap();

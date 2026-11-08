@@ -17,13 +17,29 @@ cargo run --locked -p neocogi-platform-examples --bin gltf_brainstem
 Select exactly one assembly and one backend. To load shared objects:
 
 ~~~sh
-python3 scripts/build_plugins.py --backend glow
+cargo build --locked -p neocogi-platform-dylib --no-default-features --features glow --examples
 cargo run --locked -p neocogi-platform-examples --bin triangle --no-default-features --features dynamic,glow -- 3
-python3 scripts/build_plugins.py --backend vulkan
+cargo build --locked -p neocogi-platform-dylib --no-default-features --features vulkan --examples
 cargo run --locked -p neocogi-platform-examples --bin gltf_damaged_helmet --no-default-features --features dynamic,vulkan -- --frames 3
-python3 scripts/build_plugins.py --backend wgpu
+cargo build --locked -p neocogi-platform-dylib --no-default-features --features wgpu --examples
 cargo run --locked -p neocogi-platform-examples --bin gltf_brainstem --no-default-features --features dynamic,wgpu -- --frames 3 --time 1
 ~~~
+
+For a min-size dynamic build, prepare the same profile before running:
+
+~~~sh
+cargo build --profile min-size -p neocogi-platform-dylib --no-default-features --features vulkan --examples
+cargo run --profile min-size -p neocogi-platform-examples --bin gltf_brainstem --no-default-features --features vulkan,dynamic
+~~~
+
+Both commands must use the same profile and target. The first builds the selected
+backend's two named Cargo library examples; the second automatically stages them
+from that profile's `examples/` directory into `lib/`. Only Cargo and Rust are
+needed for building and staging libraries.
+Startup checks the complete compiler/platform pair and returns an owned error with
+the matching preparation command when a file is missing. This check runs before
+model import and HDR lighting preparation. It never starts Cargo from a build script
+or application. Existing library validation still follows the SDK loader policy.
 
 Use static,vulkan or static,wgpu for linked alternatives. Cargo features select
 the backend at build time; this does not add runtime renderer switching.
@@ -39,7 +55,7 @@ is shared by the executable and the real linked/shared-library regression test.
 
 Static assembly registers linked compiler then platform descriptors and acquires
 the typed root through the SDK. Dynamic assembly uses final cdylib artifacts explicitly prepared by
-`scripts/build_plugins.py`; `neocogi-example-plugins` uses their staged filenames,
+`cargo build --examples`; `neocogi-example-plugins` stages their exact named outputs,
 loads the compiler first, loads the platform, then acquires its typed root.
 Only final dylib roots export discovery; normal provider implementations are not
 Rust dependencies of a dynamic executable. There is no linked compiler fallback.

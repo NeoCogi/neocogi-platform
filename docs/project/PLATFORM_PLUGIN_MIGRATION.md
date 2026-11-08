@@ -29,10 +29,11 @@ under `crates/platform/schemas`; embedded source bytes are reconstructed in each
 consumer's own OUT_DIR. Replace staging macro invocations with ordinary
 `build::layout` calls and Cargo rerun directives for returned inputs/outputs.
 
-Build final shared libraries with `python3 scripts/build_plugins.py --backend glow`
-(or vulkan/wgpu) before dynamic applications. The script explicitly builds the
-shim's main library and `nc_shader_compiler` library-example target, reads Cargo
-JSON artifact paths and stages backend-suffixed platform filenames. This replaces
+Build final shared libraries with `cargo build -p neocogi-platform-dylib
+--no-default-features --features glow --examples` (or vulkan/wgpu) before dynamic
+applications. Cargo builds the selected backend's two explicitly named library
+examples. The application's Rust build script stages their exact filenames from
+the same profile's `examples/` directory. This replaces
 artifact dependencies and nightly compile-time staging macros. See
 [native deployment](../contracts/NATIVE_LAYOUT.md).
 

@@ -58,7 +58,8 @@ pub fn assets_directory() -> std::io::Result<std::path::PathBuf> {
         all(feature = "wgpu", not(any(feature = "glow", feature = "vulkan")))
     )
 ))]
-pub fn acquire_platform() -> Result<neocogi_com::ComPtr<neocogi_platform_examples::sdk::render::platform::PlatformAbi>, neocogi_com::NcStatus> {
+pub fn acquire_platform()
+-> Result<neocogi_com::ComPtr<neocogi_platform_examples::sdk::render::platform::PlatformAbi>, neocogi_platform_examples::sdk::render::abi::RenderError> {
     // SAFETY: This final executable owns the immutable process-lived host tables.
     let runtime = unsafe { neocogi_com::Runtime::__from_host_api(neocogi_com_host::initialize_process()) }?;
     #[cfg(feature = "static")]
@@ -69,7 +70,9 @@ pub fn acquire_platform() -> Result<neocogi_com::ComPtr<neocogi_platform_example
             runtime.register_plugin_descriptor(neocogi_platform_examples::sdk::compiler::plugin_descriptor())?;
             runtime.register_plugin_descriptor(neocogi_platform_examples::sdk::platform::plugin_descriptor())?;
         }
-        runtime.acquire_plugin_root(neocogi_platform_examples::sdk::platform::plugin_descriptor().plugin_id)
+        runtime
+            .acquire_plugin_root(neocogi_platform_examples::sdk::platform::plugin_descriptor().plugin_id)
+            .map_err(Into::into)
     }
     #[cfg(feature = "dynamic")]
     neocogi_example_plugins::acquire(runtime)

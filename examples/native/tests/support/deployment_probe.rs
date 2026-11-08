@@ -33,7 +33,10 @@ fn main() {
     let scenario = std::env::args().nth(1).unwrap_or_else(|| "valid".into());
     match scenario.as_str() {
         "valid" => {
-            let _platform = neocogi_platform_examples::acquire_platform().unwrap();
+            let _platform = neocogi_platform_examples::acquire_platform().unwrap_or_else(|error| {
+                eprintln!("{error}");
+                std::process::exit(24);
+            });
             // This process uses a deliberately invalid SDL driver; acquisition alone must succeed.
             // Independent expectation catches a stale library after cached backend switches.
             let name = if cfg!(feature = "vulkan") {

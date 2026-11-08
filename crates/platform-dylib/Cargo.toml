@@ -8,19 +8,15 @@ repository.workspace = true
 description = "Thin final COM shared-library entrypoints for NeoCogi Platform"
 publish = ["crates-io"]
 readme = "README.md"
+autoexamples = false
 include = ["Cargo.toml", "README.md", "LICENSE", "src/**", "examples/**", "tests/**"]
 
 [lib]
 name = "nc_platform"
 crate-type = ["cdylib"]
 
-# Cargo supports one main library per package. The second final link root is
-# explicitly built as a library example; it contains only the compiler ABI shim.
-[[example]]
-name = "nc_shader_compiler"
-path = "examples/shader_compiler.rs"
-crate-type = ["cdylib"]
-
+# Cargo's named library-example targets provide both final roots per backend.
+# required-features selects exactly the pair requested by the first cargo build.
 [features]
 default = ["glow"]
 glow = ["neocogi-platform/glow"]
@@ -30,3 +26,39 @@ wgpu = ["neocogi-platform/wgpu"]
 [dependencies]
 neocogi-platform = { workspace = true, features = ["platform", "shader-compiler"] }
 neocogi-com = { workspace = true, features = ["std"] }
+
+[[example]]
+name = "nc_platform_glow"
+path = "examples/nc_platform_glow.rs"
+crate-type = ["cdylib"]
+required-features = ["glow"]
+
+[[example]]
+name = "nc_shader_compiler_glow"
+path = "examples/nc_shader_compiler_glow.rs"
+crate-type = ["cdylib"]
+required-features = ["glow"]
+
+[[example]]
+name = "nc_platform_vulkan"
+path = "examples/nc_platform_vulkan.rs"
+crate-type = ["cdylib"]
+required-features = ["vulkan"]
+
+[[example]]
+name = "nc_shader_compiler_vulkan"
+path = "examples/nc_shader_compiler_vulkan.rs"
+crate-type = ["cdylib"]
+required-features = ["vulkan"]
+
+[[example]]
+name = "nc_platform_wgpu"
+path = "examples/nc_platform_wgpu.rs"
+crate-type = ["cdylib"]
+required-features = ["wgpu"]
+
+[[example]]
+name = "nc_shader_compiler_wgpu"
+path = "examples/nc_shader_compiler_wgpu.rs"
+crate-type = ["cdylib"]
+required-features = ["wgpu"]

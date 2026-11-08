@@ -1,7 +1,3 @@
-//! Final dynamic link root for neocogi-platform::compiler; reusable code has no loader export.
-//! The descriptor, acquisition policy and COM objects remain owned by the implementation.
-#![deny(missing_docs)]
-
 /// Returns the implementation's immutable descriptor through the discovery ABI.
 ///
 /// # Safety
@@ -11,7 +7,7 @@
 pub unsafe extern "C" fn nc_get_plugin_descriptor_v1(out: *mut *const neocogi_com::NcPluginDescriptor) -> neocogi_com::NcStatus {
     // SAFETY: the caller supplies the output slot; the complete static descriptor graph
     // and its acquisition functions remain mapped as part of this final library.
-    unsafe { neocogi_com::return_plugin_descriptor(out, neocogi_platform::compiler::plugin_descriptor()) }
+    unsafe { neocogi_com::return_plugin_descriptor(out, neocogi_platform::platform::plugin_descriptor()) }
 }
 
 #[cfg(test)]
@@ -27,7 +23,7 @@ mod tests {
         let mut descriptor = core::ptr::null();
         // SAFETY: The output is one aligned writable descriptor pointer slot.
         assert_eq!(unsafe { nc_get_plugin_descriptor_v1(&mut descriptor) }, neocogi_com::NC_OK);
-        assert!(core::ptr::eq(descriptor, neocogi_platform::compiler::plugin_descriptor()));
+        assert!(core::ptr::eq(descriptor, neocogi_platform::platform::plugin_descriptor()));
         // SAFETY: Discovery lends an immutable static descriptor graph.
         assert_eq!(unsafe { neocogi_com::validate_plugin_descriptor(descriptor) }, neocogi_com::NC_OK);
     }

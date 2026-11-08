@@ -55,8 +55,9 @@ GLES3/WebGL uses ES300. Backends forward `shader-wgsl`, `shader-spirv` or
 
 Native examples select `static,glow` by default. Use `--no-default-features
 --features static,vulkan` or `static,wgpu` for alternatives. For dynamic assembly,
-first run `python3 scripts/build_plugins.py --backend glow` (or vulkan/wgpu),
-then select `dynamic` with the same backend in the application. Normal Rust
+first run `cargo build -p neocogi-platform-dylib --no-default-features --features glow --examples` (or vulkan/wgpu),
+then select `dynamic` with the same backend in the application. Pass the same
+`--profile` to both commands; min-size runs require preparing `--profile min-size`. Normal Rust
 applications link the SDK; final shared-library shims expose the existing COM ABI.
 
 The native glTF examples include a textured DamagedHelmet and animated GPU-skinned
@@ -82,10 +83,11 @@ cargo run --locked -p neocogi-platform-examples --bin gltf_brainstem
 Load shared shader/platform objects in the examples with:
 
 ~~~sh
+cargo build --locked -p neocogi-platform-dylib --no-default-features --features glow --examples
 cargo run --locked -p neocogi-platform-examples --bin gltf_brainstem --no-default-features --features dynamic,glow
 ~~~
 
-The explicit plugin build stages both libraries; startup loads the compiler before
+The application build stages both prebuilt libraries; startup loads the compiler before
 the platform. See [native assembly and relocation](examples/native/README.md).
 
 Left-drag rotates, right/middle-drag pans, and the wheel zooms. Press R to reset,

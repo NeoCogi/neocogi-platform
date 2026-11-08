@@ -534,6 +534,9 @@ pub fn run(model: &str) -> scene::Result<()> {
     let Some(options) = Options::parse(model, std::env::args().skip(1))? else {
         return Ok(());
     };
+    // Resolve deployment before parsing models or baking HDR lighting. Help and
+    // option errors above still need neither plugins nor a graphics device.
+    let platform = neocogi_platform_examples::acquire_platform().map_err(|error| format!("graphics setup: {error}"))?;
     let scene = Scene::load(&options.asset)?;
     let materials = prepare_materials(&scene)?;
     let mut lighting = Lighting {
@@ -542,7 +545,6 @@ pub fn run(model: &str) -> scene::Result<()> {
         intensity: 1.0,
         background: options.background,
     };
-    let platform = check(neocogi_platform_examples::acquire_platform())?;
     let title = format!("NeoCogi glTF — {model}");
     let result = (|| -> Result<(), RenderError> {
         let window = platform.create_window(NcCopyFromBufferOffset::new(0, title.as_bytes()), SIZE)?;
@@ -610,11 +612,6 @@ pub fn run(model: &str) -> scene::Result<()> {
         Ok(())
     })();
     result.map_err(|error| format!("{model}: {error}"))
-}
-
-/// Preserves concrete COM status diagnostics at the application error boundary.
-fn check<T>(result: Result<T, NcStatus>) -> scene::Result<T> {
-    result.map_err(|status| format!("graphics setup: {status:?}"))
 }
 
 #[cfg(test)]

@@ -18,7 +18,8 @@ implementation modules and focused tests. Its own build.rs uses the helper's
 source directly; downstream generation uses an SDK build dependency with
 `build-support`. Runtime defaults enable neither generation/staging dependencies
 nor SDL, Naga or a graphics backend. The shim archive includes both final link
-roots; the second is explicitly selected by `--example nc_shader_compiler`.
+roots as backend-named library examples, selected together by `--examples` and
+the matching backend feature.
 All packages include their README and combined license notices.
 
 Run:
@@ -48,7 +49,7 @@ Rust and have no proc-macro tracking or Cargo artifact-dependency requirement.
 
 ## Deployment and publication
 
-Before dynamic acceptance, run `python3 scripts/build_plugins.py --backend glow`
+Before dynamic acceptance, run `cargo build -p neocogi-platform-dylib --no-default-features --features glow --examples`
 (or vulkan/wgpu), then build/run applications with the same target/profile and
 selected dynamic backend. Copy the executable with its `lib` and optional assets
 folders. Load the compiler before the platform; COM identities and dependencies
@@ -65,3 +66,10 @@ Shader qualification must include isolated `shader-wgsl`, `shader-spirv` and
 release compiler should enable all outputs implicitly. Stage the backend-suffixed
 compiler and platform pair together. Shader request/report ABI signatures changed;
 rebuild generated consumers and both providers for this release.
+
+Minimal output ABI regressions run `cargo test -p neocogi-platform
+--no-default-features --features shader-compiler,shader-wgsl --test shader_targets`
+(and shader-spirv/shader-glsl), plus a shader-compiler-only build that rejects all
+formats. They deliberately omit test-support so its WGSL fixture cannot mask
+unavailable outputs. Poisoned unselected getters prove import copies only its
+selected representation; a missing selected getter propagates without fallback.

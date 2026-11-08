@@ -1,9 +1,11 @@
 # Native application staging
 
 `neocogi-platform-dylib` supplies two independent COM discovery roots. Build them
-with `python3 scripts/build_plugins.py --backend glow` (or vulkan/wgpu).
-This explicit orchestration uses Cargo JSON artifact paths; application build
-scripts never invoke Cargo and dynamic executables have no provider dependency.
+with `cargo build -p neocogi-platform-dylib --no-default-features --features glow --examples`
+(or vulkan/wgpu). Cargo selects the two backend-named library examples through their
+required features. The application build script stages these exact filenames from
+the same Cargo profile's `examples/` directory. It never invokes Cargo, and dynamic
+executables have no provider dependency.
 The compiler stages as `libnc_shader_compiler_{backend}.so`, followed by the selected
 `libnc_platform_{backend}.so` (target-specific suffix/prefix on macOS/Windows).
 Use the same backend/profile/target/output selection as the application. The compiler
@@ -88,3 +90,23 @@ buffers per input. New candidates copy directly; unchanged outputs keep their
 timestamps. The no-concurrent-source-mutation and per-mapping publication rules
 still apply. The SDK retains the filesystem/resource regressions, and extracted
 package qualification exercises a real consumer build script on stable Rust.
+
+## Missing development artifacts
+
+Dynamic examples preflight both executable-relative library paths before registering
+either provider. Missing/inaccessible files return an owned `RenderError` with
+`NC_E_LOAD_FAILED`, the actual missing path and a backend/profile preparation command.
+The build-script hint records only Cargo's profile name, without embedding private
+build paths. `debug` maps to Cargo's `dev` profile. For min-size Vulkan, run
+`cargo build --profile min-size -p neocogi-platform-dylib --no-default-features --features vulkan --examples` before the
+matching `cargo run --profile min-size ... --features vulkan,dynamic` invocation.
+Both commands default to dev and must select the same profile/target. The build
+script tracks both prebuilt inputs and staged outputs; rebuilding a shim refreshes
+its deployed copy, and deleting a staged output causes restoration on the next
+application build. Missing inputs do not prevent compilation or help; acquisition
+returns the preparation error. `NEOCOGI_NATIVE_OUTPUT_DIR` redirects staging through
+the existing output policy. No extra executable or Python builder is required.
+Preflight does not promise an atomic filesystem snapshot or replace the SDK's
+fail-fatal policy for an existing corrupt/incompatible library. glTF startup does
+this deployment work before model import or HDR preparation; help still needs
+neither libraries nor a graphics device.

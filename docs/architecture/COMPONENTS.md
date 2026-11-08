@@ -38,18 +38,18 @@ Each consumer generates into its own OUT_DIR from embedded canonical source byte
 no sibling checkout path or another package's generated output is consulted.
 Generation and staging dependencies are build-only when used as build dependencies.
 
-The shim's main library exports the platform descriptor; its library example
-`nc_shader_compiler` exports the compiler descriptor. This second final link root
-uses Cargo's library-example target because one package has one main library.
+The shim's main library exports the platform descriptor. Its backend-named library
+examples export independent platform and compiler descriptors. These final link roots
+use Cargo's library-example targets because one package has one main library.
 Both link ordinary SDK implementations and export exactly one discovery symbol
 per shared object. The SDK exports no discovery symbol. Compiler and platform
 identities/dependency order stay unchanged: register/load compiler, then platform.
 The executable owns the one COM host; providers receive its typed runtime.
 
-`scripts/build_plugins.py` builds both roots in one explicit Cargo invocation,
-reads exact artifact paths from Cargo JSON and stages a matching
-backend-suffixed compiler/platform pair beside applications. No build script invokes
-Cargo. SDK `build::layout` owns output policy and resource snapshots; ordinary
+`cargo build -p neocogi-platform-dylib --no-default-features --features glow --examples`
+builds both selected roots with backend-specific filenames. The application build
+script stages that pair from the profile's `examples/` directory beside applications.
+No build script invokes Cargo. SDK `build::layout` owns output policy and resource snapshots; ordinary
 build scripts replace the former nightly staging proc macros. See
 [native staging](../contracts/NATIVE_LAYOUT.md).
 
