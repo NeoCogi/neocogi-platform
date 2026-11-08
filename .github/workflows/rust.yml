@@ -40,6 +40,7 @@ jobs:
           cargo test --locked -p neocogi-platform --no-default-features --features shader-compiler,shader-wgsl --test shader_targets
           cargo test --locked -p neocogi-platform --no-default-features --features shader-compiler,shader-spirv --test shader_targets
           cargo test --locked -p neocogi-platform --no-default-features --features shader-compiler,shader-glsl --test shader_targets
+          cargo test --locked -p neocogi-platform --no-default-features --features shader-compiler,shader-wgsl,shader-spirv,shader-glsl --test shader_targets
       - name: Backend-owned native regressions
         run: |
           xvfb-run -a cargo test --locked -p neocogi-platform --features ${{ matrix.backend }},test-support --lib gpu::backends::${{ matrix.backend }}:: -- --include-ignored --test-threads=1

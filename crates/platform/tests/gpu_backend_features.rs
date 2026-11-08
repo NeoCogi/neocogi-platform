@@ -180,5 +180,6 @@ fn compiler_output_features_are_minimal_and_independent_of_graphics() {
         let target = if backend == "webgl" { "wasm32-unknown-unknown" } else { &native };
         let graph = Graph::resolve(&[backend], target);
         assert!(graph.packages["neocogi-platform"].contains(output));
+        assert!(graph.packages["neocogi-platform"].contains("shader-compiler"));
     }
 }

@@ -12,9 +12,10 @@ mod client {
 fn main() {
     // SAFETY: This executable owns the process-lived immutable host tables.
     let _runtime = unsafe { Runtime::__from_host_api(neocogi_com_host::initialize_process()) }.unwrap();
-    let root: ComPtr<client::ShaderCompilerAbi> = CompilerObject::from_value(CompilerObject::new(neocogi_platform::render::shader::ShaderTarget::Wgsl).unwrap())
-        .query()
-        .unwrap();
+    let root: ComPtr<client::ShaderCompilerAbi> =
+        CompilerObject::from_value(CompilerObject::new(neocogi_platform::render::shader::ShaderTarget::Wgsl).unwrap())
+            .query()
+            .unwrap();
     let source = b"@vertex fn vs()->@builtin(position) vec4<f32>{return vec4<f32>(0.,0.,0.,1.);}";
     let report = root
         .compile_result(
@@ -27,6 +28,22 @@ fn main() {
         )
         .unwrap();
     assert_eq!(report.status().unwrap(), NC_OK.code());
+    assert_eq!(report.target().unwrap(), client::ShaderTarget::Wgsl);
+    assert_eq!(report.info().unwrap().target, client::ShaderTarget::Wgsl);
+    // A consumer generated from the merged renderer schema interoperates with
+    // ordinary SDK readers by typed QI, including backend format validation.
+    use neocogi_platform::render::{
+        abi,
+        shader::{PreparedShader, ShaderTarget},
+    };
+    let canonical = report.query::<abi::IShaderCompilationAbi>().unwrap();
+    assert!(matches!(
+        PreparedShader::new(canonical.clone(), abi::GpuShaderStage::Vertex, ShaderTarget::SpirV, b"vs", 4 * 1024 * 1024),
+        Err(neocogi_com::NC_E_INVALID_ARG)
+    ));
+    let prepared = PreparedShader::new(canonical, abi::GpuShaderStage::Vertex, ShaderTarget::Wgsl, b"vs", 4 * 1024 * 1024).unwrap();
+    assert_eq!(prepared.copy().unwrap().code.target(), ShaderTarget::Wgsl);
+    drop(prepared);
     assert_eq!(report.spirv().unwrap_err(), neocogi_com::NC_E_NOINTERFACE);
     let wgsl = report.wgsl().unwrap();
     assert_eq!(report.glsl().unwrap_err(), neocogi_com::NC_E_NOINTERFACE);

@@ -13,6 +13,65 @@ const SOURCE: &str = "@vertex fn vs()->@builtin(position) vec4<f32>{return vec4<
 
 use neocogi_platform::render::shader::testing as admission;
 
+/// Matching report metadata is insufficient when the actual output belongs to another backend.
+#[test]
+fn foreign_fixed_format_is_rejected_without_publishing_or_leaking_quota() {
+    use crate::render::compiler::CompilerObject;
+    let compiler = CompilerObject::from_value(CompilerObject::new(ShaderTarget::Wgsl).unwrap()).query().unwrap();
+    let gpu = new_device(compiler);
+    let controller = gpu
+        .create_client(
+            Default::default(),
+            gpu.surface_target(RenderSurfaceKind::Framebuffer).unwrap(),
+            Default::default(),
+        )
+        .unwrap();
+    let factory = controller.resources().unwrap();
+    let source = crate::render::source::Bytes::source(SOURCE.as_bytes().to_vec());
+    for _ in 0..2 {
+        let error = factory
+            .create_shader(GpuShaderStage::Vertex, source.as_com_ref(), NcCopyFromBufferOffset::new(0, b"vs"))
+            .unwrap_err();
+        assert_eq!(error.status, NC_E_INVALID_ARG);
+        assert_eq!(gpu.live_bytes(factory.as_com_ref()).unwrap(), 0);
+        assert!(gpu.inner.shaders.borrow().is_empty());
+    }
+    // Rejection restores the operation gate and all input/provider reservations.
+    let bytes = crate::render::source::Bytes::source(vec![0; 4]);
+    let buffer = factory.create_static_buffer(GpuBufferDesc::Vertex { byte_len: 4 }, bytes.as_com_ref()).unwrap();
+    drop(buffer);
+    assert_eq!(gpu.live_bytes(factory.as_com_ref()).unwrap(), 0);
+}
+
+/// Production device composition chooses its compiler without receiving one from a caller.
+#[test]
+fn device_owned_compilers_follow_their_immutable_backend_format() {
+    let mut targets = vec![ShaderTarget::Wgsl, ShaderTarget::SpirV];
+    if cfg!(feature = "shader-glsl") {
+        targets.push(ShaderTarget::GlslEs300);
+    }
+    for target in targets {
+        let gpu = GpuDevice::new(crate::gpu::testing::Core::with_target(target)).unwrap();
+        let controller = gpu
+            .create_client(
+                Default::default(),
+                gpu.surface_target(RenderSurfaceKind::Framebuffer).unwrap(),
+                Default::default(),
+            )
+            .unwrap();
+        let factory = controller.resources().unwrap();
+        let source = crate::render::source::Bytes::source(SOURCE.as_bytes().to_vec());
+        let shader = factory
+            .create_shader(GpuShaderStage::Vertex, source.as_com_ref(), NcCopyFromBufferOffset::new(0, b"vs"))
+            .unwrap();
+        let snapshot = gpu.shader_snapshot(factory.as_com_ref(), shader.as_com_ref()).unwrap();
+        assert_eq!(snapshot.artifact.code.target(), target);
+        assert!(gpu.live_bytes(factory.as_com_ref()).unwrap() > 0);
+        drop((snapshot, shader));
+        assert_eq!(gpu.live_bytes(factory.as_com_ref()).unwrap(), 0);
+    }
+}
+
 /// A rejected module publishes no GPU resource and leaves quota and operation admission usable.
 #[test]
 fn inactive_profile_violations_reject_through_the_resource_factory() {

@@ -77,6 +77,48 @@ fn compiled_formats_match_explicit_output_features() {
     }
 }
 
+/// Identical target-free requests on distinct instances retain each renderer's format after errors.
+#[test]
+fn repeated_requests_cannot_change_a_compilers_configured_output() {
+    let compilers: Vec<_> = [ShaderTarget::Wgsl, ShaderTarget::SpirV, ShaderTarget::GlslEs300]
+        .into_iter()
+        .filter(|target| supported(*target))
+        .map(|target| {
+            let compiler: ComPtr<ShaderCompilerAbi> = CompilerObject::from_value(CompilerObject::new(target).unwrap()).query().unwrap();
+            (target, compiler)
+        })
+        .collect();
+    for _ in 0..3 {
+        for (target, compiler) in &compilers {
+            for (source, cap, status) in [
+                ("invalid WGSL", 4194304, NC_E_INVALID_ARG),
+                (SOURCE, 1, neocogi_com::NC_E_OUT_OF_RANGE),
+                (SOURCE, 4194304, NC_OK),
+            ] {
+                let report = compiler
+                    .compile_result(
+                        ShaderCompileRequest {
+                            stage: GpuShaderStage::Vertex,
+                            max_output_bytes: cap,
+                        },
+                        NcCopyFromBufferOffset::new(0, source.as_bytes()),
+                        NcCopyFromBufferOffset::new(0, b"vs"),
+                    )
+                    .unwrap();
+                assert_eq!(report.status().unwrap(), status.code());
+                if status == NC_OK {
+                    assert_eq!(report.target().unwrap(), *target);
+                    assert_eq!(report.info().unwrap().target, *target);
+                    let prepared = PreparedShader::new(report, GpuShaderStage::Vertex, *target, b"vs", cap as usize).unwrap();
+                    assert_eq!(prepared.copy().unwrap().code.target(), *target);
+                } else {
+                    assert_eq!(report.target().unwrap_err(), status);
+                }
+            }
+        }
+    }
+}
+
 /// Every unused code getter is poisoned; import must query exactly the selected representation.
 #[com_object(interfaces(neocogi_platform::render::abi::IShaderCompilation))]
 struct ReportProbe {

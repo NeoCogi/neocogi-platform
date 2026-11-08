@@ -73,3 +73,10 @@ Minimal output ABI regressions run `cargo test -p neocogi-platform
 output configurations. They deliberately omit test-support so its WGSL fixture cannot mask
 unavailable outputs. Poisoned unselected getters prove import copies only its
 selected representation; a missing selected getter propagates without fallback.
+
+Also run the matrix with all three output features together. Identical target-free
+requests on different fixed-format compiler instances must keep their configured
+outputs after validation and quota failures. Resource regressions reject an
+otherwise consistent result for another backend without publishing a shader or
+leaking reservations. The independent archive consumer generates the merged
+renderer schema and exercises result-target validation through the SDK reader.
