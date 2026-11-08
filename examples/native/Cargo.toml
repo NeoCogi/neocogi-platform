@@ -56,4 +56,9 @@ path = "src/bin/gltf_brainstem.rs"
 test = false
 
 [build-dependencies]
-provider = { package = "neocogi-platform", path = "../../crates/platform", default-features = false, features = ["build-support"] }
+# Private workspace examples compile the SDK's authored staging module directly;
+# a provider build-dependency would receive provider?/backend feature forwarding.
+tempfile.workspace = true
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"

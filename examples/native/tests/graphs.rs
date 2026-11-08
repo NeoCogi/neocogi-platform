@@ -33,8 +33,8 @@ fn cargo_library_examples_declare_exact_backend_libraries() {
     }
 }
 
-/// Resolve one isolated consumer using only its selected normal Rust dependencies.
-fn graph(mode: &str, backend: &str) -> HashSet<String> {
+/// Resolve one isolated consumer, explicitly selecting normal and/or build dependency edges.
+fn graph(mode: &str, backend: &str, edges: &str) -> HashSet<String> {
     let directory = tempfile::tempdir().unwrap();
     fs::create_dir(directory.path().join("src")).unwrap();
     fs::write(directory.path().join("src/lib.rs"), "").unwrap();
@@ -47,7 +47,7 @@ fn graph(mode: &str, backend: &str) -> HashSet<String> {
     fs::copy(package.join("../../Cargo.lock"), directory.path().join("Cargo.lock")).unwrap();
     let output = Command::new(env!("CARGO"))
         .current_dir(directory.path())
-        .args(["tree", "--offline", "--edges", "normal", "--prefix", "none", "--format", "{p}"])
+        .args(["tree", "--offline", "--edges", edges, "--prefix", "none", "--format", "{p}"])
         .output()
         .unwrap();
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
@@ -62,17 +62,29 @@ fn graph(mode: &str, backend: &str) -> HashSet<String> {
 #[test]
 fn static_and_dynamic_graphs_keep_provider_implementation_ownership_distinct() {
     for backend in ["glow", "vulkan", "wgpu"] {
-        let dynamic = graph("dynamic", backend);
+        let dynamic = graph("dynamic", backend, "normal");
         for forbidden in ["neocogi-platform-plugin", "neocogi-shader-compiler", "naga", "sdl2", "wgpu", "ash"] {
             assert!(!dynamic.contains(forbidden), "{backend}: {dynamic:?}");
         }
         assert!(dynamic.contains("neocogi-platform"));
         assert!(dynamic.contains("neocogi-example-plugins"));
-        let linked = graph("static", backend);
+        let linked = graph("static", backend, "normal");
         assert!(linked.contains("neocogi-platform"));
         assert!(linked.contains("naga"));
         assert!(linked.contains("sdl2"));
         assert!(!linked.contains("neocogi-example-plugins"));
+    }
+}
+
+/// Dynamic compilation must keep renderer features out of host-side build helpers too.
+#[test]
+fn dynamic_build_helpers_do_not_compile_shader_or_native_backend_implementations() {
+    for backend in ["glow", "vulkan", "wgpu"] {
+        let selected = graph("dynamic", backend, "normal,build");
+        for forbidden in ["naga", "sdl2", "glow", "wgpu", "ash"] {
+            assert!(!selected.contains(forbidden), "{backend} enabled {forbidden} in its build graph: {selected:?}");
+        }
+        assert!(selected.contains("neocogi-idl"), "schema generation remains available");
     }
 }
 

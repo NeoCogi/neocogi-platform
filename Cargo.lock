@@ -942,6 +942,7 @@ dependencies = [
  "neocogi-example-plugins",
  "neocogi-platform",
  "rs-math3d",
+ "serde",
  "serde_json",
  "sha2",
  "tempfile",
