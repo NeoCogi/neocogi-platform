@@ -127,4 +127,4 @@ element/byte offset conversion and that copied results survive wrapper destructi
 
 The complete state, accounting and backend lifetime contract is in
 [GPU_RENDERING.md](contracts/GPU_RENDERING.md); the authoritative interface is
-[gpu.ncidl](../crates/platform/schemas/neocogi/renderer/gpu.ncidl).
+[gpu.ncidl](../crates/platform-schema/schemas/neocogi/renderer/gpu.ncidl).

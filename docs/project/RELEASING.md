@@ -1,24 +1,27 @@
 # Preparing and publishing Platform packages
 
-The release target is **0.1.0-alpha.2**. Exactly two packages are published:
+The release target is **0.1.0-alpha.2**. Exactly three packages are published:
 
-1. `neocogi-platform`: reusable Rust SDK, contracts, optional providers and build support.
-2. `neocogi-platform-dylib`: thin final platform shared libraries including renderer-owned compilation.
+1. `neocogi-platform-schema`: authored schemas, generated contracts, Rust helpers and build support.
+2. `neocogi-platform`: renderer SDK with optional backends, owned compiler and hosting.
+3. `neocogi-platform-dylib`: final platform libraries including renderer-owned compilation.
 
 The four existing example/test packages remain `publish = false`. This supersedes
-the eleven-package release layout. Internal implementation modules, schema helpers
-and native staging code are part of the SDK archive. There are no private path
+the eleven-package release layout. Schema/build helpers and staging belong to the schema archive; implementation
+modules belong to the SDK archive. There are no private path
 or Git dependencies hidden behind a facade. All internal registry requirements
 pin the same exact pre-release version.
 
 ## Package inputs and verification
 
-The SDK archive owns the nine authored NCIDL files, the schema helper, build.rs,
-implementation modules and focused tests. Its own build.rs uses the helper's
-source directly; downstream generation uses an SDK build dependency with
-`build-support`. Runtime defaults enable neither generation/staging dependencies
-nor SDL, Naga or a graphics backend. The shim archive includes each platform as a backend-named library example;
-`--examples` and the matching backend feature select one final library.
+The schema archive owns all nine authored NCIDL files, its generation build.rs,
+compiled Rust bindings, shared helpers and optional build-support APIs. The SDK
+archive owns implementations and focused tests without a build script or copies
+of generated bindings. Dynamic/build consumers use only the schema crate; it has
+no SDK, Naga, SDL or graphics dependency in any feature configuration. The shim
+archive includes backend-named platform examples, with the selected feature and
+`--examples` choosing the final shared library.
+
 All packages include their README and combined license notices.
 
 Run:
@@ -26,12 +29,13 @@ Run:
 ```sh
 cargo fetch --locked
 cargo check --locked --workspace --all-targets
-cargo test --locked -p neocogi-platform --features platform,glow,test-support,shader-spirv,build-support
+cargo test --locked -p neocogi-platform-schema --features build-support,test-support
+cargo test --locked -p neocogi-platform --features platform,glow,test-support,shader-spirv
 python3 -B -m unittest discover -s scripts -p 'test_*.py'
 python3 -B scripts/check_packages.py --offline --stable-toolchain stable --allow-dirty
 ```
 
-Omit `--allow-dirty` for release qualification. The checker constructs both real
+Omit `--allow-dirty` for release qualification. The checker constructs all three real
 archives together, rejects unexpected release packages and duplicate schema
 ownership, extracts them outside this checkout and uses only extracted contents
 for internal registry patches. It builds all targets, runs focused SDK tests and
@@ -55,8 +59,8 @@ folders. Load only the selected platform; its renderer owns compilation and
 has no external compiler plugin dependency. See [native staging](../contracts/NATIVE_LAYOUT.md).
 
 Run relevant native/browser acceptance and review the actual archives before
-publication. Publication remains a separate explicit action. Publish the SDK
-first and wait for it to appear in the crates.io index, then publish the shim.
+publication. Publication remains a separate explicit action. Publish the schema crate first, then the SDK, then the shim, waiting for each
+dependency version to appear in the crates.io index before publishing its consumer.
 COM/host/IDL dependencies remain the published exact `0.1.0` versions. A successful
 `--list` or `--no-verify` alone is insufficient release evidence.
 
@@ -71,8 +75,9 @@ Minimal output ABI regressions run `cargo test -p neocogi-platform
 --no-default-features --features shader-compiler,shader-wgsl --test shader_targets`
 (and shader-spirv/shader-glsl), plus a shader-compiler-only build that rejects all
 output configurations. They deliberately omit test-support so its WGSL fixture cannot mask
-unavailable outputs. Poisoned unselected getters prove import copies only its
-selected representation; a missing selected getter propagates without fallback.
+unavailable outputs. The single backend code getter must preserve its encoding
+and ownership. Missing code propagates without fallback; wrong targets reject
+before acquiring code, and invalid UTF-8 rejects for either text target.
 
 Also run the matrix with all three output features together. Identical target-free
 requests on different fixed-format compiler instances must keep their configured

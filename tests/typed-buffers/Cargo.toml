@@ -6,9 +6,10 @@ license.workspace = true
 publish = false
 
 [dev-dependencies]
+neocogi-platform-schema.workspace = true
 neocogi-platform = { workspace = true, features = ["test-support"] }
 neocogi-com = { workspace = true, features = ["std", "macros", "runtime"] }
 
 [build-dependencies]
-neocogi-platform = { workspace = true, features = ["build-support"] }
+neocogi-platform-schema = { workspace = true, features = ["build-support"] }
 syn.workspace = true

@@ -3,7 +3,7 @@
 use std::{error::Error, fmt};
 
 /// Maximum accepted byte count for one packed RGBA image.
-pub const MAX_IMAGE_BYTES: usize = neocogi_platform::render::abi::MAX_IMAGE_BYTES;
+pub const MAX_IMAGE_BYTES: usize = neocogi_platform_schema::render::abi::MAX_IMAGE_BYTES;
 
 /// Checks positive RGBA dimensions and returns their exact addressable, bounded storage size.
 /// Render-target allocation uses this without fabricating an empty CPU upload.

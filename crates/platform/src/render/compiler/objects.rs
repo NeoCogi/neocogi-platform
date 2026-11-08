@@ -80,7 +80,7 @@ struct Exports {
     info: ShaderInfo,
     /// Selected entry name.
     entry: ComPtr<INcStringAbi>,
-    /// One independently owned artifact, with a format-specific SDK interface.
+    /// One independently owned backend shader payload with an explicit encoding tag.
     code: ExportCode,
     /// Location input items.
     inputs: ComPtr<IShaderLocationsAbi>,
@@ -96,13 +96,19 @@ struct Exports {
 /// Exactly one exported code owner; unused representations are never allocated.
 enum ExportCode {
     /// Original validated WGSL text.
-    Wgsl(ComPtr<INcStringAbi>),
+    Wgsl(ComPtr<INcBytesAbi>),
     /// Guarded SPIR-V bytes in little-endian wire order.
     SpirV(ComPtr<INcBytesAbi>),
     /// Bounded ES300 text.
-    GlslEs300(ComPtr<INcStringAbi>),
+    GlslEs300(ComPtr<INcBytesAbi>),
 }
 impl ExportCode {
+    /// Every format uses one byte export; its enum variant fixes the wire encoding.
+    fn bytes(&self) -> &ComPtr<INcBytesAbi> {
+        match self {
+            Self::Wgsl(bytes) | Self::SpirV(bytes) | Self::GlslEs300(bytes) => bytes,
+        }
+    }
     /// Derives the wire target from the actual owned representation.
     fn target(&self) -> ShaderTarget {
         match self {
@@ -180,8 +186,8 @@ impl Exports {
         })
         .query()?;
         let code = match shader.code {
-            ShaderCode::Wgsl(text) => ExportCode::Wgsl(NcString::from_string(text)),
-            ShaderCode::GlslEs300(text) => ExportCode::GlslEs300(NcString::from_string(text)),
+            ShaderCode::Wgsl(text) => ExportCode::Wgsl(NcBytes::from_vec(text.into_bytes())),
+            ShaderCode::GlslEs300(text) => ExportCode::GlslEs300(NcBytes::from_vec(text.into_bytes())),
             ShaderCode::SpirV(words) => {
                 let mut bytes = Vec::new();
                 bytes.try_reserve_exact(words.len() * 4).map_err(|_| NC_E_OUT_OF_MEMORY)?;
@@ -241,23 +247,8 @@ impl IShaderCompilation for Report {
     fn target(&self) -> Result<ShaderTarget, NcStatus> {
         Ok(self.exports()?.code.target())
     }
-    fn wgsl(&self) -> Result<ComPtr<INcStringAbi>, NcStatus> {
-        match &self.exports()?.code {
-            ExportCode::Wgsl(code) => Ok(code.clone()),
-            _ => Err(neocogi_com::NC_E_NOINTERFACE),
-        }
-    }
-    fn spirv(&self) -> Result<ComPtr<INcBytesAbi>, NcStatus> {
-        match &self.exports()?.code {
-            ExportCode::SpirV(code) => Ok(code.clone()),
-            _ => Err(neocogi_com::NC_E_NOINTERFACE),
-        }
-    }
-    fn glsl(&self) -> Result<ComPtr<INcStringAbi>, NcStatus> {
-        match &self.exports()?.code {
-            ExportCode::GlslEs300(code) => Ok(code.clone()),
-            _ => Err(neocogi_com::NC_E_NOINTERFACE),
-        }
+    fn code(&self) -> Result<ComPtr<INcBytesAbi>, NcStatus> {
+        Ok(self.exports()?.code.bytes().clone())
     }
     fn inputs(&self) -> Result<ComPtr<IShaderLocationsAbi>, NcStatus> {
         Ok(self.exports()?.inputs.clone())

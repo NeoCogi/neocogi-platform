@@ -877,7 +877,7 @@ name = "neocogi-example-plugins"
 version = "0.1.0-alpha.2"
 dependencies = [
  "neocogi-com",
- "neocogi-platform",
+ "neocogi-platform-schema",
 ]
 
 [[package]]
@@ -906,16 +906,12 @@ dependencies = [
  "naga",
  "neocogi-com",
  "neocogi-com-host",
- "neocogi-idl",
+ "neocogi-platform-schema",
  "pollster",
- "quote",
  "raw-window-handle",
  "rs-math3d",
  "sdl2",
- "serde",
  "serde_json",
- "sha2",
- "syn 2.0.119",
  "tempfile",
  "wasm-bindgen",
  "wasm-bindgen-futures",
@@ -941,10 +937,26 @@ dependencies = [
  "neocogi-com-host",
  "neocogi-example-plugins",
  "neocogi-platform",
+ "neocogi-platform-schema",
+ "rs-math3d",
+ "serde_json",
+ "sha2",
+ "tempfile",
+]
+
+[[package]]
+name = "neocogi-platform-schema"
+version = "0.1.0-alpha.2"
+dependencies = [
+ "neocogi-com",
+ "neocogi-com-host",
+ "neocogi-idl",
+ "quote",
  "rs-math3d",
  "serde",
  "serde_json",
  "sha2",
+ "syn 2.0.119",
  "tempfile",
 ]
 
@@ -954,6 +966,7 @@ version = "0.1.0-alpha.2"
 dependencies = [
  "neocogi-com",
  "neocogi-platform",
+ "neocogi-platform-schema",
  "syn 2.0.119",
 ]
 

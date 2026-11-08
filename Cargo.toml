@@ -3,6 +3,7 @@ resolver = "3"
 exclude = ["target", "tmp"]
 members = [
     "crates/platform",
+    "crates/platform-schema",
     "crates/platform-dylib",
     "tests/browser",
     "tests/typed-buffers",
@@ -19,6 +20,7 @@ license = "BSD-3-Clause AND MIT AND OFL-1.1 AND Apache-2.0 AND CC0-1.0"
 repository = "https://github.com/NeoCogi/neocogi-platform"
 
 [workspace.dependencies]
+neocogi-platform-schema = { path = "crates/platform-schema", version = "=0.1.0-alpha.2", default-features = false }
 neocogi-platform = { path = "crates/platform", version = "=0.1.0-alpha.2", default-features = false }
 neocogi-com = { version = "=0.1.0", default-features = false }
 neocogi-com-host = { version = "=0.1.0", default-features = false }

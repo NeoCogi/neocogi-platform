@@ -6,10 +6,10 @@ The typed `ShaderCompiler` interface is an internal composition boundary; there 
 no separately registered compiler plugin, shared library or per-draw registry lookup.
 The platform shared library includes its renderer and compiler together.
 
-The declarations join the existing `neocogi.renderer` namespace in
-`crates/platform/schemas/neocogi/renderer/compiler.ncidl`. `render::abi` supplies
+The schema crate owns the `neocogi.renderer` declarations in
+`crates/platform-schema/schemas/neocogi/renderer/compiler.ncidl`. `neocogi_platform_schema::render::abi` supplies
 the generated contracts; `render::shader` supplies plain reflection and bounded
-readers without Naga. The former shader namespace and `Module::Shader` selector
+readers without Naga, and the SDK uses these same types. The former shader namespace and `Module::Shader` selector
 are removed; build scripts request `Module::Renderer` and include `IDL_NEOCOGI_RENDERER`. The
 renderer compiler's private implementation owns Naga. Stage, request and result
 types now share one generated renderer ABI.
@@ -70,7 +70,9 @@ before compilation; invalid configuration tags reject. Compilation requests cann
 change the output. There is no output substitution or fallback to the source.
 
 A successful report has an independent `target()` getter and exactly one code
-export: `wgsl()`, `spirv()` or `glsl()`. Other code getters return `NC_E_NOINTERFACE`.
+export: `code() -> ComPtr<INcBytes>`. It contains only that renderer's backend
+shader. `Wgsl` and `GlslEs300` encode UTF-8 with no added terminator; `SpirV`
+encodes little-endian u32 words. The three format-specific getters are removed.
 `ShaderInfo.target` and `code_byte_count` summarize those same objects, replacing the
 former three mandatory format lengths. An importer authenticates its backend
 target against both getters and the actual selected export. It does not acquire,
@@ -93,7 +95,9 @@ During alpha all NCIDL versions remain 1. Rebuild generated SDK consumers and
 platform providers together after this contract replacement. The old request
 target field and external compiler plugin have no compatibility path.
 
-Code getters return immutable `INcString`/`INcBytes` objects. Inputs, outputs,
+The code getter returns one immutable `INcBytes` object. Text imports validate
+UTF-8 and retain the same allocation as a Rust String; binary imports decode
+aligned words using bounded scratch. Entry points and diagnostics remain `INcString`. Inputs, outputs,
 uniforms and sampled pairs return explicitly named typed collections, each with
 `len` and `get`. Out-of-range `get` returns `NC_E_OUT_OF_RANGE`. Items expose plain
 metadata and, for GL only, independently owned native names. Every export survives report/root
@@ -110,8 +114,8 @@ for index in 0..uniforms.len()? {
     // Native GL names are queried only for a GlslEs300 result.
     // Both layout and name are usable without consulting report.info().
 }
-let validated_wgsl = report.wgsl()?;
-drop(report); // validated_wgsl remains owned and readable.
+let backend_code = report.code()?;
+drop(report); // backend_code remains independently owned and readable.
 ```
 
 SPIR-V exports encode little-endian u32 words. Readers check word divisibility,

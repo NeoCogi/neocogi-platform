@@ -63,13 +63,14 @@ fn graph(mode: &str, backend: &str, edges: &str) -> HashSet<String> {
 fn static_and_dynamic_graphs_keep_provider_implementation_ownership_distinct() {
     for backend in ["glow", "vulkan", "wgpu"] {
         let dynamic = graph("dynamic", backend, "normal");
-        for forbidden in ["neocogi-platform-plugin", "neocogi-shader-compiler", "naga", "sdl2", "wgpu", "ash"] {
+        for forbidden in ["neocogi-platform", "naga", "sdl2", "wgpu", "ash"] {
             assert!(!dynamic.contains(forbidden), "{backend}: {dynamic:?}");
         }
-        assert!(dynamic.contains("neocogi-platform"));
+        assert!(dynamic.contains("neocogi-platform-schema"));
         assert!(dynamic.contains("neocogi-example-plugins"));
         let linked = graph("static", backend, "normal");
         assert!(linked.contains("neocogi-platform"));
+        assert!(linked.contains("neocogi-platform-schema"));
         assert!(linked.contains("naga"));
         assert!(linked.contains("sdl2"));
         assert!(!linked.contains("neocogi-example-plugins"));
@@ -81,7 +82,7 @@ fn static_and_dynamic_graphs_keep_provider_implementation_ownership_distinct() {
 fn dynamic_build_helpers_do_not_compile_shader_or_native_backend_implementations() {
     for backend in ["glow", "vulkan", "wgpu"] {
         let selected = graph("dynamic", backend, "normal,build");
-        for forbidden in ["naga", "sdl2", "glow", "wgpu", "ash"] {
+        for forbidden in ["neocogi-platform", "naga", "sdl2", "glow", "wgpu", "ash"] {
             assert!(!selected.contains(forbidden), "{backend} enabled {forbidden} in its build graph: {selected:?}");
         }
         assert!(selected.contains("neocogi-idl"), "schema generation remains available");

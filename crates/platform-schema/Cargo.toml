@@ -1,0 +1,35 @@
+[package]
+name = "neocogi-platform-schema"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "NeoCogi schemas, generated renderer/platform contracts and build support"
+publish = ["crates-io"]
+readme = "README.md"
+include = ["Cargo.toml", "README.md", "LICENSE", "src/**", "schemas/**", "build.rs", "build_support/**", "tests/**"]
+
+[features]
+default = []
+build-support = ["dep:neocogi-idl", "dep:tempfile", "dep:serde", "dep:serde_json", "dep:sha2"]
+# Portable source fixtures only; this crate never depends on Naga or a graphics backend.
+test-support = []
+
+[dependencies]
+neocogi-com = { workspace = true, features = ["alloc", "std", "macros", "runtime"] }
+rs-math3d.workspace = true
+neocogi-idl = { workspace = true, optional = true }
+tempfile = { workspace = true, optional = true }
+serde = { version = "1", features = ["derive"], optional = true }
+serde_json = { version = "1", optional = true }
+sha2 = { version = "0.10", optional = true }
+
+[build-dependencies]
+neocogi-idl.workspace = true
+syn.workspace = true
+quote.workspace = true
+
+[dev-dependencies]
+neocogi-com-host.workspace = true
+tempfile.workspace = true

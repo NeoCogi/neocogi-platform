@@ -1,4 +1,4 @@
-//! Independently generated COM calls verify format selection, ownership and exact quotas.
+//! Schema-generated COM calls verify format selection, ownership and exact quotas.
 use neocogi_com::{ComPtr, INcBytesComPtrExt, INcStringComPtrExt, NcCopyFromBufferOffset, NC_OK, NC_E_INVALID_ARG, NC_E_NOINTERFACE, NC_E_OUT_OF_RANGE};
 use neocogi_platform::{
     render::compiler::CompilerObject,
@@ -6,11 +6,8 @@ use neocogi_platform::{
     render::shader::{self, PreparedShader, ShaderTarget},
 };
 
-/// A separately compiled projection negotiates by ABI identity, never a Rust object cast.
-#[allow(dead_code, clippy::len_without_is_empty, reason = "independent len/get ABI caller")]
-mod client {
-    include!(env!("IDL_NEOCOGI_RENDERER"));
-}
+// The schema crate compiles these generated callers independently of the implementation.
+use neocogi_platform_schema::render::abi as client;
 
 const SOURCE: &str = "struct U { value:vec4<f32> } @group(1) @binding(0) var<uniform> u:U; @vertex fn vs(@location(0) p:vec2<f32>)->@builtin(position) vec4<f32> {return vec4<f32>(p,0.25,1.0)+u.value;}";
 
@@ -26,14 +23,11 @@ fn targets() -> Vec<ShaderTarget> {
     values
 }
 
-/// Keeps independent generated request values distinct from the implementation's Rust types.
+/// Uses the schema crate's generated caller against the separate renderer implementation.
 fn compile(stage: GpuShaderStage, target: ShaderTarget, source: &str, entry: &str, cap: u64) -> ComPtr<client::IShaderCompilationAbi> {
     let root: ComPtr<client::ShaderCompilerAbi> = CompilerObject::from_value(CompilerObject::new(target).unwrap()).query().unwrap();
     root.compile_result(
-        client::ShaderCompileRequest {
-            stage: client::GpuShaderStage::from_raw(stage.raw()),
-            max_output_bytes: cap,
-        },
+        client::ShaderCompileRequest { stage, max_output_bytes: cap },
         NcCopyFromBufferOffset::new(0, source.as_bytes()),
         NcCopyFromBufferOffset::new(0, entry.as_bytes()),
     )
@@ -59,31 +53,25 @@ fn exactly_one_owned_format_and_target_specific_names() {
         assert_eq!(info.uniform_count, uniforms.len().unwrap());
         match target {
             ShaderTarget::Wgsl => {
-                assert_eq!(report.glsl().unwrap_err(), NC_E_NOINTERFACE);
-                assert_eq!(report.spirv().unwrap_err(), NC_E_NOINTERFACE);
                 assert_eq!(uniform.glsl_block_name().unwrap_err(), NC_E_NOINTERFACE);
-                let code = report.wgsl().unwrap();
-                assert_eq!(info.code_byte_count, code.byte_len().unwrap());
+                let code = report.code().unwrap();
+                assert_eq!(info.code_byte_count, code.len().unwrap());
                 drop(report);
-                assert_eq!(code.to_string().unwrap(), SOURCE);
+                assert_eq!(code.to_vec().unwrap(), SOURCE.as_bytes());
             }
             ShaderTarget::SpirV => {
-                assert_eq!(report.glsl().unwrap_err(), NC_E_NOINTERFACE);
-                assert_eq!(report.wgsl().unwrap_err(), NC_E_NOINTERFACE);
                 assert_eq!(uniform.glsl_block_name().unwrap_err(), NC_E_NOINTERFACE);
-                let code = report.spirv().unwrap();
+                let code = report.code().unwrap();
                 assert_eq!(info.code_byte_count, code.len().unwrap());
                 drop(report);
                 assert_eq!(&code.to_vec().unwrap()[..4], &0x07230203u32.to_le_bytes());
             }
             ShaderTarget::GlslEs300 => {
-                assert_eq!(report.wgsl().unwrap_err(), NC_E_NOINTERFACE);
-                assert_eq!(report.spirv().unwrap_err(), NC_E_NOINTERFACE);
                 let name = uniform.glsl_block_name().unwrap();
-                let code = report.glsl().unwrap();
-                assert_eq!(info.code_byte_count, code.byte_len().unwrap());
+                let code = report.code().unwrap();
+                assert_eq!(info.code_byte_count, code.len().unwrap());
                 drop(report);
-                let text = code.to_string().unwrap();
+                let text = String::from_utf8(code.to_vec().unwrap()).unwrap();
                 assert!(text.starts_with("#version 300 es"));
                 assert!(text.contains(&name.to_string().unwrap()));
             }
@@ -107,9 +95,7 @@ fn complete_module_profile_admission_precedes_selected_exports() {
             for (stage, entry) in [(GpuShaderStage::Vertex, "selected"), (case.stage, "outside")] {
                 let report = compile(stage, target, &case.source, entry, 4194304);
                 assert_eq!(report.status().unwrap(), NC_E_INVALID_ARG.code(), "{} / {entry} / {target:?}", case.name);
-                assert_eq!(report.wgsl().unwrap_err(), NC_E_INVALID_ARG);
-                assert_eq!(report.spirv().unwrap_err(), NC_E_INVALID_ARG);
-                assert_eq!(report.glsl().unwrap_err(), NC_E_INVALID_ARG);
+                assert_eq!(report.code().unwrap_err(), NC_E_INVALID_ARG);
             }
         }
         let source = shader::testing::valid_mixed_module();
@@ -186,9 +172,7 @@ fn rejection_is_complete_and_diagnostics_are_per_call() {
         ] {
             let report = compile(GpuShaderStage::Vertex, target, source, entry, cap);
             assert_eq!(report.status().unwrap(), expected.code());
-            assert_eq!(report.wgsl().unwrap_err(), expected);
-            assert_eq!(report.spirv().unwrap_err(), expected);
-            assert_eq!(report.glsl().unwrap_err(), expected);
+            assert_eq!(report.code().unwrap_err(), expected);
             let diagnostic = report.diagnostic().unwrap();
             drop(report);
             assert!(!diagnostic.to_string_bounded(4096).unwrap().is_empty());

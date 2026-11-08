@@ -1,3 +1,22 @@
+# Dedicated schema and contract package
+
+`neocogi-platform-schema` now owns the nine authored schemas, generated Rust
+contracts and backend-neutral Rust/build helpers. The implementation SDK depends
+on this crate and exposes its exact render types. Dynamic applications and build
+scripts depend only on the schema crate; the private source-include workaround
+is removed. The release set is three packages: schema/contracts, SDK, and final
+platform shims. This supersedes the two-package layout described below. Alpha
+schema versions stay 1.
+
+# One backend shader export
+
+Compiler results now expose only `code() -> INcBytes`, tagged by `ShaderTarget`.
+Text targets use UTF-8 and SPIR-V uses little-endian words. The former three code
+getters are removed; bounded import still authenticates the backend format and
+owns one decoded Rust `ShaderCode`. Versions remain 1 during alpha. Dynamic
+example build graphs also exclude host-side renderer/compiler features through
+the dedicated schema crate, without a provider build edge.
+
 # Renderer-owned shader compilation
 
 Shader declarations now belong to `neocogi.renderer` and `render::abi`, with Rust

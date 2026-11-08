@@ -61,12 +61,11 @@ loads the platform, then acquires its typed root.
 Only final dylib roots export discovery; normal provider implementations are not
 Rust dependencies of a dynamic executable. The compiler is internal to the selected renderer.
 
-This private workspace's asset build script compiles the SDK's authored Rust
-staging module directly. It has no provider build-dependency that could receive
-backend feature forwarding, so a dynamic build compiles no Naga or native
-backend in either its executable or its build helpers. Published consumers use
-the SDK's `build-support` API; linked static applications include their renderer
-and compiler normally.
+Dynamic applications depend only on `neocogi-platform-schema` contracts and the
+example loader. Asset/plugin build scripts use the schema crate's `build-support`
+API through normal Cargo dependencies. The schema crate has no renderer or Naga
+dependency, so dynamic builds compile neither in host or target units. Linked
+static applications use the SDK and include their renderer/compiler normally.
 
 The application owns its one process-lived SDK host in both modes. Plugin code
 and metadata remain mapped under the SDK's existing loader policy. Missing

@@ -1,17 +1,18 @@
 # Platform and graphics ownership
 
-The release contains two packages: `neocogi-platform` (an ordinary Rust library)
-and `neocogi-platform-dylib` (thin final COM shared-library roots). Examples and
-browser/typed-buffer fixtures remain unpublished workspace consumers. Internal
-module boundaries do not require separately published packages.
+The release contains three packages. `neocogi-platform-schema` owns all authored
+NCIDL declarations, generated renderer/platform bindings and backend-neutral Rust
+helpers. Its `render::abi` contains compiler contracts; `render::shader` owns typed
+snapshots and bounded readers. Upload producers, shared values, typed buffer
+helpers and backend traits live beside these contracts. The optional `build`
+module supplies schema generation and native staging without renderer dependencies.
 
-The SDK's `render` module owns renderer/window contracts, generated bindings,
-shared values and upload producers. `render::abi` owns compiler contracts; `render::shader` owns reflection
-and bounded artifact readers. `gpu` owns resource versions, driver provenance,
-validation, quotas, recording and concrete backends. The optional `render::compiler`
-module supplies renderer-owned Naga translation. The optional `platform` module owns SDL/DOM
-windows, input, clipboard, native devices and drawing surfaces; its private
-`prepared` and `wheel` modules replace the former support library.
+`neocogi-platform` is the implementation SDK. Its `render` module exposes the
+schema crate's exact types and adds the renderer-owned Naga compiler. `gpu` owns
+resource versions, recording, validation, quotas and concrete backends; optional
+`platform` owns SDL/DOM hosting and native lifetimes. `neocogi-platform-dylib`
+provides thin final platform discovery roots. Examples and browser/typed-buffer
+fixtures remain unpublished workspace consumers.
 
 Native windows, contexts and graphics resources remain together under concrete
 ownership. No raw handle exchange or COM downcast is introduced. Reentrant COM
@@ -28,16 +29,16 @@ compiler and selected output. Each compiler instance has one immutable target;
 requests contain no target. Reports identify their format, which backends validate
 before copying code; Rust `ShaderCode` snapshots retain only that format. `test-support` includes WGSL fixtures and the compiler, weakly
 enabling WGPU counters only when WGPU is selected. Applications that load
-providers dynamically use SDK defaults and retain no native implementation edge.
+providers dynamically use schema contracts and retain no SDK implementation edge.
 
-The SDK contains the sole authored `schemas/neocogi` declarations. Its own
-build.rs uses the schema helper directly, without a self dependency. Downstream
-build scripts depend on the SDK with `build-support`, then call
-`neocogi_platform::build::{sources, build}` with explicit `Module` selections.
-Imports use `neocogi_platform::render::{abi, platform}`.
-Each consumer generates into its own OUT_DIR from embedded canonical source bytes;
-no sibling checkout path or another package's generated output is consulted.
-Generation and staging dependencies are build-only when used as build dependencies.
+The schema crate contains the sole authored `schemas/neocogi` declarations and
+compiles generated bindings once. Its own build.rs uses its embedded source helper.
+Downstream build scripts depend on `neocogi-platform-schema` with `build-support`,
+then call `build::{sources, build}` with explicit `Module` selections. Generated
+external imports use `neocogi_platform_schema::render::{abi, platform}`. Each
+independent projection generates in its own OUT_DIR from embedded canonical bytes;
+no sibling checkout or another package's build output is consulted. The SDK owns
+no schemas, generator, staging implementation or generated binding copies.
 
 The shim's main library exports the platform descriptor. Its backend-named library
 examples export the selected platform descriptor with its renderer-owned compiler.
@@ -50,7 +51,7 @@ The executable owns the one COM host; providers receive its typed runtime.
 `cargo build -p neocogi-platform-dylib --no-default-features --features glow --examples`
 builds the selected platform with a backend-specific filename. The application build
 script stages that library from the profile's `examples/` directory beside applications.
-No build script invokes Cargo. SDK `build::layout` owns output policy and resource snapshots; ordinary
+No build script invokes Cargo. Schema-crate `build::layout` owns output policy and resource snapshots; ordinary
 build scripts replace the former nightly staging proc macros. See
 [native staging](../contracts/NATIVE_LAYOUT.md).
 

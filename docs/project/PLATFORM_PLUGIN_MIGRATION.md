@@ -1,31 +1,31 @@
-# Migrating to the two-package SDK
+# Migrating to schemas, renderer SDK and platform shims
 
-The former eleven library/tooling packages are replaced by `neocogi-platform`
-and the thin `neocogi-platform-dylib` package. This pre-release migration retains
-no compatibility packages. The package consolidation preserves plugin names and native ownership. The
-subsequent selected-target shader contract changes request/report ABI signatures;
-rebuild all compiler and renderer consumers together.
+The release now has `neocogi-platform-schema` for authored schemas, generated
+contracts and Rust/build helpers; `neocogi-platform` for renderer/compiler/hosting
+implementations; and `neocogi-platform-dylib` for final shared libraries. The
+schema crate never depends on the SDK, Naga or native graphics. All alpha NCIDL
+versions remain 1; rebuild generated clients and providers together.
 
 | Former responsibility | SDK location |
 | --- | --- |
-| Renderer contracts and upload producers | `neocogi_platform::render` |
+| Renderer contracts and upload producers | `neocogi_platform_schema::render` |
 | GPU resources, recording and backends | `neocogi_platform::gpu` |
-| Shader contracts and reflection | `neocogi_platform::render::shader` |
+| Shader contracts and reflection | `neocogi_platform_schema::render::shader` |
 | Naga compiler provider | `neocogi_platform::render::compiler` (`shader-compiler`) |
 | SDL/DOM provider | `neocogi_platform::platform` (`platform` plus backend) |
 | Frame preparation and wheel conversion | private platform modules |
-| Schema generation helper | `neocogi_platform::build` (`build-support`) |
-| Output policy and resource staging | `neocogi_platform::build::layout` |
+| Schema generation helper | `neocogi_platform_schema::build` (`build-support`) |
+| Output policy and resource staging | `neocogi_platform_schema::build::layout` |
 
 SDK defaults are empty. Static Rust applications explicitly enable their backend,
 and `platform`, initialize one COM host, and register only
 `platform::plugin_descriptor()`. The selected backend enables and owns compilation.
-Dynamic applications depend on SDK contracts without implementation features and
+Dynamic applications depend on the schema crate without the SDK and
 load one platform shared library containing the renderer and its compiler.
 
-Build scripts declare the SDK with `build-support` and use
+Build scripts declare `neocogi-platform-schema` with `build-support` and use
 `build::{Module, sources, build}`. The single authored schema tree is packaged
-under `crates/platform/schemas`; embedded source bytes are reconstructed in each
+under `crates/platform-schema/schemas`; embedded source bytes are reconstructed in each
 consumer's own OUT_DIR. Replace staging macro invocations with ordinary
 `build::layout` calls and Cargo rerun directives for returned inputs/outputs.
 
@@ -42,7 +42,8 @@ artifact dependencies and nightly compile-time staging macros. See
 Remove `ShaderCompileRequest.target`. Compilation output is fixed at renderer
 construction. A successful report still identifies `Wgsl`, `SpirV` or `GlslEs300`
 through `target()` and `ShaderInfo.target`, so the backend can validate it before
-import. Other code getters return `NC_E_NOINTERFACE`. Summary code size
+import. Replace the three format-specific code getters with `code()`, returning
+`INcBytes` encoded as UTF-8 or little-endian SPIR-V according to the result tag. Summary code size
 is `ShaderInfo.code_byte_count`, with `target` replacing the three old format
 lengths. `PreparedShader::new` takes the expected target before entry bytes.
 Rust snapshots replace `wgsl/glsl/spirv` fields with one `ShaderCode` enum.

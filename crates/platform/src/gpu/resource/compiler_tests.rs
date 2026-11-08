@@ -260,10 +260,7 @@ impl IShaderCompilation for ReportProxy {
             self.inner.target()
         }
     }
-    fn wgsl(&self) -> Result<ComPtr<INcStringAbi>, NcStatus> {
-        Err(neocogi_com::NC_E_LOAD_FAILED) // Never queried by a SPIR-V receiver.
-    }
-    fn spirv(&self) -> Result<ComPtr<INcBytesAbi>, NcStatus> {
+    fn code(&self) -> Result<ComPtr<INcBytesAbi>, NcStatus> {
         self.probe.call();
         if matches!(self.probe.fault, Fault::MissingCode) {
             return Err(NC_E_INVALID_ARG);
@@ -275,10 +272,10 @@ impl IShaderCompilation for ReportProxy {
         }
         if matches!(self.probe.fault, Fault::Binary) {
             use neocogi_com::INcBytesComPtrExt;
-            let size = self.inner.spirv()?.len()?;
+            let size = self.inner.code()?.len()?;
             return Ok(NcBytes::from_vec(vec![0; size as usize]));
         }
-        let bytes = self.inner.spirv()?;
+        let bytes = self.inner.code()?;
         if matches!(
             self.probe.fault,
             Fault::CloseExport | Fault::HugeLength | Fault::ChangingLength | Fault::CopyError
@@ -287,9 +284,6 @@ impl IShaderCompilation for ReportProxy {
         } else {
             Ok(bytes)
         }
-    }
-    fn glsl(&self) -> Result<ComPtr<INcStringAbi>, NcStatus> {
-        Err(neocogi_com::NC_E_LOAD_FAILED) // Never queried by a SPIR-V receiver.
     }
     fn inputs(&self) -> Result<ComPtr<IShaderLocationsAbi>, NcStatus> {
         if matches!(

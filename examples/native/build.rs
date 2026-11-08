@@ -1,11 +1,5 @@
 //! Optional local artwork is staged as file slots; ordinary builds never download assets.
-// This private workspace consumer shares the authored staging implementation.
-// It must not depend on the optional provider under a build-dependency edge:
-// backend feature forwarding would compile the renderer and Naga on the host.
-#[path = "../../crates/platform/build_support/layout/mod.rs"]
-pub mod layout;
-
-/// Stages present local artwork using the SDK's single resource ownership policy.
+/// Stages present local artwork using the schema crate's shared resource ownership policy.
 fn main() {
     println!("cargo::rustc-check-cfg=cfg(example_assets_available)");
     println!("cargo::rerun-if-changed=gltf/assets");
@@ -15,7 +9,7 @@ fn main() {
         .all(|name| root.join(name).is_file())
     {
         println!("cargo::rustc-cfg=example_assets_available");
-        use layout::{Resource, output_root, stage_resources};
+        use neocogi_platform_schema::build::layout::{Resource, output_root, stage_resources};
         let manifest = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").unwrap());
         println!("cargo::rerun-if-env-changed=NEOCOGI_NATIVE_OUTPUT_DIR");
         let anchor = std::path::PathBuf::from(std::env::var_os("OUT_DIR").unwrap());

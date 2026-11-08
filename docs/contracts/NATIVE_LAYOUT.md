@@ -14,8 +14,8 @@ contains only that backend's required output support; formats never fall back to
 another representation. Missing libraries
 remain errors; there is no alternative backend fallback.
 
-Resource staging and output policy live in `neocogi_platform::build::layout`,
-available through the SDK's `build-support` feature on a build dependency.
+Resource staging and output policy live in `neocogi_platform_schema::build::layout`,
+available through the schema crate's `build-support` feature on a build dependency.
 `stage_resources(manifest, root, &[Resource { source, destination }])` returns
 `StagedResources { inputs, outputs }`. Build scripts must emit
 `cargo::rerun-if-changed` for both sets and track relevant environment overrides

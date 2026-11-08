@@ -3,8 +3,9 @@
 //! Declare this package under `[build-dependencies]`. Its packaged `schemas`
 //! directory is the only authored source tree for these namespaces. Consumers
 //! generate into their own `OUT_DIR`; they never search the surrounding checkout
-//! or depend on another contract crate's build output. No runtime dependency on
-//! this crate is necessary.
+//! or depend on another contract crate's build output. A build-only dependency
+//! suffices for fully local projections; importing canonical Rust definitions
+//! also requires this package as a normal dependency.
 #![deny(missing_docs)]
 
 use std::{
@@ -36,8 +37,8 @@ impl Module {
     /// Library path used when importing ordinary Rust values from this namespace.
     fn rust_path(self) -> &'static str {
         match self {
-            Self::Renderer => "neocogi_platform::render::abi",
-            Self::Platform => "neocogi_platform::render::platform",
+            Self::Renderer => "neocogi_platform_schema::render::abi",
+            Self::Platform => "neocogi_platform_schema::render::platform",
         }
     }
 }

@@ -12,7 +12,8 @@ import tomllib
 
 ROOT = Path(__file__).resolve().parents[1]
 PRIVATE = {"neocogi-typed-buffer-tests", "neocogi-platform-examples", "neocogi-example-plugins", "neocogi-browser-tests"}
-SCHEMA_OWNER = "neocogi-platform"
+SCHEMA_OWNER = "neocogi-platform-schema"
+RELEASE_ORDER = (SCHEMA_OWNER, "neocogi-platform", "neocogi-platform-dylib")
 
 
 def run(arguments, *, cwd=ROOT):
@@ -39,8 +40,8 @@ def published_packages(metadata):
         raise ValueError("shared source owner is missing from release set")
     if len({p["version"] for p in selected.values()}) != 1:
         raise ValueError("release members have inconsistent versions")
-    if set(selected) != {"neocogi-platform", "neocogi-platform-dylib"}:
-        raise ValueError("release set must contain exactly the SDK and cdylib shim")
+    if set(selected) != set(RELEASE_ORDER):
+        raise ValueError("release set must contain exactly schemas, SDK and cdylib shim")
     return selected
 
 
@@ -87,7 +88,7 @@ def qualify(*, allow_dirty=False, offline=False, stable=None):
     arguments = ["cargo", "package", "--locked", "--no-verify", *flags]
     if allow_dirty:
         arguments.append("--allow-dirty")
-    for name in sorted(selected):
+    for name in RELEASE_ORDER:
         arguments += ["-p", name]
     run(arguments)
     # This target may be shared by sequential commands; no second build cache is retained.
@@ -123,7 +124,8 @@ def qualify(*, allow_dirty=False, offline=False, stable=None):
         # Package manifests and build inputs are unmodified. Patches resolve only
         # unpublished internal dependencies to the exact extracted archive contents.
         run([*cargo, "build", "--workspace", "--all-targets", *common], cwd=outside)
-        run([*cargo, "test", "--lib", "--test", "compiler", "--test", "shader_targets", "-p", SCHEMA_OWNER, "--features", "build-support,test-support,platform,glow,shader-spirv", *common], cwd=outside)
+        run([*cargo, "test", "-p", SCHEMA_OWNER, "--features", "build-support,test-support", *common], cwd=outside)
+        run([*cargo, "test", "--lib", "--test", "compiler", "--test", "shader_targets", "-p", "neocogi-platform", "--features", "test-support,platform,glow,shader-spirv", *common], cwd=outside)
         run([*cargo, "run", "-p", "neocogi-package-consumer", *common], cwd=outside)
         # This exercises real Cargo invalidation after replacing the staging
         # proc macros: missing outputs must restore, and changed authored bytes

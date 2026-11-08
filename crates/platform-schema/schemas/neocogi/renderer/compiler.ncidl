@@ -146,13 +146,11 @@ interface IShaderCompilation {
     fn target(&self) -> Result<ShaderTarget>;
     /// Selected entry, owned independently.
     fn entry_point(&self) -> Result<ComPtr<INcString>>;
-    /// Validated WGSL only for Wgsl; other targets return NOINTERFACE.
-    fn wgsl(&self) -> Result<ComPtr<INcString>>;
-    /// Guarded SPIR-V only for SpirV; other targets return NOINTERFACE.
-    fn spirv(&self) -> Result<ComPtr<INcBytes>>;
-    /// GLSL only for GlslEs300; other targets return NOINTERFACE.
-    /// Standard main; vertex clip output is (x,-y,2z-w,w).
-    fn glsl(&self) -> Result<ComPtr<INcString>>;
+    /// The sole backend shader payload, owned independently of this report.
+    /// Wgsl/GlslEs300 use UTF-8 without a terminator; SpirV uses little-endian u32 words.
+    /// The backend validates target() before decoding. GLSL uses standard main;
+    /// its vertex clip output is (x,-y,2z-w,w). No alternative format is exported.
+    fn code(&self) -> Result<ComPtr<INcBytes>>;
     /// Owned input location collection.
     fn inputs(&self) -> Result<ComPtr<IShaderLocations>>;
     /// Owned output location collection.

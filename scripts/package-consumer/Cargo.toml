@@ -4,8 +4,9 @@ version = "0.1.0-alpha.2"
 edition = "2024"
 publish = false
 [dependencies]
+neocogi-platform-schema = { version = "=0.1.0-alpha.2", default-features = false }
 neocogi-com = { version = "=0.1.0", features = ["std", "macros", "runtime"] }
 neocogi-com-host = "=0.1.0"
 neocogi-platform = { version = "=0.1.0-alpha.2", default-features = false, features = ["shader-compiler", "shader-wgsl"] }
 [build-dependencies]
-neocogi-platform = { version = "=0.1.0-alpha.2", default-features = false, features = ["build-support"] }
+neocogi-platform-schema = { version = "=0.1.0-alpha.2", default-features = false, features = ["build-support"] }

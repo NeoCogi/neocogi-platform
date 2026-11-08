@@ -1,6 +1,6 @@
 //! Bounded import of immutable compiler exports. Callers retain their provider
 //! charge across construction, copying, errors and final destruction of this reader.
-use neocogi_platform::render::abi::*;
+use neocogi_platform_schema::render::abi::*;
 use crate::render::shader::{*};
 use neocogi_com::{ComPtr, INcStringAbi, INcBytesAbi, INcStringComPtrExt, INcBytesComPtrExt, NcStatus, NC_E_INVALID_ARG, NC_E_OUT_OF_RANGE, NC_E_OUT_OF_MEMORY};
 
@@ -33,26 +33,30 @@ pub struct PreparedShader {
 /// One typed foreign export retained through receiving allocation and final validation.
 enum CodeExport {
     /// Validated WGSL for WGPU.
-    Wgsl(ComPtr<INcStringAbi>),
+    Wgsl(ComPtr<INcBytesAbi>),
     /// Guarded Vulkan words in the SDK's byte ABI.
     SpirV(ComPtr<INcBytesAbi>),
     /// Guarded GLSL for GLES3/WebGL2.
-    GlslEs300(ComPtr<INcStringAbi>),
+    GlslEs300(ComPtr<INcBytesAbi>),
 }
 impl CodeExport {
+    /// The authenticated format determines decoding of this single byte export.
+    fn bytes(&self) -> &ComPtr<INcBytesAbi> {
+        match self {
+            Self::Wgsl(bytes) | Self::SpirV(bytes) | Self::GlslEs300(bytes) => bytes,
+        }
+    }
+
     /// Length is queried again after copying to detect a foreign provider mutation.
     fn byte_len(&self) -> Result<u64, NcStatus> {
-        match self {
-            Self::Wgsl(text) | Self::GlslEs300(text) => text.byte_len(),
-            Self::SpirV(words) => words.len(),
-        }
+        self.bytes().len()
     }
     /// Copies only the previously admitted representation into owned typed storage.
     fn copy(&self, bytes: usize) -> Result<ShaderCode, NcStatus> {
         match self {
-            Self::Wgsl(text) => Ok(ShaderCode::Wgsl(string(text, bytes)?)),
+            Self::Wgsl(text) => Ok(ShaderCode::Wgsl(code_text(text, bytes)?)),
             Self::SpirV(words) => Ok(ShaderCode::SpirV(spirv_words(words, bytes / 4)?)),
-            Self::GlslEs300(text) => Ok(ShaderCode::GlslEs300(string(text, bytes)?)),
+            Self::GlslEs300(text) => Ok(ShaderCode::GlslEs300(code_text(text, bytes)?)),
         }
     }
 }
@@ -72,10 +76,11 @@ impl PreparedShader {
         if report.target()? != target {
             return Err(NC_E_INVALID_ARG);
         }
+        let bytes = report.code()?;
         let code = match target {
-            ShaderTarget::Wgsl => CodeExport::Wgsl(report.wgsl()?),
-            ShaderTarget::SpirV => CodeExport::SpirV(report.spirv()?),
-            ShaderTarget::GlslEs300 => CodeExport::GlslEs300(report.glsl()?),
+            ShaderTarget::Wgsl => CodeExport::Wgsl(bytes),
+            ShaderTarget::SpirV => CodeExport::SpirV(bytes),
+            ShaderTarget::GlslEs300 => CodeExport::GlslEs300(bytes),
             _ => return Err(NC_E_INVALID_ARG),
         };
         let entry_len = entry_object.byte_len()?;
@@ -175,6 +180,18 @@ fn string(value: &ComPtr<INcStringAbi>, len: usize) -> Result<String, NcStatus> 
         return Err(NC_E_INVALID_ARG);
     }
     Ok(result)
+}
+/// Decode one admitted text payload without a second full allocation. UTF-8 and
+/// exact lengths are checked before publishing a Rust String; SPIR-V never uses this path.
+fn code_text(value: &ComPtr<INcBytesAbi>, len: usize) -> Result<String, NcStatus> {
+    if value.len()? != len as u64 {
+        return Err(NC_E_INVALID_ARG);
+    }
+    let bytes = value.to_vec_bounded(len)?;
+    if bytes.len() != len || value.len()? != len as u64 {
+        return Err(NC_E_INVALID_ARG);
+    }
+    String::from_utf8(bytes).map_err(|_| NC_E_INVALID_ARG)
 }
 /// Decodes LE words into aligned storage with bounded stack scratch, never a second
 /// full byte allocation. Exact-write SDK calls must initialize the complete output.

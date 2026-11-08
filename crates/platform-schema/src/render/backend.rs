@@ -172,7 +172,7 @@ pub trait RendererFrame {
 ///
 /// A published destination cannot be selected again through the safe Rust API:
 /// ```compile_fail
-/// use neocogi_platform::render::{RendererBackend,RendererFrame,FrameInfo};
+/// use neocogi_platform_schema::render::{RendererBackend,RendererFrame,FrameInfo};
 /// fn reuse<B:RendererBackend>(driver:&mut B,info:FrameInfo,output:B::Output){
 ///     driver.texture_frame(info,output).unwrap().finish().unwrap();
 ///     driver.texture_frame(info,output).unwrap();

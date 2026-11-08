@@ -8,10 +8,6 @@
 extern crate self as neocogi_platform;
 extern crate alloc;
 
-/// Build-script schema generation and deterministic native resource staging.
-#[cfg(feature = "build-support")]
-#[path = "../build_support/mod.rs"]
-pub mod build;
 /// Typed resources, command recording and additive concrete backend implementations.
 pub mod gpu;
 /// Optional SDL/DOM hosting with one explicitly selected graphics backend.

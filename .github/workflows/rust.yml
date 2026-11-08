@@ -33,7 +33,8 @@ jobs:
         run: cargo fetch --locked
       - name: Platform contracts and compiler
         run: |
-          cargo test --locked -p neocogi-platform --features build-support,test-support,shader-spirv,shader-glsl
+          cargo test --locked -p neocogi-platform-schema --features build-support,test-support
+          cargo test --locked -p neocogi-platform --features test-support,shader-spirv,shader-glsl
       - name: Minimal compiler output ABI and disabled-format rejection
         run: |
           cargo test --locked -p neocogi-platform --no-default-features --features shader-compiler --test shader_targets

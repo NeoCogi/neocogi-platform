@@ -1,5 +1,5 @@
 //! Runs independently generated COM calls against the packaged shader implementation.
-use neocogi_com::{ComPtr, INcStringComPtrExt, NcCopyFromBufferOffset, Runtime, NC_OK};
+use neocogi_com::{ComPtr, INcBytesComPtrExt, NcCopyFromBufferOffset, Runtime, NC_OK};
 use neocogi_platform::render::compiler::CompilerObject;
 
 /// Consumer-owned generated definitions negotiate by COM identity.
@@ -44,12 +44,10 @@ fn main() {
     let prepared = PreparedShader::new(canonical, abi::GpuShaderStage::Vertex, ShaderTarget::Wgsl, b"vs", 4 * 1024 * 1024).unwrap();
     assert_eq!(prepared.copy().unwrap().code.target(), ShaderTarget::Wgsl);
     drop(prepared);
-    assert_eq!(report.spirv().unwrap_err(), neocogi_com::NC_E_NOINTERFACE);
-    let wgsl = report.wgsl().unwrap();
-    assert_eq!(report.glsl().unwrap_err(), neocogi_com::NC_E_NOINTERFACE);
+    let code = report.code().unwrap();
     drop(report);
     drop(root);
-    assert_eq!(wgsl.to_string().unwrap().as_bytes(), source);
+    assert_eq!(code.to_vec().unwrap(), source);
     assert_eq!(
         std::fs::read(std::path::Path::new(env!("NEOCOGI_NATIVE_OUTPUT_DIR")).join("asset.txt")).unwrap(),
         include_bytes!("../asset.txt")

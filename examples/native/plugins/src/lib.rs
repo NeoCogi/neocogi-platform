@@ -1,8 +1,8 @@
-//! Executable-relative plugin loading with SDK implementation features disabled.
+//! Executable-relative plugin loading using only the dedicated schema contracts.
 #![deny(missing_docs)]
 
-/// SDK contracts; dynamic consumers enable no implementation features.
-pub use neocogi_platform as sdk;
+/// Canonical schema contracts; this loader has no renderer SDK dependency.
+pub use neocogi_platform_schema as sdk;
 
 mod artifacts;
 
@@ -23,7 +23,7 @@ pub const LIBRARIES: [&str; 1] = artifacts::libraries(
 #[cfg(not(target_arch = "wasm32"))]
 pub fn acquire(
     runtime: neocogi_com::Runtime,
-) -> Result<neocogi_com::ComPtr<neocogi_platform::render::platform::PlatformAbi>, neocogi_platform::render::abi::RenderError> {
+) -> Result<neocogi_com::ComPtr<neocogi_platform_schema::render::platform::PlatformAbi>, neocogi_platform_schema::render::abi::RenderError> {
     let executable = std::env::current_exe().map_err(|_| neocogi_com::NC_E_INVALID_ARG)?;
     let directory = executable.parent().ok_or(neocogi_com::NC_E_INVALID_ARG)?.join("lib");
     // Check the platform library before mutating the process-lived plugin catalog.
@@ -32,7 +32,7 @@ pub fn acquire(
     for filename in LIBRARIES {
         let path = directory.join(filename);
         if !path.is_file() {
-            return Err(neocogi_platform::render::abi::RenderError::new(
+            return Err(neocogi_platform_schema::render::abi::RenderError::new(
                 neocogi_com::NC_E_LOAD_FAILED,
                 format!(
                     "Required plugin library is missing or inaccessible: {}. Build matching libraries with: {}",

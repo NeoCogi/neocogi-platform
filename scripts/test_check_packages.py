@@ -82,16 +82,17 @@ class ArchiveChecks(unittest.TestCase):
         """Metadata policy is checked before Cargo constructs release archives."""
         packages = [
             {"id": "build", "name": SCHEMA_OWNER, "version": "0.1.0-alpha.1", "publish": ["crates-io"]},
+            {"id": "sdk", "name": "neocogi-platform", "version": "0.1.0-alpha.1", "publish": ["crates-io"]},
             {"id": "shim", "name": "neocogi-platform-dylib", "version": "0.1.0-alpha.1", "publish": ["crates-io"]},
             {"id": "examples", "name": "neocogi-platform-examples", "version": "0.1.0-alpha.1", "publish": []},
         ]
         metadata = {"workspace_members": [p["id"] for p in packages], "packages": packages}
-        self.assertEqual(set(published_packages(metadata)), {SCHEMA_OWNER, "neocogi-platform-dylib"})
+        self.assertEqual(set(published_packages(metadata)), {SCHEMA_OWNER, "neocogi-platform", "neocogi-platform-dylib"})
         for private in PRIVATE:
-            packages[2].update(name=private, publish=["crates-io"])
+            packages[-1].update(name=private, publish=["crates-io"])
             with self.subTest(package=private), self.assertRaisesRegex(ValueError, "private package"):
                 published_packages(metadata)
-        packages[2].update(name="other-library", version="0.1.0-alpha.2")
+        packages[-1].update(name="other-library", version="0.1.0-alpha.2")
         with self.assertRaisesRegex(ValueError, "inconsistent versions"):
             published_packages(metadata)
 
@@ -101,14 +102,16 @@ class ArchiveChecks(unittest.TestCase):
             {"id": "sdk", "name": SCHEMA_OWNER, "version": "0.1.0-alpha.2", "publish": ["crates-io"]},
         ]
         metadata = {"workspace_members": ["sdk"], "packages": packages}
-        with self.assertRaisesRegex(ValueError, "exactly the SDK and cdylib shim"):
+        with self.assertRaisesRegex(ValueError, "exactly schemas, SDK and cdylib shim"):
             published_packages(metadata)
+        packages.append({"id": "implementation", "name": "neocogi-platform", "version": "0.1.0-alpha.2", "publish": ["crates-io"]})
+        metadata["workspace_members"].append("implementation")
         packages.append({"id": "shim", "name": "neocogi-platform-dylib", "version": "0.1.0-alpha.2", "publish": ["crates-io"]})
         metadata["workspace_members"].append("shim")
-        self.assertEqual(set(published_packages(metadata)), {SCHEMA_OWNER, "neocogi-platform-dylib"})
+        self.assertEqual(set(published_packages(metadata)), {SCHEMA_OWNER, "neocogi-platform", "neocogi-platform-dylib"})
         packages.append({"id": "helper", "name": "internal-helper", "version": "0.1.0-alpha.2", "publish": ["crates-io"]})
         metadata["workspace_members"].append("helper")
-        with self.assertRaisesRegex(ValueError, "exactly the SDK and cdylib shim"):
+        with self.assertRaisesRegex(ValueError, "exactly schemas, SDK and cdylib shim"):
             published_packages(metadata)
 
 
