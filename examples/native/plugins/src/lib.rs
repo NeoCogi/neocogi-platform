@@ -23,14 +23,32 @@ pub fn acquire(runtime: neocogi_com::Runtime) -> Result<neocogi_com::ComPtr<neoc
     runtime.acquire_plugin_root(platform)
 }
 
-/// Target-specific filename of the independent CPU compiler provider.
+/// Target/backend-specific filename of the matching CPU compiler provider.
 const fn compiler_filename() -> &'static str {
-    if cfg!(target_os = "windows") {
-        "nc_shader_compiler.dll"
-    } else if cfg!(target_os = "macos") {
-        "libnc_shader_compiler.dylib"
+    if cfg!(feature = "vulkan") {
+        if cfg!(target_os = "windows") {
+            "nc_shader_compiler_vulkan.dll"
+        } else if cfg!(target_os = "macos") {
+            "libnc_shader_compiler_vulkan.dylib"
+        } else {
+            "libnc_shader_compiler_vulkan.so"
+        }
+    } else if cfg!(feature = "wgpu") {
+        if cfg!(target_os = "windows") {
+            "nc_shader_compiler_wgpu.dll"
+        } else if cfg!(target_os = "macos") {
+            "libnc_shader_compiler_wgpu.dylib"
+        } else {
+            "libnc_shader_compiler_wgpu.so"
+        }
     } else {
-        "libnc_shader_compiler.so"
+        if cfg!(target_os = "windows") {
+            "nc_shader_compiler_glow.dll"
+        } else if cfg!(target_os = "macos") {
+            "libnc_shader_compiler_glow.dylib"
+        } else {
+            "libnc_shader_compiler_glow.so"
+        }
     }
 }
 

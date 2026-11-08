@@ -12,12 +12,8 @@ pub struct PreparedShader {
     info: ShaderInfo,
     /// Selected entry export.
     entry: ComPtr<INcStringAbi>,
-    /// Validated canonical source export.
-    wgsl: ComPtr<INcStringAbi>,
-    /// ES300 export.
-    glsl: ComPtr<INcStringAbi>,
-    /// Little-endian SPIR-V export.
-    spirv: ComPtr<INcBytesAbi>,
+    /// Only the target selected by the actual device is acquired.
+    code: CodeExport,
     /// Copied bounded metadata, with no remaining foreign item owners.
     inputs: Vec<IoLocation>,
     /// Copied bounded output metadata.
@@ -33,10 +29,36 @@ pub struct PreparedShader {
     /// Exact checked code-payload bytes.
     bytes: usize,
 }
+/// One typed foreign export retained through receiving allocation and final validation.
+enum CodeExport {
+    /// Validated WGSL for WGPU.
+    Wgsl(ComPtr<INcStringAbi>),
+    /// Guarded Vulkan words in the SDK's byte ABI.
+    SpirV(ComPtr<INcBytesAbi>),
+    /// Guarded GLSL for GLES3/WebGL2.
+    GlslEs300(ComPtr<INcStringAbi>),
+}
+impl CodeExport {
+    /// Length is queried again after copying to detect a foreign provider mutation.
+    fn byte_len(&self) -> Result<u64, NcStatus> {
+        match self {
+            Self::Wgsl(text) | Self::GlslEs300(text) => text.byte_len(),
+            Self::SpirV(words) => words.len(),
+        }
+    }
+    /// Copies only the previously admitted representation into owned typed storage.
+    fn copy(&self, bytes: usize) -> Result<ShaderCode, NcStatus> {
+        match self {
+            Self::Wgsl(text) => Ok(ShaderCode::Wgsl(string(text, bytes)?)),
+            Self::SpirV(words) => Ok(ShaderCode::SpirV(spirv_words(words, bytes / 4)?)),
+            Self::GlslEs300(text) => Ok(ShaderCode::GlslEs300(string(text, bytes)?)),
+        }
+    }
+}
 impl PreparedShader {
     /// Acquires and bounds each export. Summary is checked, never used as authority
     /// in place of a collection/object. Failure releases all acquired foreign owners.
-    pub fn new(report: ComPtr<IShaderCompilationAbi>, stage: GpuShaderStage, entry: &[u8], cap: usize) -> Result<Self, NcStatus> {
+    pub fn new(report: ComPtr<IShaderCompilationAbi>, stage: GpuShaderStage, target: ShaderTarget, entry: &[u8], cap: usize) -> Result<Self, NcStatus> {
         if entry.is_empty() || entry.len() > 128 {
             return Err(NC_E_INVALID_ARG);
         }
@@ -46,34 +68,33 @@ impl PreparedShader {
         }
         let info = report.info()?;
         let entry_object = report.entry_point()?;
-        let wgsl = report.wgsl()?;
-        let glsl = report.glsl()?;
-        let spirv = report.spirv()?;
+        if report.target()? != target {
+            return Err(NC_E_INVALID_ARG);
+        }
+        let code = match target {
+            ShaderTarget::Wgsl => CodeExport::Wgsl(report.wgsl()?),
+            ShaderTarget::SpirV => CodeExport::SpirV(report.spirv()?),
+            ShaderTarget::GlslEs300 => CodeExport::GlslEs300(report.glsl()?),
+            _ => return Err(NC_E_INVALID_ARG),
+        };
         let entry_len = entry_object.byte_len()?;
-        let wgsl_len = wgsl.byte_len()?;
-        let glsl_len = glsl.byte_len()?;
-        let spv_len = spirv.len()?;
+        let code_len = code.byte_len()?;
         let bytes = entry_len
-            .checked_add(wgsl_len)
-            .and_then(|v| v.checked_add(glsl_len))
-            .and_then(|v| v.checked_add(spv_len))
-            .filter(|v| *v <= cap.min(MAX_SHADER_ARTIFACT_BYTES) as u64)
+            .checked_add(code_len)
+            .filter(|bytes| *bytes <= cap.min(MAX_SHADER_ARTIFACT_BYTES) as u64)
             .ok_or(NC_E_OUT_OF_RANGE)? as usize;
         if info.stage != stage
+            || info.target != target
             || entry_len != entry.len() as u64
-            || wgsl_len == 0
-            || wgsl_len > MAX_SHADER_BYTES as u64
-            || glsl_len == 0
-            || spv_len < 20
-            || spv_len % 4 != 0
+            || code_len == 0
+            || (target == ShaderTarget::Wgsl && code_len > MAX_SHADER_BYTES as u64)
+            || (target == ShaderTarget::SpirV && (code_len < 20 || code_len % 4 != 0))
             || info.entry_point_byte_count != entry_len
-            || info.wgsl_byte_count != wgsl_len
-            || info.glsl_byte_count != glsl_len
-            || info.spirv_word_count != spv_len / 4
+            || info.code_byte_count != code_len
         {
             return Err(NC_E_INVALID_ARG);
         }
-        let (inputs, outputs, uniforms, textures) = reflection(&report, stage, glsl_len as usize)?;
+        let (inputs, outputs, uniforms, textures) = reflection(&report, stage, target, code_len as usize)?;
         if info.input_count != inputs.len() as u32
             || info.output_count != outputs.len() as u32
             || info.uniform_count != uniforms.len() as u32
@@ -87,9 +108,7 @@ impl PreparedShader {
             report,
             info,
             entry: entry_object,
-            wgsl,
-            glsl,
-            spirv,
+            code,
             inputs,
             outputs,
             uniforms,
@@ -110,28 +129,23 @@ impl PreparedShader {
         if entry.as_bytes() != &self.expected_entry[..self.expected_len] {
             return Err(NC_E_INVALID_ARG);
         }
-        let wgsl = string(&self.wgsl, self.info.wgsl_byte_count as usize)?;
-        let glsl = string(&self.glsl, self.info.glsl_byte_count as usize)?;
-        let spirv = spirv_words(&self.spirv, self.info.spirv_word_count as usize)?;
-        let metadata = reflection(&self.report, self.info.stage, self.info.glsl_byte_count as usize)?;
+        let code = self.code.copy(self.info.code_byte_count as usize)?;
+        let metadata = reflection(&self.report, self.info.stage, self.info.target, self.info.code_byte_count as usize)?;
         if !same_info(self.info, self.report.info()?)
+            || self.report.target()? != self.info.target
             || metadata.0 != self.inputs
             || metadata.1 != self.outputs
             || metadata.2 != self.uniforms
             || metadata.3 != self.textures
             || self.entry.byte_len()? != self.info.entry_point_byte_count
-            || self.wgsl.byte_len()? != self.info.wgsl_byte_count
-            || self.glsl.byte_len()? != self.info.glsl_byte_count
-            || self.spirv.len()? != self.info.spirv_word_count * 4
+            || self.code.byte_len()? != self.info.code_byte_count
         {
             return Err(NC_E_INVALID_ARG);
         }
         Ok(Shader {
             stage: self.info.stage,
             entry,
-            wgsl,
-            glsl,
-            spirv,
+            code,
             inputs: metadata.0,
             outputs: metadata.1,
             uniforms: metadata.2,
@@ -147,9 +161,8 @@ fn same_info(a: ShaderInfo, b: ShaderInfo) -> bool {
         && a.uniform_count == b.uniform_count
         && a.sampled_texture_count == b.sampled_texture_count
         && a.entry_point_byte_count == b.entry_point_byte_count
-        && a.wgsl_byte_count == b.wgsl_byte_count
-        && a.spirv_word_count == b.spirv_word_count
-        && a.glsl_byte_count == b.glsl_byte_count
+        && a.target == b.target
+        && a.code_byte_count == b.code_byte_count
 }
 /// Reads exactly the previously admitted immutable UTF-8 length and detects length changes.
 fn string(value: &ComPtr<INcStringAbi>, len: usize) -> Result<String, NcStatus> {
@@ -187,7 +200,7 @@ fn spirv_words(value: &ComPtr<INcBytesAbi>, words: usize) -> Result<Vec<u32>, Nc
 /// Metadata is bounded separately from code, and contains no opaque implementation types.
 type Reflection = (Vec<IoLocation>, Vec<IoLocation>, Vec<Uniform>, Vec<SampledTexture>);
 /// Copies independently accessible items and verifies finite qualifiers and uniqueness.
-fn reflection(report: &ComPtr<IShaderCompilationAbi>, stage: GpuShaderStage, name_limit: usize) -> Result<Reflection, NcStatus> {
+fn reflection(report: &ComPtr<IShaderCompilationAbi>, stage: GpuShaderStage, target: ShaderTarget, name_limit: usize) -> Result<Reflection, NcStatus> {
     let inputs = locations(report.inputs()?, stage, ShaderDirection::Input)?;
     let outputs = locations(report.outputs()?, stage, ShaderDirection::Output)?;
     if stage == GpuShaderStage::Fragment
@@ -214,8 +227,11 @@ fn reflection(report: &ComPtr<IShaderCompilationAbi>, stage: GpuShaderStage, nam
         if info.stage != stage || info.slot >= 4 || info.byte_len == 0 || info.byte_len > 16384 || uniforms.iter().any(|v| v.slot == info.slot) {
             return Err(NC_E_INVALID_ARG);
         }
-        let name = item.glsl_block_name()?;
-        let gl_block = native_name(&name, name_limit, &mut names)?;
+        let gl_block = if target == ShaderTarget::GlslEs300 {
+            Some(native_name(&item.glsl_block_name()?, name_limit, &mut names)?)
+        } else {
+            None
+        };
         let again = item.info()?;
         if info.stage != again.stage || info.slot != again.slot || info.byte_len != again.byte_len {
             return Err(NC_E_INVALID_ARG);
@@ -241,8 +257,11 @@ fn reflection(report: &ComPtr<IShaderCompilationAbi>, stage: GpuShaderStage, nam
         if info.stage != stage || info.slot >= 4 || textures.iter().any(|v| v.slot == info.slot) {
             return Err(NC_E_INVALID_ARG);
         }
-        let name = item.glsl_name()?;
-        let gl_name = native_name(&name, name_limit, &mut names)?;
+        let gl_name = if target == ShaderTarget::GlslEs300 {
+            Some(native_name(&item.glsl_name()?, name_limit, &mut names)?)
+        } else {
+            None
+        };
         let again = item.info()?;
         if info.stage != again.stage || info.slot != again.slot {
             return Err(NC_E_INVALID_ARG);

@@ -4,9 +4,11 @@
 with `python3 scripts/build_plugins.py --backend glow` (or vulkan/wgpu).
 This explicit orchestration uses Cargo JSON artifact paths; application build
 scripts never invoke Cargo and dynamic executables have no provider dependency.
-The compiler stages as `libnc_shader_compiler.so`, followed by the selected
+The compiler stages as `libnc_shader_compiler_{backend}.so`, followed by the selected
 `libnc_platform_{backend}.so` (target-specific suffix/prefix on macOS/Windows).
-Use the same profile/target/output selection as the application. Missing libraries
+Use the same backend/profile/target/output selection as the application. The compiler
+contains only that backend's required output support; formats never fall back to
+another representation. Missing libraries
 remain errors; there is no linked compiler/backend fallback.
 
 Resource staging and output policy live in `neocogi_platform::build::layout`,

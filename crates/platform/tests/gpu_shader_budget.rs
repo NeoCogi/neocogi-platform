@@ -56,10 +56,11 @@ const EXPANDING: &str = r#"
 /// The factory must stop output expansion before allocating the artifact it cannot admit.
 #[test]
 fn generated_output_obeys_remaining_domain_quota_before_large_allocation() {
-    let device = neocogi_platform::gpu::testing::device(
+    let device = neocogi_platform::gpu::testing::device_with_target(
         neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
             .query()
             .unwrap(),
+        neocogi_platform::shader::ShaderTarget::GlslEs300,
     );
     let domain = device
         .create_client(
@@ -90,15 +91,25 @@ fn generated_output_obeys_remaining_domain_quota_before_large_allocation() {
         .compile(
             neocogi_platform::shader::abi::ShaderCompileRequest {
                 stage: GpuShaderStage::Fragment,
+                target: neocogi_platform::shader::ShaderTarget::GlslEs300,
                 max_output_bytes: 4194304,
             },
             NcCopyFromBufferOffset::new(0, EXPANDING.as_bytes()),
             NcCopyFromBufferOffset::new(0, b"fs"),
         )
         .unwrap();
-    let artifact = neocogi_platform::shader::PreparedShader::new(report, GpuShaderStage::Fragment, b"fs", 4194304)
-        .unwrap()
-        .copy()
-        .unwrap();
-    assert!(artifact.glsl.len() > 1024 * 1024, "the fixture must exercise real output amplification");
+    let artifact = neocogi_platform::shader::PreparedShader::new(
+        report,
+        GpuShaderStage::Fragment,
+        neocogi_platform::shader::ShaderTarget::GlslEs300,
+        b"fs",
+        4194304,
+    )
+    .unwrap()
+    .copy()
+    .unwrap();
+    assert!(
+        artifact.code.glsl().unwrap().len() > 1024 * 1024,
+        "the fixture must exercise real output amplification"
+    );
 }

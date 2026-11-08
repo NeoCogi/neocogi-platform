@@ -1,7 +1,7 @@
 //! Immutable portable shader contracts, plain snapshots and bounded ABI import.
 #![deny(missing_docs)]
 use neocogi_platform::render::abi::GpuShaderStage;
-pub use abi::{ShaderScalar, ShaderInterpolation, ShaderSampling};
+pub use abi::{ShaderScalar, ShaderInterpolation, ShaderSampling, ShaderTarget};
 /// Generated versioned CPU compiler contracts.
 #[allow(
     clippy::len_without_is_empty,
@@ -14,10 +14,12 @@ pub mod abi {
 pub const SHADER_COMPILER_PLUGIN_ID: neocogi_com::NcGuid = neocogi_com::guid_from_qualified_name("neocogi.shader.compiler");
 /// Maximum source bytes admitted before parsing.
 pub const MAX_SHADER_BYTES: usize = 1024 * 1024;
-/// Combined source, entry, GLSL and SPIR-V payload limit; reflection is bounded separately.
+/// Selected code plus entry-point payload limit; input and reflection have separate bounds.
 pub const MAX_SHADER_ARTIFACT_BYTES: usize = 4 * 1024 * 1024;
 /// Maximum diagnostic UTF-8 bytes, truncated at a character boundary.
 pub const MAX_DIAGNOSTIC_BYTES: usize = 4096;
+/// A known target was not enabled in this compiler build; no alternative is emitted.
+pub const SHADER_E_TARGET_UNAVAILABLE: neocogi_com::NcStatus = neocogi_com::NcStatus::from_code(-3100);
 /// Scalar/vector shape compared across independent shader modules and vertex layouts.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct IoShape {
@@ -47,8 +49,8 @@ pub struct Uniform {
     pub slot: u32,
     /// Exact WGSL uniform byte length; native end padding is separate.
     pub byte_len: u32,
-    /// Reflected generated GLSL block name; never an application-facing convention.
-    pub gl_block: String,
+    /// Native block name only for GLSL; absent for other targets.
+    pub gl_block: Option<String>,
 }
 
 /// Combined texture/sampler binding in emitted GLSL.
@@ -56,8 +58,8 @@ pub struct Uniform {
 pub struct SampledTexture {
     /// Stage-local slot shared by the texture and its corresponding sampler.
     pub slot: u32,
-    /// Reflected GLSL combined-sampler uniform name.
-    pub gl_name: String,
+    /// Native combined-sampler name only for GLSL; absent for other targets.
+    pub gl_name: Option<String>,
 }
 
 /// Validated CPU artifacts; immutable snapshots may outlive the public shader owner.
@@ -67,12 +69,8 @@ pub struct Shader {
     pub stage: GpuShaderStage,
     /// Selected WGSL/SPIR-V entry point.
     pub entry: String,
-    /// Original canonical source used by WGPU.
-    pub wgsl: String,
-    /// GL ES 300 / WebGL 2 source, including normalized clip-space conversion.
-    pub glsl: String,
-    /// Vulkan artifact with the same binding and clip conventions.
-    pub spirv: Vec<u32>,
+    /// Exactly one complete backend artifact; no parallel or fallback representation.
+    pub code: ShaderCode,
     /// Active uniform blocks in this entry point only.
     pub uniforms: Vec<Uniform>,
     /// Active texture/sampler pairs in this entry point only.
@@ -86,7 +84,56 @@ pub struct Shader {
 impl Shader {
     /// Exact code-payload charge; bounded readers establish arithmetic safety first.
     pub fn byte_len(&self) -> usize {
-        self.wgsl.len() + self.entry.len() + self.glsl.len() + self.spirv.len() * 4
+        self.entry.len() + self.code.byte_len()
+    }
+}
+
+/// One immutable backend representation. Text and aligned words retain distinct types.
+#[derive(Debug)]
+pub enum ShaderCode {
+    /// Original Naga-validated WGSL for WGPU.
+    Wgsl(String),
+    /// Guarded Vulkan words in aligned owned storage.
+    SpirV(Vec<u32>),
+    /// GLSL ES300 with explicit bounds guards and standard coordinate conventions.
+    GlslEs300(String),
+}
+impl ShaderCode {
+    /// Format derived from the actual owned variant, never a separate mutable tag.
+    pub fn target(&self) -> ShaderTarget {
+        match self {
+            Self::Wgsl(_) => ShaderTarget::Wgsl,
+            Self::SpirV(_) => ShaderTarget::SpirV,
+            Self::GlslEs300(_) => ShaderTarget::GlslEs300,
+        }
+    }
+    /// Exact exported byte length; compiler/import bounds precede construction.
+    pub fn byte_len(&self) -> usize {
+        match self {
+            Self::Wgsl(text) | Self::GlslEs300(text) => text.len(),
+            Self::SpirV(words) => words.len() * 4,
+        }
+    }
+    /// Selected WGSL; other variants cannot substitute for this backend.
+    pub fn wgsl(&self) -> Option<&str> {
+        match self {
+            Self::Wgsl(text) => Some(text),
+            _ => None,
+        }
+    }
+    /// Selected GLSL ES300; internal intermediate words are never retained here.
+    pub fn glsl(&self) -> Option<&str> {
+        match self {
+            Self::GlslEs300(text) => Some(text),
+            _ => None,
+        }
+    }
+    /// Selected aligned SPIR-V; text is never reinterpreted as binary.
+    pub fn spirv(&self) -> Option<&[u32]> {
+        match self {
+            Self::SpirV(words) => Some(words),
+            _ => None,
+        }
     }
 }
 

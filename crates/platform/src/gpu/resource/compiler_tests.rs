@@ -1,7 +1,10 @@
 //! Hostile-but-ABI-valid provider probes exercise the actual COM transfer rather
 //! than the unrelated counted GPU input-source protocol.
 use super::*;
-use crate::gpu::testing::device as new_device;
+/// Binary transfer probes explicitly request SPIR-V without adding a graphics backend.
+fn new_device(compiler: ComPtr<ShaderCompilerAbi>) -> GpuDevice {
+    crate::gpu::testing::device_with_target(compiler, ShaderTarget::SpirV)
+}
 type GpuDevice = crate::gpu::GpuDevice<crate::gpu::testing::Backend>;
 use neocogi_platform::shader::abi::*;
 use neocogi_com::{INcStringAbi, INcBytesAbi, NcBytes};
@@ -59,12 +62,16 @@ enum Fault {
     Diagnostic,
     /// A valid string export exceeds the receiver diagnostic limit.
     LongDiagnostic,
-    /// Missing returned WGSL must not fall back to request source.
-    Wgsl,
+    /// Missing selected code must not fall back to request source.
+    MissingCode,
     /// Structural binary rejection, with initialized backing.
     Binary,
     /// Wrong selected stage in optional metadata.
     Stage,
+    /// Independent target getter disagrees with the device request.
+    Target,
+    /// Optional code count disagrees with the selected export.
+    CodeCount,
     /// Closure during a getter.
     CloseGetter,
     /// Closure during final report Release.
@@ -171,6 +178,9 @@ impl IShaderCompilation for ReportProxy {
     fn info(&self) -> Result<ShaderInfo, NcStatus> {
         self.probe.call();
         let mut v = self.inner.info()?;
+        if matches!(self.probe.fault, Fault::CodeCount) {
+            v.code_byte_count += 4;
+        }
         if matches!(self.probe.fault, Fault::Stage) {
             v.stage = GpuShaderStage::Fragment;
         }
@@ -182,9 +192,19 @@ impl IShaderCompilation for ReportProxy {
     fn entry_point(&self) -> Result<ComPtr<INcStringAbi>, NcStatus> {
         self.inner.entry_point()
     }
+    fn target(&self) -> Result<ShaderTarget, NcStatus> {
+        if matches!(self.probe.fault, Fault::Target) {
+            Ok(ShaderTarget::Wgsl)
+        } else {
+            self.inner.target()
+        }
+    }
     fn wgsl(&self) -> Result<ComPtr<INcStringAbi>, NcStatus> {
+        Err(neocogi_com::NC_E_LOAD_FAILED) // Never queried by a SPIR-V receiver.
+    }
+    fn spirv(&self) -> Result<ComPtr<INcBytesAbi>, NcStatus> {
         self.probe.call();
-        if matches!(self.probe.fault, Fault::Wgsl) {
+        if matches!(self.probe.fault, Fault::MissingCode) {
             return Err(NC_E_INVALID_ARG);
         }
         if matches!(self.probe.fault, Fault::CloseGetter)
@@ -192,9 +212,6 @@ impl IShaderCompilation for ReportProxy {
         {
             domain.close();
         }
-        self.inner.wgsl()
-    }
-    fn spirv(&self) -> Result<ComPtr<INcBytesAbi>, NcStatus> {
         if matches!(self.probe.fault, Fault::Binary) {
             use neocogi_com::INcBytesComPtrExt;
             let size = self.inner.spirv()?.len()?;
@@ -211,7 +228,7 @@ impl IShaderCompilation for ReportProxy {
         }
     }
     fn glsl(&self) -> Result<ComPtr<INcStringAbi>, NcStatus> {
-        self.inner.glsl()
+        Err(neocogi_com::NC_E_LOAD_FAILED) // Never queried by a SPIR-V receiver.
     }
     fn inputs(&self) -> Result<ComPtr<IShaderLocationsAbi>, NcStatus> {
         if matches!(
@@ -262,9 +279,11 @@ fn fixture(fault: Fault, limit: u64) -> (GpuDevice, ComBox<IRenderClientDomainAb
 #[test]
 fn transfer_failures_reentry_and_release_close_are_atomic() {
     for (fault, expected) in [
-        (Fault::Wgsl, NC_E_INVALID_ARG),
+        (Fault::MissingCode, NC_E_INVALID_ARG),
         (Fault::Binary, NC_E_INVALID_ARG),
         (Fault::Stage, NC_E_INVALID_ARG),
+        (Fault::Target, NC_E_INVALID_ARG),
+        (Fault::CodeCount, NC_E_INVALID_ARG),
         (Fault::CloseGetter, NC_E_DROPPED),
         (Fault::CloseRelease, NC_E_DROPPED),
         (Fault::CloseExport, NC_E_DROPPED),

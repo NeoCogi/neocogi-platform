@@ -35,6 +35,9 @@ pub struct Preparation<'a> {
     pass: vk::RenderPass,
 }
 impl NativeResources for Backend {
+    fn shader_target(_core: &Self::Core) -> crate::shader::ShaderTarget {
+        crate::shader::ShaderTarget::SpirV
+    }
     type Core = Core;
     type Buffer = Buffer;
     type Image = Texture;
@@ -1486,13 +1489,23 @@ impl Executor {
             |value| unsafe { device.destroy_pipeline_layout(value, None) },
         );
         let vertex = ResourceGuard::new(
-            unsafe { device.create_shader_module(&vk::ShaderModuleCreateInfo::default().code(&source.vertex().artifact().spirv), None) }
-                .map_err(|error| core.failure("create vertex shader", error))?,
+            unsafe {
+                device.create_shader_module(
+                    &vk::ShaderModuleCreateInfo::default().code(source.vertex().artifact().code.spirv().ok_or("Vulkan requires SPIR-V")?),
+                    None,
+                )
+            }
+            .map_err(|error| core.failure("create vertex shader", error))?,
             |value| unsafe { device.destroy_shader_module(value, None) },
         );
         let fragment = ResourceGuard::new(
-            unsafe { device.create_shader_module(&vk::ShaderModuleCreateInfo::default().code(&source.fragment().artifact().spirv), None) }
-                .map_err(|error| core.failure("create fragment shader", error))?,
+            unsafe {
+                device.create_shader_module(
+                    &vk::ShaderModuleCreateInfo::default().code(source.fragment().artifact().code.spirv().ok_or("Vulkan requires SPIR-V")?),
+                    None,
+                )
+            }
+            .map_err(|error| core.failure("create fragment shader", error))?,
             |value| unsafe { device.destroy_shader_module(value, None) },
         );
         let vertex_entry = CString::new(source.vertex().artifact().entry.as_bytes()).map_err(|_| "invalid vertex entry name")?;

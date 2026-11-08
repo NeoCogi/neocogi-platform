@@ -34,6 +34,9 @@ pub struct Preparation<'a> {
     executor: &'a mut Executor,
 }
 impl NativeResources for Backend {
+    fn shader_target(_core: &Self::Core) -> crate::shader::ShaderTarget {
+        crate::shader::ShaderTarget::Wgsl
+    }
     type Core = Core;
     type Buffer = Buffer;
     type Image = Image;
@@ -828,11 +831,20 @@ impl Executor {
         });
         let vertex = self.core.device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("neocogi.gpu.vertex"),
-            source: wgpu::ShaderSource::Wgsl(source.vertex().artifact().wgsl.clone().into()),
+            source: wgpu::ShaderSource::Wgsl(source.vertex().artifact().code.wgsl().ok_or("WGPU requires validated WGSL")?.to_owned().into()),
         });
         let fragment = self.core.device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("neocogi.gpu.fragment"),
-            source: wgpu::ShaderSource::Wgsl(source.fragment().artifact().wgsl.clone().into()),
+            source: wgpu::ShaderSource::Wgsl(
+                source
+                    .fragment()
+                    .artifact()
+                    .code
+                    .wgsl()
+                    .ok_or("WGPU requires validated WGSL")?
+                    .to_owned()
+                    .into(),
+            ),
         });
         let mut attributes: [Vec<wgpu::VertexAttribute>; 8] = std::array::from_fn(|_| Vec::new());
         for attribute in source.attributes() {

@@ -4,7 +4,7 @@ use crate::compiler::compile::{Compiler, CompileError};
 use neocogi_com::{
     com_object, ComPtr, NcStatus, NcString, NcBytes, NcCopyFromBufferOffset, INcStringAbi, INcBytesAbi, NC_E_INVALID_ARG, NC_E_OUT_OF_RANGE, NC_E_OUT_OF_MEMORY,
 };
-use neocogi_platform::shader::{abi::*, Shader, MAX_DIAGNOSTIC_BYTES};
+use neocogi_platform::shader::{abi::*, Shader, ShaderCode, MAX_DIAGNOSTIC_BYTES};
 
 /// CPU-only root; no global diagnostic or session state.
 #[com_object(interfaces(neocogi_platform::shader::abi::ShaderCompiler))]
@@ -22,13 +22,20 @@ impl ShaderCompiler for CompilerObject {
             }
             let source = std::str::from_utf8(source.as_slice()).map_err(|_| CompileError::Invalid("shader is not UTF-8".into()))?;
             let entry = std::str::from_utf8(entry.as_slice()).map_err(|_| CompileError::Invalid("entry is not UTF-8".into()))?;
-            Compiler::compile_bounded(request.stage, source, entry, usize::try_from(request.max_output_bytes).unwrap_or(usize::MAX))
+            Compiler::compile_bounded(
+                request.stage,
+                request.target,
+                source,
+                entry,
+                usize::try_from(request.max_output_bytes).unwrap_or(usize::MAX),
+            )
         })();
         let outcome = match result {
             Ok(shader) => Outcome::Succeeded(Exports::new(shader)?),
             Err(error) => {
                 let status = match error {
                     CompileError::Invalid(_) => NC_E_INVALID_ARG,
+                    CompileError::Unavailable => neocogi_platform::shader::SHADER_E_TARGET_UNAVAILABLE,
                     CompileError::Limit => NC_E_OUT_OF_RANGE,
                     CompileError::Allocation => NC_E_OUT_OF_MEMORY,
                 };
@@ -61,12 +68,8 @@ struct Exports {
     info: ShaderInfo,
     /// Selected entry name.
     entry: ComPtr<INcStringAbi>,
-    /// Validated canonical source.
-    wgsl: ComPtr<INcStringAbi>,
-    /// ES300 code with fixed coordinate semantics.
-    glsl: ComPtr<INcStringAbi>,
-    /// Guarded little-endian words.
-    spirv: ComPtr<INcBytesAbi>,
+    /// One independently owned artifact, with a format-specific SDK interface.
+    code: ExportCode,
     /// Location input items.
     inputs: ComPtr<IShaderLocationsAbi>,
     /// Location output items.
@@ -78,6 +81,25 @@ struct Exports {
     /// Success has an owned empty diagnostic.
     diagnostic: ComPtr<INcStringAbi>,
 }
+/// Exactly one exported code owner; unused representations are never allocated.
+enum ExportCode {
+    /// Original validated WGSL text.
+    Wgsl(ComPtr<INcStringAbi>),
+    /// Guarded SPIR-V bytes in little-endian wire order.
+    SpirV(ComPtr<INcBytesAbi>),
+    /// Bounded ES300 text.
+    GlslEs300(ComPtr<INcStringAbi>),
+}
+impl ExportCode {
+    /// Derives the wire target from the actual owned representation.
+    fn target(&self) -> ShaderTarget {
+        match self {
+            Self::Wgsl(_) => ShaderTarget::Wgsl,
+            Self::SpirV(_) => ShaderTarget::SpirV,
+            Self::GlslEs300(_) => ShaderTarget::GlslEs300,
+        }
+    }
+}
 impl Exports {
     /// Moves plain outputs into independent SDK-owned exports before publishing the report.
     fn new(shader: Shader) -> Result<Self, NcStatus> {
@@ -88,9 +110,8 @@ impl Exports {
             uniform_count: shader.uniforms.len() as u32,
             sampled_texture_count: shader.textures.len() as u32,
             entry_point_byte_count: shader.entry.len() as u64,
-            wgsl_byte_count: shader.wgsl.len() as u64,
-            spirv_word_count: shader.spirv.len() as u64,
-            glsl_byte_count: shader.glsl.len() as u64,
+            target: shader.code.target(),
+            code_byte_count: shader.code.byte_len() as u64,
         };
         let locations = |values: Vec<neocogi_platform::shader::IoLocation>, direction| -> Result<ComPtr<IShaderLocationsAbi>, NcStatus> {
             let items = values
@@ -125,7 +146,7 @@ impl Exports {
                             slot: v.slot,
                             byte_len: v.byte_len,
                         },
-                        name: NcString::from_string(v.gl_block),
+                        name: v.gl_block.map(NcString::from_string),
                     })
                     .query()
                 })
@@ -139,24 +160,29 @@ impl Exports {
                 .map(|v| {
                     Texture::from_value(Texture {
                         info: ShaderSampledTextureInfo { stage: shader.stage, slot: v.slot },
-                        name: NcString::from_string(v.gl_name),
+                        name: v.gl_name.map(NcString::from_string),
                     })
                     .query()
                 })
                 .collect::<Result<_, _>>()?,
         })
         .query()?;
-        let mut spirv = Vec::new();
-        spirv.try_reserve_exact(shader.spirv.len() * 4).map_err(|_| NC_E_OUT_OF_MEMORY)?;
-        for word in shader.spirv {
-            spirv.extend_from_slice(&word.to_le_bytes());
-        }
+        let code = match shader.code {
+            ShaderCode::Wgsl(text) => ExportCode::Wgsl(NcString::from_string(text)),
+            ShaderCode::GlslEs300(text) => ExportCode::GlslEs300(NcString::from_string(text)),
+            ShaderCode::SpirV(words) => {
+                let mut bytes = Vec::new();
+                bytes.try_reserve_exact(words.len() * 4).map_err(|_| NC_E_OUT_OF_MEMORY)?;
+                for word in words {
+                    bytes.extend_from_slice(&word.to_le_bytes());
+                }
+                ExportCode::SpirV(NcBytes::from_vec(bytes))
+            }
+        };
         Ok(Self {
             info,
             entry: NcString::from_string(shader.entry),
-            wgsl: NcString::from_string(shader.wgsl),
-            glsl: NcString::from_string(shader.glsl),
-            spirv: NcBytes::from_vec(spirv),
+            code,
             inputs,
             outputs,
             uniforms,
@@ -200,14 +226,26 @@ impl IShaderCompilation for Report {
     fn entry_point(&self) -> Result<ComPtr<INcStringAbi>, NcStatus> {
         Ok(self.exports()?.entry.clone())
     }
+    fn target(&self) -> Result<ShaderTarget, NcStatus> {
+        Ok(self.exports()?.code.target())
+    }
     fn wgsl(&self) -> Result<ComPtr<INcStringAbi>, NcStatus> {
-        Ok(self.exports()?.wgsl.clone())
+        match &self.exports()?.code {
+            ExportCode::Wgsl(code) => Ok(code.clone()),
+            _ => Err(neocogi_com::NC_E_NOINTERFACE),
+        }
     }
     fn spirv(&self) -> Result<ComPtr<INcBytesAbi>, NcStatus> {
-        Ok(self.exports()?.spirv.clone())
+        match &self.exports()?.code {
+            ExportCode::SpirV(code) => Ok(code.clone()),
+            _ => Err(neocogi_com::NC_E_NOINTERFACE),
+        }
     }
     fn glsl(&self) -> Result<ComPtr<INcStringAbi>, NcStatus> {
-        Ok(self.exports()?.glsl.clone())
+        match &self.exports()?.code {
+            ExportCode::GlslEs300(code) => Ok(code.clone()),
+            _ => Err(neocogi_com::NC_E_NOINTERFACE),
+        }
     }
     fn inputs(&self) -> Result<ComPtr<IShaderLocationsAbi>, NcStatus> {
         Ok(self.exports()?.inputs.clone())
@@ -239,14 +277,14 @@ struct Uniform {
     /// Copied layout.
     info: ShaderUniformInfo,
     /// Native block identifier.
-    name: ComPtr<INcStringAbi>,
+    name: Option<ComPtr<INcStringAbi>>,
 }
 impl IShaderUniform for Uniform {
     fn info(&self) -> Result<ShaderUniformInfo, NcStatus> {
         Ok(self.info)
     }
     fn glsl_block_name(&self) -> Result<ComPtr<INcStringAbi>, NcStatus> {
-        Ok(self.name.clone())
+        self.name.clone().ok_or(neocogi_com::NC_E_NOINTERFACE)
     }
 }
 /// Independent sampled-pair item and native name.
@@ -255,14 +293,14 @@ struct Texture {
     /// Copied slot.
     info: ShaderSampledTextureInfo,
     /// Native combined sampler identifier.
-    name: ComPtr<INcStringAbi>,
+    name: Option<ComPtr<INcStringAbi>>,
 }
 impl IShaderSampledTexture for Texture {
     fn info(&self) -> Result<ShaderSampledTextureInfo, NcStatus> {
         Ok(self.info)
     }
     fn glsl_name(&self) -> Result<ComPtr<INcStringAbi>, NcStatus> {
-        Ok(self.name.clone())
+        self.name.clone().ok_or(neocogi_com::NC_E_NOINTERFACE)
     }
 }
 /// Generates only storage/retention mechanics for three explicitly named contracts.

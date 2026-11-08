@@ -14,8 +14,8 @@ provider's private implementation owns Naga. It uses the SDK render module's exi
 
 ## Outcomes and owned exports
 
-The Rust `compile(request, source, entry)` facade accepts canonical UTF-8 WGSL, a selected entry
-and a combined output-byte cap. There is one supported read-only graphics
+The Rust `compile(request, source, entry)` facade accepts canonical UTF-8 WGSL, a selected entry,
+one explicit `ShaderTarget` and a selected-output byte cap. There is one supported read-only graphics
 contract, documented in [GPU rendering](GPU_RENDERING.md). The compiler has no
 viewport, surface, Window/Texture, target height or arbitrary profile selector.
 
@@ -25,7 +25,7 @@ owns its status and message before the call returns. Raw COM clients use
 
 A report is either complete success or rejection with an original failing status
 and diagnostic. Success requires parsing, whole-module admission/validation,
-selected-stage/entry agreement, guarded SPIR-V emission and ES300 emission within
+selected-stage/entry agreement and emission of the one requested artifact within
 quota. Forbidden unused declarations and other entries cannot bypass admission.
 WGPU's native checked translation and native linking/allocation stay fallible.
 
@@ -42,27 +42,67 @@ This is the common single-mip 2D image contract, not admission-only support.
 Only the requested entry is emitted/reflected; inactive entries cannot alter its
 selected collections.
 
-The returned WGSL is the exact source validated by Naga. A native emission failure
-rejects the whole result; it cannot return WGSL-only success. Outer COM transport
-or result-construction errors remain outer failures. Invalid source, output
-bounds and fallible allocation preserve distinct statuses. Diagnostic text is
-per-report, capped at 4096 UTF-8 bytes at a character boundary; allocator aborts
-from infallible SDK construction cannot be converted into a diagnostic.
+## Selected target and build features
+
+| Device | Requested target | Compiler output features | Naga features |
+| --- | --- | --- | --- |
+| Vulkan | `SpirV` | `shader-spirv` | `wgsl-in,spv-out` |
+| GLES3 / WebGL2 | `GlslEs300` | `shader-glsl` | `wgsl-in,spv-out,spv-in,glsl-out` |
+| WGPU | `Wgsl` | `shader-wgsl` | `wgsl-in` |
+
+The backend forwards the corresponding output feature without enabling the optional
+compiler. A standalone CPU provider selects `shader-compiler` and output features
+without SDL, a Vulkan loader or WGPU. Output features are additive, so an explicitly
+multi-target compiler supports their union, but each request returns one format.
+`test-support` includes WGSL for CPU fixtures and does not enable either native writer.
+Naga defaults are disabled; no WGSL emitter is required. WGPU's own native drivers
+can independently enable Naga writers through Cargo feature unification.
+
+The device's immutable native resource family chooses its target once before the
+foreign compiler call. Public resource clients cannot substitute another target.
+A known format absent from the compiler build produces a rejected report with
+`SHADER_E_TARGET_UNAVAILABLE`; unknown enum tags reject at the generated ABI boundary.
+There is no output substitution or fallback to the request source.
+
+A successful report has an independent `target()` getter and exactly one code
+export: `wgsl()`, `spirv()` or `glsl()`. Other code getters return `NC_E_NOINTERFACE`.
+`ShaderInfo.target` and `code_byte_count` summarize those same objects, replacing the
+former three mandatory format lengths. An importer authenticates the requested
+target against both getters and the actual selected export. It does not acquire,
+copy or retain unselected formats. Rust snapshots use `ShaderCode::{Wgsl,SpirV,GlslEs300}`.
+
+WGSL output is the exact original validated source. SPIR-V output is guarded Vulkan
+code. GL still emits and reimports guarded SPIR-V as temporary compiler scratch to
+lower array/buffer checks before emitting ES300; those words are never exported or
+retained by a GL shader. Only GL items have generated block/combined-sampler names;
+the corresponding getters return `NC_E_NOINTERFACE` for WGSL/SPIR-V, while portable
+slot/layout/IO metadata remains available for every target.
+
+Failure of the selected emitter rejects the whole result. Unselected emitters are
+not invoked and cannot veto success. Outer COM transport/result-construction
+failures remain outer errors. Invalid source, output bounds and fallible reservation
+retain distinct statuses. Diagnostics are per-report, capped at 4096 UTF-8 bytes;
+infallible SDK/Naga allocation aborts are not promised to become diagnostics.
+
+This is a breaking pre-release shader request/report ABI change. Rebuild SDK
+consumers and both providers together; plugin qualified names and registration
+order remain unchanged. No compatibility path retains the three-output contract.
 
 Code getters return immutable `INcString`/`INcBytes` objects. Inputs, outputs,
 uniforms and sampled pairs return explicitly named typed collections, each with
 `len` and `get`. Out-of-range `get` returns `NC_E_OUT_OF_RANGE`. Items expose plain
-metadata and independently owned native names. Every export survives report/root
+metadata and, for GL only, independently owned native names. Every export survives report/root
 release; an item survives collection release and retains no unrelated code.
 `info()` is an optional summary of those same objects, never a prerequisite:
 
 ```rust,ignore
+// request.target selects exactly one format; this example selects WGSL.
 let report = compiler.compile(request, NcCopyFromBufferOffset::new(0, source), NcCopyFromBufferOffset::new(0, entry))?;
 let uniforms = report.uniforms()?;
 for index in 0..uniforms.len()? {
     let uniform = uniforms.get(index)?;
     let layout = uniform.info()?;
-    let name = uniform.glsl_block_name()?;
+    // Native GL names are queried only for a GlslEs300 request.
     // Both layout and name are usable without consulting report.info().
 }
 let validated_wgsl = report.wgsl()?;
@@ -80,13 +120,14 @@ The selected provider remains responsible for validated artifact semantics.
 
 ## Admission and transfer lifetime
 
-Source is at most one MiB; entry is at most 128 UTF-8 bytes. Combined code payload
-is `WGSL bytes + entry bytes + 4*SPIR-V words + GLSL bytes`, at most four MiB and
-the caller cap. The bounded GLSL writer checks growth before allocating. This is
+Source is at most one MiB; entry is at most 128 UTF-8 bytes. Retained code payload
+is `entry bytes + selected code bytes`, at most four MiB and the caller cap.
+SPIR-V code bytes are exactly four times its word count. Inputs and temporary
+intermediate representations are not retained code and do not inflate this charge. The bounded GLSL writer checks growth before allocating. This is
 not a total compiler scratch/RSS, shader-time or native-device fault guarantee.
 
 Reflection is excluded from that charge but bounded: at most 16 inputs, 16 outputs,
-four uniforms and four sampled pairs per stage. Native names are bounded by the
+four uniforms and four sampled pairs per stage. GL-only native names are bounded by the
 admitted GLSL length, with checked aggregate length bounded by eight such names.
 No new small name limit excludes existing long generated identifiers.
 

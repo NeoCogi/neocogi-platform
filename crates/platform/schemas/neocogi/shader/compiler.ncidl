@@ -50,11 +50,24 @@ enum ShaderSampling: u8 {
 }
 
 #[version(1)]
+/// One requested output; successful compilation never exports other formats.
+enum ShaderTarget: u8 {
+    /// Original validated source for WGPU's checked native translation.
+    Wgsl,
+    /// Guarded aligned SPIR-V for Vulkan.
+    SpirV,
+    /// Guarded GLSL ES300 for GLES3 and WebGL2.
+    GlslEs300,
+}
+
+#[version(1)]
 /// Synchronous read-only graphics compilation request.
 struct ShaderCompileRequest {
     /// Selected vertex or fragment stage.
     stage: GpuShaderStage,
-    /// Maximum combined WGSL, entry, SPIR-V and GLSL payload bytes.
+    /// Exact requested backend artifact format.
+    target: ShaderTarget,
+    /// Maximum selected artifact plus entry-point payload bytes.
     max_output_bytes: u64,
 }
 
@@ -73,12 +86,10 @@ struct ShaderInfo {
     sampled_texture_count: u32,
     /// Exact entry point byte count.
     entry_point_byte_count: u64,
-    /// Exact wgsl byte count.
-    wgsl_byte_count: u64,
-    /// Exact spirv word count.
-    spirv_word_count: u64,
-    /// Exact glsl byte count.
-    glsl_byte_count: u64,
+    /// Selected target; must agree with the independent target getter.
+    target: ShaderTarget,
+    /// Exact selected code byte count, including SPIR-V's four bytes per word.
+    code_byte_count: u64,
 }
 
 #[version(1)]
@@ -136,13 +147,16 @@ interface IShaderCompilation {
     fn diagnostic(&self) -> Result<ComPtr<INcString>>;
     /// Optional counts; not required to use exports.
     fn info(&self) -> Result<ShaderInfo>;
+    /// Selected target, independently accessible without the summary.
+    fn target(&self) -> Result<ShaderTarget>;
     /// Selected entry, owned independently.
     fn entry_point(&self) -> Result<ComPtr<INcString>>;
-    /// Naga-validated canonical WGSL.
+    /// Validated WGSL only for Wgsl; other targets return NOINTERFACE.
     fn wgsl(&self) -> Result<ComPtr<INcString>>;
-    /// Guarded SPIR-V words encoded little endian.
+    /// Guarded SPIR-V only for SpirV; other targets return NOINTERFACE.
     fn spirv(&self) -> Result<ComPtr<INcBytes>>;
-    /// ES 300 standard main; vertex clip output is (x,-y,2z-w,w).
+    /// GLSL only for GlslEs300; other targets return NOINTERFACE.
+    /// Standard main; vertex clip output is (x,-y,2z-w,w).
     fn glsl(&self) -> Result<ComPtr<INcString>>;
     /// Owned input location collection.
     fn inputs(&self) -> Result<ComPtr<IShaderLocations>>;
@@ -193,7 +207,7 @@ interface IShaderLocation {
 interface IShaderUniform {
     /// Copied portable metadata.
     fn info(&self) -> Result<ShaderUniformInfo>;
-    /// Owned native identifier matching emitted GLSL.
+    /// Native identifier for GlslEs300 only; other targets return NOINTERFACE.
     fn glsl_block_name(&self) -> Result<ComPtr<INcString>>;
 }
 
@@ -202,7 +216,7 @@ interface IShaderUniform {
 interface IShaderSampledTexture {
     /// Copied portable metadata.
     fn info(&self) -> Result<ShaderSampledTextureInfo>;
-    /// Owned native identifier matching emitted GLSL.
+    /// Native identifier for GlslEs300 only; other targets return NOINTERFACE.
     fn glsl_name(&self) -> Result<ComPtr<INcString>>;
 }
 

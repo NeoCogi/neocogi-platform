@@ -58,7 +58,7 @@ def build(*, backend, profile="dev", target=None, offline=False, output=None):
     if not root.is_absolute():
         raise ValueError("native output directory must be absolute")
     for name, source in libraries.items():
-        filename = source.name.replace("nc_platform", f"nc_platform_{backend}") if name == "nc_platform" else source.name
+        filename = source.name.replace(name, f"{name}_{backend}")
         install(source, root / "lib" / filename)
         print(root / "lib" / filename)
     return root

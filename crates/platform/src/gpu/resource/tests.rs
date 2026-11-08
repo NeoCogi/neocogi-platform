@@ -561,7 +561,7 @@ fn pipeline_retains_shader_artifacts_after_exclusive_shader_owners_expire() {
     assert_eq!(captured.vertex.artifact.entry, "vs");
     assert_eq!(captured.fragment.artifact.entry, "fs");
     assert_eq!(captured.attributes[0].format, GpuVertexFormat::Float32x3);
-    assert_eq!(captured.vertex.artifact.spirv[0], 0x0723_0203);
+    assert!(captured.vertex.artifact.code.wgsl().unwrap().contains("@vertex"));
     let core = device.inner.core.clone();
     let account = device.domain(factory.as_com_ref()).unwrap().account.clone();
     let first = captured.native(0, &mut crate::gpu::testing::Preparation::new(&core)).unwrap();

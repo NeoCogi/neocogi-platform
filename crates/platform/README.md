@@ -5,7 +5,7 @@ shader compilation and optional SDL/browser hosting. Empty default features need
 no SDL, graphics loader or Naga implementation.
 
 Modules: `render` (contracts and sources), `gpu` (recording and backends), `shader`
-(portable compiler contracts), optional `compiler` (`shader-compiler` feature),
+(portable compiler contracts), optional `compiler` (`shader-compiler` feature plus selected outputs),
 optional `platform` (hosting plus exactly one backend), and optional `build`
 (`build-support`, for build scripts).
 
@@ -20,3 +20,10 @@ platform descriptors. Dynamic applications depend on the same SDK with empty
 features and load final artifacts from `neocogi-platform-dylib`.
 
 See the repository documentation for contracts, ownership and deployment.
+
+Compiler targets are explicit per request: `shader-wgsl` (WGPU), `shader-spirv`
+(Vulkan), and `shader-glsl` (GLES3/WebGL2). Backends forward their required output
+without enabling the optional compiler. CPU-only providers select `shader-compiler`
+plus output features directly. A report exports exactly its requested format;
+other format/native-name getters return `NC_E_NOINTERFACE`. Rust `ShaderCode`
+owns one artifact, and quotas charge entry plus selected code bytes only.

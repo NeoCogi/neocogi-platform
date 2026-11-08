@@ -10,6 +10,8 @@ use std::{cell::Cell, rc::Rc};
 
 /// Counter/fault state only: no resource owners, submissions, channel endpoints or UI authority.
 pub struct Core {
+    /// Explicit immutable format for compiler transfer regressions.
+    target: crate::shader::ShaderTarget,
     /// One retained identity for the virtual compatible device.
     identity: DriverIdentity,
     /// Number of successfully constructed virtual native allocations.
@@ -77,7 +79,12 @@ pub fn bind_uniform(
 impl Core {
     /// Creates a distinct explicitly selected virtual driver with no native resources.
     pub fn new() -> Rc<Self> {
+        Self::with_target(crate::shader::ShaderTarget::Wgsl)
+    }
+    /// Creates a virtual core for exactly one requested shader artifact family.
+    pub fn with_target(target: crate::shader::ShaderTarget) -> Rc<Self> {
         Rc::new(Self {
+            target,
             identity: new_driver_identity(),
             created: Cell::new(0),
             destroyed: Cell::new(0),
@@ -180,6 +187,9 @@ impl Drop for Pipeline {
     }
 }
 impl NativeResources for Backend {
+    fn shader_target(core: &Core) -> crate::shader::ShaderTarget {
+        core.target
+    }
     type Core = Core;
     type Buffer = Storage;
     type Image = Image;
@@ -262,3 +272,8 @@ pub fn device(compiler: neocogi_com::ComPtr<neocogi_platform::shader::abi::Shade
 pub mod derivatives;
 /// Real COM shader/image fixtures shared by native and browser acceptance.
 pub mod sampled;
+
+/// Explicit target fixture; it never selects a compiler fallback or native graphics backend.
+pub fn device_with_target(compiler: neocogi_com::ComPtr<crate::shader::abi::ShaderCompilerAbi>, target: crate::shader::ShaderTarget) -> GpuDevice<Backend> {
+    GpuDevice::new(Core::with_target(target), compiler)
+}

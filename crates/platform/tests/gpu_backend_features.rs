@@ -146,3 +146,39 @@ fn enabled_modules_implement_the_typed_resource_contract() {
     #[cfg(feature = "test-support")]
     backend::<neocogi_platform::gpu::testing::Backend>();
 }
+
+/// Standalone compiler outputs select only their Naga writers and never a graphics implementation.
+#[test]
+fn compiler_output_features_are_minimal_and_independent_of_graphics() {
+    let native = host();
+    for (output, expected) in [
+        ("shader-wgsl", vec!["wgsl-in"]),
+        ("shader-spirv", vec!["wgsl-in", "spv-out"]),
+        ("shader-glsl", vec!["wgsl-in", "spv-in", "spv-out", "glsl-out"]),
+    ] {
+        let graph = Graph::resolve(&["shader-compiler", output], &native);
+        let naga = &graph.packages["naga"];
+        for feature in ["wgsl-in", "wgsl-out", "spv-in", "spv-out", "glsl-out", "glsl-in", "hlsl-out", "msl-out"] {
+            assert_eq!(
+                naga.contains(feature),
+                expected.contains(&feature),
+                "{output}: unexpected Naga features {naga:?}"
+            );
+        }
+        for dependency in ["sdl2", "ash", "wgpu", "glow", "web-sys"] {
+            assert!(!graph.contains(dependency), "{output} enabled {dependency}");
+        }
+        let disabled = Graph::resolve(&[output], &native);
+        assert!(!disabled.contains("naga"), "output selection enabled the optional compiler");
+    }
+    for (backend, output) in [
+        ("glow", "shader-glsl"),
+        ("webgl", "shader-glsl"),
+        ("vulkan", "shader-spirv"),
+        ("wgpu", "shader-wgsl"),
+    ] {
+        let target = if backend == "webgl" { "wasm32-unknown-unknown" } else { &native };
+        let graph = Graph::resolve(&[backend], target);
+        assert!(graph.packages["neocogi-platform"].contains(output));
+    }
+}

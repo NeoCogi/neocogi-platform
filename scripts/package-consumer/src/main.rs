@@ -1,5 +1,5 @@
 //! Runs independently generated COM calls against the packaged shader implementation.
-use neocogi_com::{ComPtr, INcBytesComPtrExt, INcStringComPtrExt, NcCopyFromBufferOffset, Runtime, NC_OK};
+use neocogi_com::{ComPtr, INcStringComPtrExt, NcCopyFromBufferOffset, Runtime, NC_OK};
 use neocogi_platform::render::abi::GpuShaderStage;
 use neocogi_platform::compiler;
 
@@ -21,6 +21,7 @@ fn main() {
         .compile_result(
             client::ShaderCompileRequest {
                 stage: GpuShaderStage::Vertex,
+                target: client::ShaderTarget::Wgsl,
                 max_output_bytes: 4 * 1024 * 1024,
             },
             NcCopyFromBufferOffset::new(0, source),
@@ -28,14 +29,12 @@ fn main() {
         )
         .unwrap();
     assert_eq!(report.status().unwrap(), NC_OK.code());
-    let spirv = report.spirv().unwrap();
+    assert_eq!(report.spirv().unwrap_err(), neocogi_com::NC_E_NOINTERFACE);
     let wgsl = report.wgsl().unwrap();
-    let glsl = report.glsl().unwrap();
+    assert_eq!(report.glsl().unwrap_err(), neocogi_com::NC_E_NOINTERFACE);
     drop(report);
     drop(root);
-    assert_eq!(&spirv.to_vec().unwrap()[..4], &0x07230203u32.to_le_bytes());
     assert_eq!(wgsl.to_string().unwrap().as_bytes(), source);
-    assert!(glsl.to_string().unwrap().contains("#version 300 es"));
     assert_eq!(
         std::fs::read(std::path::Path::new(env!("NEOCOGI_NATIVE_OUTPUT_DIR")).join("asset.txt")).unwrap(),
         include_bytes!("../asset.txt")

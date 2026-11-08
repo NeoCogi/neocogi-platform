@@ -169,12 +169,13 @@ Canonical fragment/texture coordinates have their origin at the top left; signed
 Y derivatives increase downwards on both window and offscreen targets. GL/WebGL
 window adaptation normalizes `dFdy` independently of fragment-position use, including
 varying-only shaders. X derivatives and unsigned `fwidth` retain their native
-values. The CPU compiler has no target-selection option; the existing native
-program variant owns coordinate, winding, depth and differential-axis adaptation.
+values. The device selects a compiler artifact format, while the existing native
+program variant owns window/image coordinate, winding, depth and differential-axis adaptation.
 
 WGSL is the canonical source. The required `neocogi.shader.compiler` COM provider
-validates and returns owned WGSL, GLSL ES 300, guarded SPIR-V and typed reflection.
-The renderer imports those results; WGPU consumes returned validated WGSL. See
+validates and returns exactly the requested format with typed portable reflection:
+WGSL for WGPU, GLSL ES300 for GL/WebGL, or guarded SPIR-V for Vulkan.
+The renderer imports only that artifact, rejecting target disagreement. See
 [shader compilation](SHADER_COMPILATION.md) for the complete boundary. No public native binary bypasses the
 profile. Vertex and fragment stages support read-only uniform blocks and paired
 non-comparison sampled 2D float textures/samplers. Storage, atomics, compute,
@@ -199,9 +200,9 @@ are not required by the GL/Vulkan guards. Fragment-coordinate adaptation recogni
 complete built-in identifier tokens and preserves ordinary identifiers containing
 the same text.
 
-WGSL source is limited to one MiB. Combined owned source, entry name, SPIR-V and
-GLSL are limited to four MiB per shader and the domain's remaining live-byte
-quota. During COM import the provider and receiving copy each retain a charge
+WGSL input is limited to one MiB. The selected artifact plus entry name is
+limited to four MiB per shader and the domain's remaining live-byte quota.
+Unused formats are neither retained nor charged; GL's intermediate SPIR-V is scratch. During COM import the provider and receiving copy each retain a charge
 for their actual live code payload; receiving admission can therefore reject a
 compilation that succeeded before copying. Reflection is excluded from the byte
 charge but independently bounded to 16 input/output locations and four uniform/
@@ -217,8 +218,8 @@ where their API requires a canonical value (WebGPU requires both to be One).
 Binding groups are 0 for vertex sampled pairs, 1 for vertex uniforms, 2 for
 fragment sampled pairs and 3 for fragment uniforms. There are four slots per
 stage/class. A sampled slot uses texture binding `2*slot` and sampler binding
-`2*slot+1`. Uniform binding equals slot. Reflection supplies generated GLSL block
-and sampler names privately; clients never depend on native uniform names.
+`2*slot+1`. Uniform binding equals slot. Only GL reflection supplies generated native block and sampler names; non-GL
+items expose their portable slot/layout metadata without native names.
 
 Uniform bytes use explicit column-major layouts whose member offsets, matrix
 column strides and array strides agree with std140. Differing layouts reject.

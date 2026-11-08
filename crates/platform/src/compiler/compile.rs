@@ -6,7 +6,7 @@
 //! fragment uniforms 3. Each sampled pair uses texture=2*slot, sampler=2*slot+1.
 
 use neocogi_platform::render::abi::GpuShaderStage;
-use neocogi_platform::shader::{Shader, IoLocation, IoShape, Uniform, SampledTexture, ShaderScalar, ShaderInterpolation, ShaderSampling};
+use neocogi_platform::shader::{Shader, ShaderCode, ShaderTarget, IoLocation, IoShape, Uniform, SampledTexture, ShaderScalar, ShaderInterpolation, ShaderSampling};
 mod images;
 
 use naga::{AddressSpace, Binding, Handle, ScalarKind, ShaderStage, Type, TypeInner};
@@ -20,6 +20,8 @@ pub(crate) enum CompileError {
     Invalid(String),
     /// Admitted output cannot fit the hard profile or remaining domain-byte budget.
     Limit,
+    /// Known output format is absent from this compiler build.
+    Unavailable,
     /// Bounded output reservation failed without publishing a partial artifact.
     Allocation,
 }
@@ -41,6 +43,7 @@ impl std::fmt::Display for CompileError {
         match self {
             Self::Invalid(message) => output.write_str(message),
             Self::Limit => output.write_str("shader artifact byte budget exceeded"),
+            Self::Unavailable => output.write_str("requested shader target is not enabled in this compiler build"),
             Self::Allocation => output.write_str("shader artifact allocation failed"),
         }
     }
@@ -50,22 +53,25 @@ impl std::fmt::Display for CompileError {
 pub(crate) struct Compiler;
 
 /// GLSL expansion cannot grow an unrestricted String before domain artifact admission.
+#[cfg(feature = "shader-glsl")]
 struct Output {
     /// Complete initialized prefix only; allocation growth is capped at the selected limit.
     text: String,
-    /// Remaining combined artifact budget after source, entry and SPIR-V bytes.
+    /// Maximum selected GLSL bytes after accounting for the entry name.
     limit: usize,
     /// First writer failure survives Naga's formatting-error conversion.
     failure: Option<WriteFailure>,
 }
 /// Exact cause of a failed bounded formatting operation.
 #[derive(Clone, Copy)]
+#[cfg(feature = "shader-glsl")]
 enum WriteFailure {
     /// Requested output would exceed the selected budget.
     Limit,
     /// A bounded reservation failed.
     Allocation,
 }
+#[cfg(feature = "shader-glsl")]
 impl std::fmt::Write for Output {
     /// Check complete writes before reserving or appending, including large initializer expansion.
     fn write_str(&mut self, value: &str) -> std::fmt::Result {
@@ -89,21 +95,32 @@ impl std::fmt::Write for Output {
 }
 
 impl Compiler {
-    /// Parses, validates the complete module, reflects one entry and emits both native artifacts.
-    /// Driver allocation/linking remains a later fallible preparation operation.
+    /// Test convenience uses the portable WGSL target unless a test selects another explicitly.
     #[cfg(test)]
     pub fn compile(stage: GpuShaderStage, source: &str, entry: &str) -> Result<Shader, String> {
-        Self::compile_bounded(stage, source, entry, MAX_SHADER_ARTIFACT_BYTES).map_err(|error| error.to_string())
+        Self::compile_bounded(stage, ShaderTarget::Wgsl, source, entry, MAX_SHADER_ARTIFACT_BYTES).map_err(|error| error.to_string())
     }
 
-    /// The factory supplies its actual remaining live-byte quota before generated output expands.
-    pub(crate) fn compile_bounded(stage: GpuShaderStage, source: &str, entry: &str, budget: usize) -> Result<Shader, CompileError> {
+    /// Validates the complete portable module, then emits exactly the requested artifact.
+    /// The output cap covers entry plus selected code; intermediate IR is scratch, not retained output.
+    pub(crate) fn compile_bounded(stage: GpuShaderStage, target: ShaderTarget, source: &str, entry: &str, budget: usize) -> Result<Shader, CompileError> {
+        if !matches!(target, ShaderTarget::Wgsl | ShaderTarget::SpirV | ShaderTarget::GlslEs300) {
+            return Err("unknown shader target".into());
+        }
+        let enabled = match target {
+            ShaderTarget::Wgsl => cfg!(any(test, feature = "shader-wgsl")),
+            ShaderTarget::SpirV => cfg!(feature = "shader-spirv"),
+            ShaderTarget::GlslEs300 => cfg!(feature = "shader-glsl"),
+            _ => unreachable!(),
+        };
+        if !enabled {
+            return Err(CompileError::Unavailable);
+        }
         if source.is_empty() || source.len() > MAX_SHADER_BYTES || entry.is_empty() || entry.len() > 128 {
             return Err("shader source or entry length exceeds the graphics profile".into());
         }
         let native_stage = native_stage(stage)?;
-        let fixed = source.len().checked_add(entry.len()).ok_or(CompileError::Limit)?;
-        let available = budget.min(MAX_SHADER_ARTIFACT_BYTES).checked_sub(fixed).ok_or(CompileError::Limit)?;
+        let available = budget.min(MAX_SHADER_ARTIFACT_BYTES).checked_sub(entry.len()).ok_or(CompileError::Limit)?;
         let module = naga::front::wgsl::parse_str(source).map_err(|error| error.emit_to_string(source))?;
         let info = naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::empty())
             .validate(&module)
@@ -123,30 +140,131 @@ impl Compiler {
         if let Some(result) = &selected.function.result {
             collect_io(&module, result.ty, result.binding.as_ref(), &mut outputs)?;
         }
-        let spv_options = naga::back::spv::Options {
-            flags: naga::back::spv::WriterFlags::ADJUST_COORDINATE_SPACE
-                | naga::back::spv::WriterFlags::LABEL_VARYINGS
-                | naga::back::spv::WriterFlags::CLAMP_FRAG_DEPTH,
-            bounds_check_policies: bounds_checks(),
-            ..Default::default()
+        let usage = info.get_entry_point(entry_index);
+        let mut uniforms = Vec::new();
+        for (handle, variable) in module.global_variables.iter() {
+            if usage[handle].is_empty() || variable.space != AddressSpace::Uniform {
+                continue;
+            }
+            let binding = variable.binding.ok_or("admitted uniform lost its binding")?;
+            uniforms.push(Uniform {
+                slot: binding.binding,
+                byte_len: uniform_block_len(&module, variable.ty)?,
+                gl_block: None,
+            });
+        }
+        let mut textures = Vec::new();
+        for pair in &usage.sampling_set {
+            let image = module.global_variables[pair.image].binding.ok_or("sampled texture lacks a binding")?;
+            textures.push(SampledTexture { slot: image.binding / 2, gl_name: None });
+        }
+        uniforms.sort_by_key(|value| value.slot);
+        textures.sort_by_key(|value| value.slot);
+        let code = match target {
+            ShaderTarget::Wgsl => {
+                if source.len() > available {
+                    return Err(CompileError::Limit);
+                }
+                ShaderCode::Wgsl(owned_text(source)?)
+            }
+            #[cfg(feature = "shader-spirv")]
+            ShaderTarget::SpirV => {
+                let words = emit_spirv(&module, &info, native_stage, entry)?;
+                if words.len().checked_mul(4).ok_or(CompileError::Limit)? > available {
+                    return Err(CompileError::Limit);
+                }
+                ShaderCode::SpirV(words)
+            }
+            #[cfg(feature = "shader-glsl")]
+            ShaderTarget::GlslEs300 => {
+                let words = emit_spirv(&module, &info, native_stage, entry)?;
+                // Import guarded words to lower array and buffer checks before GLSL.
+                // Intermediate words die here and are never charged or exported as shader code.
+                ShaderCode::GlslEs300(
+                    SelectedEntry {
+                        module: &module,
+                        info: &info,
+                        entry_index,
+                        stage,
+                        native_stage,
+                        entry,
+                    }
+                    .emit_glsl(&words, available, &mut uniforms, &mut textures)?,
+                )
+            }
+            _ => return Err(CompileError::Unavailable),
         };
-        let spirv = naga::back::spv::write_vec(
-            &module,
-            &info,
-            &spv_options,
-            Some(&naga::back::spv::PipelineOptions {
-                shader_stage: native_stage,
-                entry_point: entry.into(),
-            }),
-        )
-        .map_err(|error| error.to_string())?;
-        let available = available
-            .checked_sub(spirv.len().checked_mul(4).ok_or(CompileError::Limit)?)
-            .ok_or(CompileError::Limit)?;
-        // Naga's GLSL writer currently applies image-load policies but does not lower array/
-        // buffer index policies. Reimport its guarded SPIR-V so those explicit branches become
-        // ordinary IR before GLSL emission. The importer restores canonical vertex coordinates;
-        // the final GLSL writer then performs its usual target conversion exactly once.
+        Ok(Shader {
+            stage,
+            entry: owned_text(entry)?,
+            code,
+            inputs,
+            outputs,
+            uniforms,
+            textures,
+        })
+    }
+}
+
+/// Owns bounded text fallibly before it can be published as code or an entry name.
+fn owned_text(text: &str) -> Result<String, CompileError> {
+    let mut owned = String::new();
+    owned.try_reserve_exact(text.len()).map_err(|_| CompileError::Allocation)?;
+    owned.push_str(text);
+    Ok(owned)
+}
+
+/// Emits guarded Vulkan words, also used transiently by GL's bounds-check lowering.
+#[cfg(any(feature = "shader-spirv", feature = "shader-glsl"))]
+fn emit_spirv(module: &naga::Module, info: &naga::valid::ModuleInfo, native_stage: ShaderStage, entry: &str) -> Result<Vec<u32>, CompileError> {
+    let spv_options = naga::back::spv::Options {
+        flags: naga::back::spv::WriterFlags::ADJUST_COORDINATE_SPACE
+            | naga::back::spv::WriterFlags::LABEL_VARYINGS
+            | naga::back::spv::WriterFlags::CLAMP_FRAG_DEPTH,
+        bounds_check_policies: bounds_checks(),
+        ..Default::default()
+    };
+    let spirv = naga::back::spv::write_vec(
+        module,
+        info,
+        &spv_options,
+        Some(&naga::back::spv::PipelineOptions {
+            shader_stage: native_stage,
+            entry_point: entry.into(),
+        }),
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(spirv)
+}
+
+/// Immutable view of the one validated entry selected for native GL emission.
+#[cfg(feature = "shader-glsl")]
+struct SelectedEntry<'a> {
+    /// Original validated module; native names are recovered by its explicit bindings.
+    module: &'a naga::Module,
+    /// Validation and resource-usage information for that same module.
+    info: &'a naga::valid::ModuleInfo,
+    /// Selected entry's index in the original module.
+    entry_index: usize,
+    /// Portable stage used to authenticate stage-local native reflection.
+    stage: GpuShaderStage,
+    /// Corresponding Naga stage for its target-specific writer.
+    native_stage: ShaderStage,
+    /// Selected original entry name.
+    entry: &'a str,
+}
+#[cfg(feature = "shader-glsl")]
+impl SelectedEntry<'_> {
+    /// Produces bounded ES300 and attaches names only to existing portable reflection slots.
+    fn emit_glsl(&self, spirv: &[u32], limit: usize, uniforms: &mut [Uniform], textures: &mut [SampledTexture]) -> Result<String, CompileError> {
+        let Self {
+            module,
+            info,
+            entry_index,
+            stage,
+            native_stage,
+            entry,
+        } = *self;
         let mut gl_module = naga::front::spv::Frontend::new(
             spirv.iter().copied(),
             &naga::front::spv::Options {
@@ -172,7 +290,7 @@ impl Compiler {
         };
         let mut output = Output {
             text: String::new(),
-            limit: available,
+            limit,
             failure: None,
         };
         let emission = naga::back::glsl::Writer::new(
@@ -195,55 +313,54 @@ impl Compiler {
             None => CompileError::Invalid(error.to_string()),
         })?;
         let glsl = output.text;
-        let mut uniforms = Vec::new();
-        let mut textures = Vec::new();
         let usage = info.get_entry_point(entry_index);
-        // Admission covered every entry. This pass extracts selected output names/values only.
-        for (handle, variable) in module.global_variables.iter() {
+        let (_, uniform_group) = groups(stage)?;
+        for uniform in uniforms.iter_mut() {
+            let (handle, variable) = module
+                .global_variables
+                .iter()
+                .find(|(_, variable)| {
+                    variable.space == AddressSpace::Uniform
+                        && variable
+                            .binding
+                            .is_some_and(|binding| binding.binding == uniform.slot && binding.group == uniform_group)
+                })
+                .ok_or("selected uniform lost its binding")?;
             if usage[handle].is_empty() || variable.space != AddressSpace::Uniform {
                 continue;
             }
             let binding = variable.binding.ok_or("admitted uniform lost its binding")?;
-            uniforms.push(Uniform {
-                slot: binding.binding,
-                byte_len: uniform_block_len(&module, variable.ty)?,
-                gl_block: gl_module
+            uniform.gl_block = Some(
+                gl_module
                     .global_variables
                     .iter()
                     .find(|(_, global)| global.binding == Some(binding) && global.space == AddressSpace::Uniform)
                     .and_then(|(handle, _)| reflection.uniforms.get(&handle))
                     .cloned()
                     .ok_or("missing emitted uniform reflection")?,
-            });
+            );
         }
         for (gl_name, mapping) in &reflection.texture_mapping {
             let image = gl_module.global_variables[mapping.texture].binding.ok_or("sampled texture lacks a binding")?;
             // The emitter must preserve the admitted sampled pair; its name is selected-output data.
             mapping.sampler.ok_or("emitted texture reflection lost its paired sampler")?;
-            textures.push(SampledTexture {
-                slot: image.binding / 2,
-                gl_name: gl_name.clone(),
-            });
+            let texture = textures
+                .iter_mut()
+                .find(|texture| texture.slot == image.binding / 2)
+                .ok_or("emitted sampler is outside selected reflection")?;
+            texture.gl_name = Some(gl_name.clone());
         }
-        uniforms.sort_by_key(|uniform| uniform.slot);
-        textures.sort_by_key(|texture| texture.slot);
-        Ok(Shader {
-            stage,
-            entry: entry.into(),
-            wgsl: source.into(),
-            glsl,
-            spirv,
-            uniforms,
-            textures,
-            inputs,
-            outputs,
-        })
+        if textures.iter().any(|texture| texture.gl_name.is_none()) {
+            return Err("selected texture lacks emitted native name".into());
+        }
+        Ok(glsl)
     }
 }
 
 /// Naga is a translator and defaults to unchecked indexing. Clients do not gain authority
 /// beyond their own read-only bindings or private computation through undefined array access.
 /// Hardware robustness is deliberately not assumed by the direct GL/Vulkan adapters.
+#[cfg(any(feature = "shader-spirv", feature = "shader-glsl"))]
 fn bounds_checks() -> naga::proc::BoundsCheckPolicies {
     use naga::proc::BoundsCheckPolicy::ReadZeroSkipWrite;
     naga::proc::BoundsCheckPolicies {

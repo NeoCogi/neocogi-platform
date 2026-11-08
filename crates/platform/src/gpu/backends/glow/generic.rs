@@ -29,6 +29,9 @@ pub struct Preparation<'a> {
     executor: &'a mut Executor,
 }
 impl NativeResources for Backend {
+    fn shader_target(_core: &Self::Core) -> crate::shader::ShaderTarget {
+        crate::shader::ShaderTarget::GlslEs300
+    }
     type Core = Core;
     type Buffer = Buffer;
     type Image = Image;
@@ -696,8 +699,9 @@ impl Executor {
         }
         let attributes = Self::copied(source.attributes())?;
         let layouts = Self::copied(source.vertex_buffers())?;
-        let vertex = super::shader_adapter::vertex(&source.vertex().artifact().glsl, offscreen)?;
-        let (fragment, height_name) = super::shader_adapter::fragment(&source.fragment().artifact().glsl, offscreen)?;
+        let vertex = super::shader_adapter::vertex(source.vertex().artifact().code.glsl().ok_or("GL requires a GLSL artifact")?, offscreen)?;
+        let (fragment, height_name) =
+            super::shader_adapter::fragment(source.fragment().artifact().code.glsl().ok_or("GL requires a GLSL artifact")?, offscreen)?;
         let raw = super::create_program(&self.gl, &vertex, &fragment).map_err(|error| error.to_string())?;
         // SAFETY: The linked program belongs to this checked current context and exact reflected stages.
         let target_height = height_name.and_then(|name| unsafe { self.gl.get_uniform_location(raw, &name) });
@@ -717,12 +721,17 @@ impl Executor {
             self.gl.use_program(Some(raw));
             for shader in [source.vertex().artifact(), source.fragment().artifact()] {
                 for uniform in &shader.uniforms {
-                    if let Some(index) = self.gl.get_uniform_block_index(raw, &uniform.gl_block) {
+                    if let Some(index) = self
+                        .gl
+                        .get_uniform_block_index(raw, uniform.gl_block.as_deref().ok_or("GL uniform lacks its native name")?)
+                    {
                         self.gl.uniform_block_binding(raw, index, unit(shader.stage, uniform.slot));
                     }
                 }
                 for texture in &shader.textures {
-                    let location = self.gl.get_uniform_location(raw, &texture.gl_name);
+                    let location = self
+                        .gl
+                        .get_uniform_location(raw, texture.gl_name.as_deref().ok_or("GL sampler lacks its native name")?);
                     self.gl.uniform_1_i32(location.as_ref(), unit(shader.stage, texture.slot) as i32);
                 }
             }

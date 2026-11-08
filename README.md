@@ -45,10 +45,13 @@ SDL_VIDEODRIVER=offscreen cargo test --locked -p neocogi-platform --features pla
 
 The SDK has empty default features. Native GPU features `glow`, `vulkan` and
 `wgpu` are additive under `neocogi_platform::gpu::backends`. Enable `platform`
-with exactly one backend for SDL hosting, `shader-compiler` for Naga, and
+with exactly one backend for SDL hosting, `shader-compiler` for the optional Naga provider, and
 `build-support` on build dependencies for schema generation/resource staging.
 Browser hosting uses `platform,webgl` and `wasm32-unknown-unknown`.
 CPU-only consumers need no SDL, graphics loader or compiler implementation.
+Shader outputs are selected per request: WGPU uses WGSL, Vulkan uses SPIR-V and
+GLES3/WebGL uses ES300. Backends forward `shader-wgsl`, `shader-spirv` or
+`shader-glsl`; standalone compilers select these without graphics dependencies.
 
 Native examples select `static,glow` by default. Use `--no-default-features
 --features static,vulkan` or `static,wgpu` for alternatives. For dynamic assembly,

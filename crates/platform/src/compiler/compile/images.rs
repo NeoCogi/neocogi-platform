@@ -1,5 +1,7 @@
 //! Portable single-mip image operations and GL adaptation of already guarded SPIR-V.
-use naga::{Arena, Block, Expression, ImageQuery, Literal, Module, Statement};
+use naga::{Expression, ImageQuery, Literal, Module};
+#[cfg(feature = "shader-glsl")]
+use naga::{Arena, Block, Statement};
 
 /// Rejects unsupported image operations throughout original WGSL, including unused functions.
 /// Exact loads and dimension queries may use only statically known mip zero.
@@ -55,6 +57,7 @@ fn zero(expression: &Expression, module: &Module) -> bool {
 /// branches for GL, but ES300 has no textureQueryLevels. Its known answer is one
 /// because every admitted sampled allocation has exactly one mip. Image loads
 /// must not be guarded a second time by the GLSL writer after this transformation.
+#[cfg(feature = "shader-glsl")]
 pub(super) fn specialize_gl(module: &mut Module) {
     for function in module
         .functions
@@ -73,6 +76,7 @@ pub(super) fn specialize_gl(module: &mut Module) {
 
 /// Removes newly constant expressions from Emit ranges without changing statement scope.
 /// Naga literals are already in scope; explicitly emitting one would invalidate IR.
+#[cfg(feature = "shader-glsl")]
 fn filter_emits(block: &mut Block, expressions: &Arena<Expression>) {
     for (mut statement, span) in std::mem::take(block).span_into_iter() {
         match &mut statement {

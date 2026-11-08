@@ -784,8 +784,13 @@ impl<B: crate::gpu::native::NativeResources> IRenderResources for Factory<B> {
                 self.domain.open()?;
                 let cap = (self.domain.account.remaining_bytes().min(crate::gpu::shader::MAX_SHADER_ARTIFACT_BYTES as u64)) as usize;
                 let mut provider_charge = self.domain.account.bytes(cap)?;
+                let target = B::shader_target(&self.domain.device.inner.core);
                 let result = self.domain.device.inner.compiler.compile_result(
-                    neocogi_platform::shader::abi::ShaderCompileRequest { stage, max_output_bytes: cap as u64 },
+                    neocogi_platform::shader::abi::ShaderCompileRequest {
+                        stage,
+                        target,
+                        max_output_bytes: cap as u64,
+                    },
                     NcCopyFromBufferOffset::new(0, &bytes),
                     NcCopyFromBufferOffset::new(0, &expected[..entry.len()]),
                 );
@@ -793,7 +798,7 @@ impl<B: crate::gpu::native::NativeResources> IRenderResources for Factory<B> {
                 drop(input_charge);
                 let report = result?;
                 neocogi_platform::shader::check_compilation(&report)?;
-                let prepared = neocogi_platform::shader::PreparedShader::new(report, stage, &expected[..entry.len()], cap)?;
+                let prepared = neocogi_platform::shader::PreparedShader::new(report, stage, target, &expected[..entry.len()], cap)?;
                 provider_charge.shrink(prepared.byte_len())?;
                 let charge = self.domain.account.bytes(prepared.byte_len())?;
                 let artifact = prepared.copy()?;
@@ -853,7 +858,7 @@ pub(crate) fn publish_pipeline<B: crate::gpu::native::NativeResources>(
 #[cfg(test)]
 mod tests;
 
-#[cfg(test)]
+#[cfg(all(test, feature = "shader-spirv"))]
 mod compiler_tests;
 
 #[cfg(test)]

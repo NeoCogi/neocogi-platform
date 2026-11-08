@@ -26,7 +26,7 @@ Run:
 ```sh
 cargo fetch --locked
 cargo check --locked --workspace --all-targets
-cargo test --locked -p neocogi-platform --features platform,glow,test-support,build-support
+cargo test --locked -p neocogi-platform --features platform,glow,test-support,shader-spirv,build-support
 python3 -B -m unittest discover -s scripts -p 'test_*.py'
 python3 -B scripts/check_packages.py --offline --stable-toolchain stable --allow-dirty
 ```
@@ -59,3 +59,9 @@ publication. Publication remains a separate explicit action. Publish the SDK
 first and wait for it to appear in the crates.io index, then publish the shim.
 COM/host/IDL dependencies remain the published exact `0.1.0` versions. A successful
 `--list` or `--no-verify` alone is insufficient release evidence.
+
+Shader qualification must include isolated `shader-wgsl`, `shader-spirv` and
+`shader-glsl` compiler graphs. GPU features forward the selected target, and no
+release compiler should enable all outputs implicitly. Stage the backend-suffixed
+compiler and platform pair together. Shader request/report ABI signatures changed;
+rebuild generated consumers and both providers for this release.

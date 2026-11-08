@@ -6,6 +6,6 @@ publish = false
 [dependencies]
 neocogi-com = { version = "=0.1.0", features = ["std", "macros", "runtime"] }
 neocogi-com-host = "=0.1.0"
-neocogi-platform = { version = "=0.1.0-alpha.2", default-features = false, features = ["shader-compiler"] }
+neocogi-platform = { version = "=0.1.0-alpha.2", default-features = false, features = ["shader-compiler", "shader-wgsl"] }
 [build-dependencies]
 neocogi-platform = { version = "=0.1.0-alpha.2", default-features = false, features = ["build-support"] }

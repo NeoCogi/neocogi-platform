@@ -1,3 +1,15 @@
+# Backend-specific shader artifacts
+
+The shader request now selects WGSL, SPIR-V or GLSL ES300, and success owns only
+that representation. Device families choose their immutable format; importers
+check target agreement and charge entry plus selected code bytes. The prior
+three-output shader request/report ABI is superseded without compatibility
+aliases. Rebuild SDK clients and both providers together. Optional compiler output
+features enable only required Naga writers; GL keeps its guarded SPIR-V roundtrip
+as temporary scratch. Compiler and platform deployment filenames both identify
+the selected backend. Current contracts are in SHADER_COMPILATION.md and
+GPU_RENDERING.md; older entries below describe earlier behavior.
+
 # Two-package SDK consolidation
 
 The current pre-release layout supersedes the eleven-package release set with

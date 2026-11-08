@@ -123,7 +123,7 @@ def qualify(*, allow_dirty=False, offline=False, stable=None):
         # Package manifests and build inputs are unmodified. Patches resolve only
         # unpublished internal dependencies to the exact extracted archive contents.
         run([*cargo, "build", "--workspace", "--all-targets", *common], cwd=outside)
-        run([*cargo, "test", "--lib", "--test", "compiler", "-p", SCHEMA_OWNER, "--features", "build-support,test-support,platform,glow", *common], cwd=outside)
+        run([*cargo, "test", "--lib", "--test", "compiler", "-p", SCHEMA_OWNER, "--features", "build-support,test-support,platform,glow,shader-spirv", *common], cwd=outside)
         run([*cargo, "run", "-p", "neocogi-package-consumer", *common], cwd=outside)
         # This exercises real Cargo invalidation after replacing the staging
         # proc macros: missing outputs must restore, and changed authored bytes

@@ -22,7 +22,10 @@ unchanged; see [drawing targets](../contracts/RENDER_SURFACES.md).
 Default SDK features are empty. GPU backends `glow`, `vulkan` and `wgpu` are
 additive; `webgl` reuses GL execution on Wasm. `platform` enables hosting and
 requires exactly one legal target/backend selection. `shader-compiler` enables
-Naga. `test-support` exposes portable/native fixtures and the compiler, weakly
+Naga WGSL parsing; output features `shader-wgsl`, `shader-spirv` and `shader-glsl`
+select emitters independently of graphics dependencies and are forwarded by backends.
+Each request selects exactly one `ShaderTarget`; reports and Rust `ShaderCode`
+snapshots retain only that format. `test-support` includes WGSL fixtures and the compiler, weakly
 enabling WGPU counters only when WGPU is selected. Applications that load
 providers dynamically use SDK defaults and retain no native implementation edge.
 
@@ -44,8 +47,8 @@ identities/dependency order stay unchanged: register/load compiler, then platfor
 The executable owns the one COM host; providers receive its typed runtime.
 
 `scripts/build_plugins.py` builds both roots in one explicit Cargo invocation,
-reads exact artifact paths from Cargo JSON and stages a compiler plus a
-backend-suffixed platform library beside applications. No build script invokes
+reads exact artifact paths from Cargo JSON and stages a matching
+backend-suffixed compiler/platform pair beside applications. No build script invokes
 Cargo. SDK `build::layout` owns output policy and resource snapshots; ordinary
 build scripts replace the former nightly staging proc macros. See
 [native staging](../contracts/NATIVE_LAYOUT.md).
