@@ -10,61 +10,69 @@ struct Point {
 #[version(1)]
 /// Logical keyboard identity normalized independently of native scan codes.
 enum KeyCode: u8 {
-    /// Printable shortcut key; its scalar is carried in `KeyStroke::value`.
-    Character = 0,
+    /// Printable shortcut key carrying a Unicode scalar, validated before delivery.
+    Character(u32),
     /// Removes the previous character.
-    Backspace = 1,
+    Backspace,
     /// Removes the next character.
-    Delete = 2,
+    Delete,
     /// Primary activation or line break.
-    Enter = 3,
+    Enter,
     /// Cancellation or popup dismissal.
-    Escape = 4,
+    Escape,
     /// Space-bar activation, separate from committed text.
-    Space = 5,
+    Space,
     /// Sequential focus traversal.
-    Tab = 6,
+    Tab,
     /// Insert editing command.
-    Insert = 7,
+    Insert,
     /// Beginning of content or line.
-    Home = 8,
+    Home,
     /// End of content or line.
-    End = 9,
+    End,
     /// Previous viewport.
-    PageUp = 10,
+    PageUp,
     /// Next viewport.
-    PageDown = 11,
+    PageDown,
     /// Upward navigation.
-    ArrowUp = 12,
+    ArrowUp,
     /// Downward navigation.
-    ArrowDown = 13,
+    ArrowDown,
     /// Leftward navigation.
-    ArrowLeft = 14,
+    ArrowLeft,
     /// Rightward navigation.
-    ArrowRight = 15,
-    /// Numbered function key; its number is carried in `KeyStroke::value`.
-    Function = 16,
+    ArrowRight,
+    /// Numbered function key in the inclusive range 1 through 24.
+    Function(u8),
     /// Alt/Option itself, for distinguishing a tap from a chord.
-    Alt = 17,
+    Alt,
     /// Control modifier itself.
-    Control = 18,
+    Control,
     /// Shift modifier itself.
-    Shift = 19,
+    Shift,
     /// Command/Windows/Super modifier itself.
-    Super = 20,
+    Super,
+}
+
+#[version(1)]
+/// A key release or press; repeat belongs only to a press.
+enum KeyAction: u8 {
+    /// A platform key-down transition, including operating-system repeats.
+    Pressed {
+        /// True only for an automatically repeated press.
+        repeat: bool,
+    },
+    /// A key-up transition; releases cannot repeat.
+    Released,
 }
 
 #[version(1)]
 /// Complete logical key transition shared by platform producers and UI consumers.
 struct KeyStroke {
-    /// Stable logical key family.
+    /// Logical key identity with only its applicable payload.
     key: KeyCode,
-    /// Unicode scalar for Character, function number for Function, otherwise zero.
-    value: u32,
-    /// True for a press, false for a release.
-    pressed: bool,
-    /// True only for a platform-generated repeated press.
-    repeat: bool,
+    /// Press or release, with repeat information only for presses.
+    action: KeyAction,
     /// Complete modifier bits: Alt=1, Ctrl=2, Shift=4, Super=8.
     modifiers: u8,
 }

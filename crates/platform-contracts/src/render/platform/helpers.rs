@@ -11,18 +11,34 @@ impl Default for Point {
 }
 
 impl KeyStroke {
-    /// Rejects undefined keys, invalid scalar/function payloads, and unknown modifier bits.
+    /// Rejects invalid scalar/function payloads and unknown modifier bits.
     pub fn validate(self) -> Result<(), NcStatus> {
-        // The copied key family determines the exact meaning of `value`; keeping
-        // this validation beside the owning contract prevents platform and UI
-        // implementations from drifting into different accepted domains.
+        // The enum carries only the applicable payload; value validation stays
+        // beside the owning contract so producers and consumers share a domain.
         let value_valid = match self.key {
-            KeyCode::Character => char::from_u32(self.value).is_some(),
-            KeyCode::Function => (1..=24).contains(&self.value),
-            key if key.raw() <= KeyCode::Super.raw() => self.value == 0,
-            _ => false,
+            KeyCode::Character(scalar) => char::from_u32(scalar).is_some(),
+            KeyCode::Function(number) => (1..=24).contains(&number),
+            KeyCode::Backspace
+            | KeyCode::Delete
+            | KeyCode::Enter
+            | KeyCode::Escape
+            | KeyCode::Space
+            | KeyCode::Tab
+            | KeyCode::Insert
+            | KeyCode::Home
+            | KeyCode::End
+            | KeyCode::PageUp
+            | KeyCode::PageDown
+            | KeyCode::ArrowUp
+            | KeyCode::ArrowDown
+            | KeyCode::ArrowLeft
+            | KeyCode::ArrowRight
+            | KeyCode::Alt
+            | KeyCode::Control
+            | KeyCode::Shift
+            | KeyCode::Super => true,
         };
-        if value_valid && self.modifiers & !15 == 0 && (!self.repeat || self.pressed) {
+        if value_valid && self.modifiers & !15 == 0 {
             Ok(())
         } else {
             Err(NC_E_INVALID_ARG)

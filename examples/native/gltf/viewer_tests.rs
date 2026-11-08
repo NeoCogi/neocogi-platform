@@ -321,14 +321,12 @@ fn hdr_interpolation_probe() {
             GpuShaderBinding {
                 stage: GpuShaderStage::Fragment,
                 slot: 1,
-                kind: GpuBindingKind::Uniform,
-                byte_len: environment::UNIFORM_BYTES,
+                kind: GpuBindingKind::Uniform(environment::UNIFORM_BYTES),
             },
             GpuShaderBinding {
                 stage: GpuShaderStage::Fragment,
                 slot: 1,
                 kind: GpuBindingKind::SampledTexture,
-                byte_len: 0,
             },
         ],
         ..PipelineDesc::default()

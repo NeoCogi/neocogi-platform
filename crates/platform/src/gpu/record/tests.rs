@@ -908,14 +908,12 @@ struct Out { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32> 
             GpuShaderBinding {
                 stage: GpuShaderStage::Fragment,
                 slot: 0,
-                kind: GpuBindingKind::Uniform,
-                byte_len: 16,
+                kind: GpuBindingKind::Uniform(16),
             },
             GpuShaderBinding {
                 stage: GpuShaderStage::Fragment,
                 slot: 0,
                 kind: GpuBindingKind::SampledTexture,
-                byte_len: 0,
             },
         ],
     );

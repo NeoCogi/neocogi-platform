@@ -155,33 +155,28 @@ impl Graphics {
             GpuShaderBinding {
                 stage: GpuShaderStage::Vertex,
                 slot: 0,
-                kind: GpuBindingKind::Uniform,
-                byte_len: 64,
+                kind: GpuBindingKind::Uniform(64),
             },
             GpuShaderBinding {
                 stage: GpuShaderStage::Vertex,
                 slot: 1,
-                kind: GpuBindingKind::Uniform,
-                byte_len: (MAX_JOINTS * 64) as u32,
+                kind: GpuBindingKind::Uniform((MAX_JOINTS * 64) as u32),
             },
             GpuShaderBinding {
                 stage: GpuShaderStage::Fragment,
                 slot: 0,
-                kind: GpuBindingKind::Uniform,
-                byte_len: material::UNIFORM_BYTES,
+                kind: GpuBindingKind::Uniform(material::UNIFORM_BYTES),
             },
             GpuShaderBinding {
                 stage: GpuShaderStage::Fragment,
                 slot: 1,
-                kind: GpuBindingKind::Uniform,
-                byte_len: environment::UNIFORM_BYTES,
+                kind: GpuBindingKind::Uniform(environment::UNIFORM_BYTES),
             },
         ];
         bindings.extend((0..2).map(|slot| GpuShaderBinding {
             stage: GpuShaderStage::Fragment,
             slot,
             kind: GpuBindingKind::SampledTexture,
-            byte_len: 0,
         }));
         let descriptor = PipelineDesc {
             state: GpuPipelineInfo {
@@ -257,20 +252,17 @@ impl Graphics {
                 GpuShaderBinding {
                     stage: GpuShaderStage::Vertex,
                     slot: 0,
-                    kind: GpuBindingKind::Uniform,
-                    byte_len: 64,
+                    kind: GpuBindingKind::Uniform(64),
                 },
                 GpuShaderBinding {
                     stage: GpuShaderStage::Fragment,
                     slot: 1,
-                    kind: GpuBindingKind::Uniform,
-                    byte_len: environment::UNIFORM_BYTES,
+                    kind: GpuBindingKind::Uniform(environment::UNIFORM_BYTES),
                 },
                 GpuShaderBinding {
                     stage: GpuShaderStage::Fragment,
                     slot: 1,
                     kind: GpuBindingKind::SampledTexture,
-                    byte_len: 0,
                 },
             ],
             ..PipelineDesc::default()
@@ -413,10 +405,7 @@ impl Target {
     /// surface capability can drop after construction: the group retains its immutable target metadata.
     fn new(window: ComPtr<IPlatformWindowAbi>) -> Result<Self, NcStatus> {
         let clients: ComPtr<IRenderClientFactoryAbi> = window.query()?;
-        let surface = window.query::<IRenderSurfaceFactoryAbi>()?.create_surface(RenderSurfaceDesc {
-            kind: RenderSurfaceKind::Framebuffer,
-            size: Size::default(),
-        })?;
+        let surface = window.query::<IRenderSurfaceFactoryAbi>()?.create_surface(RenderSurfaceDesc::Framebuffer)?;
         let domain = clients.create_client(RenderClientLimits::default(), surface.as_com_ref(), RenderClientPermissions::default())?;
         Ok(Self {
             renderer: window.query()?,
@@ -576,19 +565,18 @@ pub fn run(model: &str) -> scene::Result<()> {
                 let batch = std::mem::take(&mut *events.borrow_mut());
                 for event in batch {
                     if let UiInput::Key(key) = &event
-                        && key.pressed
-                        && !key.repeat
+                        && matches!(key.action, KeyAction::Pressed { repeat: false })
                     {
                         match key.key {
                             KeyCode::Escape => break 'frames,
                             KeyCode::Space => paused = !paused,
-                            KeyCode::Character if key.value == u32::from('b') || key.value == u32::from('B') => {
+                            KeyCode::Character(scalar) if scalar == u32::from('b') || scalar == u32::from('B') => {
                                 lighting.background = match lighting.background {
                                     Background::Hidden => Background::Environment,
                                     Background::Environment => Background::Hidden,
                                 }
                             }
-                            KeyCode::Character if key.value == u32::from('r') || key.value == u32::from('R') => camera.reset(),
+                            KeyCode::Character(scalar) if scalar == u32::from('r') || scalar == u32::from('R') => camera.reset(),
                             _ => {}
                         }
                     }

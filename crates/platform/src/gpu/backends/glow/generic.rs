@@ -832,17 +832,15 @@ impl Executor {
                 info.color_write & 4 != 0,
                 info.color_write & 8 != 0,
             );
-            if info.blend.enabled {
-                gl.enable(glow::BLEND);
-                gl.blend_func_separate(
-                    factor(info.blend.src_color),
-                    factor(info.blend.dst_color),
-                    factor(info.blend.src_alpha),
-                    factor(info.blend.dst_alpha),
-                );
-                gl.blend_equation_separate(blend_op(info.blend.color_op), blend_op(info.blend.alpha_op));
-            } else {
-                gl.disable(glow::BLEND);
+            match info.blend {
+                GpuBlendState::Replace => gl.disable(glow::BLEND),
+                GpuBlendState::Blend { color, alpha } => {
+                    let (src_color, dst_color, color_op) = blend_equation(color);
+                    let (src_alpha, dst_alpha, alpha_op) = blend_equation(alpha);
+                    gl.enable(glow::BLEND);
+                    gl.blend_func_separate(src_color, dst_color, src_alpha, dst_alpha);
+                    gl.blend_equation_separate(color_op, alpha_op);
+                }
             }
             if info.cull == GpuCullMode::None {
                 gl.disable(glow::CULL_FACE);
@@ -975,14 +973,14 @@ fn factor(value: GpuBlendFactor) -> u32 {
         _ => glow::ONE_MINUS_DST_ALPHA,
     }
 }
-/// Maps an admitted unblended/min/max/add/subtract equation.
-fn blend_op(value: GpuBlendOp) -> u32 {
+/// Maps only the selected equation; min/max receive canonical unused native factors.
+fn blend_equation(value: GpuBlendEquation) -> (u32, u32, u32) {
     match value {
-        GpuBlendOp::Add => glow::FUNC_ADD,
-        GpuBlendOp::Subtract => glow::FUNC_SUBTRACT,
-        GpuBlendOp::ReverseSubtract => glow::FUNC_REVERSE_SUBTRACT,
-        GpuBlendOp::Min => glow::MIN,
-        _ => glow::MAX,
+        GpuBlendEquation::Add { src, dst } => (factor(src), factor(dst), glow::FUNC_ADD),
+        GpuBlendEquation::Subtract { src, dst } => (factor(src), factor(dst), glow::FUNC_SUBTRACT),
+        GpuBlendEquation::ReverseSubtract { src, dst } => (factor(src), factor(dst), glow::FUNC_REVERSE_SUBTRACT),
+        GpuBlendEquation::Min => (glow::ONE, glow::ONE, glow::MIN),
+        GpuBlendEquation::Max => (glow::ONE, glow::ONE, glow::MAX),
     }
 }
 /// Interprets portable encoded attributes; integer inputs never use float conversion.

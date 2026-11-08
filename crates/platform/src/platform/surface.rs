@@ -122,30 +122,31 @@ impl IRenderDriverBound for FramebufferSurface {
 }
 
 /// Publishes either concrete capability after all descriptor validation and registry reservation.
-/// Framebuffer views require zero descriptor size; image extents may suspend but must remain bounded.
+/// Only images carry extents; they may suspend but must remain bounded.
 /// The local canonical identity is registered before return and never inferred from public metadata.
 pub(super) fn create(device: &Rc<Device>, desc: RenderSurfaceDesc) -> Result<ComPtr<IRenderSurfaceAbi>, NcStatus> {
-    match desc.kind {
-        RenderSurfaceKind::Framebuffer if desc.size == Size::default() => {}
-        RenderSurfaceKind::Image => validate_size(desc.size)?,
-        _ => return Err(NC_E_INVALID_ARG),
-    }
+    let kind = match desc {
+        RenderSurfaceDesc::Framebuffer => RenderSurfaceKind::Framebuffer,
+        RenderSurfaceDesc::Image(size) => {
+            validate_size(size)?;
+            RenderSurfaceKind::Image
+        }
+    };
     let _access = device.access()?;
-    let target = device.logical.surface_target(desc.kind)?;
+    let target = device.logical.surface_target(kind)?;
     device.surfaces.borrow_mut().try_reserve(1).map_err(|_| neocogi_com::NC_E_OUT_OF_MEMORY)?;
     let record = Rc::new(SurfaceRecord {
         device: device.clone(),
         target,
         key: Cell::new(0),
     });
-    let surface: ComPtr<IRenderSurfaceAbi> = match desc.kind {
-        RenderSurfaceKind::Framebuffer => FramebufferSurface::from_value(FramebufferSurface { record: record.clone() }).query()?,
-        RenderSurfaceKind::Image => ImageSurface::from_value(ImageSurface {
+    let surface: ComPtr<IRenderSurfaceAbi> = match desc {
+        RenderSurfaceDesc::Framebuffer => FramebufferSurface::from_value(FramebufferSurface { record: record.clone() }).query()?,
+        RenderSurfaceDesc::Image(size) => ImageSurface::from_value(ImageSurface {
             record: record.clone(),
-            state: RefCell::new(Some(SurfaceState { size: desc.size, completed: None })),
+            state: RefCell::new(Some(SurfaceState { size, completed: None })),
         })
         .query()?,
-        _ => unreachable!("validated surface kind"),
     };
     let key = identity(&surface)?;
     record.key.set(key);

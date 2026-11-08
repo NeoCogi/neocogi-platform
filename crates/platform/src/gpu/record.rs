@@ -616,13 +616,13 @@ impl<B: crate::gpu::native::NativeResources> Recorder<B> {
         }
         for binding in &pipeline.bindings {
             match binding.kind {
-                GpuBindingKind::Uniform => {
+                GpuBindingKind::Uniform(byte_len) => {
                     let bound = self
                         .uniforms
                         .iter()
                         .find(|bound| bound.stage == binding.stage && bound.slot == binding.slot)
                         .ok_or(RENDER_E_STATE)?;
-                    if bound.len != binding.byte_len as usize {
+                    if bound.len != byte_len as usize {
                         return Err(NC_E_INVALID_ARG);
                     }
                     let buffer = bound.object.with(|buffer| {
@@ -660,7 +660,6 @@ impl<B: crate::gpu::native::NativeResources> Recorder<B> {
                         sampler,
                     });
                 }
-                _ => return Err(NC_E_INVALID_ARG),
             }
         }
         let state = self.stack.current();

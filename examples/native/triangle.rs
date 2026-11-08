@@ -33,10 +33,7 @@ pub fn render_frames(window: ComPtr<IPlatformWindowAbi>, frames: u32) -> Result<
     let clients: ComPtr<IRenderClientFactoryAbi> = window.query()?;
     // Select the existing window framebuffer. This creates no second frame or attachment; the
     // window renderer below still owns acquisition, the whole-frame clear and presentation.
-    let surface = window.query::<IRenderSurfaceFactoryAbi>()?.create_surface(RenderSurfaceDesc {
-        kind: RenderSurfaceKind::Framebuffer,
-        size: Size::default(),
-    })?;
+    let surface = window.query::<IRenderSurfaceFactoryAbi>()?.create_surface(RenderSurfaceDesc::Framebuffer)?;
     let domain = clients.create_client(RenderClientLimits::default(), surface.as_com_ref(), RenderClientPermissions::default())?;
     let resources = domain.resources()?;
     let host = window.graphics_host()?;

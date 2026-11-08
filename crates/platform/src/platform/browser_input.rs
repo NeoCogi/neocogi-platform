@@ -226,24 +226,22 @@ impl BrowserInputHost {
                     if keyboard.is_composing() || keyboard.key_code() == 229 || queue.borrow().composing {
                         return;
                     }
-                    if let Some((key, value)) = map_key(&keyboard.key()) {
+                    if let Some(key) = map_key(&keyboard.key()) {
                         let pressed = name == "keydown";
                         let transition = KeyStroke {
                             key,
-                            value,
-                            pressed,
-                            repeat: pressed && keyboard.repeat(),
+                            action: if pressed { KeyAction::Pressed { repeat: keyboard.repeat() } } else { KeyAction::Released },
                             modifiers: map_modifiers(keyboard),
                         };
                         queue.borrow_mut().push(UiInput::Key(transition));
                         let editable = event.target().is_some_and(|target| target == EventTarget::from(text.clone()));
-                        let printable = matches!(key, KeyCode::Character | KeyCode::Space);
+                        let printable = matches!(key, KeyCode::Character(_) | KeyCode::Space);
                         // Clipboard and history shortcuts belong to the retained editor. Suppress
                         // dummy-textarea defaults so asynchronous paste cannot also arrive as input.
                         let editor_command = editable
                             && transition.modifiers & (2 | 8) != 0
                             && transition.modifiers & 1 == 0
-                            && char::from_u32(value).is_some_and(|key| matches!(key.to_ascii_lowercase(), 'a' | 'c' | 'x' | 'v' | 'z' | 'y'));
+                            && matches!(key, KeyCode::Character(scalar) if char::from_u32(scalar).is_some_and(|key| matches!(key.to_ascii_lowercase(), 'a' | 'c' | 'x' | 'v' | 'z' | 'y')));
                         if editor_command || !(editable && printable) {
                             event.prevent_default();
                         }
@@ -358,36 +356,32 @@ fn js_error(error: wasm_bindgen::JsValue) -> String {
 pub(crate) mod tests;
 
 /// Maps logical commands without deriving committed text from key events.
-fn map_key(key: &str) -> Option<(KeyCode, u32)> {
+fn map_key(key: &str) -> Option<KeyCode> {
     match key {
-        "Backspace" => Some((KeyCode::Backspace, 0)),
-        "Delete" => Some((KeyCode::Delete, 0)),
-        "Enter" => Some((KeyCode::Enter, 0)),
-        "Escape" | "Esc" => Some((KeyCode::Escape, 0)),
-        " " | "Spacebar" => Some((KeyCode::Space, 0)),
-        "Tab" => Some((KeyCode::Tab, 0)),
-        "Insert" => Some((KeyCode::Insert, 0)),
-        "Home" => Some((KeyCode::Home, 0)),
-        "End" => Some((KeyCode::End, 0)),
-        "PageUp" => Some((KeyCode::PageUp, 0)),
-        "PageDown" => Some((KeyCode::PageDown, 0)),
-        "ArrowUp" => Some((KeyCode::ArrowUp, 0)),
-        "ArrowDown" => Some((KeyCode::ArrowDown, 0)),
-        "ArrowLeft" => Some((KeyCode::ArrowLeft, 0)),
-        "ArrowRight" => Some((KeyCode::ArrowRight, 0)),
-        "Alt" => Some((KeyCode::Alt, 0)),
-        "Control" => Some((KeyCode::Control, 0)),
-        "Shift" => Some((KeyCode::Shift, 0)),
-        "Meta" | "OS" => Some((KeyCode::Super, 0)),
-        _ if key.starts_with('F') && key.len() > 1 => key[1..]
-            .parse::<u8>()
-            .ok()
-            .filter(|number| (1..=24).contains(number))
-            .map(|number| (KeyCode::Function, u32::from(number))),
+        "Backspace" => Some(KeyCode::Backspace),
+        "Delete" => Some(KeyCode::Delete),
+        "Enter" => Some(KeyCode::Enter),
+        "Escape" | "Esc" => Some(KeyCode::Escape),
+        " " | "Spacebar" => Some(KeyCode::Space),
+        "Tab" => Some(KeyCode::Tab),
+        "Insert" => Some(KeyCode::Insert),
+        "Home" => Some(KeyCode::Home),
+        "End" => Some(KeyCode::End),
+        "PageUp" => Some(KeyCode::PageUp),
+        "PageDown" => Some(KeyCode::PageDown),
+        "ArrowUp" => Some(KeyCode::ArrowUp),
+        "ArrowDown" => Some(KeyCode::ArrowDown),
+        "ArrowLeft" => Some(KeyCode::ArrowLeft),
+        "ArrowRight" => Some(KeyCode::ArrowRight),
+        "Alt" => Some(KeyCode::Alt),
+        "Control" => Some(KeyCode::Control),
+        "Shift" => Some(KeyCode::Shift),
+        "Meta" | "OS" => Some(KeyCode::Super),
+        _ if key.starts_with('F') && key.len() > 1 => key[1..].parse::<u8>().ok().filter(|number| (1..=24).contains(number)).map(KeyCode::Function),
         _ => {
             let mut characters = key.chars();
             let character = characters.next()?;
-            characters.next().is_none().then_some((KeyCode::Character, u32::from(character)))
+            characters.next().is_none().then_some(KeyCode::Character(u32::from(character)))
         }
     }
 }

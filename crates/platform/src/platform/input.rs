@@ -70,22 +70,18 @@ impl InputState {
                 UiInput::Scroll(Point { x: delta[0], y: delta[1] })
             }
             Event::KeyDown { keycode: Some(code), keymod, repeat, .. } => {
-                let Some((key, value)) = key(code) else { return Transition::Ignore };
+                let Some(key) = key(code) else { return Transition::Ignore };
                 UiInput::Key(KeyStroke {
                     key,
-                    value,
-                    pressed: true,
-                    repeat,
+                    action: KeyAction::Pressed { repeat },
                     modifiers: modifiers(keymod),
                 })
             }
             Event::KeyUp { keycode: Some(code), keymod, .. } => {
-                let Some((key, value)) = key(code) else { return Transition::Ignore };
+                let Some(key) = key(code) else { return Transition::Ignore };
                 UiInput::Key(KeyStroke {
                     key,
-                    value,
-                    pressed: false,
-                    repeat: false,
+                    action: KeyAction::Released,
                     modifiers: modifiers(keymod),
                 })
             }
@@ -122,7 +118,7 @@ fn button(button: MouseButton) -> Option<u8> {
 }
 
 /// Preserves logical shortcut identity without deriving committed text from key presses.
-fn key(code: Keycode) -> Option<(KeyCode, u32)> {
+fn key(code: Keycode) -> Option<KeyCode> {
     let key = match code {
         Keycode::Backspace => KeyCode::Backspace,
         Keycode::Delete => KeyCode::Delete,
@@ -149,15 +145,13 @@ fn key(code: Keycode) -> Option<(KeyCode, u32)> {
             let raw = code.into_i32();
             for (first, last, offset) in [(Keycode::F1, Keycode::F12, 1), (Keycode::F13, Keycode::F24, 13)] {
                 if (first.into_i32()..=last.into_i32()).contains(&raw) {
-                    return Some((KeyCode::Function, (raw - first.into_i32() + offset) as u32));
+                    return Some(KeyCode::Function((raw - first.into_i32() + offset) as u8));
                 }
             }
-            return char::from_u32(raw as u32)
-                .filter(|c| !c.is_control())
-                .map(|c| (KeyCode::Character, u32::from(c)));
+            return char::from_u32(raw as u32).filter(|c| !c.is_control()).map(|c| KeyCode::Character(u32::from(c)));
         }
     };
-    Some((key, 0))
+    Some(key)
 }
 
 /// Copies the full modifier snapshot; left/right distinctions stay inside SDL.
@@ -249,12 +243,12 @@ mod tests {
     /// contracts; exercise their SDL translation without opening a display or constructing a GPU.
     #[test]
     fn logical_keys_buttons_and_scaled_capture_keep_their_complete_values() {
-        assert_eq!(key(Keycode::F1), Some((KeyCode::Function, 1)));
-        assert_eq!(key(Keycode::F12), Some((KeyCode::Function, 12)));
-        assert_eq!(key(Keycode::F13), Some((KeyCode::Function, 13)));
-        assert_eq!(key(Keycode::F24), Some((KeyCode::Function, 24)));
-        assert_eq!(key(Keycode::A), Some((KeyCode::Character, u32::from('a'))));
-        assert_eq!(key(Keycode::KpEnter), Some((KeyCode::Enter, 0)));
+        assert_eq!(key(Keycode::F1), Some(KeyCode::Function(1)));
+        assert_eq!(key(Keycode::F12), Some(KeyCode::Function(12)));
+        assert_eq!(key(Keycode::F13), Some(KeyCode::Function(13)));
+        assert_eq!(key(Keycode::F24), Some(KeyCode::Function(24)));
+        assert_eq!(key(Keycode::A), Some(KeyCode::Character(u32::from('a'))));
+        assert_eq!(key(Keycode::KpEnter), Some(KeyCode::Enter));
         assert_eq!(modifiers(Mod::RALTMOD | Mod::LCTRLMOD | Mod::RSHIFTMOD | Mod::LGUIMOD), 15);
         assert_eq!(button(MouseButton::Left), Some(1));
         assert_eq!(button(MouseButton::Right), Some(2));
@@ -305,8 +299,8 @@ mod tests {
         });
         let UiInput::Key(press) = translated[0].0 else { panic!("press expected") };
         let UiInput::Key(release) = translated[1].0 else { panic!("release expected") };
-        assert!(press.pressed && press.repeat && press.modifiers == 2);
-        assert!(!release.pressed && !release.repeat && release.modifiers == 0);
+        assert!(press.action == KeyAction::Pressed { repeat: true } && press.modifiers == 2);
+        assert!(release.action == KeyAction::Released && release.modifiers == 0);
         assert_eq!(translated[2], (UiInput::Text, "é☃".to_owned()));
         assert_eq!(translated[3], (UiInput::Cancel, String::new()));
     }

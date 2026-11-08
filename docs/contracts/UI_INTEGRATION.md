@@ -16,6 +16,16 @@ leaves the scope through the editor's normal focus traversal. Outer menus and
 modal eligibility still take priority. `WidgetProperties` uses the pre-release v1 baseline;
 hosts and UI plugins must be rebuilt together.
 
+Logical keyboard identity uses Rust enum payloads: `KeyCode::Character(u32)`
+carries a validated Unicode scalar and `KeyCode::Function(u8)` carries 1 through
+24; named commands carry no extra value. `KeyStroke` combines that identity with
+`KeyAction::Pressed { repeat }` or `KeyAction::Released` and an independent
+modifier snapshot (Alt=1, Ctrl=2, Shift=4, Super=8). A repeated release cannot be
+constructed. Unknown wire tags reject at the generated COM boundary; invalid
+scalar/function values and unknown modifier bits return `NC_E_INVALID_ARG`
+before input delivery. Key identity describes shortcuts; committed text still
+arrives separately through `UiInput::Text`, including IME and paste.
+
 The shared application host supplies `AppState::after_update` after all editor
 event callbacks return and before rendering. Preview compilation, resource
 installation, input delivery, and offscreen rendering belong at that boundary.

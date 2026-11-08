@@ -37,11 +37,11 @@ enum RenderSurfaceKind: u8 {
 
 #[version(1)]
 /// Surface construction on the factory's device; no native attachment is exposed.
-struct RenderSurfaceDesc {
-    /// Framebuffer view or independent image target.
-    kind: RenderSurfaceKind,
-    /// Image dimensions, including zero for suspension; framebuffer views require zero and follow the window.
-    size: Size,
+enum RenderSurfaceDesc: u8 {
+    /// View of the window's current framebuffer; dimensions follow the window.
+    Framebuffer,
+    /// Independent image dimensions; bounded nonnegative sizes allow zero for suspension.
+    Image(Size),
 }
 
 #[version(1)]
@@ -65,8 +65,8 @@ interface IRenderSurface: IRenderDriverBound {
 interface IRenderSurfaceFactory: IRenderDriverBound {
     /// Framebuffer views expose no independent renderer and never allocate, clear or present a replacement target.
     /// Image surfaces preserve completed images across subsequent rendering, resize and failed submissions.
-    /// Unknown wire-enum tags return NC_E_INVALID_TAG at the generated ABI boundary. Nonzero framebuffer
-    /// sizes and negative image extents return NC_E_INVALID_ARG; all extents validate before publication.
+    /// Unknown wire-enum tags return NC_E_INVALID_TAG at the generated ABI boundary.
+    /// Negative or over-budget image extents return NC_E_INVALID_ARG before publication.
     fn create_surface(&self, desc: RenderSurfaceDesc) -> Result<ComPtr<IRenderSurface>>;
 }
 

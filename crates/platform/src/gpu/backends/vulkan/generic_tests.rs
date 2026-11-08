@@ -423,8 +423,7 @@ fn pipeline_state(resources: &ComPtr<IRenderResourcesAbi>, state: GpuPipelineInf
             .map(|stage| GpuShaderBinding {
                 stage,
                 slot: 0,
-                kind: GpuBindingKind::Uniform,
-                byte_len: 32,
+                kind: GpuBindingKind::Uniform(32),
             })
             .to_vec(),
         ..Default::default()
@@ -592,8 +591,7 @@ fn generated_bounds_guards_execute_on_the_native_driver() {
         bindings: vec![GpuShaderBinding {
             stage: GpuShaderStage::Fragment,
             slot: 0,
-            kind: GpuBindingKind::Uniform,
-            byte_len: 48,
+            kind: GpuBindingKind::Uniform(48),
         }],
         ..Default::default()
     }
@@ -629,15 +627,15 @@ fn generated_bounds_guards_execute_on_the_native_driver() {
 #[test]
 #[ignore = "requires a native Vulkan graphics device, including a software device"]
 fn indexed_texture_versions_and_unscaled_min_max_blending_reach_native_pixels() {
-    for operation in [GpuBlendOp::Min, GpuBlendOp::Max] {
+    for operation in [GpuBlendEquation::Min, GpuBlendEquation::Max] {
         for imported in [false, true] {
             indexed_texture_case(operation, imported);
         }
     }
 }
 
-/// Both operations ignore factors, while exact image/uniform snapshots retain painter order.
-fn indexed_texture_case(operation: GpuBlendOp, imported: bool) {
+/// Factor-free min/max preserve exact image/uniform snapshots and painter order.
+fn indexed_texture_case(operation: GpuBlendEquation, imported: bool) {
     let core = core();
     let mut target = Target::new(core.clone(), 8, 8);
     let mut executor = Executor::new(core).unwrap();
@@ -687,15 +685,7 @@ fn indexed_texture_case(operation: GpuBlendOp, imported: bool) {
         .unwrap();
     let desc = PipelineDesc {
         state: GpuPipelineInfo {
-            blend: GpuBlendState {
-                enabled: true,
-                color_op: operation,
-                alpha_op: operation,
-                src_color: GpuBlendFactor::Zero,
-                dst_color: GpuBlendFactor::Zero,
-                src_alpha: GpuBlendFactor::Zero,
-                dst_alpha: GpuBlendFactor::Zero,
-            },
+            blend: GpuBlendState::Blend { color: operation, alpha: operation },
             ..Default::default()
         },
         vertex_buffers: vec![GpuVertexBufferLayout {
@@ -722,13 +712,11 @@ fn indexed_texture_case(operation: GpuBlendOp, imported: bool) {
                 stage: GpuShaderStage::Fragment,
                 slot: 0,
                 kind: GpuBindingKind::SampledTexture,
-                byte_len: 0,
             },
             GpuShaderBinding {
                 stage: GpuShaderStage::Fragment,
                 slot: 0,
-                kind: GpuBindingKind::Uniform,
-                byte_len: 16,
+                kind: GpuBindingKind::Uniform(16),
             },
         ],
     }
@@ -818,7 +806,7 @@ fn indexed_texture_case(operation: GpuBlendOp, imported: bool) {
     let prepared = executor.prepare(&snapshot, target.pass, target.signature).unwrap();
     drop((snapshot, owner, view, session, recording, vertices, indices, pipeline, image, sampler, vs, fs));
 
-    let clear = if operation == GpuBlendOp::Min { [1.; 4] } else { [0., 0., 0., 1.] };
+    let clear = if operation == GpuBlendEquation::Min { [1.; 4] } else { [0., 0., 0., 1.] };
     target.render_color(&mut executor, vec![prepared], Size { width: 8, height: 8 }, clear);
     let pixels = target.read(&target.pixels);
     let pixel = |x: usize, y: usize| &pixels[(y * 8 + x) * 4..(y * 8 + x) * 4 + 4];

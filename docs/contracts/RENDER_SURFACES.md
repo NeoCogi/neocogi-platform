@@ -17,14 +17,14 @@ They retain separate ownership, quotas, permissions and closure state; sharing a
 target does not share resources.
 
 The generated COM boundary rejects unknown enum tags with `NC_E_INVALID_TAG`.
-Known target kinds with invalid or over-budget image dimensions return
+Image descriptors with invalid or over-budget dimensions return
 `NC_E_INVALID_ARG` before publication. This is the shared descriptor-size policy;
 group quota admission and native allocation failures belong to their own operations.
 
-| Surface kind | Descriptor size | Submission | Depth |
+| Descriptor | Dimensions | Submission | Depth |
 | --- | --- | --- | --- |
-| `Framebuffer` | Zero; `size()` follows the window's physical pixel size | Submit recorded blocks in the window renderer's ordered frame | Uses the window's depth attachment |
-| `Image` | Bounded nonnegative physical pixel size | Query the surface for `IRenderer` and submit an independent image frame | Color only; depth permissions reject at group creation |
+| `RenderSurfaceDesc::Framebuffer` | No size payload; `size()` follows the window's physical pixel size | Submit recorded blocks in the window renderer's ordered frame | Uses the window's depth attachment |
+| `RenderSurfaceDesc::Image(Size)` | Bounded nonnegative physical pixel size | Query the surface for `IRenderer` and submit an independent image frame | Color only; depth permissions reject at group creation |
 
 A framebuffer view exposes no independent `IRenderer`. The window renderer owns
 frame acquisition, the initial whole-frame clear and presentation. View commands

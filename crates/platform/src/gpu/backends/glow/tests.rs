@@ -286,8 +286,7 @@ fn native_completion_owns_resource_and_command_charges() {
             bindings: vec![GpuShaderBinding {
                 stage: GpuShaderStage::Vertex,
                 slot: 0,
-                kind: GpuBindingKind::Uniform,
-                byte_len: 16,
+                kind: GpuBindingKind::Uniform(16),
             }],
             ..Default::default()
         }
@@ -396,8 +395,7 @@ fn dynamic_shader_indices_cannot_escape_uniform_or_private_storage() {
         bindings: vec![GpuShaderBinding {
             stage: GpuShaderStage::Fragment,
             slot: 0,
-            kind: GpuBindingKind::Uniform,
-            byte_len: 48,
+            kind: GpuBindingKind::Uniform(48),
         }],
         ..Default::default()
     }

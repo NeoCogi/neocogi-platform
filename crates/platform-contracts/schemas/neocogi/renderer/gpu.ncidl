@@ -180,25 +180,40 @@ enum GpuBlendFactor: u8 {
 }
 
 #[version(1)]
-/// Operation combining scaled source and destination.
-enum GpuBlendOp: u8 {
-    /// Add blend operation.
-    Add,
-    /// Subtract blend operation.
-    Subtract,
-    /// ReverseSubtract blend operation.
-    ReverseSubtract,
-    /// Min blend operation.
+/// One color or alpha equation; only scaled arithmetic carries factors.
+enum GpuBlendEquation: u8 {
+    /// Source times src plus destination times dst.
+    Add {
+        /// Source scaling factor.
+        src: GpuBlendFactor,
+        /// Destination scaling factor.
+        dst: GpuBlendFactor,
+    },
+    /// Source times src minus destination times dst.
+    Subtract {
+        /// Source scaling factor.
+        src: GpuBlendFactor,
+        /// Destination scaling factor.
+        dst: GpuBlendFactor,
+    },
+    /// Destination times dst minus source times src.
+    ReverseSubtract {
+        /// Source scaling factor.
+        src: GpuBlendFactor,
+        /// Destination scaling factor.
+        dst: GpuBlendFactor,
+    },
+    /// Component-wise minimum of unscaled source and destination.
     Min,
-    /// Max blend operation.
+    /// Component-wise maximum of unscaled source and destination.
     Max,
 }
 
 #[version(1)]
 /// Read-only shader inputs allowed by the graphics profile.
 enum GpuBindingKind: u8 {
-    /// A reflected uniform block.
-    Uniform,
+    /// A uniform block carrying its exact positive reflected byte length.
+    Uniform(u32),
     /// A two-dimensional sampled texture and sampler pair.
     SampledTexture,
 }
@@ -281,22 +296,17 @@ struct GpuSamplerDesc {
 }
 
 #[version(1)]
-/// Complete separate color and alpha blend equation.
-struct GpuBlendState {
-    /// Disable for exact source replacement.
-    enabled: bool,
-    /// Source color factor.
-    src_color: GpuBlendFactor,
-    /// Destination color factor.
-    dst_color: GpuBlendFactor,
-    /// Color equation.
-    color_op: GpuBlendOp,
-    /// Source alpha factor.
-    src_alpha: GpuBlendFactor,
-    /// Destination alpha factor.
-    dst_alpha: GpuBlendFactor,
-    /// Alpha equation.
-    alpha_op: GpuBlendOp,
+/// Source replacement or independent color and alpha blending.
+enum GpuBlendState: u8 {
+    /// Replace destination components directly with source components.
+    Replace,
+    /// Apply the selected equations independently to RGB and alpha.
+    Blend {
+        /// RGB equation.
+        color: GpuBlendEquation,
+        /// Alpha equation.
+        alpha: GpuBlendEquation,
+    },
 }
 
 #[version(1)]
@@ -353,10 +363,8 @@ struct GpuShaderBinding {
     stage: GpuShaderStage,
     /// Uniform slot below four or texture slot below four.
     slot: u32,
-    /// Uniform block or sampled texture/sampler pair.
+    /// Uniform block with its reflected size, or sampled texture/sampler pair.
     kind: GpuBindingKind,
-    /// Exact reflected uniform size; zero for sampled textures.
-    byte_len: u32,
 }
 
 #[version(1)]

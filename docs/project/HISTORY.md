@@ -1,3 +1,16 @@
+# Rust enum payloads in platform and renderer contracts
+
+Keyboard keys carry their character/function payload directly. Presses own their
+repeat flag; releases have none. Surface descriptors select a framebuffer view
+without a size or an image with its own dimensions. SDL, DOM input, native
+examples and surface acceptance use these Rust enums. Invalid payload values
+still reject before delivery/publication, while unknown raw tags reject at the
+generated boundary. Shader bindings carry byte lengths only for uniform blocks.
+Blend state carries equations only when enabled, and min/max equations carry no
+scaling factors. All three native adapters and WebGL consume the same typed
+descriptors. Alpha declarations retain version 1; clients and providers must
+rebuild together.
+
 # Typed platform audio
 
 The platform now exposes PCM playback, microphone capture and capability queries

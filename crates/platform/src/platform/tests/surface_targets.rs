@@ -27,10 +27,7 @@ fn color_permissions() -> RenderClientPermissions {
 
 /// Construct through the actual platform, preserving the production native device and public identities.
 fn window() -> crate::platform::testing::NativeWindow {
-    crate::platform::testing::window("explicit surface target",
-        SIZE,
-    )
-    .unwrap()
+    crate::platform::testing::window("explicit surface target", SIZE).unwrap()
 }
 
 #[cfg(feature = "glow")]
@@ -92,7 +89,6 @@ fn image_block(host: &ComPtr<IRenderHostAbi>, resources: &ComPtr<IRenderResource
             stage: GpuShaderStage::Fragment,
             slot: 0,
             kind: GpuBindingKind::SampledTexture,
-            byte_len: 0,
         }],
         ..PipelineDesc::default()
     }
@@ -129,12 +125,7 @@ fn framebuffer_views_and_image_targets_select_actual_surfaces_without_ui_roles()
     let surfaces: ComPtr<IRenderSurfaceFactoryAbi> = window.query().unwrap();
     let groups: ComPtr<IRenderClientFactoryAbi> = window.query().unwrap();
     let renderer: ComPtr<IRendererAbi> = window.query().unwrap();
-    let framebuffer = surfaces
-        .create_surface(RenderSurfaceDesc {
-            kind: RenderSurfaceKind::Framebuffer,
-            size: Size::default(),
-        })
-        .unwrap();
+    let framebuffer = surfaces.create_surface(RenderSurfaceDesc::Framebuffer).unwrap();
     assert_eq!(framebuffer.kind().unwrap(), RenderSurfaceKind::Framebuffer);
     assert_eq!(framebuffer.size().unwrap(), window.size().unwrap());
     assert!(
@@ -143,14 +134,6 @@ fn framebuffer_views_and_image_targets_select_actual_surfaces_without_ui_roles()
     );
     assert!(matches!(framebuffer.completed_image(), Err(neocogi_com::NC_E_NOT_FOUND)));
     assert_eq!(framebuffer.resize(SIZE), Err(NC_E_INVALID_ARG));
-    assert!(
-        surfaces
-            .create_surface(RenderSurfaceDesc {
-                kind: RenderSurfaceKind::Framebuffer,
-                size: SIZE
-            })
-            .is_err()
-    );
     let first = groups.create_client(Default::default(), framebuffer.as_com_ref(), color_permissions()).unwrap();
     let second = groups.create_client(Default::default(), framebuffer.as_com_ref(), color_permissions()).unwrap();
     let blocks = stream(vec![
@@ -187,12 +170,7 @@ fn framebuffer_views_and_image_targets_select_actual_surfaces_without_ui_roles()
     );
 
     let extent = Size { width: 32, height: 32 };
-    let image = surfaces
-        .create_surface(RenderSurfaceDesc {
-            kind: RenderSurfaceKind::Image,
-            size: extent,
-        })
-        .unwrap();
+    let image = surfaces.create_surface(RenderSurfaceDesc::Image(extent)).unwrap();
     assert_eq!(image.kind().unwrap(), RenderSurfaceKind::Image);
     assert!(matches!(image.completed_image(), Err(neocogi_com::NC_E_NOT_FOUND)));
     let image_renderer: ComPtr<IRendererAbi> = image.query().unwrap();
@@ -228,27 +206,14 @@ fn framebuffer_views_and_image_targets_select_actual_surfaces_without_ui_roles()
     // Descriptor rejection uses the shared InvalidArg mapping before any output allocation.
     // A failed resize must preserve both committed dimensions and the last immutable image.
     let oversized = Size { width: 8193, height: 2048 };
-    assert_eq!(
-        surfaces
-            .create_surface(RenderSurfaceDesc {
-                kind: RenderSurfaceKind::Image,
-                size: oversized
-            })
-            .err(),
-        Some(NC_E_INVALID_ARG)
-    );
+    assert_eq!(surfaces.create_surface(RenderSurfaceDesc::Image(oversized)).err(), Some(NC_E_INVALID_ARG));
     assert_eq!(image.resize(oversized), Err(NC_E_INVALID_ARG));
     assert_eq!(image.size().unwrap(), extent);
     assert_eq!(identity(&image.completed_image().unwrap()).unwrap(), identity(&old).unwrap());
 
     let old_identity = identity(&old).unwrap();
     // A group cannot substitute another image merely because its size and device match.
-    let other = surfaces
-        .create_surface(RenderSurfaceDesc {
-            kind: RenderSurfaceKind::Image,
-            size: extent,
-        })
-        .unwrap();
+    let other = surfaces.create_surface(RenderSurfaceDesc::Image(extent)).unwrap();
     let other_renderer: ComPtr<IRendererAbi> = other.query().unwrap();
     assert_eq!(
         other_renderer
@@ -380,10 +345,7 @@ fn group_creation_authenticates_surface_ownership_and_attachment_permissions() {
     let other_surface = foreign
         .query::<IRenderSurfaceFactoryAbi>()
         .unwrap()
-        .create_surface(RenderSurfaceDesc {
-            kind: RenderSurfaceKind::Framebuffer,
-            size: Size::default(),
-        })
+        .create_surface(RenderSurfaceDesc::Framebuffer)
         .unwrap();
     for invalid in [&forged, &other_surface] {
         assert!(matches!(
@@ -393,37 +355,13 @@ fn group_creation_authenticates_surface_ownership_and_attachment_permissions() {
     }
     assert_eq!(metadata_calls.get(), 0, "authentication must not invoke foreign surface metadata");
     for (invalid, expected) in [
-        (
-            RenderSurfaceDesc {
-                kind: RenderSurfaceKind::from_raw(255),
-                size: Size::default(),
-            },
-            neocogi_com::NC_E_INVALID_TAG,
-        ),
-        (
-            RenderSurfaceDesc {
-                kind: RenderSurfaceKind::Framebuffer,
-                size: SIZE,
-            },
-            NC_E_INVALID_ARG,
-        ),
-        (
-            RenderSurfaceDesc {
-                kind: RenderSurfaceKind::Image,
-                size: Size { width: -1, height: 1 },
-            },
-            NC_E_INVALID_ARG,
-        ),
+        (RenderSurfaceDesc::Image(Size { width: -1, height: 1 }), NC_E_INVALID_ARG),
+        (RenderSurfaceDesc::Image(Size { width: 1, height: -1 }), NC_E_INVALID_ARG),
     ] {
         let result = surfaces.create_surface(invalid);
         assert!(matches!(result, Err(actual) if actual == expected), "descriptor {invalid:?}: {result:?}");
     }
-    let image = surfaces
-        .create_surface(RenderSurfaceDesc {
-            kind: RenderSurfaceKind::Image,
-            size: SIZE,
-        })
-        .unwrap();
+    let image = surfaces.create_surface(RenderSurfaceDesc::Image(SIZE)).unwrap();
     for depth in [
         RenderClientPermissions { read_depth: true, ..color_permissions() },
         RenderClientPermissions { write_depth: true, ..color_permissions() },
@@ -472,12 +410,7 @@ fn image_submission_rechecks_group_closure_after_the_final_stream_callback() {
     let host = native.window.graphics_host().unwrap();
     let surfaces: ComPtr<IRenderSurfaceFactoryAbi> = host.query().unwrap();
     let groups: ComPtr<IRenderClientFactoryAbi> = host.query().unwrap();
-    let image = surfaces
-        .create_surface(RenderSurfaceDesc {
-            kind: RenderSurfaceKind::Image,
-            size: SIZE,
-        })
-        .unwrap();
+    let image = surfaces.create_surface(RenderSurfaceDesc::Image(SIZE)).unwrap();
     let renderer: ComPtr<IRendererAbi> = image.query().unwrap();
     let first = groups.create_client(Default::default(), image.as_com_ref(), color_permissions()).unwrap();
     let second = groups.create_client(Default::default(), image.as_com_ref(), color_permissions()).unwrap();

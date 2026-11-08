@@ -127,17 +127,9 @@ impl Default for RenderClientPermissions {
 }
 
 impl Default for GpuBlendState {
-    /// Opaque replacement, with fully specified dormant alpha/color factors.
+    /// Opaque replacement has no dormant color or alpha equation.
     fn default() -> Self {
-        Self {
-            enabled: false,
-            src_color: GpuBlendFactor::One,
-            dst_color: GpuBlendFactor::Zero,
-            color_op: GpuBlendOp::Add,
-            src_alpha: GpuBlendFactor::One,
-            dst_alpha: GpuBlendFactor::Zero,
-            alpha_op: GpuBlendOp::Add,
-        }
+        Self::Replace
     }
 }
 

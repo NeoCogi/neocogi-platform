@@ -789,7 +789,9 @@ impl Executor {
                 } else {
                     wgpu::ShaderStages::FRAGMENT
                 };
-                if binding.kind == GpuBindingKind::Uniform && uniform_group(binding.stage) == group as u32 {
+                if let GpuBindingKind::Uniform(byte_len) = binding.kind
+                    && uniform_group(binding.stage) == group as u32
+                {
                     entries.push(wgpu::BindGroupLayoutEntry {
                         binding: binding.slot,
                         visibility,
@@ -797,7 +799,7 @@ impl Executor {
                         ty: wgpu::BindingType::Buffer {
                             ty: wgpu::BufferBindingType::Uniform,
                             has_dynamic_offset: false,
-                            min_binding_size: NonZeroU64::new(u64::from(binding.byte_len)),
+                            min_binding_size: NonZeroU64::new(u64::from(byte_len)),
                         },
                     });
                 } else if binding.kind == GpuBindingKind::SampledTexture && texture_group(binding.stage) == group as u32 {
@@ -873,10 +875,13 @@ impl Executor {
             })
             .collect();
         let state = source.info();
-        let blend = state.blend.enabled.then(|| wgpu::BlendState {
-            color: component(state.blend.src_color, state.blend.dst_color, state.blend.color_op),
-            alpha: component(state.blend.src_alpha, state.blend.dst_alpha, state.blend.alpha_op),
-        });
+        let blend = match state.blend {
+            GpuBlendState::Replace => None,
+            GpuBlendState::Blend { color, alpha } => Some(wgpu::BlendState {
+                color: component(color),
+                alpha: component(alpha),
+            }),
+        };
         let raw = self.core.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("neocogi.gpu.pipeline"),
             layout: Some(&layout),
@@ -1188,20 +1193,14 @@ fn factor(value: GpuBlendFactor) -> wgpu::BlendFactor {
         _ => wgpu::BlendFactor::OneMinusDstAlpha,
     }
 }
-/// Converts independent color/alpha equations into complete native fixed state.
-fn component(src: GpuBlendFactor, dst: GpuBlendFactor, op: GpuBlendOp) -> wgpu::BlendComponent {
-    // Min/max use unscaled source/destination values. WebGPU requires One explicitly,
-    // whereas GL/Vulkan accept and ignore other factor fields for these operations.
-    let unscaled = matches!(op, GpuBlendOp::Min | GpuBlendOp::Max);
-    wgpu::BlendComponent {
-        src_factor: if unscaled { wgpu::BlendFactor::One } else { factor(src) },
-        dst_factor: if unscaled { wgpu::BlendFactor::One } else { factor(dst) },
-        operation: match op {
-            GpuBlendOp::Add => wgpu::BlendOperation::Add,
-            GpuBlendOp::Subtract => wgpu::BlendOperation::Subtract,
-            GpuBlendOp::ReverseSubtract => wgpu::BlendOperation::ReverseSubtract,
-            GpuBlendOp::Min => wgpu::BlendOperation::Min,
-            _ => wgpu::BlendOperation::Max,
-        },
-    }
+/// Converts the active equation; WebGPU requires One factors for unscaled min/max.
+fn component(value: GpuBlendEquation) -> wgpu::BlendComponent {
+    let (src_factor, dst_factor, operation) = match value {
+        GpuBlendEquation::Add { src, dst } => (factor(src), factor(dst), wgpu::BlendOperation::Add),
+        GpuBlendEquation::Subtract { src, dst } => (factor(src), factor(dst), wgpu::BlendOperation::Subtract),
+        GpuBlendEquation::ReverseSubtract { src, dst } => (factor(src), factor(dst), wgpu::BlendOperation::ReverseSubtract),
+        GpuBlendEquation::Min => (wgpu::BlendFactor::One, wgpu::BlendFactor::One, wgpu::BlendOperation::Min),
+        GpuBlendEquation::Max => (wgpu::BlendFactor::One, wgpu::BlendFactor::One, wgpu::BlendOperation::Max),
+    };
+    wgpu::BlendComponent { src_factor, dst_factor, operation }
 }

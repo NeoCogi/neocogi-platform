@@ -1,4 +1,4 @@
-//! Runs independently generated COM calls against the packaged shader implementation.
+//! Runs independently generated COM calls against packaged platform and renderer providers.
 use neocogi_com::{ComPtr, INcBytesComPtrExt, NcCopyFromBufferOffset, Runtime, NC_OK};
 use neocogi_platform::render::compiler::CompilerObject;
 
@@ -14,10 +14,72 @@ mod platform_client {
     include!(env!("IDL_NEOCOGI_PLATFORM"));
 }
 
+/// A separately generated caller reads nested enums and typed arrays from a canonical producer.
+fn typed_pipeline_contract() {
+    use neocogi_platform::render::{abi, source::PipelineDesc};
+    let source: ComPtr<client::IGpuPipelineSourceAbi> = PipelineDesc {
+        state: abi::GpuPipelineInfo {
+            blend: abi::GpuBlendState::Blend {
+                color: abi::GpuBlendEquation::Subtract {
+                    src: abi::GpuBlendFactor::SrcAlpha,
+                    dst: abi::GpuBlendFactor::OneMinusSrcAlpha,
+                },
+                alpha: abi::GpuBlendEquation::Min,
+            },
+            ..Default::default()
+        },
+        bindings: vec![
+            abi::GpuShaderBinding {
+                stage: abi::GpuShaderStage::Fragment,
+                slot: 0,
+                kind: abi::GpuBindingKind::Uniform(16),
+            },
+            abi::GpuShaderBinding {
+                stage: abi::GpuShaderStage::Fragment,
+                slot: 0,
+                kind: abi::GpuBindingKind::SampledTexture,
+            },
+        ],
+        ..Default::default()
+    }
+    .source()
+    .unwrap()
+    .query()
+    .unwrap();
+    assert_eq!(
+        source.info().unwrap().blend,
+        client::GpuBlendState::Blend {
+            color: client::GpuBlendEquation::Subtract {
+                src: client::GpuBlendFactor::SrcAlpha,
+                dst: client::GpuBlendFactor::OneMinusSrcAlpha
+            },
+            alpha: client::GpuBlendEquation::Min,
+        }
+    );
+    let mut bindings = neocogi_com::NcOutputBuffer::<client::GpuShaderBinding>::new();
+    source.bindings(bindings.output(0, 2)).unwrap();
+    assert_eq!(
+        bindings.as_slice(),
+        [
+            client::GpuShaderBinding {
+                stage: client::GpuShaderStage::Fragment,
+                slot: 0,
+                kind: client::GpuBindingKind::Uniform(16)
+            },
+            client::GpuShaderBinding {
+                stage: client::GpuShaderStage::Fragment,
+                slot: 0,
+                kind: client::GpuBindingKind::SampledTexture
+            },
+        ]
+    );
+}
+
 /// Retained artifact exports stay usable after their report and compiler are released.
 fn main() {
     // SAFETY: This executable owns the process-lived immutable host tables.
     let _runtime = unsafe { Runtime::__from_host_api(neocogi_com_host::initialize_process()) }.unwrap();
+    typed_pipeline_contract();
     let audio = neocogi_platform::audio::capabilities()
         .unwrap()
         .query::<platform_client::IAudioCapabilitiesAbi>()

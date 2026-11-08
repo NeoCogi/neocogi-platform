@@ -109,8 +109,7 @@ pub(crate) fn create<B: crate::gpu::native::NativeResources>(
             expected.push(GpuShaderBinding {
                 stage: shader.stage,
                 slot: uniform.slot,
-                kind: GpuBindingKind::Uniform,
-                byte_len: uniform.byte_len,
+                kind: GpuBindingKind::Uniform(uniform.byte_len),
             });
         }
         for texture in &shader.textures {
@@ -118,7 +117,6 @@ pub(crate) fn create<B: crate::gpu::native::NativeResources>(
                 stage: shader.stage,
                 slot: texture.slot,
                 kind: GpuBindingKind::SampledTexture,
-                byte_len: 0,
             });
         }
     }
@@ -126,13 +124,7 @@ pub(crate) fn create<B: crate::gpu::native::NativeResources>(
         return Err(NC_E_INVALID_ARG);
     }
     for (index, binding) in bindings.iter().enumerate() {
-        if bindings[..index]
-            .iter()
-            .any(|previous| previous.stage == binding.stage && previous.kind == binding.kind && previous.slot == binding.slot)
-            || !expected.iter().any(|expected| {
-                expected.stage == binding.stage && expected.slot == binding.slot && expected.kind == binding.kind && expected.byte_len == binding.byte_len
-            })
-        {
+        if bindings[..index].contains(binding) || !expected.contains(binding) {
             return Err(NC_E_INVALID_ARG);
         }
     }
@@ -186,31 +178,42 @@ fn validate_state(info: GpuPipelineInfo) -> Result<(), NcStatus> {
         )
         || !matches!(info.cull, GpuCullMode::None | GpuCullMode::Front | GpuCullMode::Back)
         || !matches!(info.front_face, GpuFrontFace::Ccw | GpuFrontFace::Cw)
-        || [info.blend.src_color, info.blend.dst_color, info.blend.src_alpha, info.blend.dst_alpha]
-            .iter()
-            .any(|factor| {
-                !matches!(
-                    *factor,
-                    GpuBlendFactor::Zero
-                        | GpuBlendFactor::One
-                        | GpuBlendFactor::SrcColor
-                        | GpuBlendFactor::OneMinusSrcColor
-                        | GpuBlendFactor::DstColor
-                        | GpuBlendFactor::OneMinusDstColor
-                        | GpuBlendFactor::SrcAlpha
-                        | GpuBlendFactor::OneMinusSrcAlpha
-                        | GpuBlendFactor::DstAlpha
-                        | GpuBlendFactor::OneMinusDstAlpha
-                )
-            })
-        || [info.blend.color_op, info.blend.alpha_op].iter().any(|op| {
-            !matches!(
-                *op,
-                GpuBlendOp::Add | GpuBlendOp::Subtract | GpuBlendOp::ReverseSubtract | GpuBlendOp::Min | GpuBlendOp::Max
-            )
-        })
     {
         return Err(NC_E_INVALID_ARG);
     }
+    match info.blend {
+        GpuBlendState::Replace => {}
+        GpuBlendState::Blend { color, alpha } => {
+            validate_equation(color)?;
+            validate_equation(alpha)?;
+        }
+    }
     Ok(())
+}
+
+/// Validate only factors that participate in scaled arithmetic; min/max have no factors.
+fn validate_equation(equation: GpuBlendEquation) -> Result<(), NcStatus> {
+    let (src, dst) = match equation {
+        GpuBlendEquation::Add { src, dst } | GpuBlendEquation::Subtract { src, dst } | GpuBlendEquation::ReverseSubtract { src, dst } => (src, dst),
+        GpuBlendEquation::Min | GpuBlendEquation::Max => return Ok(()),
+    };
+    if [src, dst].iter().all(|factor| {
+        matches!(
+            *factor,
+            GpuBlendFactor::Zero
+                | GpuBlendFactor::One
+                | GpuBlendFactor::SrcColor
+                | GpuBlendFactor::OneMinusSrcColor
+                | GpuBlendFactor::DstColor
+                | GpuBlendFactor::OneMinusDstColor
+                | GpuBlendFactor::SrcAlpha
+                | GpuBlendFactor::OneMinusSrcAlpha
+                | GpuBlendFactor::DstAlpha
+                | GpuBlendFactor::OneMinusDstAlpha
+        )
+    }) {
+        Ok(())
+    } else {
+        Err(NC_E_INVALID_ARG)
+    }
 }

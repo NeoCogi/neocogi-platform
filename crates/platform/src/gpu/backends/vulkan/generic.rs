@@ -1453,7 +1453,7 @@ impl Executor {
                 } else {
                     vk::ShaderStageFlags::FRAGMENT
                 };
-                if binding.kind == GpuBindingKind::Uniform && uniform_group(binding.stage) == group {
+                if matches!(binding.kind, GpuBindingKind::Uniform(_)) && uniform_group(binding.stage) == group {
                     bindings.push(
                         vk::DescriptorSetLayoutBinding::default()
                             .binding(binding.slot)
@@ -1569,16 +1569,22 @@ impl Executor {
             .depth_test_enable(signature.depth.is_some())
             .depth_write_enable(state.depth_write)
             .depth_compare_op(compare(state.depth_compare));
-        let blend = state.blend;
-        let color = [vk::PipelineColorBlendAttachmentState::default()
-            .blend_enable(blend.enabled)
-            .src_color_blend_factor(factor(blend.src_color))
-            .dst_color_blend_factor(factor(blend.dst_color))
-            .color_blend_op(blend_op(blend.color_op))
-            .src_alpha_blend_factor(factor(blend.src_alpha))
-            .dst_alpha_blend_factor(factor(blend.dst_alpha))
-            .alpha_blend_op(blend_op(blend.alpha_op))
-            .color_write_mask(vk::ColorComponentFlags::from_raw(u32::from(state.color_write)))];
+        let color = vk::PipelineColorBlendAttachmentState::default().color_write_mask(vk::ColorComponentFlags::from_raw(u32::from(state.color_write)));
+        let color = [match state.blend {
+            GpuBlendState::Replace => color.blend_enable(false),
+            GpuBlendState::Blend { color: rgb, alpha } => {
+                let (src_color, dst_color, color_op) = blend_equation(rgb);
+                let (src_alpha, dst_alpha, alpha_op) = blend_equation(alpha);
+                color
+                    .blend_enable(true)
+                    .src_color_blend_factor(src_color)
+                    .dst_color_blend_factor(dst_color)
+                    .color_blend_op(color_op)
+                    .src_alpha_blend_factor(src_alpha)
+                    .dst_alpha_blend_factor(dst_alpha)
+                    .alpha_blend_op(alpha_op)
+            }
+        }];
         let color = vk::PipelineColorBlendStateCreateInfo::default().attachments(&color);
         let dynamic = vk::PipelineDynamicStateCreateInfo::default().dynamic_states(&[vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR]);
         let descriptor = vk::GraphicsPipelineCreateInfo::default()
@@ -1818,14 +1824,14 @@ fn factor(value: GpuBlendFactor) -> vk::BlendFactor {
         _ => vk::BlendFactor::ONE_MINUS_DST_ALPHA,
     }
 }
-/// Min/max are unscaled operations; Vulkan ignores their factor fields.
-fn blend_op(value: GpuBlendOp) -> vk::BlendOp {
+/// Min/max carry no portable factors; supply canonical unused Vulkan factors privately.
+fn blend_equation(value: GpuBlendEquation) -> (vk::BlendFactor, vk::BlendFactor, vk::BlendOp) {
     match value {
-        GpuBlendOp::Add => vk::BlendOp::ADD,
-        GpuBlendOp::Subtract => vk::BlendOp::SUBTRACT,
-        GpuBlendOp::ReverseSubtract => vk::BlendOp::REVERSE_SUBTRACT,
-        GpuBlendOp::Min => vk::BlendOp::MIN,
-        _ => vk::BlendOp::MAX,
+        GpuBlendEquation::Add { src, dst } => (factor(src), factor(dst), vk::BlendOp::ADD),
+        GpuBlendEquation::Subtract { src, dst } => (factor(src), factor(dst), vk::BlendOp::SUBTRACT),
+        GpuBlendEquation::ReverseSubtract { src, dst } => (factor(src), factor(dst), vk::BlendOp::REVERSE_SUBTRACT),
+        GpuBlendEquation::Min => (vk::BlendFactor::ONE, vk::BlendFactor::ONE, vk::BlendOp::MIN),
+        GpuBlendEquation::Max => (vk::BlendFactor::ONE, vk::BlendFactor::ONE, vk::BlendOp::MAX),
     }
 }
 

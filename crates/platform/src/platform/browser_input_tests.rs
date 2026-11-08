@@ -63,16 +63,11 @@ fn browser_surface_targets() {
         import_images: true,
         ..RenderClientPermissions::none()
     };
-    let framebuffer = surfaces
-        .create_surface(RenderSurfaceDesc {
-            kind: RenderSurfaceKind::Framebuffer,
-            size: Size::default(),
-        })
-        .unwrap();
+    let framebuffer = surfaces.create_surface(RenderSurfaceDesc::Framebuffer).unwrap();
     assert_eq!(framebuffer.size().unwrap(), drawable);
     assert!(framebuffer.query::<IRendererAbi>().is_err());
     let window_group = groups.create_client(Default::default(), framebuffer.as_com_ref(), permissions).unwrap();
-    let image = surfaces.create_surface(RenderSurfaceDesc { kind: RenderSurfaceKind::Image, size }).unwrap();
+    let image = surfaces.create_surface(RenderSurfaceDesc::Image(size)).unwrap();
     let image_group = groups.create_client(Default::default(), image.as_com_ref(), permissions).unwrap();
     let image_renderer: ComPtr<IRendererAbi> = image.query().unwrap();
     let image_stream = surface_clear(&host, &image_group);
@@ -84,7 +79,7 @@ fn browser_surface_targets() {
     };
     image_renderer.render(info, image_stream.as_com_ref()).map_err(|error| error.status).unwrap();
     let old = image.completed_image().unwrap();
-    let other = surfaces.create_surface(RenderSurfaceDesc { kind: RenderSurfaceKind::Image, size }).unwrap();
+    let other = surfaces.create_surface(RenderSurfaceDesc::Image(size)).unwrap();
     assert_eq!(
         other
             .query::<IRendererAbi>()
@@ -358,6 +353,17 @@ extern "C" {
 /// Runs WebGL target/ownership checks and DOM composition, paste, keyboard, wheel, pointer and teardown assertions.
 pub fn run_platform_input_tests() {
     std::panic::set_hook(Box::new(|info| record_panic(&info.to_string())));
+    for (native, expected) in [
+        ("F1", Some(KeyCode::Function(1))),
+        ("F24", Some(KeyCode::Function(24))),
+        ("F25", None),
+        ("F0", None),
+        ("🦀", Some(KeyCode::Character(u32::from('🦀')))),
+        ("ArrowLeft", Some(KeyCode::ArrowLeft)),
+        ("Unidentified", None),
+    ] {
+        assert_eq!(map_key(native), expected);
+    }
     canonical_browser_derivatives();
     browser_surface_targets();
     let document = web_sys::window().unwrap().document().unwrap();
@@ -377,9 +383,7 @@ pub fn run_platform_input_tests() {
     exercise(host.text.unchecked_ref(), "paste");
     assert!(matches!(host.drain().as_slice(), [PendingInput { event: UiInput::Text, text }] if text == "é\n pasted"));
     exercise(host.text.unchecked_ref(), "key");
-    assert!(
-        matches!(host.drain().as_slice(), [PendingInput { event: UiInput::Key(event), .. }] if event.key == KeyCode::Character && event.value == u32::from('F'))
-    );
+    assert!(matches!(host.drain().as_slice(), [PendingInput { event: UiInput::Key(event), .. }] if event.key == KeyCode::Character(u32::from('F'))));
     exercise(canvas.unchecked_ref(), "wheel");
     assert!(matches!(
         host.drain().as_slice(),

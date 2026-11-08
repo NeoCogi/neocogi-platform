@@ -57,8 +57,7 @@ fn pipeline(resources: &ComPtr<IRenderResourcesAbi>, mask: u8) -> ComBox<IGpuPip
             .map(|stage| GpuShaderBinding {
                 stage,
                 slot: 0,
-                kind: GpuBindingKind::Uniform,
-                byte_len: 32,
+                kind: GpuBindingKind::Uniform(32),
             })
             .to_vec(),
         ..Default::default()
@@ -233,15 +232,15 @@ fn regional_depth_clears_ordered_views_and_completion_keep_their_contracts() {
 #[test]
 #[ignore = "requires a native WGPU adapter, including a software adapter"]
 fn indexed_textures_and_uniform_versions_execute_without_public_owners() {
-    for operation in [GpuBlendOp::Min, GpuBlendOp::Max] {
+    for operation in [GpuBlendEquation::Min, GpuBlendEquation::Max] {
         for imported in [false, true] {
             indexed_texture_case(operation, imported);
         }
     }
 }
 
-/// Both unscaled min/max blend operations ignore factors, including factors WebGPU forbids verbatim.
-fn indexed_texture_case(operation: GpuBlendOp, imported: bool) {
+/// Factor-free min/max become valid WebGPU state while retaining exact resource snapshots.
+fn indexed_texture_case(operation: GpuBlendEquation, imported: bool) {
     let (native, queue) = device();
     let outer = native.push_error_scope(wgpu::ErrorFilter::Validation);
     let mut executor = crate::gpu::backends::wgpu::generic::Executor::new(Core::new(native.clone(), queue.clone()));
@@ -291,15 +290,7 @@ fn indexed_texture_case(operation: GpuBlendOp, imported: bool) {
         .unwrap();
     let desc = PipelineDesc {
         state: GpuPipelineInfo {
-            blend: GpuBlendState {
-                enabled: true,
-                color_op: operation,
-                alpha_op: operation,
-                src_color: GpuBlendFactor::Zero,
-                dst_color: GpuBlendFactor::Zero,
-                src_alpha: GpuBlendFactor::Zero,
-                dst_alpha: GpuBlendFactor::Zero,
-            },
+            blend: GpuBlendState::Blend { color: operation, alpha: operation },
             ..Default::default()
         },
         vertex_buffers: vec![GpuVertexBufferLayout {
@@ -326,13 +317,11 @@ fn indexed_texture_case(operation: GpuBlendOp, imported: bool) {
                 stage: GpuShaderStage::Fragment,
                 slot: 0,
                 kind: GpuBindingKind::SampledTexture,
-                byte_len: 0,
             },
             GpuShaderBinding {
                 stage: GpuShaderStage::Fragment,
                 slot: 0,
-                kind: GpuBindingKind::Uniform,
-                byte_len: 16,
+                kind: GpuBindingKind::Uniform(16),
             },
         ],
     }
@@ -446,7 +435,7 @@ fn indexed_texture_case(operation: GpuBlendOp, imported: bool) {
                 depth_slice: None,
                 resolve_target: None,
                 ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(if operation == GpuBlendOp::Min {
+                    load: wgpu::LoadOp::Clear(if operation == GpuBlendEquation::Min {
                         wgpu::Color::WHITE
                     } else {
                         wgpu::Color::BLACK
@@ -629,13 +618,11 @@ fn partial_preparation_failure_keeps_resource_versions_charged_through_upload_co
                     stage: GpuShaderStage::Fragment,
                     slot: 0,
                     kind: GpuBindingKind::SampledTexture,
-                    byte_len: 0,
                 },
                 GpuShaderBinding {
                     stage: GpuShaderStage::Fragment,
                     slot: 0,
-                    kind: GpuBindingKind::Uniform,
-                    byte_len: 16,
+                    kind: GpuBindingKind::Uniform(16),
                 },
             ],
         }

@@ -931,3 +931,93 @@ fn version_one_keeps_structural_query_admission() {
     assert_eq!(factory.query::<StaleShape>().unwrap_err(), neocogi_com::NC_E_ABI_VERSION);
     assert!(factory.query::<IRenderResourcesAbi>().is_ok());
 }
+
+/// Same-slot textures and uniforms are distinct classes; only uniforms carry exact reflected sizes.
+#[test]
+fn typed_binding_payloads_match_reflection_and_fail_without_leaking_quota() {
+    use crate::gpu::source::{Bytes as Upload, PipelineDesc};
+    let device = GpuDevice::new(crate::gpu::testing::Core::with_target(ShaderTarget::Wgsl)).unwrap();
+    let (_controller, factory) = client(&device, Default::default());
+    let code = Upload::source(
+        br#"
+        struct Params { color: vec4<f32> }
+        @group(3) @binding(0) var<uniform> params: Params;
+        @group(2) @binding(0) var image: texture_2d<f32>;
+        @group(2) @binding(1) var image_sampler: sampler;
+        @vertex fn vs() -> @builtin(position) vec4<f32> { return vec4(0.,0.,0.,1.); }
+        @fragment fn fs() -> @location(0) vec4<f32> {
+            return params.color * textureSample(image, image_sampler, vec2(0.5));
+        }
+    "#
+        .to_vec(),
+    );
+    let vertex = factory
+        .create_shader(GpuShaderStage::Vertex, code.as_com_ref(), NcCopyFromBufferOffset::new(0, b"vs"))
+        .unwrap();
+    let fragment = factory
+        .create_shader(GpuShaderStage::Fragment, code.as_com_ref(), NcCopyFromBufferOffset::new(0, b"fs"))
+        .unwrap();
+    let uniform = GpuShaderBinding {
+        stage: GpuShaderStage::Fragment,
+        slot: 0,
+        kind: GpuBindingKind::Uniform(16),
+    };
+    let texture = GpuShaderBinding {
+        kind: GpuBindingKind::SampledTexture,
+        ..uniform
+    };
+    let baseline = device.live_bytes(factory.as_com_ref()).unwrap();
+    let description = PipelineDesc {
+        bindings: vec![uniform, texture],
+        ..Default::default()
+    }
+    .source()
+    .unwrap();
+    let pipeline = factory
+        .create_pipeline(description.as_com_ref(), vertex.as_com_ref(), fragment.as_com_ref())
+        .unwrap();
+    let snapshot = device.pipeline_snapshot(factory.as_com_ref(), pipeline.as_com_ref()).unwrap();
+    assert_eq!(snapshot.bindings, [uniform, texture]);
+    drop((snapshot, pipeline));
+    assert_eq!(device.live_bytes(factory.as_com_ref()).unwrap(), baseline);
+    for bindings in [
+        vec![],
+        vec![uniform],
+        vec![texture],
+        vec![uniform, uniform],
+        vec![texture, texture],
+        vec![
+            GpuShaderBinding {
+                kind: GpuBindingKind::Uniform(0),
+                ..uniform
+            },
+            texture,
+        ],
+        vec![
+            GpuShaderBinding {
+                kind: GpuBindingKind::Uniform(32),
+                ..uniform
+            },
+            texture,
+        ],
+        vec![GpuShaderBinding { stage: GpuShaderStage::Vertex, ..uniform }, texture],
+        vec![GpuShaderBinding { slot: 4, ..uniform }, texture],
+        vec![uniform, texture, texture],
+    ] {
+        let description = PipelineDesc { bindings, ..Default::default() }.source().unwrap();
+        assert_eq!(
+            factory
+                .create_pipeline(description.as_com_ref(), vertex.as_com_ref(), fragment.as_com_ref())
+                .err(),
+            Some(NC_E_INVALID_ARG)
+        );
+        assert_eq!(device.live_bytes(factory.as_com_ref()).unwrap(), baseline);
+    }
+    // A rejected descriptor leaves the operation gate usable for a subsequent complete pipeline.
+    drop(
+        factory
+            .create_pipeline(description.as_com_ref(), vertex.as_com_ref(), fragment.as_com_ref())
+            .unwrap(),
+    );
+    assert_eq!(device.live_bytes(factory.as_com_ref()).unwrap(), baseline);
+}

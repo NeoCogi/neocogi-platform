@@ -60,7 +60,6 @@ fn block_fragment<B: neocogi_platform::gpu::native::NativeResources>(
             stage: GpuShaderStage::Fragment,
             slot: 0,
             kind: GpuBindingKind::SampledTexture,
-            byte_len: 0,
         }],
         ..Default::default()
     }

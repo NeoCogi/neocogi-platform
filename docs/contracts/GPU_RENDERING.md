@@ -211,15 +211,25 @@ allocation. Exhausted output quota returns `NC_E_OUT_OF_RANGE`; failed bounded
 output allocation returns `NC_E_OUT_OF_MEMORY`. These limits cover retained
 artifacts and generated text, rather than all compiler scratch memory or runtime.
 
-Min/max color and alpha blending compare unscaled source/destination values;
-their factor fields have no effect. Native adapters normalize ignored factors
-where their API requires a canonical value (WebGPU requires both to be One).
+`GpuBlendState::Replace` carries no blend parameters. `Blend { color, alpha }`
+selects independent `GpuBlendEquation` values. `Add`, `Subtract` and
+`ReverseSubtract` carry their `src` and `dst` factors; `Min` and `Max` carry
+none and compare unscaled source/destination values. Native adapters supply
+canonical private factors where required (WebGPU requires both to be One).
+Unknown wire tags and factor values return `NC_E_INVALID_TAG` at the generated
+COM boundary before native mapping or pipeline publication.
 
 Binding groups are 0 for vertex sampled pairs, 1 for vertex uniforms, 2 for
 fragment sampled pairs and 3 for fragment uniforms. There are four slots per
 stage/class. A sampled slot uses texture binding `2*slot` and sampler binding
 `2*slot+1`. Uniform binding equals slot. Only GL reflection supplies generated native block and sampler names; non-GL
 items expose their portable slot/layout metadata without native names.
+
+`GpuShaderBinding` combines stage and slot with `GpuBindingKind::Uniform(u32)`
+or `SampledTexture`. Only uniform bindings carry a byte length, which must match
+the shader's positive reflected block size exactly. Texture bindings have no
+dummy size. Pipeline admission compares the complete typed binding against
+reflection and rejects missing, duplicate or mismatched bindings before publication.
 
 Uniform bytes use explicit column-major layouts whose member offsets, matrix
 column strides and array strides agree with std140. Differing layouts reject.

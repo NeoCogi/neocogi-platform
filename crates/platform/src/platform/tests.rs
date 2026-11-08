@@ -142,10 +142,7 @@ fn framebuffer_group(
     let surface = factory
         .query::<IRenderSurfaceFactoryAbi>()
         .unwrap()
-        .create_surface(RenderSurfaceDesc {
-            kind: RenderSurfaceKind::Framebuffer,
-            size: Size::default(),
-        })
+        .create_surface(RenderSurfaceDesc::Framebuffer)
         .unwrap();
     factory.create_client(limits, surface.as_com_ref(), permissions).unwrap()
 }
