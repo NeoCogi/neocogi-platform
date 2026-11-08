@@ -135,6 +135,9 @@ fn command_line_is_checked_before_window_creation() {
         vec!["--unknown", "value"],
         vec!["--exposure", "0"],
         vec!["--exposure", "inf"],
+        vec!["--backend"],
+        vec!["--backend", "--frames", "3"],
+        vec!["--backend", "vulkan", "--backend", "glow"],
     ] {
         assert!(parse(&args).is_err());
     }
@@ -146,6 +149,9 @@ fn command_line_is_checked_before_window_creation() {
     assert_eq!(options.exposure, 0.75);
     assert_eq!(options.environment, PathBuf::from("custom.hdr"));
     assert!(options.background == Background::Hidden);
+    let options = parse(&["--backend", "vulkan", "--frames", "3"]).unwrap().unwrap();
+    assert_eq!(options.backend.as_deref(), Some("vulkan"));
+    assert_eq!(options.frames, Some(3));
 }
 
 /// Uses real uploaded meshes, palette uniforms, textures and native depth-tested indexed draws.

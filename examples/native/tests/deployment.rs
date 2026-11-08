@@ -14,6 +14,8 @@ struct Deployment {
     root: PathBuf,
     /// Runtime backend selected for this isolated fixture.
     backend: neocogi_example_plugins::Backend,
+    /// Original Cargo deployment used only for copying fixtures, never passed to child code.
+    profile: PathBuf,
 }
 impl Deployment {
     /// Copies Cargo-built final artifacts and all real example executables.
@@ -61,7 +63,12 @@ impl Deployment {
         }
         let root = directory.path().join("relocated");
         fs::rename(before, &root).unwrap();
-        Self { _directory: directory, root, backend }
+        Self {
+            _directory: directory,
+            root,
+            backend,
+            profile,
+        }
     }
     /// Launches directly with a neutral CWD and no Cargo-supplied loader search path.
     fn run(&self, binary: &str, args: &[&str], native: bool) -> Output {
@@ -77,6 +84,57 @@ impl Deployment {
         }
         command.output().unwrap()
     }
+}
+
+/// One unchanged executable loads distinct backends using runtime arguments after relocation.
+#[test]
+#[ignore = "requires two separately built platform libraries; no graphics device needed"]
+fn one_dynamic_executable_selects_multiple_backends_and_rejects_mislabeled_libraries() {
+    use neocogi_example_plugins::{Backend, library_filename};
+    let app = Deployment::new(false);
+    let available: Vec<_> = Backend::ALL
+        .into_iter()
+        .filter(|backend| app.profile.join("lib").join(library_filename(*backend)).is_file())
+        .collect();
+    assert!(available.len() >= 2, "build two platform variants before runtime selection acceptance");
+    for backend in &available {
+        let filename = library_filename(*backend);
+        fs::copy(app.profile.join("lib").join(filename), app.root.join("lib").join(filename)).unwrap();
+    }
+    let executable = app.root.join(format!("deployment_probe{}", std::env::consts::EXE_SUFFIX));
+    let original = fs::read(&executable).unwrap();
+    let ambiguous = app.run("deployment_probe", &[], false);
+    assert_eq!(ambiguous.status.code(), Some(24));
+    assert!(String::from_utf8_lossy(&ambiguous.stderr).contains("Multiple platform libraries"));
+    for binary in ["gltf_brainstem", "gltf_damaged_helmet"] {
+        let result = app.run(binary, &["--frames", "1"], false);
+        assert_eq!(result.status.code(), Some(1));
+        let message = String::from_utf8_lossy(&result.stderr);
+        assert!(message.contains("--backend"), "{message}");
+        assert!(!String::from_utf8_lossy(&result.stdout).contains("Preparing HDR"));
+    }
+    for backend in &available {
+        let selected = app.run("deployment_probe", &["--backend", backend.name()], false);
+        assert!(selected.status.success(), "{}", String::from_utf8_lossy(&selected.stderr));
+        assert!(String::from_utf8_lossy(&selected.stdout).contains(backend.plugin_name()));
+        assert_eq!(fs::read(&executable).unwrap(), original, "runtime choices cannot alter the executable");
+    }
+    let unknown = app.run("deployment_probe", &["--backend", "metal"], false);
+    assert_eq!(unknown.status.code(), Some(24));
+    assert!(String::from_utf8_lossy(&unknown.stderr).contains("Unknown backend"));
+    // A valid library's descriptor must still belong to the requested backend.
+    // Fresh child processes keep process-lived catalog registration independent.
+    let wrong = available[0];
+    let requested = available[1];
+    let path = app.root.join("lib").join(library_filename(requested));
+    let held = app.root.join("held-library");
+    fs::rename(&path, &held).unwrap();
+    fs::copy(app.root.join("lib").join(library_filename(wrong)), &path).unwrap();
+    let mislabeled = app.run("deployment_probe", &["--backend", requested.name()], false);
+    assert_eq!(mislabeled.status.code(), Some(24));
+    assert!(String::from_utf8_lossy(&mislabeled.stderr).contains("does not identify the requested"));
+    fs::remove_file(path).unwrap();
+    fs::rename(held, app.root.join("lib").join(library_filename(requested))).unwrap();
 }
 
 /// A single real platform library must activate with no compiler registration or extra library.

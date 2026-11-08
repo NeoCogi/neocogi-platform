@@ -66,6 +66,7 @@ jobs:
       - name: Dynamic example graphs and relocated shared objects
         run: |
           cargo build --locked -p neocogi-platform-dylib --no-default-features --features ${{ matrix.backend }} --examples
+          cargo build --locked -p neocogi-platform-dylib --no-default-features --features ${{ matrix.backend == 'glow' && 'vulkan' || 'glow' }} --examples
           NEOCOGI_TEST_BACKEND=${{ matrix.backend }} xvfb-run -a cargo test --locked -p neocogi-platform-examples --no-default-features --features dynamic --test graphs --test deployment --test triangle -- --include-ignored --test-threads=1
       - name: Backend warnings
         run: |

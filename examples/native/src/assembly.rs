@@ -90,4 +90,14 @@ mod tests {
             assert!(LaunchArguments::parse(args.into_iter().map(str::to_owned)).is_err());
         }
     }
+
+    /// A runtime request cannot change the implementation linked by a static build.
+    #[test]
+    #[cfg(feature = "static")]
+    fn static_assembly_rejects_other_backends_before_host_or_native_initialization() {
+        let other = if cfg!(feature = "glow") { "vulkan" } else { "glow" };
+        let error = acquire_platform(Some(other)).unwrap_err();
+        assert_eq!(error.status, neocogi_com::NC_E_INVALID_ARG);
+        assert!(error.message.contains("static application"));
+    }
 }

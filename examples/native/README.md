@@ -116,6 +116,9 @@ Opt-in deployment acceptance renders all three real examples after relocation.
 Static GL pixel acceptance retains animation, arcball, material/HDR and skybox
 checks. Dependency regressions use the selected Cargo tree and verify that dynamic
 applications enable no SDL, graphics-loader or compiler implementation dependency.
+The ignored multi-library acceptance test needs two platform variants built in
+the same profile. It loads each using one unchanged executable, rejects ambiguity
+before model/HDR work, and rejects a valid library with a mismatched descriptor.
 The triangle regression renders a real framebuffer whose extent differs from its
 initial request, checks recorded bounds and successful submissions, counts size
 queries, and tests a suspended iteration. It does not require a particular monitor's
