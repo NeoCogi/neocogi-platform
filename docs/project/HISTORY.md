@@ -1,3 +1,13 @@
+# Private native uniform extents
+
+GL/WebGL now preserve the distinction between exact logical WGSL uniform bytes
+and std140's private final block rounding. Persistent uniform buffers initialize
+their bounded native tail once, refresh logical bytes in place and bind the
+required native extent. Public reflection, descriptors, range checks, CPU reads
+and quota semantics remain exact. Shared native/browser acceptance exercises
+small scalar blocks, all creation policies and offset-at-capacity ranges through
+the actual compiler and generated COM recording path.
+
 # Rust enum payloads in platform and renderer contracts
 
 Keyboard keys carry their character/function payload directly. Presses own their

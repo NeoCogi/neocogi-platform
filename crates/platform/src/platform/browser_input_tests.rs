@@ -188,6 +188,28 @@ fn canonical_browser_derivatives() {
         )
         .unwrap();
     let resources = domain.resources().unwrap();
+    // Strict WebGL validates the complete native std140 block, unlike lenient native drivers.
+    // Exercise the real compiler, COM buffer/pipeline/recording and actual renderer path.
+    for usage in [GpuBufferUsage::Static, GpuBufferUsage::Dynamic, GpuBufferUsage::Streamed] {
+        for members in 1..=8 {
+            for offset in [0, 256] {
+                let fixture = crate::gpu::testing::uniforms::fixture(&gpu, &resources, members, offset, usage);
+                let block = gpu.block_snapshot(fixture.block.as_com_ref()).unwrap();
+                let prepared = renderer.prepare_block(&block, false).unwrap();
+                let mut frame = renderer.frame(FrameInfo::try_new(Dimensioni::new(8, 8), color(0, 0, 0, 255)).unwrap()).unwrap();
+                frame.execute_block(&prepared);
+                let mut pixel = [0; 4];
+                // SAFETY: the current frame owns this complete 8x8 target and initialized RGBA destination.
+                unsafe {
+                    gl.bind_framebuffer(glow::READ_FRAMEBUFFER, None);
+                    gl.read_pixels(4, 4, 1, 1, glow::RGBA, glow::UNSIGNED_BYTE, glow::PixelPackData::Slice(Some(&mut pixel)));
+                    assert_eq!(gl.get_error(), glow::NO_ERROR);
+                }
+                assert_eq!(pixel, [255, 0, 0, 255], "members={members}, offset={offset}, usage={usage:?}");
+                frame.finish().unwrap();
+            }
+        }
+    }
     for case in derivatives::cases() {
         let owner = derivatives::block(&gpu, &resources, &case.source);
         let snapshot = gpu.block_snapshot(owner.as_com_ref()).unwrap();

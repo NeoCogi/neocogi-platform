@@ -21,6 +21,15 @@ type Draw = crate::gpu::command::Draw<Backend>;
 type Block = crate::gpu::record::Block<Backend>;
 type Command = crate::gpu::command::Command<Backend>;
 
+/// GL std140 rounds block ends to sixteen bytes, independently of exact WGSL spans.
+/// The same checked extent governs native allocation and selected uniform ranges.
+fn uniform_extent(logical_bytes: u64) -> Result<i32, String> {
+    logical_bytes
+        .checked_next_multiple_of(16)
+        .and_then(|bytes| i32::try_from(bytes).ok())
+        .ok_or_else(|| "native uniform extent exceeds GL limits".into())
+}
+
 /// Statically selected resource family; its native objects are never Rust trait objects over COM.
 pub struct Backend;
 /// Exclusive native construction capability; only this backend owns an executor reference.
@@ -322,8 +331,8 @@ struct PreparedDraw {
     index: Option<(Rc<Buffer>, GpuIndexFormat, u64)>,
     /// Image/sampler pairs retain per-import use accounting independently of physical sharing.
     textures: Vec<(u32, Rc<Image>, Rc<Sampler>, BackingCharge)>,
-    /// Exact captured persistent uniform backing and its selected byte range.
-    uniforms: Vec<(u32, Rc<Buffer>, u64, u64)>,
+    /// Persistent uniform backing, logical offset and private std140 binding extent.
+    uniforms: Vec<(u32, Rc<Buffer>, u64, i32)>,
     /// Already checked direct primitive range.
     range: DrawRange,
     /// Flattened host-bounded viewport mapping.
@@ -516,11 +525,13 @@ impl Executor {
         let mut uniforms = Vec::new();
         uniforms.try_reserve_exact(draw.uniforms.len()).map_err(|error| error.to_string())?;
         for binding in &draw.uniforms {
+            // Public offsets are 256-byte aligned, also satisfying std140's sixteen-byte
+            // alignment; rounding the length therefore fits the rounded backing capacity.
             uniforms.push((
                 unit(binding.stage, binding.slot),
                 binding.data.native(&mut preparation)?,
                 binding.data.offset(),
-                binding.data.byte_len(),
+                uniform_extent(binding.data.byte_len())?,
             ));
         }
         Ok(PreparedDraw {
@@ -541,6 +552,15 @@ impl Executor {
     }
     /// Creates actual storage and installs initialization ownership before issuing any write.
     fn create_buffer(&mut self, source: &BufferVersion) -> Result<Rc<Buffer>, String> {
+        let bytes = source.bytes().as_slice();
+        // Only uniform storage has native block-end rounding. Public capacity,
+        // CPU contents and quota admission continue to describe exact logical bytes.
+        let native_len = if source.desc().role() == GpuBufferRole::Uniform {
+            uniform_extent(bytes.len() as u64)?
+        } else {
+            i32::try_from(bytes.len()).map_err(|_| "native buffer capacity exceeds GL limits")?
+        };
+        let padding = native_len as usize - bytes.len();
         self.uploads.try_reserve(1).map_err(|error| error.to_string())?;
         // SAFETY: The checked owning preparation core is current.
         unsafe {
@@ -567,7 +587,15 @@ impl Executor {
                 GpuBufferUsage::Streamed => glow::STREAM_DRAW,
                 _ => return Err("invalid buffer usage".into()),
             };
-            self.gl.buffer_data_u8_slice(target, source.bytes().as_slice(), hint);
+            if padding == 0 {
+                self.gl.buffer_data_u8_slice(target, bytes, hint);
+            } else {
+                // Allocate once, initialize every logical byte and the private tail.
+                // Refreshes write only logical bytes, retaining this zero tail and native name.
+                self.gl.buffer_data_size(target, native_len, hint);
+                self.gl.buffer_sub_data_u8_slice(target, 0, bytes);
+                self.gl.buffer_sub_data_u8_slice(target, bytes.len() as i32, &[0; 15][..padding]);
+            }
             self.gl.bind_vertex_array(None);
             self.check()?;
             Ok(value)
@@ -886,7 +914,7 @@ impl Executor {
                 gl.bind_sampler(*unit, Some(sampler.raw));
             }
             for (unit, uniform, offset, len) in &draw.uniforms {
-                gl.bind_buffer_range(glow::UNIFORM_BUFFER, *unit, Some(uniform.raw), *offset as i32, *len as i32);
+                gl.bind_buffer_range(glow::UNIFORM_BUFFER, *unit, Some(uniform.raw), *offset as i32, *len);
             }
             match draw.range {
                 DrawRange::Vertices { first, count, instances } => gl.draw_arrays_instanced(glow::TRIANGLES, first as i32, count as i32, instances as i32),

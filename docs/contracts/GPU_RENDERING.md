@@ -233,8 +233,15 @@ reflection and rejects missing, duplicate or mismatched bindings before publicat
 
 Uniform bytes use explicit column-major layouts whose member offsets, matrix
 column strides and array strides agree with std140. Differing layouts reject.
-Final native block padding may be added privately. Each uniform input must match
-its reflected byte length. Vertex streams have explicit byte offsets, stride,
+GL/WebGL privately round uniform allocation ends and selected binding lengths to
+sixteen bytes for std140. For example, a reflected four-byte block still requires
+`Uniform(4)` and a four-byte public range; a range at offset 256 ending at logical
+capacity 260 uses native capacity 272 and native range length 16. Private tail
+bytes start at zero and are never exposed by CPU reads or counted as public
+capacity. Persistent writes preserve both the native name and its private tail;
+rounding does not overwrite neighboring logical data. Signed native-size overflow
+rejects before allocation. Each uniform input must match its reflected byte
+length. Vertex streams have explicit byte offsets, stride,
 step mode and formats. Index and vertex buffer roles are distinct for WebGL.
 The common profile limits strides to 252 bytes: WebGL 2 caps stride at 255,
 while WebGPU requires four-byte stride alignment. Attribute offsets use the

@@ -272,6 +272,8 @@ pub fn device(compiler: neocogi_com::ComPtr<neocogi_platform::render::abi::Shade
 pub mod derivatives;
 /// Real COM shader/image fixtures shared by native and browser acceptance.
 pub mod sampled;
+/// Exact logical uniform spans exercised through native GL and browser WebGL.
+pub mod uniforms;
 
 /// Explicit target fixture; it never selects a compiler fallback or native graphics backend.
 pub fn device_with_target(
