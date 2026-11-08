@@ -29,8 +29,13 @@ interface IWindowCreationResult: IRenderOutcome {
 }
 
 #[version(1)]
-/// Constructible platform root whose native-window interface is its concrete API.
+/// Constructible platform root for typed system services and independent native windows.
 interface Platform {
+    /// Queries the audio implementation and application PCM profile without opening a microphone or window.
+    fn audio_capabilities(&self) -> Result<ComPtr<IAudioCapabilities>>;
+    /// Opens the default PCM playback or capture device independently of windows and graphics.
+    /// Browser capture requests permission asynchronously. A ready stream starts paused.
+    fn open_audio(&self, direction: AudioDirection, config: AudioConfig) -> Result<ComBox<IAudioOpenRequest>>;
     /// Creates an independent native window and graphics device without UI assets.
     /// Construction detail belongs to the returned report, never to shared platform state.
     fn create_window_result(

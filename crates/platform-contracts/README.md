@@ -13,5 +13,5 @@ and supplies concrete renderers and their owned shader compilers.
 
 Build scripts enable `build-support` and use `build::{Module, sources, build}`
 for consumer-owned projections or `build::layout` for native resource staging.
-All nine authored schemas live in this archive, are embedded by the helper and
+All ten authored schemas live in this archive, are embedded by the helper and
 are reconstructed in each consumer's own OUT_DIR. Alpha schema versions remain 1.

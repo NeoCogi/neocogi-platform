@@ -12,3 +12,4 @@ neocogi-platform = { workspace = true, features = ["platform", "webgl", "test-su
 neocogi-com = { workspace = true, features = ["runtime"] }
 neocogi-com-host.workspace = true
 wasm-bindgen.workspace = true
+wasm-bindgen-futures = "=0.4.77"

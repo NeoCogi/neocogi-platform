@@ -14,7 +14,7 @@ pin the same exact pre-release version.
 
 ## Package inputs and verification
 
-The contracts archive owns all nine authored NCIDL files, its generation build.rs,
+The contracts archive owns all ten authored NCIDL files, its generation build.rs,
 compiled Rust bindings, shared helpers and optional build-support APIs. The SDK
 archive owns implementations and focused tests without a build script or copies
 of generated bindings. Dynamic/build consumers use only the contracts crate; it has

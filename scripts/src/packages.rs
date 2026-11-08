@@ -11,6 +11,8 @@ use std::{
 
 /// Canonical source owner must be published before its implementation consumers.
 const CONTRACTS: &str = "neocogi-platform-contracts";
+/// Complete authored declarations, including platform PCM services.
+const SCHEMA_COUNT: usize = 10;
 /// The complete release set; adding a workspace tool must not add a published crate.
 const RELEASE_ORDER: &[&str] = &[CONTRACTS, "neocogi-platform", "neocogi-platform-dylib"];
 /// Known workspace applications, fixtures and development tools are always unpublished.
@@ -151,7 +153,7 @@ fn inspect_archive(archive: &Path, package: &Package) -> Result<String> {
     registry_dependencies(&manifest)?;
     let schemas = files.iter().filter(|name| name.ends_with(".ncidl")).count();
     ensure!(
-        schemas == if package.name == CONTRACTS { 9 } else { 0 },
+        schemas == if package.name == CONTRACTS { SCHEMA_COUNT } else { 0 },
         "incorrect shared source ownership in {prefix}"
     );
     Ok(prefix)
@@ -233,6 +235,8 @@ pub(crate) fn qualify(allow_dirty: bool, offline: bool, stable: Option<&str>) ->
         run(cargo(Some(toolchain))
             .current_dir(outside.path())
             .args(arguments)
+            // Archive qualification must not depend on a desktop audio daemon or physical microphone.
+            .env("SDL_AUDIODRIVER", "dummy")
             .args(&flags)
             .arg("--target-dir")
             .arg(&metadata.target_directory))

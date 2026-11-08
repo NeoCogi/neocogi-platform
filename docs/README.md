@@ -3,6 +3,7 @@
 - [Browser regression execution](../tests/browser/README.md)
 - [Native artifact and resource staging](contracts/NATIVE_LAYOUT.md)
 - [Component ownership](architecture/COMPONENTS.md)
+- [PCM playback, capture and typed capabilities](contracts/AUDIO.md)
 - [GPU resources, commands and execution](contracts/GPU_RENDERING.md)
 - [Persistent GPU buffer alpha migration](GPU_BUFFER_MIGRATION.md)
 - [Shader compilation and reflection](contracts/SHADER_COMPILATION.md)

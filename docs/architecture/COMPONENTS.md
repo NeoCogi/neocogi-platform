@@ -11,7 +11,9 @@ renderer dependencies.
 `neocogi-platform` is the implementation SDK. Its `render` module exposes the
 contracts crate's exact types and adds the renderer-owned Naga compiler. `gpu` owns
 resource versions, recording, validation, quotas and concrete backends; optional
-`platform` owns SDL/DOM hosting and native lifetimes. `neocogi-platform-dylib`
+`platform` owns SDL/DOM hosting and native lifetimes. `audio` owns bounded PCM
+playback/capture on SDL/Web Audio without requiring any renderer or Naga.
+Platform hosting includes audio through the same discovery root. `neocogi-platform-dylib`
 provides thin final platform discovery roots. Examples and browser/typed-buffer
 fixtures remain unpublished workspace consumers.
 

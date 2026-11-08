@@ -1,0 +1,272 @@
+#[version(1)]
+/// PCM direction chosen once while opening a default system device.
+enum AudioDirection: u8 {
+    /// Application-produced samples sent to the system output.
+    Playback,
+    /// Microphone samples copied into application-owned storage.
+    Capture,
+}
+
+#[version(1)]
+/// Audio implementation, independent of the graphics backend.
+enum AudioBackend: u8 {
+    /// Native SDL audio services.
+    Sdl,
+    /// Browser AudioContext and AudioWorklet services.
+    WebAudio,
+}
+
+#[version(1)]
+/// Each numerical family carries exactly its applicable encoding parameters.
+enum PcmType {
+    /// Offset-binary PCM; payload is 8, 16, 24 or 32 storage bits.
+    UnsignedInteger(u8),
+    /// Two's-complement PCM normalized by 2^(bits-1); payload is 8, 16, 24 or 32 bits.
+    SignedInteger(u8),
+    /// Signed (storage bits, fractional bits); scale is 2^fractional_bits and fractional bits < width.
+    FixedPoint(u8, u8),
+    /// IEEE binary32 or binary64; payload is 32 or 64 storage bits.
+    FloatingPoint(u8),
+}
+
+#[version(1)]
+/// Explicit byte order; 8-bit representations have identical bytes in either order.
+enum PcmByteOrder: u8 {
+    /// Least significant byte first.
+    LittleEndian,
+    /// Most significant byte first.
+    BigEndian,
+}
+
+#[version(1)]
+/// Application PCM representation, converted to backend float32 processing precision.
+struct PcmFormat {
+    /// Numerical encoding with its own width/scale payload.
+    sample_type: PcmType,
+    /// Explicit encoded byte order, independent of the provider machine.
+    byte_order: PcmByteOrder,
+}
+
+#[version(1)]
+/// Portable channel layout, without an unrelated arbitrary channel-count field.
+enum AudioChannels: u8 {
+    /// One mono sample per frame.
+    Mono,
+    /// Two samples per frame, ordered left then right.
+    Stereo,
+}
+
+#[version(1)]
+/// Inclusive application-side admission range, independent of physical-device negotiation.
+struct AudioRange {
+    /// Smallest supported value.
+    min: u32,
+    /// Largest supported value.
+    max: u32,
+}
+
+#[version(1)]
+/// Shared application-side queue, sample-rate and transfer limits.
+struct AudioLimits {
+    /// Exact admitted application sample rates; device opening still validates backend support.
+    sample_rate: AudioRange,
+    /// Bounded queue capacities in complete frames.
+    capacity_frames: AudioRange,
+    /// Maximum complete frames copied by one write/read.
+    transfer_frames: u32,
+}
+
+#[version(1)]
+/// Host enumeration outcome, without sentinel counts and parallel status fields.
+enum AudioDeviceCount {
+    /// Not synchronously enumerated, including browser devices before permission.
+    Unknown,
+    /// Observed device count; zero does not revoke implementation/API support.
+    Known(u32),
+    /// Enumeration failed, carrying the original status.
+    Failed(i32),
+}
+
+#[version(1)]
+/// Access policy attached to a supported direction.
+enum AudioAccess: u8 {
+    /// Operating-system-managed native device access.
+    System,
+    /// Browser policy may require user activation to start or resume output.
+    BrowserUserActivation,
+    /// Secure browser microphone permission, also subject to start/resume policy.
+    BrowserMicrophone,
+}
+
+#[version(1)]
+/// API support carries only metadata applicable to that supported direction.
+enum AudioSupport {
+    /// The required platform/browser API is unavailable.
+    Unavailable,
+    /// Implementation support does not guarantee hardware availability or granted permission.
+    Available {
+        /// Host enumeration observation for this direction.
+        devices: AudioDeviceCount,
+        /// Applicable native/browser access policy.
+        access: AudioAccess,
+    },
+}
+
+#[version(1)]
+/// Capability header; exact numerical formats and layouts are enumerated by its snapshot object.
+struct AudioCapabilities {
+    /// Actual audio implementation selected for the platform target.
+    backend: AudioBackend,
+    /// Output support and its applicable access/enumeration data.
+    playback: AudioSupport,
+    /// Microphone support and its applicable access/enumeration data.
+    capture: AudioSupport,
+    /// Shared application-side admission limits.
+    limits: AudioLimits,
+}
+
+#[version(1)]
+/// Immutable system snapshot; querying never opens a microphone, window or running audio context.
+interface IAudioCapabilities {
+    /// Backend, directional support and admission limits.
+    fn info(&self) -> Result<AudioCapabilities>;
+    /// Number of concrete PCM variants, including fixed-point width/scale combinations.
+    fn pcm_type_count(&self) -> Result<u32>;
+    /// Copies the exact requested PCM-type interval; offset counts types, not bytes.
+    fn pcm_types(&self, output: &mut [PcmType]) -> Result<()>;
+    /// Number of supported encoded byte orders.
+    fn byte_order_count(&self) -> Result<u32>;
+    /// Copies the requested byte-order interval.
+    fn byte_orders(&self, output: &mut [PcmByteOrder]) -> Result<()>;
+    /// Number of supported channel layouts.
+    fn channel_count(&self) -> Result<u32>;
+    /// Copies the requested layout interval.
+    fn channels(&self, output: &mut [AudioChannels]) -> Result<()>;
+}
+
+#[version(1)]
+/// Interleaved normalized PCM; each frame contains one encoded sample per channel.
+struct AudioConfig {
+    /// Application encoding; this does not promise hardware precision.
+    format: PcmFormat,
+    /// Exact application sample rate, from 8000 through 192000 Hz.
+    sample_rate: u32,
+    /// Mono or left/right stereo sample layout.
+    channels: AudioChannels,
+    /// Bounded retained/pending PCM frames, from 128 through 65536.
+    capacity_frames: u32,
+}
+
+#[version(1)]
+/// Observable stream lifecycle; pending browser controls are explicit phases.
+enum AudioState {
+    /// Open and paused; queued PCM is retained.
+    Paused,
+    /// Browser resume is pending.
+    Starting,
+    /// Native callback or browser worklet is processing PCM.
+    Running,
+    /// Browser suspend is pending.
+    Pausing,
+    /// Browser reset acknowledgement is pending, preventing a new generation from starting early.
+    Clearing,
+    /// Closed/detached; close remains idempotent.
+    Closed,
+    /// Terminal backend failure carrying its status; failure_message retains the owned explanation.
+    Failed(i32),
+}
+
+#[version(1)]
+/// A queue snapshot contains only counters for its actual direction.
+enum AudioQueueInfo {
+    /// Output backlog and starvation accounting.
+    Playback {
+        /// Includes browser PCM messages in flight, bounded by configured capacity.
+        queued_frames: u32,
+        /// Latest observed output frames replaced by silence.
+        silent_frames: u64,
+    },
+    /// Readable microphone frames and overrun accounting.
+    Capture {
+        /// Delivered readable frames, bounded by configured capacity.
+        queued_frames: u32,
+        /// Newest frames discarded on capacity exhaustion.
+        dropped_frames: u64,
+    },
+}
+
+#[version(1)]
+/// Stream metadata combines immutable configuration with typed lifecycle and directional queue data.
+struct AudioInfo {
+    /// Immutable application-side PCM configuration.
+    config: AudioConfig,
+    /// Latest observed lifecycle phase.
+    state: AudioState,
+    /// Only the actual direction's queue metadata.
+    queue: AudioQueueInfo,
+}
+
+#[version(1)]
+/// Exclusive stream controls, independent of windows, graphics, codecs and mixing policy.
+interface IAudioStream {
+    /// Incorporates pending control completion and returns the latest bounded snapshot.
+    fn info(&mut self) -> Result<AudioInfo>;
+    /// Starts Paused; repeated starts while Running succeed without resetting PCM.
+    fn start(&mut self) -> Result<()>;
+    /// Pauses Running without discarding PCM; repeated pauses while Paused succeed.
+    fn pause(&mut self) -> Result<()>;
+    /// Discards PCM only while Paused; browsers enter Clearing until acknowledged. Counters persist.
+    fn clear(&mut self) -> Result<()>;
+    /// Idempotently releases the device/context and all microphone tracks.
+    fn close(&mut self) -> Result<()>;
+    /// Independent bounded explanation for Failed; empty in other phases.
+    fn failure_message(&self) -> Result<ComPtr<INcString>>;
+}
+
+#[version(1)]
+/// Exclusive PCM producer; QI cannot obtain microphone capture authority.
+interface IAudioPlayback: IAudioStream {
+    /// Copies all frames or rejects without enqueueing any. Offset is zero and length is whole encoded
+    /// frames, at most 4096. Decoded samples must be finite and in [-1,1]. Paused/Running accept writes;
+    /// overflow returns Limit, never waits for the device to consume PCM.
+    fn write(&mut self, samples: &[u8]) -> Result<()>;
+}
+
+#[version(1)]
+/// Exclusive microphone consumer; QI cannot obtain output authority.
+interface IAudioCapture: IAudioStream {
+    /// Copies up to the requested whole frames and returns their count; an empty queue returns zero.
+    /// Offset is zero, capacity is at most 4096 frames, and only the returned prefix is initialized.
+    /// Invalid requests write nothing and consume no queued PCM.
+    fn read(&mut self, output: &mut [u8]) -> Result<u32>;
+}
+
+#[version(1)]
+/// Opening is asynchronous where permission or worklet initialization requires it.
+enum AudioOpenState {
+    /// Permission/backend preparation is pending.
+    Pending,
+    /// A complete paused stream is ready for its one successful typed take.
+    Ready,
+    /// Failure carries its own status; message retains this request's independent explanation.
+    Failed(i32),
+    /// One successful typed take consumed this request's stream.
+    Taken,
+    /// Terminal cancellation; late permission is cleaned up without publication.
+    Cancelled,
+}
+
+#[version(1)]
+/// Exclusive opening transaction; dropping an untaken request closes/cancels its stream.
+interface IAudioOpenRequest {
+    /// Incorporates asynchronous completion into the request's owned state.
+    fn poll(&mut self) -> Result<AudioOpenState>;
+    /// Independent bounded text for this opening failure; empty while pending or ready.
+    fn message(&self) -> Result<ComPtr<INcString>>;
+    /// Takes playback once; a wrong-direction NOINTERFACE leaves the ready stream owned by the request.
+    fn take_playback(&mut self) -> Result<ComBox<IAudioPlayback>>;
+    /// Takes capture once; a wrong-direction NOINTERFACE leaves the ready stream owned by the request.
+    fn take_capture(&mut self) -> Result<ComBox<IAudioCapture>>;
+    /// Cancels Pending/Ready and closes owned devices; Taken remains terminal.
+    fn cancel(&mut self) -> Result<()>;
+}

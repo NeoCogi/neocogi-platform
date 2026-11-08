@@ -1169,6 +1169,7 @@ dependencies = [
  "neocogi-com-host",
  "neocogi-platform",
  "wasm-bindgen",
+ "wasm-bindgen-futures",
 ]
 
 [[package]]

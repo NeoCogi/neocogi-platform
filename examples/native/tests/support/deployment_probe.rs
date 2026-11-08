@@ -6,10 +6,39 @@ fn main() {
         eprintln!("{error}");
         std::process::exit(24);
     });
-    let _platform = neocogi_platform_examples::acquire_platform(launch.backend.as_deref()).unwrap_or_else(|error| {
+    let platform = neocogi_platform_examples::acquire_platform(launch.backend.as_deref()).unwrap_or_else(|error| {
         eprintln!("{error}");
         std::process::exit(24);
     });
+    if launch.arguments == ["--audio"] {
+        use neocogi_example_plugins::sdk::render::platform::*;
+        use neocogi_com::{NcCopyFromBufferOffset, NcOutputBuffer};
+        let capabilities = platform.audio_capabilities().unwrap();
+        let config = AudioConfig {
+            capacity_frames: 128,
+            ..AudioConfig::stereo()
+        };
+        assert!(capabilities.supports_config(config).unwrap());
+        let mut request = platform.open_audio(AudioDirection::Playback, config).unwrap();
+        assert_eq!(request.poll().unwrap(), AudioOpenState::Ready);
+        let mut playback = request.take_playback().unwrap();
+        drop(request);
+        playback.write(NcCopyFromBufferOffset::new(0, &[0; 16])).unwrap();
+        assert_eq!(playback.info().unwrap().queued_frames(), 2);
+        playback.start().unwrap();
+        playback.pause().unwrap();
+        playback.close().unwrap();
+        let mut request = platform.open_audio(AudioDirection::Capture, config).unwrap();
+        let mut capture = request.take_capture().unwrap();
+        drop(request);
+        drop(platform);
+        let mut output = NcOutputBuffer::<u8>::new();
+        assert_eq!(capture.read(output.output(0, 16)).unwrap(), 0);
+        capture.start().unwrap();
+        capture.pause().unwrap();
+        capture.close().unwrap();
+        println!("Dynamic audio playback and capture acquired without a window or external plugin.");
+    }
     // SAFETY: This executable owns the process-lived host, already initialized by acquisition.
     let runtime = unsafe { neocogi_com::Runtime::__from_host_api(neocogi_com_host::initialize_process()) }.unwrap();
     let loaded: Vec<_> = neocogi_example_plugins::Backend::ALL

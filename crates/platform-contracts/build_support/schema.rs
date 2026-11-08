@@ -21,7 +21,7 @@ pub use neocogi_idl::cargo::{BuildError, BuildOutput, SharedSources};
 pub enum Module {
     /// Renderer values, compiler results, resource groups and recording in render::abi.
     Renderer,
-    /// Window, input and clipboard interfaces in render::platform.
+    /// Audio, window, input and clipboard interfaces in render::platform.
     Platform,
 }
 
@@ -46,6 +46,7 @@ impl Module {
 /// Canonical files embedded from the one authored tree. Embedding lets a cached
 /// helper survive Cargo relocating or removing the dependency's source directory.
 const SOURCES: &[(&str, &[u8])] = &[
+    ("neocogi/platform/audio.ncidl", include_bytes!("../schemas/neocogi/platform/audio.ncidl")),
     (
         "neocogi/platform/dependencies.ncidl",
         include_bytes!("../schemas/neocogi/platform/dependencies.ncidl"),

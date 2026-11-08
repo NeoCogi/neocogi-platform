@@ -2,7 +2,8 @@
 
 A Rust workspace for native/browser platform services, portable GPU resources,
 scoped graphics commands, shader compilation and backend execution. Public APIs
-use typed COM interfaces. Applications can use graphics directly or combine it
+use typed COM interfaces. PCM playback, microphone capture and capability queries
+use native SDL or browser Web Audio. Applications can use graphics directly or combine it
 with [NeoCogi UI](https://github.com/NeoCogi/neocogi-ui).
 
 ## Workspace
@@ -105,6 +106,7 @@ packages to exact `0.1.0`. Shared dependencies participate in one application Ca
 Independent builds can reuse compatible artifacts through `CARGO_TARGET_DIR`.
 
 See [documentation](docs/README.md), [component ownership](docs/architecture/COMPONENTS.md),
+[audio contracts](docs/contracts/AUDIO.md),
 [GPU contracts](docs/contracts/GPU_RENDERING.md), [shader compilation](docs/contracts/SHADER_COMPILATION.md),
 and [dependency compatibility and revision history](docs/project/HISTORY.md).
 

@@ -99,6 +99,19 @@ fn cpu_only_and_virtual_fixtures_do_not_enable_native_backends() {
     }
 }
 
+/// Audio services select only target audio dependencies, including host-side schema generation.
+#[test]
+fn audio_only_has_no_renderer_or_shader_compiler_dependency() {
+    let native = Graph::resolve(&["audio"], &host());
+    assert!(native.contains("sdl2"));
+    let browser = Graph::resolve(&["audio"], "wasm32-unknown-unknown");
+    assert!(browser.contains("web-sys"));
+    assert!(!browser.contains("sdl2"));
+    for graph in [native, browser] {
+        for forbidden in ["naga", "glow", "ash", "wgpu"] { assert!(!graph.contains(forbidden), "audio enabled {forbidden}"); }
+    }
+}
+
 /// GL and Vulkan select their own native dependencies; browser GL never pulls in SDL or Vulkan.
 #[test]
 fn selected_backends_resolve_only_their_required_target_dependencies() {

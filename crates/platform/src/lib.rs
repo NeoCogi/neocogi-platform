@@ -8,6 +8,10 @@
 extern crate self as neocogi_platform;
 extern crate alloc;
 
+/// Optional bounded PCM playback and microphone capture, independent of graphics.
+#[cfg(feature = "audio")]
+pub mod audio;
+
 /// Typed resources, command recording and additive concrete backend implementations.
 pub mod gpu;
 /// Optional SDL/DOM hosting with one explicitly selected graphics backend.

@@ -25,7 +25,7 @@ fn archive(directory: &Path, owner: &str, omitted: &[&str], dependency: &str, ex
         ("LICENSE".into(), "License notice".into()),
     ]);
     if owner == CONTRACTS {
-        for index in 0..9 {
+        for index in 0..SCHEMA_COUNT {
             files.insert(format!("schemas/{index}.ncidl"), "declaration".into());
         }
     }
@@ -112,7 +112,7 @@ fn unsafe_members_and_review_notes() {
     }
 }
 
-/// Only the contracts package may own the nine authored interface files.
+/// Only the contracts package may own the complete authored interface set.
 #[test]
 fn one_complete_schema_owner() {
     let directory = tempfile::tempdir().unwrap();

@@ -1,6 +1,8 @@
 <!doctype html>
 <meta charset="utf-8">
 <title>Browser platform regression</title>
+<!-- Keep the load event pending until real-time audio acceptance completes. -->
+<iframe src="/test-pending" hidden></iframe>
 <pre id="result">RUNNING</pre>
 <script type="module">
 const result = document.getElementById('result');
@@ -9,11 +11,14 @@ window.addEventListener('error', event => fail(event.error || event.message));
 window.addEventListener('unhandledrejection', event => fail(event.reason));
 try {
     // Import inside the try so missing files, bindings, or exports become FAIL.
-    const { default: init, run_platform_input_tests } = await import('./input-test.js');
+    const { default: init, run_platform_input_tests, run_platform_audio_tests } = await import('./input-test.js');
     await init();
     run_platform_input_tests();
+    await run_platform_audio_tests();
     result.textContent = 'PASS';
 } catch (error) {
     fail(error);
+} finally {
+    await fetch('/test-complete', {method: 'POST'});
 }
 </script>

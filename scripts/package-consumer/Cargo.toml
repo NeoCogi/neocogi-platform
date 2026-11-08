@@ -7,6 +7,6 @@ publish = false
 neocogi-platform-contracts = { version = "=0.1.0-alpha.2", default-features = false }
 neocogi-com = { version = "=0.1.0", features = ["std", "macros", "runtime"] }
 neocogi-com-host = "=0.1.0"
-neocogi-platform = { version = "=0.1.0-alpha.2", default-features = false, features = ["shader-compiler", "shader-wgsl"] }
+neocogi-platform = { version = "=0.1.0-alpha.2", default-features = false, features = ["shader-compiler", "shader-wgsl", "audio"] }
 [build-dependencies]
 neocogi-platform-contracts = { version = "=0.1.0-alpha.2", default-features = false, features = ["build-support"] }

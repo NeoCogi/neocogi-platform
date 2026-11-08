@@ -55,6 +55,12 @@ impl Default for PlatformObject {
 }
 
 impl Platform for PlatformObject {
+    /// Query native/backend observations without constructing a window or requesting capture permission.
+    fn audio_capabilities(&self) -> Result<ComPtr<IAudioCapabilitiesAbi>, NcStatus> { crate::audio::capabilities() }
+    /// Audio initializes independently of the window host and never constructs a graphics device.
+    fn open_audio(&self, direction: AudioDirection, config: AudioConfig) -> Result<neocogi_com::ComBox<IAudioOpenRequestAbi>, NcStatus> {
+        crate::audio::open(direction, config)
+    }
     /// Validates input and publishes one complete native object only after the selected backend exists.
     fn create_window_result(&self, title: NcCopyFromBufferOffset<'_, u8>, size: Size) -> Result<neocogi_com::ComBox<IWindowCreationResultAbi>, NcStatus> {
         let result = (|| -> Result<_, RenderError> {

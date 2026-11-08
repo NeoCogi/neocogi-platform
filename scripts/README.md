@@ -10,7 +10,7 @@ the repository root, `cargo tools` expands to
 | `cargo tools fetch-gltf-examples [--output DIR]` | Download the pinned models/HDR over Rust HTTPS, verify SHA-256, then atomically install each file. Verified cached files need no network. |
 | `cargo tools check-packages [--offline] [--allow-dirty] [--stable-toolchain stable]` | Construct and inspect the three release archives, extract outside the checkout, and build/test them with an independent generated COM consumer. Never publishes. |
 | `cargo tools install-wasm-bindgen` | Install `wasm-bindgen-cli` at the exact workspace pin using Cargo. |
-| `cargo tools test-browser [--browser PATH] [--wasm-bindgen PATH]` | Build the real Wasm fixture, generate web bindings and execute DOM/WebGL tests in headless Chrome/Chromium. |
+| `cargo tools test-browser [--browser PATH] [--wasm-bindgen PATH]` | Build the real Wasm fixture, generate web bindings and execute DOM/WebGL/audio tests in headless Chrome/Chromium with fake microphone devices. |
 | `cargo tools lldb-source-map EXECUTABLE [--output FILE]` | Translate Cargo's adjacent `.trim-paths.json` into native LLDB commands; absent sidecars produce no commands. |
 | `cargo tools local-sources --platform CHECKOUT` | Print a temporary Cargo patch overlay for published libraries without modifying manifests, lockfiles or global configuration. |
 
@@ -31,7 +31,9 @@ The browser runner requires exactly one `<pre id="result">PASS</pre>` in the
 captured DOM. Missing/stuck/failed or duplicate results, mismatched binding tools,
 failed processes and a 90-second browser deadline all fail. Its loopback server,
 generated bindings and fresh browser profile are disposable and shut down on
-success or failure.
+success or failure. A load-event completion barrier uses real wall time so capture
+and worklet processing finish before DOM capture; an 80-second capture timeout
+precedes the 90-second process deadline.
 
 For trimmed native debugging, generate a command file after building:
 

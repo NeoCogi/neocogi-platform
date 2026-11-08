@@ -1,12 +1,15 @@
 # NeoCogi Platform renderer SDK
 
 Typed GPU recording/resources, optional concrete backends, renderer-owned shader
-compilation and SDL/browser hosting. Canonical schemas and generated contracts
+compilation, PCM playback/capture and SDL/browser hosting. Canonical schemas and generated contracts
 live in `neocogi-platform-contracts`; `render` reexports those exact contract types
 and adds the optional `render::compiler` implementation. Build scripts depend on
 the contracts crate with `build-support`, not this implementation crate.
 
-SDK defaults are empty. Backend features `glow`, `vulkan`, `wgpu` and `webgl`
+SDK defaults are empty. The `audio` feature enables SDL/Web Audio without a
+renderer, window or shader compiler. `platform` includes audio; its root exposes
+typed capability queries and asynchronous playback/capture opening. PCM types
+carry their width/scale as Rust enum payloads. Backend features `glow`, `vulkan`, `wgpu` and `webgl`
 enable their required compiler output. `platform` requires one selected hosting
 backend; GPU-only Rust consumers may combine native backends. Static applications
 link this SDK and register only the platform descriptor. Dynamic clients use the

@@ -1,3 +1,13 @@
+# Typed platform audio
+
+The platform now exposes PCM playback, microphone capture and capability queries
+on SDL and browser Web Audio. Audio-only Rust consumers enable `audio` without
+graphics/Naga. Concrete `PcmType` variants carry widths and fixed scales; support,
+enumeration and directional queue snapshots use typed enums. The ten canonical
+schemas remain in the contracts crate and alpha versions remain 1. Browser
+completion is explicit; cancellation/final release stops late microphone tracks.
+See the audio contract for ownership, bounds and qualification.
+
 # Rust repository tools
 
 The unpublished `neocogi-platform-tools` member replaces the Python scripts with

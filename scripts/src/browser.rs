@@ -106,6 +106,43 @@ struct WebServer {
     worker: Option<thread::JoinHandle<()>>,
 }
 
+/// One fixture's load-event barrier; the pending iframe keeps DOM capture behind actual asynchronous completion.
+enum CompletionGate {
+    /// The fixture's initial pending request has not reached the server.
+    Idle,
+    /// Own the response until the browser explicitly completes all synchronous/asynchronous assertions.
+    Waiting(tiny_http::Request),
+    /// Completion can race ahead of the initial request; later requests finish immediately.
+    Complete,
+}
+impl CompletionGate {
+    /// Handle only the fixture's two control routes, leaving static asset requests responsive.
+    fn handle(&mut self, request: tiny_http::Request) -> Option<tiny_http::Request> {
+        match (request.url(), request.method()) {
+            ("/test-pending", tiny_http::Method::Get) => {
+                match self {
+                    Self::Idle => *self = Self::Waiting(request),
+                    Self::Waiting(_) => {
+                        let _ = request.respond(tiny_http::Response::empty(409));
+                    }
+                    Self::Complete => {
+                        let _ = request.respond(tiny_http::Response::empty(204));
+                    }
+                }
+                None
+            }
+            ("/test-complete", tiny_http::Method::Post) => {
+                if let Self::Waiting(pending) = std::mem::replace(self, Self::Complete) {
+                    let _ = pending.respond(tiny_http::Response::empty(204));
+                }
+                let _ = request.respond(tiny_http::Response::empty(204));
+                None
+            }
+            _ => Some(request),
+        }
+    }
+}
+
 impl WebServer {
     /// Serve generated bindings only; browser profile data lives outside this root.
     fn start(root: PathBuf) -> Result<Self> {
@@ -113,9 +150,14 @@ impl WebServer {
         let address = server.server_addr().to_ip().context("expected TCP listener")?;
         let (stop, stopped) = mpsc::channel();
         let worker = thread::spawn(move || {
+            let mut gate = CompletionGate::Idle;
             while matches!(stopped.try_recv(), Err(mpsc::TryRecvError::Empty)) {
                 match server.recv_timeout(Duration::from_millis(50)) {
-                    Ok(Some(request)) => serve(request, &root),
+                    Ok(Some(request)) => {
+                        if let Some(request) = gate.handle(request) {
+                            serve(request, &root);
+                        }
+                    }
                     Ok(None) => (),
                     Err(_) => break,
                 }
@@ -197,9 +239,12 @@ pub(crate) fn run(browser: Option<PathBuf>, bindgen: Option<PathBuf>) -> Result<
                 "--no-default-browser-check",
                 "--use-angle=swiftshader",
                 "--enable-unsafe-swiftshader",
+                "--use-fake-ui-for-media-stream",
+                "--use-fake-device-for-media-stream",
+                "--autoplay-policy=no-user-gesture-required",
             ])
             .arg(format!("--user-data-dir={}", directory.path().join("profile").display()))
-            .args(["--dump-dom", "--virtual-time-budget=60000"])
+            .args(["--dump-dom", "--timeout=80000"])
             .arg(format!("http://{}/index.html", server.address)),
         Duration::from_secs(90),
     )?;
@@ -207,7 +252,7 @@ pub(crate) fn run(browser: Option<PathBuf>, bindgen: Option<PathBuf>) -> Result<
         eprintln!("{}\n{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
         anyhow::bail!("Browser regression did not pass ({}); see captured DOM and diagnostics above", output.status);
     }
-    println!("Browser platform DOM and WebGL regressions: PASS");
+    println!("Browser platform DOM, WebGL and audio regressions: PASS");
     Ok(())
 }
 
@@ -256,5 +301,24 @@ mod tests {
         let address = server.address;
         drop(server);
         assert!(std::net::TcpStream::connect(address).is_err());
+    }
+
+    /// An outstanding completion barrier must not block modules/Wasm, and explicit completion releases it.
+    #[test]
+    fn asynchronous_completion_barrier_keeps_assets_responsive() {
+        let directory = tempfile::tempdir().unwrap();
+        fs::write(directory.path().join("module.js"), "export const ready = true;").unwrap();
+        let server = WebServer::start(directory.path().canonicalize().unwrap()).unwrap();
+        let address = server.address;
+        let pending = thread::spawn(move || {
+            let agent: ureq::Agent = ureq::Agent::config_builder().timeout_global(Some(Duration::from_secs(3))).build().into();
+            agent.get(format!("http://{address}/test-pending")).call().unwrap().status().as_u16()
+        });
+        assert!(ureq::get(format!("http://{address}/module.js")).call().unwrap().status().is_success());
+        assert_eq!(
+            ureq::post(format!("http://{address}/test-complete")).send_empty().unwrap().status().as_u16(),
+            204
+        );
+        assert_eq!(pending.join().unwrap(), 204);
     }
 }

@@ -81,9 +81,24 @@ impl Deployment {
             .env_remove("DYLD_FALLBACK_LIBRARY_PATH");
         if !native {
             command.env("SDL_VIDEODRIVER", "deliberately-invalid");
+            command.env("SDL_AUDIODRIVER", "dummy");
         }
         command.output().unwrap()
     }
+}
+
+/// A relocated schema-only executable uses actual playback/capture through its one platform library.
+#[test]
+fn relocated_audio_uses_platform_library_without_window_or_compiler_plugin() {
+    let application = Deployment::new(false);
+    let output = application.run("deployment_probe", &["--audio"], false);
+    assert!(
+        output.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(String::from_utf8_lossy(&output.stdout).contains("Dynamic audio playback and capture acquired"));
 }
 
 /// One unchanged executable loads distinct backends using runtime arguments after relocation.

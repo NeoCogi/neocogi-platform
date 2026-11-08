@@ -8,10 +8,26 @@ mod client {
     include!(env!("IDL_NEOCOGI_RENDERER"));
 }
 
+/// Separately emitted platform caller verifies typed audio enum payloads through the real COM codec.
+#[allow(dead_code, clippy::len_without_is_empty)]
+mod platform_client {
+    include!(env!("IDL_NEOCOGI_PLATFORM"));
+}
+
 /// Retained artifact exports stay usable after their report and compiler are released.
 fn main() {
     // SAFETY: This executable owns the process-lived immutable host tables.
     let _runtime = unsafe { Runtime::__from_host_api(neocogi_com_host::initialize_process()) }.unwrap();
+    let audio = neocogi_platform::audio::capabilities()
+        .unwrap()
+        .query::<platform_client::IAudioCapabilitiesAbi>()
+        .unwrap();
+    assert_eq!(audio.info().unwrap().backend, platform_client::AudioBackend::Sdl);
+    let mut supported = neocogi_com::NcOutputBuffer::<platform_client::PcmType>::new();
+    audio.pcm_types(supported.output(0, audio.pcm_type_count().unwrap() as usize)).unwrap();
+    drop(audio);
+    assert!(supported.as_slice().contains(&platform_client::PcmType::FixedPoint(32, 16)));
+    assert!(supported.as_slice().contains(&platform_client::PcmType::UnsignedInteger(8)));
     let root: ComPtr<client::ShaderCompilerAbi> =
         CompilerObject::from_value(CompilerObject::new(neocogi_platform::render::shader::ShaderTarget::Wgsl).unwrap())
             .query()

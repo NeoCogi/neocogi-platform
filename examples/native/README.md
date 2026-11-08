@@ -73,6 +73,10 @@ API through normal Cargo dependencies. The contracts crate has no renderer or Na
 dependency, so dynamic builds compile neither in host or target units. Linked
 static applications use the SDK and include their renderer/compiler normally.
 
+Platform roots also expose typed PCM capabilities and playback/capture opening.
+Audio lives in the same selected platform library and can be used without creating
+a window. See [audio contracts](../../docs/contracts/AUDIO.md).
+
 The application owns its one process-lived SDK host in both modes. Plugin code
 and metadata remain mapped under the SDK's existing loader policy. Missing
 platform libraries fail through that policy. No new renderer ABI or native-handle exchange

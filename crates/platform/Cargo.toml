@@ -20,7 +20,9 @@ glow = ["shader-compiler", "shader-glsl", "dep:glow", "dep:sdl2", "dep:web-sys"]
 vulkan = ["shader-compiler", "shader-spirv", "dep:ash", "dep:ash-window-handle", "dep:raw-window-handle", "dep:sdl2"]
 wgpu = ["shader-compiler", "shader-wgsl", "dep:wgpu", "dep:pollster", "dep:raw-window-handle", "dep:sdl2"]
 webgl = ["shader-compiler", "shader-glsl", "dep:glow", "dep:web-sys", "dep:wasm-bindgen", "dep:wasm-bindgen-futures", "dep:js-sys"]
-platform = []
+platform = ["audio"]
+# PCM services can be linked independently of any renderer or native window.
+audio = ["dep:sdl2", "dep:wasm-bindgen", "dep:wasm-bindgen-futures", "dep:js-sys", "dep:web-sys"]
 shader-compiler = ["dep:naga", "naga/wgsl-in"]
 # Output selection never enables the optional compiler or graphics dependencies.
 shader-wgsl = []
@@ -48,6 +50,10 @@ wasm-bindgen = { workspace = true, optional = true }
 wasm-bindgen-futures = { version = "=0.4.77", optional = true }
 js-sys = { version = "=0.3.104", optional = true }
 web-sys = { workspace = true, optional = true, features = [
+    "AudioContext", "AudioContextOptions", "AudioContextState", "AudioDestinationNode", "AudioNode",
+    "AudioWorklet", "Worklet", "AudioWorkletNode", "AudioWorkletNodeOptions", "ChannelCountMode",
+    "Blob", "BlobPropertyBag", "Url", "MessagePort", "MessageEvent", "ErrorEvent",
+    "MediaDevices", "MediaStream", "MediaStreamConstraints", "MediaStreamAudioSourceNode", "MediaStreamTrack", "MediaStreamTrackState",
     "Clipboard", "Navigator", "Document", "DomRect", "Element", "Event", "EventTarget", "FocusEvent",
     "CssStyleDeclaration", "HtmlTextAreaElement", "HtmlCanvasElement", "HtmlElement",
     "KeyboardEvent", "PointerEvent", "WebGl2RenderingContext", "WheelEvent", "Window",
@@ -59,6 +65,10 @@ neocogi-com-host.workspace = true
 tempfile.workspace = true
 serde_json = "1"
 naga = { workspace = true, features = ["wgsl-in"] }
+
+[[test]]
+name = "audio"
+required-features = ["audio"]
 
 [[test]]
 name = "gpu_shader_budget"
