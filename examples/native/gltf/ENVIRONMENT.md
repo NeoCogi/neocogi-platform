@@ -5,7 +5,7 @@ glTF-Sample-Environments revision `3a030b54c2e4f0f4d469eec2f98f47398c9a2a30`.
 It is the reference viewer's default HDR environment, provided separately from
 the helmet model. [Asset attribution and license](Cannon_Exterior-LICENSE.md).
 
-`python3 scripts/fetch_gltf_examples.py` fetches the HDR alongside the two GLBs,
+`cargo tools fetch-gltf-examples` fetches the HDR alongside the two GLBs,
 verifies its pinned SHA-256 and installs it atomically. No Cargo build or ordinary
 test needs network access. The first load computes lighting on the CPU and caches
 it as `assets/Cannon_Exterior.ibl`; subsequent loads reuse that prepared atlas.

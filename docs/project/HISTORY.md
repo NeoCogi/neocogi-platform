@@ -1,3 +1,15 @@
+# Rust repository tools
+
+The unpublished `neocogi-platform-tools` member replaces the Python scripts with
+`cargo tools` commands for sample downloads, release archive qualification,
+browser execution, LLDB source-map generation and local-source overlays. Their
+regressions now run under `cargo test -p neocogi-platform-tools`. CI, application
+diagnostics and documentation use these Rust commands. HTTPS, gzip/tar, hashing,
+manifest/HTML parsing and loopback serving run in Rust; the browser workflow keeps
+its explicit Chrome/Chromium and matching wasm-bindgen prerequisites. Native
+build/run commands and the three-crate release set remain unchanged. Debuggers
+source generated native LLDB commands instead of importing a Python hook.
+
 # Contracts package naming
 
 `neocogi-platform-contracts` replaces `neocogi-platform-schema` in

@@ -160,13 +160,13 @@ fn decodes_hdr_as_floating_point_and_rejects_bad_sources() {
         Environment::load(Path::new("/does-not-exist/environment.hdr"))
             .err()
             .unwrap()
-            .contains("fetch_gltf_examples.py")
+            .contains("cargo tools fetch-gltf-examples")
     );
 }
 
 /// Opt-in real-source preparation additionally proves the persisted atlas round-trips.
 #[test]
-#[ignore = "requires python3 scripts/fetch_gltf_examples.py"]
+#[ignore = "requires cargo tools fetch-gltf-examples"]
 fn cannon_exterior_prepares_and_reuses_cache() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("gltf/assets/Cannon_Exterior.hdr");
     let atlas = Environment::load(&path).unwrap();

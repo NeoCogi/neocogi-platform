@@ -13,6 +13,7 @@ with [NeoCogi UI](https://github.com/NeoCogi/neocogi-ui).
 | `crates/platform` (`neocogi-platform`) | GPU recording/backends, renderer-owned compiler and optional hosting |
 | `crates/platform-dylib` (`neocogi-platform-dylib`) | Thin platform shared-library entrypoints including the renderer compiler |
 | `examples/native`, `tests/*` | Unpublished application and acceptance consumers |
+| `scripts` (`neocogi-platform-tools`) | Unpublished Rust development and qualification tools, run with `cargo tools` |
 
 Platform and graphics implementations share native lifetime ownership. Native
 windows, SDL/DOM objects and API handles remain private; callers receive typed
@@ -79,7 +80,7 @@ BrainStem is by Keith Hunter, © Smith Micro Software, Inc.
 is by Greg Zaal ([CC0](examples/native/gltf/Cannon_Exterior-LICENSE.md)).
 
 ```sh
-python3 scripts/fetch_gltf_examples.py
+cargo tools fetch-gltf-examples
 cargo run --locked -p neocogi-platform-examples --bin gltf_damaged_helmet
 cargo run --locked -p neocogi-platform-examples --bin gltf_brainstem
 ```
@@ -109,3 +110,7 @@ and [dependency compatibility and revision history](docs/project/HISTORY.md).
 
 The current release target is `0.1.0-alpha.2`. See [release preparation](docs/project/RELEASING.md)
 for the published package set, self-contained build inputs and verification.
+
+Asset downloads, package qualification, browser tests and local debugging helpers
+are Rust commands. See [repository tools](scripts/README.md); no Python interpreter
+is required.

@@ -6,7 +6,7 @@ The release target is **0.1.0-alpha.2**. Exactly three packages are published:
 2. `neocogi-platform`: renderer SDK with optional backends, owned compiler and hosting.
 3. `neocogi-platform-dylib`: final platform libraries including renderer-owned compilation.
 
-The four existing example/test packages remain `publish = false`. This supersedes
+The five example/test/tool packages remain `publish = false`. This supersedes
 the eleven-package release layout. Schema/build helpers and staging belong to the contracts archive; implementation
 modules belong to the SDK archive. There are no private path
 or Git dependencies hidden behind a facade. All internal registry requirements
@@ -31,8 +31,8 @@ cargo fetch --locked
 cargo check --locked --workspace --all-targets
 cargo test --locked -p neocogi-platform-contracts --features build-support,test-support
 cargo test --locked -p neocogi-platform --features platform,glow,test-support,shader-spirv
-python3 -B -m unittest discover -s scripts -p 'test_*.py'
-python3 -B scripts/check_packages.py --offline --stable-toolchain stable --allow-dirty
+cargo test --locked -p neocogi-platform-tools
+cargo tools check-packages --offline --stable-toolchain stable --allow-dirty
 ```
 
 Omit `--allow-dirty` for release qualification. The checker constructs all three real

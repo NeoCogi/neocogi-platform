@@ -13,9 +13,9 @@ jobs:
       - name: Native package build prerequisites
         run: sudo apt-get update -qq && sudo apt-get install -y libsdl2-dev
       - name: Release archive validation regressions
-        run: python3 -B -m unittest discover -s scripts -p 'test_*.py'
+        run: cargo test --locked -p neocogi-platform-tools
       - name: Extracted packages and independent COM consumer
-        run: python3 -B scripts/check_packages.py
+        run: cargo tools check-packages
   native:
     runs-on: ubuntu-latest
     strategy:
@@ -54,8 +54,8 @@ jobs:
           xvfb-run -a cargo test --locked -p neocogi-platform-examples --test triangle --no-default-features --features static,${{ matrix.backend }} -- --include-ignored --test-threads=1
       - name: Pinned glTF example assets
         run: |
-          python3 -m unittest discover -s scripts -p test_fetch_gltf_examples.py
-          python3 scripts/fetch_gltf_examples.py
+          cargo test --locked -p neocogi-platform-tools assets::
+          cargo tools fetch-gltf-examples
       - name: glTF import, arcball and native pixel regressions
         run: |
           xvfb-run -a cargo test --locked -p neocogi-platform-examples --test gltf_scene --test gltf_environment --test gltf_material --test gltf_camera --test gltf_viewer --no-default-features --features static,${{ matrix.backend }},test-support -- --include-ignored --test-threads=1
@@ -82,10 +82,10 @@ jobs:
         id: chrome
       - name: Matching Wasm bindings tool
         run: |
-          python3 -c 'import subprocess,tomllib; v=tomllib.load(open("Cargo.toml","rb"))["workspace"]["dependencies"]["wasm-bindgen"].lstrip("="); subprocess.run(["cargo","install","wasm-bindgen-cli","--version",v,"--locked"],check=True)'
+          cargo tools install-wasm-bindgen
       - name: Browser harness failure detection
         run: |
-          python3 -B -m unittest discover -s scripts -p 'test_*.py'
+          cargo test --locked -p neocogi-platform-tools
       - name: Real DOM and WebGL execution
         run: |
-          python3 scripts/test_browser.py --browser '${{ steps.chrome.outputs.chrome-path }}'
+          cargo tools test-browser --browser '${{ steps.chrome.outputs.chrome-path }}'

@@ -12,7 +12,7 @@ For the UI branch, include Platform's checkout when generating the overlay and
 run Cargo in that UI checkout:
 
 ```sh
-python3 /path/to/neocogi-platform/tools/local-sources.py \
+cargo run --locked --manifest-path /path/to/neocogi-platform/scripts/Cargo.toml -- local-sources \
   --platform /path/to/neocogi-platform > /tmp/neocogi-ui-local.toml
 cargo check --offline --config /tmp/neocogi-ui-local.toml --workspace --all-targets
 ```

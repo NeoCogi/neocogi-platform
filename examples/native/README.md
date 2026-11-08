@@ -8,7 +8,7 @@ unchanged; each application acquires and retains one root.
 Default features select static registration and Glow:
 
 ~~~sh
-python3 scripts/fetch_gltf_examples.py
+cargo tools fetch-gltf-examples
 cargo run --locked -p neocogi-platform-examples --bin triangle -- 3
 cargo run --locked -p neocogi-platform-examples --bin gltf_damaged_helmet
 cargo run --locked -p neocogi-platform-examples --bin gltf_brainstem

@@ -164,7 +164,7 @@ impl Scene {
     /// Imports a local glTF/GLB plus referenced files, reporting a useful missing-asset hint.
     pub fn load(path: &Path) -> Result<Self> {
         let (document, buffers, images) =
-            gltf::import(path).map_err(|error| format!("{}: {error}; fetch samples with python3 scripts/fetch_gltf_examples.py", path.display()))?;
+            gltf::import(path).map_err(|error| format!("{}: {error}; fetch samples with cargo tools fetch-gltf-examples", path.display()))?;
         Self::import(document, buffers, images)
     }
 

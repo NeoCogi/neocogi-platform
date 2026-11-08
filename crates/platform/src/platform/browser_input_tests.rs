@@ -1,7 +1,7 @@
 //! Browser-executed DOM regressions exported from the wasm library test artifact.
 //!
 //! The final neocogi-browser-tests cdylib owns the public JavaScript export and
-//! single host. scripts/test_browser.py builds it, generates matching bindings,
+//! single host. `cargo tools test-browser` builds it, generates matching bindings,
 //! serves the checked-in page and requires actual browser PASS.
 
 use super::*;

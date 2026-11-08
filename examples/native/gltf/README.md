@@ -9,7 +9,7 @@ environment intensity default to one, with the reference +Z orientation and
 Khronos PBR Neutral tone mapping.
 
 ```sh
-python3 scripts/fetch_gltf_examples.py
+cargo tools fetch-gltf-examples
 cargo run --locked -p neocogi-platform-examples --bin gltf_damaged_helmet
 cargo run --locked -p neocogi-platform-examples --bin gltf_brainstem
 ```
@@ -52,7 +52,7 @@ viewer would need asynchronous asset loading and a browser event-loop owner.
 Fetch the models explicitly from the workspace root:
 
 ```sh
-python3 scripts/fetch_gltf_examples.py
+cargo tools fetch-gltf-examples
 ```
 
 The script pins Khronos glTF-Sample-Assets revision

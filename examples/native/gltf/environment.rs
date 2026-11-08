@@ -95,7 +95,7 @@ impl Environment {
     /// Loads the HDR source, reuses only a matching valid cache, otherwise prepares lighting.
     /// Cache persistence is best-effort: a read-only asset directory still permits rendering.
     pub fn load(path: &Path) -> Result<Self, String> {
-        let bytes = fs::read(path).map_err(|error| format!("{}: {error}; run python3 scripts/fetch_gltf_examples.py", path.display()))?;
+        let bytes = fs::read(path).map_err(|error| format!("{}: {error}; run cargo tools fetch-gltf-examples", path.display()))?;
         let key = cache_key(&bytes, Quality::DEFAULT);
         let cache_path = path.with_extension("ibl");
         if let Some(environment) = Self::read_cache(&cache_path, key) {

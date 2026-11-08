@@ -141,7 +141,7 @@ fn explicit_gpu_encoding() {
 
 /// Explicit asset acceptance runs after the pinned download; ordinary tests stay offline.
 #[test]
-#[ignore = "requires python3 scripts/fetch_gltf_examples.py"]
+#[ignore = "requires cargo tools fetch-gltf-examples"]
 fn pinned_assets_import_and_brainstem_deforms() {
     let directory = Path::new(env!("CARGO_MANIFEST_DIR")).join("gltf/assets");
     let helmet = Scene::load(&directory.join("DamagedHelmet.glb")).unwrap();

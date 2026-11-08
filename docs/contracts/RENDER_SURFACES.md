@@ -156,4 +156,4 @@ Vulkan is sufficient. Run platform acceptance separately with
 those providers. SDL dummy/offscreen drivers cannot create WGPU windows. The
 optional Khronos validation layer can be enabled with
 `VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation`. Browser execution is checked
-separately by `scripts/test_browser.py`.
+separately by `cargo tools test-browser`.

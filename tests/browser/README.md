@@ -9,8 +9,8 @@ Install a Chrome/Chromium executable and the CLI matching the workspace's pinned
 wasm-bindgen version:
 
 ~~~sh
-cargo install wasm-bindgen-cli --version 0.2.127 --locked
-python3 scripts/test_browser.py --browser /path/to/chrome
+cargo tools install-wasm-bindgen
+cargo tools test-browser --browser /path/to/chrome
 ~~~
 
 The runner builds neocogi-browser-tests for wasm32, discovers the actual Cargo
