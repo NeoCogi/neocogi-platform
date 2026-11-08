@@ -8,7 +8,7 @@ use glow::{Framebuffer, VertexArray, Texture, Sampler, Buffer};
 pub(super) static NATIVE_SESSION: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// Owns application-side objects used to leave deliberately hostile persistent GL state.
-struct ForeignState {
+pub(super) struct ForeignState {
     /// The live test context used for setup and deterministic cleanup.
     gl: Rc<glow::Context>,
     /// Incomplete application target that must never receive a UI clear or draw.
@@ -25,7 +25,7 @@ struct ForeignState {
 
 impl ForeignState {
     /// Creates independent resources without borrowing or modifying any backend-owned object.
-    fn new(gl: Rc<glow::Context>) -> Self {
+    pub(super) fn new(gl: Rc<glow::Context>) -> Self {
         unsafe {
             Self {
                 framebuffer: gl.create_framebuffer().unwrap(),
@@ -39,7 +39,7 @@ impl ForeignState {
     }
 
     /// Contaminates bindings, write masks, tests, blending, and upload addressing at once.
-    fn bind(&self) {
+    pub(super) fn bind(&self) {
         let gl = &self.gl;
         unsafe {
             gl.bind_framebuffer(glow::FRAMEBUFFER, Some(self.framebuffer));

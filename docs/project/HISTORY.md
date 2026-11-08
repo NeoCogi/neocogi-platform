@@ -1,3 +1,11 @@
+# Persistent texture upload state
+
+Dynamic and streamed GL/WebGL texture refreshes now use the same complete unpack
+initializer as first realization. Valid application PBO, stride, skip and browser
+conversion state cannot reinterpret tightly packed CPU RGBA bytes. Native and
+browser acceptance exercise repeated completed uploads, exact pixels and reuse
+of the existing one/three native slot names under contaminated application state.
+
 # Private native uniform extents
 
 GL/WebGL now preserve the distinction between exact logical WGSL uniform bytes

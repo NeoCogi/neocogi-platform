@@ -1,7 +1,9 @@
 # Browser platform regression
 
-This final test cdylib owns one COM host and exports run_platform_input_tests.
+This final test cdylib owns one COM host and exports asynchronous run_platform_input_tests.
 It calls the production platform's installed DOM listeners and WebGL executor.
+Repeated mutable-upload checks yield browser tasks until ordinary maintenance
+observes actual WebGL fence completion; the page awaits that export before audio.
 An asynchronous export exercises real AudioWorklet playback and fake-microphone
 capture, including typed capabilities, bounded queues, denial and late cancellation.
 The reusable platform test helper is a Rust function; only this final artifact

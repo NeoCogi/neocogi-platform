@@ -146,8 +146,137 @@ fn browser_surface_targets() {
     host.prepare_texture(resources.as_com_ref(), imported.as_com_ref()).unwrap();
 }
 
+/// Mutable native slots must ignore application unpack addressing on every reuse.
+async fn browser_texture_refresh(
+    gpu: &crate::gpu::GpuDevice<crate::gpu::backends::webgl::Backend>,
+    resources: &ComPtr<IRenderResourcesAbi>,
+    renderer: &mut crate::gpu::backends::webgl::WebGlCanvasRenderer,
+    gl: &glow::Context,
+    native: &web_sys::WebGl2RenderingContext,
+) {
+    use glow::HasContext;
+    use crate::render::{
+        FrameInfo, RendererBackend, RendererFrame,
+        prelude::{Dimensioni, color},
+    };
+    use web_sys::WebGl2RenderingContext as WebGl;
+    // SAFETY: this private test buffer belongs to the live context and is deleted after all cases.
+    let unpack = unsafe { gl.create_buffer().unwrap() };
+    for usage in [GpuBufferUsage::Dynamic, GpuBufferUsage::Streamed] {
+        let desc = GpuBufferDesc::Texture {
+            size: Size { width: 2, height: 2 },
+            format: GpuTextureFormat::Rgba8Unorm,
+            mip_count: 1,
+        };
+        let mut buffer = if usage == GpuBufferUsage::Dynamic {
+            resources.create_dynamic_buffer(desc)
+        } else {
+            resources.create_streamed_buffer(desc)
+        }
+        .unwrap();
+        let slots = if usage == GpuBufferUsage::Dynamic { 1 } else { 3 };
+        let mut names = Vec::new();
+        let mut pinned = Vec::new();
+        for fill in 1..=8u8 {
+            // Unequal rows and partial alpha detect accidental flip/premultiplication as well as bad strides.
+            let bytes = [fill, 47, 83, 128, 11, 31, fill, 255, 17, fill, 71, 255, 99, 51, 23, 128];
+            // WebGL exposes completed fences only after a browser task boundary. Keep
+            // the real in-flight exclusion and wait for ordinary maintenance to retire it.
+            for attempt in 0..200 {
+                match buffer.upload(neocogi_com::NcCopyFromBufferOffset::new(0, &bytes)) {
+                    Ok(()) => break,
+                    Err(crate::render::abi::RENDER_E_BUSY) if attempt < 199 => {
+                        wasm_bindgen_futures::JsFuture::from(next_test_task()).await.unwrap();
+                        renderer.maintain().unwrap();
+                    }
+                    Err(error) => panic!("upload did not become writable: {error}"),
+                }
+            }
+            // SAFETY: valid private application state; the small PBO makes an omitted reset reject
+            // without exposing a short native CPU pointer to a driver.
+            unsafe {
+                gl.active_texture(glow::TEXTURE3);
+                gl.bind_buffer(glow::PIXEL_UNPACK_BUFFER, Some(unpack));
+                gl.buffer_data_size(glow::PIXEL_UNPACK_BUFFER, 4, glow::STATIC_DRAW);
+                gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 8);
+                gl.pixel_store_i32(glow::UNPACK_ROW_LENGTH, 3);
+                gl.pixel_store_i32(glow::UNPACK_IMAGE_HEIGHT, 5);
+                gl.pixel_store_i32(glow::UNPACK_SKIP_PIXELS, 1);
+                gl.pixel_store_i32(glow::UNPACK_SKIP_ROWS, 1);
+                gl.pixel_store_i32(glow::UNPACK_SKIP_IMAGES, 1);
+            }
+            native.pixel_storei(WebGl::UNPACK_FLIP_Y_WEBGL, 1);
+            native.pixel_storei(WebGl::UNPACK_PREMULTIPLY_ALPHA_WEBGL, 1);
+            native.pixel_storei(WebGl::UNPACK_COLORSPACE_CONVERSION_WEBGL, WebGl::BROWSER_DEFAULT_WEBGL as i32);
+            assert_eq!(unsafe { gl.get_error() }, glow::NO_ERROR);
+            let version = gpu.texture_snapshot(resources.as_com_ref(), buffer.as_com_ref()).unwrap();
+            renderer.prepare_texture(version.clone()).unwrap();
+            // SAFETY: query this live context's scalar unpack state after the actual upload.
+            unsafe {
+                assert_eq!(gl.get_parameter_i32(glow::ACTIVE_TEXTURE) as u32, glow::TEXTURE0);
+                for parameter in [
+                    glow::UNPACK_ROW_LENGTH,
+                    glow::UNPACK_IMAGE_HEIGHT,
+                    glow::UNPACK_SKIP_PIXELS,
+                    glow::UNPACK_SKIP_ROWS,
+                    glow::UNPACK_SKIP_IMAGES,
+                ] {
+                    assert_eq!(gl.get_parameter_i32(parameter), 0);
+                }
+                assert!(native.get_parameter(WebGl::PIXEL_UNPACK_BUFFER_BINDING).unwrap().is_null());
+                assert_eq!(native.get_parameter(WebGl::UNPACK_FLIP_Y_WEBGL).unwrap().as_bool(), Some(false));
+                assert_eq!(native.get_parameter(WebGl::UNPACK_PREMULTIPLY_ALPHA_WEBGL).unwrap().as_bool(), Some(false));
+                assert_eq!(
+                    native.get_parameter(WebGl::UNPACK_COLORSPACE_CONVERSION_WEBGL).unwrap().as_f64(),
+                    Some(f64::from(glow::NONE))
+                );
+            }
+            let root = Rect { x: 0, y: 0, width: 8, height: 8 };
+            let owner = sampled::buffer_block(gpu, resources, root, buffer.as_com_ref());
+            let block = gpu.block_snapshot(owner.as_com_ref()).unwrap();
+            let prepared = renderer.prepare_block(&block, false).unwrap();
+            let mut frame = renderer.frame(FrameInfo::try_new(Dimensioni::new(8, 8), color(0, 0, 0, 255)).unwrap()).unwrap();
+            frame.execute_block(&prepared);
+            // SAFETY: the actual sampled draw has bound this initialized texture. The temporary
+            // read attachment borrows its live allocation and reads exactly its 2x2 RGBA contents.
+            unsafe {
+                let texture = gl.get_parameter_texture(glow::TEXTURE_BINDING_2D).unwrap();
+                if names.len() < slots {
+                    assert!(!names.contains(&texture));
+                    names.push(texture);
+                    pinned.push(version.clone());
+                } else {
+                    assert!(names.contains(&texture), "refresh must retain its native texture name");
+                }
+                let framebuffer = gl.create_framebuffer().unwrap();
+                gl.bind_framebuffer(glow::READ_FRAMEBUFFER, Some(framebuffer));
+                gl.framebuffer_texture_2d(glow::READ_FRAMEBUFFER, glow::COLOR_ATTACHMENT0, glow::TEXTURE_2D, Some(texture), 0);
+                assert_eq!(gl.check_framebuffer_status(glow::READ_FRAMEBUFFER), glow::FRAMEBUFFER_COMPLETE);
+                let mut pixels = [0; 16];
+                gl.read_pixels(0, 0, 2, 2, glow::RGBA, glow::UNSIGNED_BYTE, glow::PixelPackData::Slice(Some(&mut pixels)));
+                assert_eq!(gl.get_error(), glow::NO_ERROR);
+                assert_eq!(pixels, bytes, "usage={usage:?}, upload={fill}");
+                gl.bind_framebuffer(glow::READ_FRAMEBUFFER, None);
+                gl.delete_framebuffer(framebuffer);
+            }
+            frame.finish().unwrap();
+            drop((owner, block, prepared));
+            drop(version);
+            renderer.maintain().unwrap();
+            // SAFETY: finish this context's uploads, then retire their in-flight owners before slot reuse.
+            unsafe { gl.finish() };
+            renderer.maintain().unwrap();
+            if pinned.len() == slots {
+                pinned.clear();
+            }
+        }
+    }
+    // SAFETY: no upload uses this application-side unpack buffer; the backend has unbound it.
+    unsafe { gl.delete_buffer(unpack) };
+}
+
 /// Exercises actual browser WebGL target adaptation and the delegated safe upload boundary.
-fn canonical_browser_derivatives() {
+async fn canonical_browser_derivatives() {
     use glow::HasContext;
     use neocogi_platform::render::abi::GpuTextureFormat;
     use neocogi_platform::render::{FrameInfo, RendererBackend, RendererFrame};
@@ -188,6 +317,7 @@ fn canonical_browser_derivatives() {
         )
         .unwrap();
     let resources = domain.resources().unwrap();
+    browser_texture_refresh(&gpu, &resources, &mut renderer, &gl, &native).await;
     // Strict WebGL validates the complete native std140 block, unlike lenient native drivers.
     // Exercise the real compiler, COM buffer/pipeline/recording and actual renderer path.
     for usage in [GpuBufferUsage::Static, GpuBufferUsage::Dynamic, GpuBufferUsage::Streamed] {
@@ -330,6 +460,9 @@ export function lose_test_context(context) {
 export function record_panic(text) {
     document.getElementById('result').dataset.panic = text;
 }
+export function next_test_task() {
+    return new Promise(resolve => setTimeout(resolve, 0));
+}
 export function exercise(target, name) {
     if (name === 'compose-start') {
         target.dispatchEvent(new CompositionEvent('compositionstart'));
@@ -370,10 +503,11 @@ extern "C" {
     fn lose_test_context(context: &web_sys::WebGl2RenderingContext);
     /// Dispatches one deterministic DOM sequence against the actual installed Rust listeners.
     fn exercise(target: &EventTarget, name: &str);
+    fn next_test_task() -> js_sys::Promise;
 }
 
 /// Runs WebGL target/ownership checks and DOM composition, paste, keyboard, wheel, pointer and teardown assertions.
-pub fn run_platform_input_tests() {
+pub async fn run_platform_input_tests() {
     std::panic::set_hook(Box::new(|info| record_panic(&info.to_string())));
     for (native, expected) in [
         ("F1", Some(KeyCode::Function(1))),
@@ -386,7 +520,7 @@ pub fn run_platform_input_tests() {
     ] {
         assert_eq!(map_key(native), expected);
     }
-    canonical_browser_derivatives();
+    canonical_browser_derivatives().await;
     browser_surface_targets();
     let document = web_sys::window().unwrap().document().unwrap();
     let canvas = document.create_element("canvas").unwrap().dyn_into::<HtmlCanvasElement>().unwrap();

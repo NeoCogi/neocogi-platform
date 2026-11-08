@@ -1,5 +1,5 @@
 //! Shared native-test input: a procedural sampled triangle using the public graphics vocabulary.
-use neocogi_com::{ComBox, ComPtr, NcCopyFromBufferOffset};
+use neocogi_com::{ComBox, ComPtr, ComRef, NcCopyFromBufferOffset};
 use neocogi_platform::gpu::{
     GpuDevice,
     abi::*,
@@ -37,6 +37,37 @@ fn block_fragment<B: neocogi_platform::gpu::native::NativeResources>(
     pixels: Option<&[u8]>,
     expression: &str,
 ) -> ComBox<IRenderViewBlockAbi> {
+    let texture = resources
+        .create_static_buffer(
+            GpuBufferDesc::Texture {
+                size,
+                format: GpuTextureFormat::Rgba8Unorm,
+                mip_count: 1,
+            },
+            Bytes::source(pixels.map_or_else(|| vec![0; (size.width * size.height * 4) as usize], |pixels| pixels.to_vec())).as_com_ref(),
+        )
+        .unwrap();
+    record_fragment(gpu, resources, root, texture.as_com_ref(), expression)
+}
+
+/// Sample an existing typed texture buffer through actual shader/pipeline and COM recording calls.
+pub fn buffer_block<B: neocogi_platform::gpu::native::NativeResources>(
+    gpu: &GpuDevice<B>,
+    resources: &ComPtr<IRenderResourcesAbi>,
+    root: Rect,
+    texture: ComRef<'_, IGpuBufferAbi>,
+) -> ComBox<IRenderViewBlockAbi> {
+    record_fragment(gpu, resources, root, texture, "textureSample(image,image_sampler,v.uv)")
+}
+
+/// Recording owns immutable snapshots independently of how the caller created its texture.
+fn record_fragment<B: neocogi_platform::gpu::native::NativeResources>(
+    gpu: &GpuDevice<B>,
+    resources: &ComPtr<IRenderResourcesAbi>,
+    root: Rect,
+    texture: ComRef<'_, IGpuBufferAbi>,
+    expression: &str,
+) -> ComBox<IRenderViewBlockAbi> {
     let source = r#"
         @group(2) @binding(0) var image:texture_2d<f32>;
         @group(2) @binding(1) var image_sampler:sampler;
@@ -66,23 +97,12 @@ fn block_fragment<B: neocogi_platform::gpu::native::NativeResources>(
     .source()
     .unwrap();
     let pipeline = resources.create_pipeline(desc.as_com_ref(), vs.as_com_ref(), fs.as_com_ref()).unwrap();
-    let texture = resources
-        .create_static_buffer(
-            GpuBufferDesc::Texture {
-                size,
-                format: GpuTextureFormat::Rgba8Unorm,
-                mip_count: 1,
-            },
-            Bytes::source(pixels.map_or_else(|| vec![0; (size.width * size.height * 4) as usize], |pixels| pixels.to_vec())).as_com_ref(),
-        )
-        .unwrap();
     let sampler = resources.create_sampler(GpuSamplerDesc::default()).unwrap();
     let mut frame = gpu.broker().begin_frame().unwrap();
     let mut session = frame.begin_view(RenderViewRoot { client: root, target: root }, resources.as_com_ref()).unwrap();
     let mut view = session.view().unwrap();
     view.bind_pipeline(pipeline.as_com_ref()).unwrap();
-    view.bind_texture(GpuShaderStage::Fragment, 0, texture.as_com_ref(), sampler.as_com_ref())
-        .unwrap();
+    view.bind_texture(GpuShaderStage::Fragment, 0, texture, sampler.as_com_ref()).unwrap();
     view.draw(3, 1, 0).unwrap();
     view.finish().unwrap();
     let block = session.take_block().unwrap();

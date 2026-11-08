@@ -243,6 +243,15 @@ rounding does not overwrite neighboring logical data. Signed native-size overflo
 rejects before allocation. Each uniform input must match its reflected byte
 length. Vertex streams have explicit byte offsets, stride,
 step mode and formats. Index and vertex buffer roles are distinct for WebGL.
+
+Every GL/WebGL CPU texture upload establishes the same complete unpack state,
+including in-place refresh of dynamic and streamed native slots. The adapter
+selects texture unit zero, unbinds pixel-unpack buffers, clears row/image strides
+and skips, and disables WebGL flip, premultiplication and color conversion.
+Application GL state therefore cannot reinterpret an admitted tightly packed
+RGBA slice. Refresh retains native names and the existing version/completion
+ownership; establishing upload inputs does not restore arbitrary application
+state after the operation.
 The common profile limits strides to 252 bytes: WebGL 2 caps stride at 255,
 while WebGPU requires four-byte stride alignment. Attribute offsets use the
 minimum of four and the format size, including four-byte alignment for Unorm8x4.

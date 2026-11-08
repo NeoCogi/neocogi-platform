@@ -108,10 +108,11 @@ impl NativeResources for Backend {
             .ok_or("immutable imported image cannot be updated")?;
         let size = source.desc().size;
         // SAFETY: The full initialized RGBA extent matches this existing image,
-        // and concrete completion/capture ownership ended before slot reuse.
+        // unpack addressing is reset before the CPU slice reaches GL, and concrete
+        // completion/capture ownership ended before slot reuse.
         unsafe {
+            super::GLRenderer::prepare_upload(&executor.gl);
             executor.gl.bind_texture(glow::TEXTURE_2D, Some(native.raw));
-            executor.gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 1);
             executor.gl.tex_sub_image_2d(
                 glow::TEXTURE_2D,
                 0,

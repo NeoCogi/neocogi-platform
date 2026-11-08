@@ -26,50 +26,82 @@ fn uploaded_resource_slots_keep_native_names_across_uploads() {
         )
         .unwrap();
     let resources = domain.resources().unwrap();
-    let buffer = resources.create_dynamic_buffer(GpuBufferDesc::Uniform { byte_len: 260 }).unwrap();
-    let image = resources
-        .create_dynamic_buffer(GpuBufferDesc::Texture {
+    let foreign = super::super::tests::ForeignState::new(gl.clone());
+    for usage in [GpuBufferUsage::Dynamic, GpuBufferUsage::Streamed] {
+        let create = |desc| {
+            if usage == GpuBufferUsage::Dynamic {
+                resources.create_dynamic_buffer(desc)
+            } else {
+                resources.create_streamed_buffer(desc)
+            }
+            .unwrap()
+        };
+        let buffer = create(GpuBufferDesc::Uniform { byte_len: 260 });
+        let image = create(GpuBufferDesc::Texture {
             size: Size { width: 2, height: 2 },
             format: GpuTextureFormat::Rgba8Unorm,
             mip_count: 1,
-        })
-        .unwrap();
-    let mut expected = None;
-    for fill in 1..=8u8 {
-        crate::gpu::testing::write_buffer(buffer.as_com_ref(), 0, &[fill; 260]).unwrap();
-        crate::gpu::testing::write_pixels(image.as_com_ref(), Rect { x: 0, y: 0, width: 2, height: 2 }, &[fill; 16]).unwrap();
-        let source = gpu.buffer_snapshot(resources.as_com_ref(), buffer.as_com_ref()).unwrap();
-        let pixels = gpu.texture_snapshot(resources.as_com_ref(), image.as_com_ref()).unwrap();
-        let backing = source.native(&mut Preparation { executor: &mut executor }).unwrap();
-        let texture = pixels.native(&mut Preparation { executor: &mut executor }).unwrap();
-        let identity = (backing.raw, texture.raw);
-        assert_eq!(*expected.get_or_insert(identity), identity);
-        // Inspect the real GL uniform allocation, including its creation usage hint.
-        // SAFETY: This context owns the live buffer and all reads stay within its capacity.
-        unsafe {
-            gl.bind_buffer(glow::UNIFORM_BUFFER, Some(backing.raw));
-            assert_eq!(gl.get_buffer_parameter_i32(glow::UNIFORM_BUFFER, glow::BUFFER_USAGE) as u32, glow::DYNAMIC_DRAW);
-            let pointer = gl.map_buffer_range(glow::UNIFORM_BUFFER, 0, 272, glow::MAP_READ_BIT);
-            assert!(!pointer.is_null());
-            assert_eq!(&std::slice::from_raw_parts(pointer, 272)[..260], &[fill; 260]);
-            assert_eq!(&std::slice::from_raw_parts(pointer, 272)[260..], &[0; 12]);
-            gl.unmap_buffer(glow::UNIFORM_BUFFER);
+        });
+        let slots = if usage == GpuBufferUsage::Dynamic { 1 } else { 3 };
+        let mut expected = Vec::new();
+        let mut pinned = Vec::new();
+        for fill in 1..=8u8 {
+            crate::gpu::testing::write_buffer(buffer.as_com_ref(), 0, &[fill; 260]).unwrap();
+            crate::gpu::testing::write_pixels(image.as_com_ref(), Rect { x: 0, y: 0, width: 2, height: 2 }, &[fill; 16]).unwrap();
+            let source = gpu.buffer_snapshot(resources.as_com_ref(), buffer.as_com_ref()).unwrap();
+            let pixels = gpu.texture_snapshot(resources.as_com_ref(), image.as_com_ref()).unwrap();
+            // A valid application's PBO/strides must not change the CPU source addressed on creation or refresh.
+            foreign.bind();
+            let backing = source.native(&mut Preparation { executor: &mut executor }).unwrap();
+            let texture = pixels.native(&mut Preparation { executor: &mut executor }).unwrap();
+            let identity = (backing.raw, texture.raw);
+            if expected.len() < slots {
+                assert!(!expected.contains(&identity));
+                expected.push(identity);
+                // Force every reserved streamed slot to be realized before releasing captures.
+                pinned.push((source.clone(), pixels.clone()));
+            } else {
+                assert!(expected.contains(&identity), "completed uploads must reuse the existing native slots");
+            }
+            // Inspect the real GL uniform allocation, including its creation usage hint.
+            // SAFETY: This context owns the live buffer and all reads stay within its capacity.
+            unsafe {
+                gl.bind_buffer(glow::UNIFORM_BUFFER, Some(backing.raw));
+                assert_eq!(
+                    gl.get_buffer_parameter_i32(glow::UNIFORM_BUFFER, glow::BUFFER_USAGE) as u32,
+                    if usage == GpuBufferUsage::Dynamic {
+                        glow::DYNAMIC_DRAW
+                    } else {
+                        glow::STREAM_DRAW
+                    }
+                );
+                let pointer = gl.map_buffer_range(glow::UNIFORM_BUFFER, 0, 272, glow::MAP_READ_BIT);
+                assert!(!pointer.is_null());
+                assert_eq!(&std::slice::from_raw_parts(pointer, 272)[..260], &[fill; 260]);
+                assert_eq!(&std::slice::from_raw_parts(pointer, 272)[260..], &[0; 12]);
+                gl.unmap_buffer(glow::UNIFORM_BUFFER);
+            }
+            assert_eq!(super::super::tests::read_image(&gl, &texture, 2, 2), [fill; 16]);
+            drop((source, pixels));
+            if usage == GpuBufferUsage::Dynamic {
+                assert_eq!(crate::gpu::testing::write_buffer(buffer.as_com_ref(), 0, &[fill; 4]), Err(RENDER_E_BUSY));
+                assert_eq!(crate::gpu::testing::write_buffer(image.as_com_ref(), 0, &[fill; 4]), Err(RENDER_E_BUSY));
+            }
+            drop((backing, texture));
+            executor.complete().unwrap();
+            // SAFETY: The current context completes issued uploads before the completion poll.
+            unsafe { gl.finish() };
+            executor.collect().unwrap();
+            if pinned.len() == slots {
+                pinned.clear();
+            }
+            crate::gpu::testing::write_buffer(buffer.as_com_ref(), 0, &[fill; 4]).unwrap();
+            crate::gpu::testing::write_buffer(image.as_com_ref(), 0, &[fill; 4]).unwrap();
         }
-        assert_eq!(super::super::tests::read_image(&gl, &texture, 2, 2), [fill; 16]);
-        drop((source, pixels));
-        assert_eq!(crate::gpu::testing::write_buffer(buffer.as_com_ref(), 0, &[fill; 4]), Err(RENDER_E_BUSY));
-        assert_eq!(crate::gpu::testing::write_buffer(image.as_com_ref(), 0, &[fill; 4]), Err(RENDER_E_BUSY));
-        drop((backing, texture));
-        executor.complete().unwrap();
-        // SAFETY: The current context completes issued uploads before the completion poll.
-        unsafe { gl.finish() };
+        drop((buffer, image));
         executor.collect().unwrap();
-        crate::gpu::testing::write_buffer(buffer.as_com_ref(), 0, &[fill; 4]).unwrap();
-        crate::gpu::testing::write_buffer(image.as_com_ref(), 0, &[fill; 4]).unwrap();
+        assert_eq!(gpu.live_bytes(resources.as_com_ref()).unwrap(), 0);
     }
-    drop((buffer, image));
-    executor.collect().unwrap();
-    assert_eq!(gpu.live_bytes(resources.as_com_ref()).unwrap(), 0);
 }
 
 /// Exact COM spans and offset-at-capacity ranges draw correctly with initialized native tails.
