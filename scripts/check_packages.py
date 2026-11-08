@@ -11,7 +11,7 @@ import tempfile
 import tomllib
 
 ROOT = Path(__file__).resolve().parents[1]
-PRIVATE = {"neocogi-typed-buffer-tests", "neocogi-platform-examples", "neocogi-example-plugins", "neocogi-browser-tests"}
+PRIVATE = {"neocogi-typed-buffer-tests", "neocogi-platform-examples", "neocogi-example-plugins", "neocogi-browser-tests", "neocogi-platform-tools"}
 CONTRACTS_OWNER = "neocogi-platform-contracts"
 RELEASE_ORDER = (CONTRACTS_OWNER, "neocogi-platform", "neocogi-platform-dylib")
 

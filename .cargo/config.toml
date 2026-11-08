@@ -45,6 +45,7 @@ rustflags = ["-Zfmt-debug=full"]
 rustflags = ["-Zfmt-debug=full"]
 
 [alias]
+tools = ["run", "--locked", "--package", "neocogi-platform-tools", "--"]
 # Convenience only: the profile itself owns all target compiler settings.
 build-min-size = ["build", "--profile", "min-size"]
 

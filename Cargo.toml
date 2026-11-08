@@ -9,6 +9,7 @@ members = [
     "tests/typed-buffers",
     "examples/native",
     "examples/native/plugins",
+    "scripts",
 ]
 default-members = ["crates/platform"]
 
