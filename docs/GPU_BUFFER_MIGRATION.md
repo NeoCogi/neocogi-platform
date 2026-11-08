@@ -5,7 +5,7 @@ unchanged `neocogi-com = 0.1.0` SDK and its existing input/output slices.
 Platform builds normally, with no SDK source override:
 
 ```sh
-cargo test -p neocogi-render-gpu --lib
+cargo test -p neocogi-platform --lib
 ```
 
 For the UI branch, include Platform's checkout when generating the overlay and
@@ -90,7 +90,7 @@ It sits above the untyped driver and wraps the original returned objects. The
 application defines its vertex types and their exact shader packing:
 
 ```rust
-use neocogi_render_core::buffer::{GpuElement, TypedGpuBufferDesc, TypedGpuBufferFactory};
+use neocogi_platform::render::buffer::{GpuElement, TypedGpuBufferDesc, TypedGpuBufferFactory};
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -127,4 +127,4 @@ element/byte offset conversion and that copied results survive wrapper destructi
 
 The complete state, accounting and backend lifetime contract is in
 [GPU_RENDERING.md](contracts/GPU_RENDERING.md); the authoritative interface is
-[gpu.ncidl](../tools/platform-build/schemas/neocogi/renderer/gpu.ncidl).
+[gpu.ncidl](../crates/platform/schemas/neocogi/renderer/gpu.ncidl).

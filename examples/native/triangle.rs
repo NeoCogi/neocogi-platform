@@ -1,7 +1,7 @@
 //! Application-owned triangle recording shared by the executable and native consumer regressions.
 use neocogi_com::{ComBox, ComPtr, NcCopyFromBufferOffset, NcStatus, com_object};
-use neocogi_render_core::abi::*;
-use neocogi_render_core::platform::IPlatformWindowAbi;
+use neocogi_platform_examples::sdk::render::abi::*;
+use neocogi_platform_examples::sdk::render::platform::IPlatformWindowAbi;
 
 /// Initial OS window request; actual drawable pixels may differ through scaling or later resize.
 pub const INITIAL_SIZE: Size = Size { width: 320, height: 240 };
@@ -28,7 +28,7 @@ impl IRenderStream for Stream {
 /// Query physical pixels before each recording, using that one value for both view bounds and submission.
 /// Zero dimensions suspend without consuming a requested frame; negative dimensions reject as invalid metadata.
 pub fn render_frames(window: ComPtr<IPlatformWindowAbi>, frames: u32) -> Result<(), RenderError> {
-    use neocogi_render_core::source::{Bytes, PipelineDesc};
+    use neocogi_platform_examples::sdk::render::source::{Bytes, PipelineDesc};
     let renderer: ComPtr<IRendererAbi> = window.query()?;
     let clients: ComPtr<IRenderClientFactoryAbi> = window.query()?;
     // Select the existing window framebuffer. This creates no second frame or attachment; the

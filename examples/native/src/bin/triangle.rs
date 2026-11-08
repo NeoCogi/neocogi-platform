@@ -5,7 +5,7 @@ mod triangle;
 
 /// Acquires one selected platform root and window, then runs the ordinary triangle drawing loop.
 #[cfg(not(target_arch = "wasm32"))]
-fn main() -> Result<(), neocogi_render_core::abi::RenderError> {
+fn main() -> Result<(), neocogi_platform_examples::sdk::render::abi::RenderError> {
     use neocogi_com::NcCopyFromBufferOffset;
     let platform = neocogi_platform_examples::acquire_platform()?;
     let window = platform.create_window(NcCopyFromBufferOffset::new(0, b"NeoCogi Platform triangle"), triangle::INITIAL_SIZE)?;

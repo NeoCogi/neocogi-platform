@@ -1,3 +1,14 @@
+# Two-package SDK consolidation
+
+The current pre-release layout supersedes the eleven-package release set with
+`neocogi-platform` and `neocogi-platform-dylib`. Implementations, shared contracts,
+schema generation and stable build-script staging are SDK modules. The final
+shim package supplies platform and independent compiler discovery roots, with
+backend-suffixed deployed platform filenames. Examples and fixtures remain
+unpublished. Older entries below describe the historical architecture and retain
+their former names for context; current contracts are in COMPONENTS.md,
+NATIVE_LAYOUT.md and RELEASING.md.
+
 # Dependency compatibility and revision history
 
 NeoCogi UI depends on compatible NeoCogi Platform packages. The repositories can

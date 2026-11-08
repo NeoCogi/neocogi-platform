@@ -82,7 +82,7 @@ def run(browser: str, bindgen: str) -> None:
         directory = Path(directory)
         subprocess.run([bindgen, str(artifact), "--target", "web", "--out-dir", str(directory),
                         "--out-name", "input-test"], check=True)
-        shutil.copyfile(ROOT / "crates/platform/plugin/tests/browser-input.html", directory / "index.html")
+        shutil.copyfile(ROOT / "crates/platform/tests/platform_browser-input.html", directory / "index.html")
         handler = partial(SimpleHTTPRequestHandler, directory=str(directory))
         server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
         thread = threading.Thread(target=server.serve_forever, daemon=True)

@@ -832,7 +832,7 @@ version = "0.1.0-alpha.2"
 dependencies = [
  "neocogi-com",
  "neocogi-com-host",
- "neocogi-platform-plugin",
+ "neocogi-platform",
  "wasm-bindgen",
 ]
 
@@ -877,10 +877,7 @@ name = "neocogi-example-plugins"
 version = "0.1.0-alpha.2"
 dependencies = [
  "neocogi-com",
- "neocogi-native-layout",
- "neocogi-platform-plugin-dylib",
- "neocogi-render-core",
- "neocogi-shader-compiler-dylib",
+ "neocogi-platform",
 ]
 
 [[package]]
@@ -899,32 +896,39 @@ dependencies = [
 ]
 
 [[package]]
-name = "neocogi-native-layout"
+name = "neocogi-platform"
 version = "0.1.0-alpha.2"
 dependencies = [
- "neocogi-native-layout-core",
- "proc-macro2",
+ "ash",
+ "ash-window",
+ "glow 0.18.0",
+ "js-sys",
+ "naga",
+ "neocogi-com",
+ "neocogi-com-host",
+ "neocogi-idl",
+ "pollster",
  "quote",
- "syn 2.0.119",
- "tempfile",
-]
-
-[[package]]
-name = "neocogi-native-layout-core"
-version = "0.1.0-alpha.2"
-dependencies = [
+ "raw-window-handle",
+ "rs-math3d",
+ "sdl2",
  "serde",
  "serde_json",
  "sha2",
+ "syn 2.0.119",
  "tempfile",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+ "wgpu",
 ]
 
 [[package]]
-name = "neocogi-platform-build"
+name = "neocogi-platform-dylib"
 version = "0.1.0-alpha.2"
 dependencies = [
- "neocogi-idl",
- "tempfile",
+ "neocogi-com",
+ "neocogi-platform",
 ]
 
 [[package]]
@@ -936,11 +940,7 @@ dependencies = [
  "neocogi-com",
  "neocogi-com-host",
  "neocogi-example-plugins",
- "neocogi-native-layout",
- "neocogi-native-layout-core",
- "neocogi-platform-plugin",
- "neocogi-render-core",
- "neocogi-shader-compiler",
+ "neocogi-platform",
  "rs-math3d",
  "serde_json",
  "sha2",
@@ -948,113 +948,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "neocogi-platform-plugin"
-version = "0.1.0-alpha.2"
-dependencies = [
- "glow 0.18.0",
- "js-sys",
- "neocogi-com",
- "neocogi-com-host",
- "neocogi-render-core",
- "neocogi-render-gpu",
- "neocogi-render-support",
- "neocogi-shader-compiler",
- "neocogi-shader-core",
- "rs-math3d",
- "sdl2",
- "tempfile",
- "wasm-bindgen",
- "wasm-bindgen-futures",
- "web-sys",
-]
-
-[[package]]
-name = "neocogi-platform-plugin-dylib"
-version = "0.1.0-alpha.2"
-dependencies = [
- "neocogi-com",
- "neocogi-platform-plugin",
-]
-
-[[package]]
-name = "neocogi-render-core"
-version = "0.1.0-alpha.2"
-dependencies = [
- "neocogi-com",
- "neocogi-platform-build",
- "quote",
- "rs-math3d",
- "syn 2.0.119",
- "tempfile",
-]
-
-[[package]]
-name = "neocogi-render-gpu"
-version = "0.1.0-alpha.2"
-dependencies = [
- "ash",
- "ash-window",
- "glow 0.18.0",
- "neocogi-com",
- "neocogi-render-core",
- "neocogi-shader-compiler",
- "neocogi-shader-core",
- "pollster",
- "raw-window-handle",
- "sdl2",
- "serde_json",
- "tempfile",
- "web-sys",
- "wgpu",
-]
-
-[[package]]
-name = "neocogi-render-support"
-version = "0.1.0-alpha.2"
-dependencies = [
- "neocogi-com",
- "neocogi-render-core",
- "neocogi-render-gpu",
- "neocogi-shader-compiler",
-]
-
-[[package]]
-name = "neocogi-shader-compiler"
-version = "0.1.0-alpha.2"
-dependencies = [
- "naga",
- "neocogi-com",
- "neocogi-platform-build",
- "neocogi-render-core",
- "neocogi-shader-core",
-]
-
-[[package]]
-name = "neocogi-shader-compiler-dylib"
-version = "0.1.0-alpha.2"
-dependencies = [
- "neocogi-com",
- "neocogi-shader-compiler",
-]
-
-[[package]]
-name = "neocogi-shader-core"
-version = "0.1.0-alpha.2"
-dependencies = [
- "neocogi-com",
- "neocogi-platform-build",
- "neocogi-render-core",
-]
-
-[[package]]
 name = "neocogi-typed-buffer-tests"
 version = "0.1.0-alpha.2"
 dependencies = [
  "neocogi-com",
- "neocogi-platform-build",
- "neocogi-render-core",
- "neocogi-render-gpu",
- "neocogi-shader-compiler",
+ "neocogi-platform",
  "syn 2.0.119",
 ]
 

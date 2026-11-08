@@ -4,8 +4,8 @@
 mod triangle;
 
 use neocogi_com::{com_object, ComBox, ComPtr, ComRef, NcCopyFromBufferOffset, NcStatus};
-use neocogi_render_core::abi::*;
-use neocogi_render_core::platform::*;
+use neocogi_platform_examples::sdk::render::abi::*;
+use neocogi_platform_examples::sdk::render::platform::*;
 use std::{
     cell::{Cell, RefCell},
     rc::Rc,
@@ -17,7 +17,7 @@ use std::{
 #[cfg(feature = "dynamic")]
 fn stage_test_plugins() {
     let executable = std::env::current_exe().unwrap();
-    let profile = neocogi_native_layout_core::output_root(Some(&executable), None).unwrap();
+    let profile = executable.ancestors().find(|path| path.join(".cargo-lock").is_file()).unwrap().to_path_buf();
     let directory = executable.parent().unwrap().join("lib");
     std::fs::create_dir_all(&directory).unwrap();
     for filename in neocogi_example_plugins::LIBRARIES {

@@ -5,17 +5,14 @@ publish = false
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Cargo-selected shared-library composition for native graphics examples"
+description = "Executable-relative loading of explicitly prepared NeoCogi shared libraries"
 
 [features]
 default = ["glow"]
-glow = ["platform-library/glow"]
-vulkan = ["platform-library/vulkan"]
-wgpu = ["platform-library/wgpu"]
+glow = []
+vulkan = []
+wgpu = []
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 neocogi-com = { workspace = true, features = ["runtime"] }
-neocogi-render-core.workspace = true
-neocogi-native-layout = { path = "../../../tools/native-layout" }
-shader-library = { package = "neocogi-shader-compiler-dylib", path = "../../../crates/shader/plugin/dylib", artifact = "cdylib" }
-platform-library = { package = "neocogi-platform-plugin-dylib", path = "../../../crates/platform/plugin/dylib", artifact = "cdylib", default-features = false }
+neocogi-platform.workspace = true

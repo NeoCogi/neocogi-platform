@@ -14,9 +14,9 @@ use camera::Camera;
 use environment::Environment;
 use material::{MaterialAtlas, Tile};
 use neocogi_com::{ComBox, ComPtr, NcCopyFromBufferOffset, NcStatus, com_object};
-use neocogi_render_core::{abi::*, platform::*};
-use neocogi_render_core::source::{Bytes, PipelineDesc};
-use neocogi_render_core::buffer::{TypedGpuBuffer, TypedGpuBufferDesc, TypedGpuBufferFactory};
+use neocogi_platform_examples::sdk::render::{abi::*, platform::*};
+use neocogi_platform_examples::sdk::render::source::{Bytes, PipelineDesc};
+use neocogi_platform_examples::sdk::render::buffer::{TypedGpuBuffer, TypedGpuBufferDesc, TypedGpuBufferFactory};
 use scene::{MAX_JOINTS, Scene, VERTEX_STRIDE, floats, matrix_bytes};
 use std::{
     cell::RefCell,

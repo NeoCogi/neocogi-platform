@@ -17,8 +17,11 @@ cargo run --locked -p neocogi-platform-examples --bin gltf_brainstem
 Select exactly one assembly and one backend. To load shared objects:
 
 ~~~sh
+python3 scripts/build_plugins.py --backend glow
 cargo run --locked -p neocogi-platform-examples --bin triangle --no-default-features --features dynamic,glow -- 3
+python3 scripts/build_plugins.py --backend vulkan
 cargo run --locked -p neocogi-platform-examples --bin gltf_damaged_helmet --no-default-features --features dynamic,vulkan -- --frames 3
+python3 scripts/build_plugins.py --backend wgpu
 cargo run --locked -p neocogi-platform-examples --bin gltf_brainstem --no-default-features --features dynamic,wgpu -- --frames 3 --time 1
 ~~~
 
@@ -35,8 +38,8 @@ is shared by the executable and the real linked/shared-library regression test.
 ## Ownership and deployment
 
 Static assembly registers linked compiler then platform descriptors and acquires
-the typed root through the SDK. Dynamic assembly builds ordinary final cdylib
-artifacts through neocogi-example-plugins. It stages their exact filenames,
+the typed root through the SDK. Dynamic assembly uses final cdylib artifacts explicitly prepared by
+`scripts/build_plugins.py`; `neocogi-example-plugins` uses their staged filenames,
 loads the compiler first, loads the platform, then acquires its typed root.
 Only final dylib roots export discovery; normal provider implementations are not
 Rust dependencies of a dynamic executable. There is no linked compiler fallback.
@@ -81,8 +84,8 @@ Cargo loader paths, and acquire through COM without a GPU. Isolated children
 exercise missing libraries, missing compiler dependencies and incompatible roots.
 Opt-in deployment acceptance renders all three real examples after relocation.
 Static GL pixel acceptance retains animation, arcball, material/HDR and skybox
-checks. Dependency regressions use the selected Cargo tree and verify artifact-only
-edges; metadata alone may contain inactive weak-feature edges.
+checks. Dependency regressions use the selected Cargo tree and verify that dynamic
+applications enable no SDL, graphics-loader or compiler implementation dependency.
 The triangle regression renders a real framebuffer whose extent differs from its
 initial request, checks recorded bounds and successful submissions, counts size
 queries, and tests a suspended iteration. It does not require a particular monitor's

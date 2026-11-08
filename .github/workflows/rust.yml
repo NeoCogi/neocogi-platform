@@ -33,13 +33,13 @@ jobs:
         run: cargo fetch --locked
       - name: Platform contracts and compiler
         run: |
-          cargo test --locked -p neocogi-render-core -p neocogi-render-gpu -p neocogi-render-support -p neocogi-shader-core -p neocogi-shader-compiler -p neocogi-native-layout -p neocogi-native-layout-core
+          cargo test --locked -p neocogi-platform --features build-support,test-support
       - name: Backend-owned native regressions
         run: |
-          xvfb-run -a cargo test --locked -p neocogi-render-gpu --features ${{ matrix.backend }},test-support --lib backends::${{ matrix.backend }}:: -- --include-ignored --test-threads=1
+          xvfb-run -a cargo test --locked -p neocogi-platform --features ${{ matrix.backend }},test-support --lib gpu::backends::${{ matrix.backend }}:: -- --include-ignored --test-threads=1
       - name: Backend acceptance
         run: |
-          xvfb-run -a cargo test --locked -p neocogi-platform-plugin --lib --test compiler_activation --no-default-features --features ${{ matrix.backend }} -- --include-ignored --test-threads=1
+          xvfb-run -a cargo test --locked -p neocogi-platform --lib --test platform_compiler_activation --no-default-features --features platform,shader-compiler,${{ matrix.backend }} -- --include-ignored --test-threads=1
       - name: Standalone graphics application
         run: |
           xvfb-run -a cargo run --locked -p neocogi-platform-examples --bin triangle --no-default-features --features static,${{ matrix.backend }} -- 3
@@ -57,17 +57,18 @@ jobs:
           xvfb-run -a cargo run --locked -p neocogi-platform-examples --bin gltf_brainstem --no-default-features --features static,${{ matrix.backend }} -- --frames 3 --time 1
       - name: Dynamic example graphs and relocated shared objects
         run: |
+          python3 scripts/build_plugins.py --backend ${{ matrix.backend }}
           xvfb-run -a cargo test --locked -p neocogi-platform-examples --no-default-features --features dynamic,${{ matrix.backend }} --test graphs --test deployment --test triangle -- --include-ignored --test-threads=1
       - name: Backend warnings
         run: |
-          cargo clippy --locked -p neocogi-platform-plugin --all-targets --no-default-features --features ${{ matrix.backend }} -- -D warnings
+          cargo clippy --locked -p neocogi-platform --all-targets --no-default-features --features platform,${{ matrix.backend }} -- -D warnings
   browser:
     runs-on: ubuntu-latest
     env:
       CARGO_TARGET_DIR: ${{ github.workspace }}/target
     steps:
       - uses: actions/checkout@v6
-      - run: cargo check --locked -p neocogi-platform-plugin --target wasm32-unknown-unknown --no-default-features --features webgl,test-support
+      - run: cargo check --locked -p neocogi-platform --target wasm32-unknown-unknown --no-default-features --features platform,webgl,test-support
       - uses: browser-actions/setup-chrome@v2
         id: chrome
       - name: Matching Wasm bindings tool

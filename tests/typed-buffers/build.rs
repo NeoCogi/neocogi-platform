@@ -1,5 +1,5 @@
 //! Compile a consumer-owned specialization using the real Platform source package.
-use neocogi_platform_build::{sources, build};
+use neocogi_platform::build::{sources, build};
 
 /// Derive a local trait alias from the generated declaration, never a copied UUID.
 fn main() {

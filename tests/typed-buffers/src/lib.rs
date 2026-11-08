@@ -4,7 +4,7 @@ extern crate self as fixture_typed_buffers;
 #[cfg(test)]
 mod tests {
     use neocogi_com::*;
-    use neocogi_render_core::{
+    use neocogi_platform::render::{
         abi::*,
         buffer::{GpuElement, TypedGpuBuffer, TypedGpuBufferFactory, TypedGpuBufferDesc},
     };
@@ -69,8 +69,8 @@ mod tests {
     /// Generic inheritance preserves copied transfers and the independently registered original identity.
     #[test]
     fn application_specialization_transfers_real_storage_and_exposes_its_driver_owner() {
-        let gpu = neocogi_render_gpu::testing::device(
-            nc_shader_compiler::CompilerObject::from_value(nc_shader_compiler::CompilerObject)
+        let gpu = neocogi_platform::gpu::testing::device(
+            neocogi_platform::compiler::CompilerObject::from_value(neocogi_platform::compiler::CompilerObject)
                 .query()
                 .unwrap(),
         );

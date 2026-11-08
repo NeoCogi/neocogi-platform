@@ -1,14 +1,21 @@
 # Native application staging
 
-Final applications select ordinary Cargo cdylib artifacts, then
-neocogi-native-layout stages their filenames into app/lib. Only final dylib
-packages export plugin discovery. The tool does not run Cargo, resolve plugins,
-or choose a renderer at runtime.
+`neocogi-platform-dylib` supplies two independent COM discovery roots. Build them
+with `python3 scripts/build_plugins.py --backend glow` (or vulkan/wgpu).
+This explicit orchestration uses Cargo JSON artifact paths; application build
+scripts never invoke Cargo and dynamic executables have no provider dependency.
+The compiler stages as `libnc_shader_compiler.so`, followed by the selected
+`libnc_platform_{backend}.so` (target-specific suffix/prefix on macOS/Windows).
+Use the same profile/target/output selection as the application. Missing libraries
+remain errors; there is no linked compiler/backend fallback.
 
-neocogi-native-layout-core owns build-only output policy and resource staging.
-It has no renderer, COM, math or IDL dependency. Build scripts and tests needing
-output policy depend on that package directly; the former
-neocogi_render_core::platform::deployment module is removed.
+Resource staging and output policy live in `neocogi_platform::build::layout`,
+available through the SDK's `build-support` feature on a build dependency.
+`stage_resources(manifest, root, &[Resource { source, destination }])` returns
+`StagedResources { inputs, outputs }`. Build scripts must emit
+`cargo::rerun-if-changed` for both sets and track relevant environment overrides
+with `cargo::rerun-if-env-changed`. SDK consumers generate normal Rust code;
+there are no procedural macros, tracked macro paths or artifact dependencies.
 
 ## Output selection
 
@@ -40,12 +47,12 @@ sources are not concurrently replaced; it is not a filesystem sandbox.
 
 One consuming package may rebuild its exact destination slot using a different
 source (including A/B/A feature changes). Different slots cannot overlap by prefix,
-even across packages or macro invocations. Duplicates in one invocation reject.
+even across packages or staging invocations. Duplicates in one invocation reject.
 A preexisting destination without an ownership receipt rejects rather than
 silently acquiring authority to delete it. Use a clean staging output when
 migrating from the former additive copier.
 
-The tool serializes ownership checks and publication across compiler processes
+The tool serializes ownership checks and publication across build-script processes
 using a filesystem lock. Typed versioned receipts contain relative destinations
 and an opaque SHA-256 package-owner fingerprint, not private source paths.
 Receipts belong to build output, not the runtime ABI or a plugin registry.
@@ -68,25 +75,14 @@ destinations to preserve rename-based replacement on the same filesystem.
 An already owned input equal to its destination is allowed when its temporary
 sibling is outside that input. Validation does not reject all input/output equality.
 
-Unchanged snapshots preserve deployed file timestamps. Compiler dep-info tracks
-source and output files/directories: removing an output or changing its membership
-invalidates cached expansion. Removing a mapping entirely requires clean packaging;
-a macro that no longer runs cannot retire its old slot automatically.
-
-## Compiler-facing test artifacts
-
-Real macro-consumer tests use the exact library recorded in their own executable's
-rustc dependency information. The development workspace enables Cargo's
-`binary-dep-depinfo` option and explicitly loads the macro dependency for that
-record. Missing, ambiguous or deleted recorded artifacts fail with a rebuild
-diagnostic. Directory scans and modification dates never select a substitute.
-The fixture invokes the pinned rustc directly; it does not start a nested Cargo
-build or retain another Cargo target directory.
+Unchanged snapshots preserve deployed file timestamps. Cargo rerun directives
+track source and output files/directories. Removing outputs or changing input
+membership reruns the build script and restores the exact snapshot. Removing a
+mapping entirely requires clean packaging; a build script that no longer invokes
+that mapping cannot retire its old slot automatically.
 
 File equality compares size/permissions and streams bytes through fixed 8 KiB
-buffers per input, without retaining whole asset or library payloads. New temporary
-payloads are copied directly; unchanged installed files keep their timestamps.
-The no-concurrent-source-mutation and per-mapping publication rules still apply.
-Compiler-selected macro paths decode only the actual pinned rustc space escapes;
-dollar signs and original backslashes remain literal. Producer-boundary regressions
-compile real dep-info and expand the selected macro under punctuation-bearing paths.
+buffers per input. New candidates copy directly; unchanged outputs keep their
+timestamps. The no-concurrent-source-mutation and per-mapping publication rules
+still apply. The SDK retains the filesystem/resource regressions, and extracted
+package qualification exercises a real consumer build script on stable Rust.

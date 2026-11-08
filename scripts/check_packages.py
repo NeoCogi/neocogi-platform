@@ -12,7 +12,7 @@ import tomllib
 
 ROOT = Path(__file__).resolve().parents[1]
 PRIVATE = {"neocogi-typed-buffer-tests", "neocogi-platform-examples", "neocogi-example-plugins", "neocogi-browser-tests"}
-SCHEMA_OWNER = "neocogi-platform-build"
+SCHEMA_OWNER = "neocogi-platform"
 
 
 def run(arguments, *, cwd=ROOT):
@@ -39,6 +39,8 @@ def published_packages(metadata):
         raise ValueError("shared source owner is missing from release set")
     if len({p["version"] for p in selected.values()}) != 1:
         raise ValueError("release members have inconsistent versions")
+    if set(selected) != {"neocogi-platform", "neocogi-platform-dylib"}:
+        raise ValueError("release set must contain exactly the SDK and cdylib shim")
     return selected
 
 
@@ -121,9 +123,8 @@ def qualify(*, allow_dirty=False, offline=False, stable=None):
         # Package manifests and build inputs are unmodified. Patches resolve only
         # unpublished internal dependencies to the exact extracted archive contents.
         run([*cargo, "build", "--workspace", "--all-targets", *common], cwd=outside)
-        run([*cargo, "test", "--lib", "-p", SCHEMA_OWNER, "-p", "neocogi-render-core", "-p", "neocogi-shader-core",
-             "-p", "neocogi-shader-compiler", "-p", "neocogi-native-layout-core", *common], cwd=outside)
-        run([*cargo, "run", "-p", "neocogi-package-consumer", "--features", "staging", *common], cwd=outside)
+        run([*cargo, "test", "--lib", "-p", SCHEMA_OWNER, "--features", "build-support,test-support,platform,glow", *common], cwd=outside)
+        run([*cargo, "run", "-p", "neocogi-package-consumer", *common], cwd=outside)
         if stable:
             run(["cargo", f"+{stable}", "run", "-p", "neocogi-package-consumer", *common], cwd=outside)
     print(f"PASS: {len(selected)} archives and external consumer; internal sources came only from extracted archives", flush=True)

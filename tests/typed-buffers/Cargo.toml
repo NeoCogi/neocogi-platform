@@ -6,11 +6,9 @@ license.workspace = true
 publish = false
 
 [dev-dependencies]
-neocogi-render-core.workspace = true
-neocogi-render-gpu = { workspace = true, features = ["test-support"] }
+neocogi-platform = { workspace = true, features = ["test-support"] }
 neocogi-com = { workspace = true, features = ["std", "macros", "runtime"] }
-neocogi-shader-compiler.workspace = true
 
 [build-dependencies]
-neocogi-platform-build.workspace = true
+neocogi-platform = { workspace = true, features = ["build-support"] }
 syn.workspace = true

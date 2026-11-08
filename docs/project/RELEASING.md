@@ -1,117 +1,60 @@
 # Preparing and publishing Platform packages
 
-The current release target is **0.1.0-alpha.2**. All workspace packages inherit
-that version. The eleven library/build/shared-library packages are enabled for
-crates.io; the native examples, example plugin composition and browser test
-harness and typed-buffer ABI fixture remain unpublished. Publication is a separate
-explicit action after local qualification and review.
+The release target is **0.1.0-alpha.2**. Exactly two packages are published:
 
-## Build inputs and archive contents
+1. `neocogi-platform`: reusable Rust SDK, contracts, optional providers and build support.
+2. `neocogi-platform-dylib`: thin final platform/compiler shared-library roots.
 
-`neocogi-platform-build` contains the authoritative renderer, platform and shader
-interface files and their shared generation helper. Each contract/compiler build
-script declares it as a build dependency, generates into its own OUT_DIR and
-imports ordinary Rust values from the appropriate contract library. No generation
-step searches sibling repository folders. The helper embeds its canonical source
-bytes and reconstructs derived inputs in each caller's OUT_DIR, preserving
-unchanged files and pruning obsolete declarations. A cached helper therefore
-keeps working after its original source directory moves or disappears. Source
-declarations stay version 1.
+The four existing example/test packages remain `publish = false`. This supersedes
+the eleven-package release layout. Internal implementation modules, schema helpers
+and native staging code are part of the SDK archive. There are no private path
+or Git dependencies hidden behind a facade. All internal registry requirements
+pin the same exact pre-release version.
 
-Internal package dependencies specify an exact `=0.1.0-alpha.2` requirement in
-addition to their development path. Cargo removes development paths from the
-published manifests. This release set is intentionally qualified together;
-NeoCogi UI does not need a matching repository commit and must migrate its own
-selected contracts separately.
+## Package inputs and verification
 
-Each published package explicitly includes its sources, applicable build script,
-tests, README and a LICENSE containing the project license plus the bundled
-workspace notices. Shared interface files occur only in the build-support
-package. Example models, review notes and repository-local caches are excluded.
-The runtime libraries do not depend on the build helper at runtime.
+The SDK archive owns the nine authored NCIDL files, the schema helper, build.rs,
+implementation modules and focused tests. Its own build.rs uses the helper's
+source directly; downstream generation uses an SDK build dependency with
+`build-support`. Runtime defaults enable neither generation/staging dependencies
+nor SDL, Naga or a graphics backend. The shim archive includes both final link
+roots; the second is explicitly selected by `--example nc_shader_compiler`.
+All packages include their README and combined license notices.
 
-## Local qualification
-
-Use the checked-in nightly toolchain for the workspace and native staging macros.
-`neocogi-native-layout` uses tracked procedural-macro inputs and requires nightly;
-shared-library Cargo artifact dependencies also require nightly support. Normal
-library consumers do not inherit this repository's nightly-only Cargo settings.
-Native platform builds require SDL2 development libraries; Vulkan additionally
-requires its loader. Backend selection remains explicit and mutually exclusive
-in each platform provider.
-
-Create all interdependent archives together so Cargo can resolve this release's
-unpublished members during local packaging:
+Run:
 
 ```sh
-cargo package --locked --offline --workspace \
-  --exclude neocogi-platform-examples \
-  --exclude neocogi-example-plugins \
-  --exclude neocogi-browser-tests \
-  --exclude neocogi-typed-buffer-tests
-```
-
-For development checks of uncommitted changes, add `--allow-dirty`; release
-qualification uses a clean tracked tree. Omitting `--no-verify` makes Cargo build
-the archived packages. This workspace check is followed by extraction and an
-independent consumer build outside the checkout, because Cargo otherwise still
-finds repository-level configuration around its verification directory.
-
-Do not publish a package merely because `--list` or `--no-verify` succeeded.
-Inspect the actual archives and build their contents using declared dependencies.
-Run the normal suites and relevant native/browser checks for runtime changes.
-Keep review notes and OPEN_ITEMS.md ignored and uncommitted.
-
-The repeatable external check is:
-
-```sh
+cargo fetch --locked
+cargo check --locked --workspace --all-targets
+cargo test --locked -p neocogi-platform --features platform,glow,test-support,build-support
 python3 -B -m unittest discover -s scripts -p 'test_*.py'
-python3 -B scripts/check_packages.py --offline --stable-toolchain stable
+python3 -B scripts/check_packages.py --offline --stable-toolchain stable --allow-dirty
 ```
 
-Omit `--offline` when dependencies need downloading; the optional stable check
-requires an installed stable toolchain. Use `--allow-dirty` while developing.
-The checker assembles real archives, validates their normalized manifests and
-contents, and extracts them into a temporary workspace outside this checkout.
-Registry patches point unpublished internal dependencies only at those extracted
-contents, never at source directories in the checkout. External dependencies keep
-their declared registry requirements. This verifies package construction before
-upload; actual registry availability is established by publication.
+Omit `--allow-dirty` for release qualification. The checker constructs both real
+archives together, rejects unexpected release packages and duplicate schema
+ownership, extracts them outside this checkout and uses only extracted contents
+for internal registry patches. It builds all targets, runs focused SDK tests and
+executes an independent generated COM consumer with retained shader exports and
+real build-script resource staging. The optional stable run validates the same
+consumer without repository nightly configuration. It does not claim all native
+adapters or browser execution are qualified on stable.
 
-All extracted packages and test targets are compiled with the checked-in nightly,
-without the repository's `.cargo/config.toml`. Focused extracted-library tests run,
-then an independent application generates shader bindings, acquires the packaged
-compiler through COM and checks retained WGSL/GLSL/SPIR-V exports. A nightly feature
-also expands the packaged staging macro and checks the copied file. The optional
-stable run checks the ordinary CPU consumer without the nightly macro. It does
-not qualify all native/browser execution or every archived test on stable Rust.
+Native builds require SDL2 development libraries; Vulkan needs its loader.
+The development workspace still pins nightly for build-std and its min-size
+profile, independently of the package architecture. Build-only APIs use stable
+Rust and have no proc-macro tracking or Cargo artifact-dependency requirement.
 
-Commands reuse one sequential target directory. Before compiling, the checker
-cleans this release's package artifacts so normalized archive mtimes cannot make
-stale code from an earlier extraction appear current. Third-party dependency
-artifacts can be reused. Temporary extracted sources are removed when the check
-finishes; `cargo clean` removes its build output. CI runs
-this check in addition to the existing backend/browser jobs.
+## Deployment and publication
 
-## Publication order
+Before dynamic acceptance, run `python3 scripts/build_plugins.py --backend glow`
+(or vulkan/wgpu), then build/run applications with the same target/profile and
+selected dynamic backend. Copy the executable with its `lib` and optional assets
+folders. Load the compiler before the platform; COM identities and dependencies
+are unchanged. See [native staging](../contracts/NATIVE_LAYOUT.md).
 
-Publish after the selected archives and external consumer have passed and the
-review findings have been triaged. The already published COM/host/IDL dependencies
-are pinned at `0.1.0`. Publish this repository's packages in this order,
-waiting for each required dependency to become available in the crates.io index:
-
-1. `neocogi-platform-build`
-2. `neocogi-native-layout-core`
-3. `neocogi-native-layout`
-4. `neocogi-render-core`
-5. `neocogi-shader-core`
-6. `neocogi-shader-compiler`
-7. `neocogi-shader-compiler-dylib`
-8. `neocogi-render-gpu`
-9. `neocogi-render-support`
-10. `neocogi-platform-plugin`
-11. `neocogi-platform-plugin-dylib`
-
-The two final dylib packages own discovery exports and produce deployable shared
-libraries. Reusable providers stay ordinary Rust libraries. Keep the examples
-workspace-only; they exercise both linked and loaded compositions.
+Run relevant native/browser acceptance and review the actual archives before
+publication. Publication remains a separate explicit action. Publish the SDK
+first and wait for it to appear in the crates.io index, then publish the shim.
+COM/host/IDL dependencies remain the published exact `0.1.0` versions. A successful
+`--list` or `--no-verify` alone is insufficient release evidence.

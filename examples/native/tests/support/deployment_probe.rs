@@ -6,12 +6,14 @@ use neocogi_com::{ComPtr, NcStatus};
 #[cfg(not(target_arch = "wasm32"))]
 mod wrong {
     use super::*;
-    use neocogi_render_core::abi::{IRenderOutcome, IRenderOutcomeAbi};
-    #[neocogi_com::com_object(interfaces(neocogi_render_core::abi::IRenderOutcome))]
+    use neocogi_platform_examples::sdk::render::abi::{IRenderOutcome, IRenderOutcomeAbi};
+    #[neocogi_com::com_object(interfaces(neocogi_platform_examples::sdk::render::abi::IRenderOutcome))]
     /// Valid COM allocation advertising an operation outcome rather than the compiler contract.
     struct Root;
     impl IRenderOutcome for Root {
-        fn status(&self) -> Result<i32, NcStatus> { Ok(neocogi_com::NC_OK.code()) }
+        fn status(&self) -> Result<i32, NcStatus> {
+            Ok(neocogi_com::NC_OK.code())
+        }
         fn message(&self) -> Result<ComPtr<neocogi_com::INcStringAbi>, NcStatus> {
             Ok(neocogi_com::NcString::from_utf8_str("wrong compiler root"))
         }
@@ -56,7 +58,7 @@ fn main() {
             // SAFETY: A freshly staged trusted real platform library; missing dependency
             // loading is deliberately fail-fatal in the SDK and runs only in a child.
             let id = unsafe { runtime.load_plugin_library(directory.join(neocogi_example_plugins::LIBRARIES[1])) };
-            let result = runtime.acquire_plugin_root::<neocogi_render_core::platform::PlatformAbi>(id);
+            let result = runtime.acquire_plugin_root::<neocogi_platform_examples::sdk::render::platform::PlatformAbi>(id);
             assert!(result.is_err(), "wrong compiler root must reject before native construction");
             eprintln!("Wrong compiler contract rejected before native construction.");
             std::process::exit(23);

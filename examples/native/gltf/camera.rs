@@ -1,5 +1,5 @@
 //! Example-owned virtual trackball. Pointer coordinates are physical drawable pixels.
-use neocogi_render_core::{
+use neocogi_platform_examples::sdk::render::{
     abi::Size,
     platform::{Point, UiInput},
 };

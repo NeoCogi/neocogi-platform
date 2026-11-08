@@ -1,9 +1,4 @@
 [unstable]
-# Native development compositions use Cargo-provided cdylib artifacts.
-bindeps = true
-# Real proc-macro consumer tests read their compiler-recorded binary dependency.
-# This records the exact selected library and avoids guessing from output filenames or dates.
-binary-dep-depinfo = true
 # Cargo cannot enable build-std conditionally by profile. Rebuild target std in
 # this nightly development workspace so plain --profile min-size is complete;
 # portable SDK consumers outside this workspace continue using prebuilt std.

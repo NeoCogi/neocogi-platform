@@ -14,56 +14,9 @@ fn graph(mode: &str, backend: &str) -> HashSet<String> {
     );
     fs::write(directory.path().join("Cargo.toml"), manifest).unwrap();
     fs::copy(package.join("../../Cargo.lock"), directory.path().join("Cargo.lock")).unwrap();
-    // Metadata alone can include inactive weak-feature edges. Verify artifact roles
-    // there, then use the actual selected Cargo tree for reachable Rust dependencies.
-    let metadata = Command::new(env!("CARGO"))
-        .current_dir(directory.path())
-        .args(["-Z", "bindeps", "metadata", "--offline", "--format-version", "1"])
-        .output()
-        .unwrap();
-    assert!(metadata.status.success(), "{}", String::from_utf8_lossy(&metadata.stderr));
-    let metadata: serde_json::Value = serde_json::from_slice(&metadata.stdout).unwrap();
-    if mode == "dynamic" {
-        let composition = metadata["packages"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|package| package["name"] == "neocogi-example-plugins")
-            .unwrap();
-        let artifacts = composition["dependencies"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .filter(|dependency| dependency.get("artifact").is_some())
-            .collect::<Vec<_>>();
-        assert_eq!(artifacts.len(), 2);
-        for dependency in artifacts {
-            assert_eq!(dependency["artifact"]["lib"], false);
-            assert_eq!(dependency["artifact"]["kinds"], serde_json::json!(["cdylib"]));
-            assert!(matches!(
-                dependency["name"].as_str().unwrap(),
-                "neocogi-platform-plugin-dylib" | "neocogi-shader-compiler-dylib"
-            ));
-        }
-    }
     let output = Command::new(env!("CARGO"))
         .current_dir(directory.path())
-        .args([
-            "-Z",
-            "bindeps",
-            "tree",
-            "--offline",
-            "--edges",
-            "normal",
-            "--prefix",
-            "none",
-            "--format",
-            "{p}",
-            "--prune",
-            "neocogi-platform-plugin-dylib",
-            "--prune",
-            "neocogi-shader-compiler-dylib",
-        ])
+        .args(["tree", "--offline", "--edges", "normal", "--prefix", "none", "--format", "{p}"])
         .output()
         .unwrap();
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
@@ -79,21 +32,14 @@ fn graph(mode: &str, backend: &str) -> HashSet<String> {
 fn static_and_dynamic_graphs_keep_provider_implementation_ownership_distinct() {
     for backend in ["glow", "vulkan", "wgpu"] {
         let dynamic = graph("dynamic", backend);
-        for forbidden in [
-            "neocogi-platform-plugin",
-            "neocogi-shader-compiler",
-            "neocogi-render-gpu",
-            "naga",
-            "sdl2",
-            "wgpu",
-            "ash",
-        ] {
+        for forbidden in ["neocogi-platform-plugin", "neocogi-shader-compiler", "naga", "sdl2", "wgpu", "ash"] {
             assert!(!dynamic.contains(forbidden), "{backend}: {dynamic:?}");
         }
         assert!(dynamic.contains("neocogi-example-plugins"));
         let linked = graph("static", backend);
-        assert!(linked.contains("neocogi-platform-plugin"));
-        assert!(linked.contains("neocogi-shader-compiler"));
+        assert!(linked.contains("neocogi-platform"));
+        assert!(linked.contains("naga"));
+        assert!(linked.contains("sdl2"));
         assert!(!linked.contains("neocogi-example-plugins"));
     }
 }

@@ -9,21 +9,18 @@ description = "Native graphics examples with explicit static or shared-library p
 
 [features]
 default = ["static", "glow"]
-static = ["dep:neocogi-platform-plugin", "dep:neocogi-shader-compiler"]
+static = ["dep:provider", "provider/platform", "provider/shader-compiler"]
 dynamic = ["dep:neocogi-example-plugins"]
-glow = ["neocogi-platform-plugin?/glow", "neocogi-example-plugins?/glow"]
-vulkan = ["neocogi-platform-plugin?/vulkan", "neocogi-example-plugins?/vulkan"]
-wgpu = ["neocogi-platform-plugin?/wgpu", "neocogi-example-plugins?/wgpu"]
+glow = ["provider?/glow", "neocogi-example-plugins?/glow"]
+vulkan = ["provider?/vulkan", "neocogi-example-plugins?/vulkan"]
+wgpu = ["provider?/wgpu", "neocogi-example-plugins?/wgpu"]
 # Native probe acceptance belongs to the linked static fixture, not deployed shared libraries.
-test-support = ["static", "neocogi-platform-plugin/test-support"]
+test-support = ["static", "provider/test-support"]
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 neocogi-com = { workspace = true, features = ["std", "macros", "runtime"] }
 neocogi-com-host.workspace = true
-neocogi-native-layout = { path = "../../tools/native-layout" }
-neocogi-render-core.workspace = true
-neocogi-platform-plugin = { path = "../../crates/platform/plugin", default-features = false, optional = true }
-neocogi-shader-compiler = { workspace = true, optional = true }
+provider = { package = "neocogi-platform", path = "../../crates/platform", default-features = false, optional = true }
 neocogi-example-plugins = { path = "plugins", default-features = false, optional = true }
 rs-math3d.workspace = true
 gltf = { version = "1.4.1", default-features = false, features = ["import", "utils", "names"] }
@@ -33,7 +30,6 @@ sha2 = "0.10"
 [dev-dependencies]
 tempfile.workspace = true
 serde_json = "1"
-neocogi-native-layout-core.workspace = true
 
 [[test]]
 name = "deployment"
@@ -58,3 +54,6 @@ test = false
 name = "gltf_brainstem"
 path = "src/bin/gltf_brainstem.rs"
 test = false
+
+[build-dependencies]
+provider = { package = "neocogi-platform", path = "../../crates/platform", default-features = false, features = ["build-support"] }

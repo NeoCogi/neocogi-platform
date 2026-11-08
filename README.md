@@ -7,16 +7,11 @@ with [NeoCogi UI](https://github.com/NeoCogi/neocogi-ui).
 
 ## Workspace
 
-| Package family | Responsibility |
+| Package | Responsibility |
 | --- | --- |
-| `crates/render/core` | Renderer/platform bindings and upload producers |
-| `crates/render/gpu` | Typed resources, command recording, lifetime accounting and optional graphics backends |
-| `crates/render/support` | Shared frame preparation and platform algorithms |
-| `crates/platform/plugin` | Selected platform/backend assembly; windows, input, clipboard and surfaces |
-| `crates/shader/core`, `plugin` | Portable compiler contracts, reflection and Naga-backed compiler provider |
-| `examples/native` | Triangle and glTF applications with static/dynamic plugin assembly |
-| `tools/platform-build` | Packaged authoritative interfaces and build-only generation helper |
-| `tools/native-layout` | Build-only output policy and compile-time staging of Cargo artifacts and exact resource snapshots |
+| `crates/platform` (`neocogi-platform`) | Contracts, GPU recording/backends, optional compiler/hosting and build-script APIs |
+| `crates/platform-dylib` (`neocogi-platform-dylib`) | Thin platform and compiler shared-library entrypoints |
+| `examples/native`, `tests/*` | Unpublished application and acceptance consumers |
 
 Platform and graphics implementations share native lifetime ownership. Native
 windows, SDL/DOM objects and API handles remain private; callers receive typed
@@ -37,7 +32,7 @@ without network access, even when those dependencies are not used by the current
 ```sh
 cargo fetch --locked
 cargo check --locked --workspace --all-targets
-cargo test --locked --workspace
+cargo test --locked -p neocogi-platform --features platform,glow,test-support,build-support
 cargo run --locked -p neocogi-platform-examples --bin triangle -- 3
 ```
 
@@ -45,21 +40,21 @@ For headless native GL qualification:
 
 ```sh
 SDL_VIDEODRIVER=offscreen cargo run --locked -p neocogi-platform-examples --bin triangle -- 3
-SDL_VIDEODRIVER=offscreen cargo test --locked -p neocogi-platform-plugin --lib -- --include-ignored --test-threads=1
+SDL_VIDEODRIVER=offscreen cargo test --locked -p neocogi-platform --features platform,glow,test-support --lib -- --include-ignored --test-threads=1
 ```
 
-Select exactly one backend. Cargo adds feature selections to defaults, so use
-`--no-default-features --features vulkan` or `wgpu` for another native provider.
-Native examples select their assembly too: `static,vulkan` or `dynamic,vulkan`.
-Browser consumers select `webgl` and `wasm32-unknown-unknown`. Dynamic deployments
-use the final renderer and compiler `*-dylib` packages; static applications use
-their ordinary Rust implementations. The application owns the COM host and
-compiler/profile selection for the complete build graph.
+The SDK has empty default features. Native GPU features `glow`, `vulkan` and
+`wgpu` are additive under `neocogi_platform::gpu::backends`. Enable `platform`
+with exactly one backend for SDL hosting, `shader-compiler` for Naga, and
+`build-support` on build dependencies for schema generation/resource staging.
+Browser hosting uses `platform,webgl` and `wasm32-unknown-unknown`.
+CPU-only consumers need no SDL, graphics loader or compiler implementation.
 
-The GPU package has empty default features. Its `glow`, `vulkan`, `wgpu` and
-`webgl` features expose implementations under `neocogi_render_gpu::backends`;
-native features are additive there. The platform assembly selects exactly one
-backend. CPU-only recording and validation need no SDL or graphics dependencies.
+Native examples select `static,glow` by default. Use `--no-default-features
+--features static,vulkan` or `static,wgpu` for alternatives. For dynamic assembly,
+first run `python3 scripts/build_plugins.py --backend glow` (or vulkan/wgpu),
+then select `dynamic` with the same backend in the application. Normal Rust
+applications link the SDK; final shared-library shims expose the existing COM ABI.
 
 The native glTF examples include a textured DamagedHelmet and animated GPU-skinned
 BrainStem, both with arcball rotation, pan and zoom.
@@ -87,7 +82,7 @@ Load shared shader/platform objects in the examples with:
 cargo run --locked -p neocogi-platform-examples --bin gltf_brainstem --no-default-features --features dynamic,glow
 ~~~
 
-Cargo builds and stages the selected libraries; startup loads the compiler before
+The explicit plugin build stages both libraries; startup loads the compiler before
 the platform. See [native assembly and relocation](examples/native/README.md).
 
 Left-drag rotates, right/middle-drag pans, and the wheel zooms. Press R to reset,

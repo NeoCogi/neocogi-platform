@@ -28,8 +28,9 @@ impl Deployment {
         for source in binaries {
             fs::copy(source, before.join(Path::new(source).file_name().unwrap())).unwrap();
         }
-        let profile =
-            neocogi_native_layout_core::output_root(Some(Path::new(binaries[0])), std::env::var_os("NEOCOGI_NATIVE_OUTPUT_DIR").map(Into::into)).unwrap();
+        let profile = std::env::var_os("NEOCOGI_NATIVE_OUTPUT_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| Path::new(binaries[0]).parent().unwrap().to_path_buf());
         for filename in neocogi_example_plugins::LIBRARIES {
             fs::copy(profile.join("lib").join(filename), before.join("lib").join(filename)).unwrap();
         }

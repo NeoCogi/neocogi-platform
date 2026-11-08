@@ -1,0 +1,32 @@
+[package]
+name = "neocogi-platform-dylib"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Thin final COM shared-library entrypoints for NeoCogi Platform"
+publish = ["crates-io"]
+readme = "README.md"
+include = ["Cargo.toml", "README.md", "LICENSE", "src/**", "examples/**", "tests/**"]
+
+[lib]
+name = "nc_platform"
+crate-type = ["cdylib"]
+
+# Cargo supports one main library per package. The second final link root is
+# explicitly built as a library example; it contains only the compiler ABI shim.
+[[example]]
+name = "nc_shader_compiler"
+path = "examples/shader_compiler.rs"
+crate-type = ["cdylib"]
+
+[features]
+default = ["glow"]
+glow = ["neocogi-platform/glow"]
+vulkan = ["neocogi-platform/vulkan"]
+wgpu = ["neocogi-platform/wgpu"]
+
+[dependencies]
+neocogi-platform = { workspace = true, features = ["platform", "shader-compiler"] }
+neocogi-com = { workspace = true, features = ["std"] }

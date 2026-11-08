@@ -1,17 +1,13 @@
 //! Runs independently generated COM calls against the packaged shader implementation.
 use neocogi_com::{ComPtr, INcBytesComPtrExt, INcStringComPtrExt, NcCopyFromBufferOffset, Runtime, NC_OK};
-use neocogi_render_core::abi::GpuShaderStage;
-use neocogi_render_support as _;
+use neocogi_platform::render::abi::GpuShaderStage;
+use neocogi_platform::compiler;
 
 /// Consumer-owned generated definitions negotiate by COM identity.
 #[allow(dead_code, clippy::len_without_is_empty)]
 mod client {
     include!(env!("IDL_NEOCOGI_SHADER"));
 }
-
-/// A real macro expansion from the packaged procedural macro, enabled only on nightly.
-#[cfg(feature = "staging")]
-const _: () = neocogi_native_layout::stage_resources!("asset.txt" => "asset.txt");
 
 /// Retained artifact exports stay usable after their report and compiler are released.
 fn main() {
@@ -40,7 +36,6 @@ fn main() {
     assert_eq!(&spirv.to_vec().unwrap()[..4], &0x07230203u32.to_le_bytes());
     assert_eq!(wgsl.to_string().unwrap().as_bytes(), source);
     assert!(glsl.to_string().unwrap().contains("#version 300 es"));
-    #[cfg(feature = "staging")]
     assert_eq!(
         std::fs::read(std::path::Path::new(env!("NEOCOGI_NATIVE_OUTPUT_DIR")).join("asset.txt")).unwrap(),
         b"packaged staging fixture\n"

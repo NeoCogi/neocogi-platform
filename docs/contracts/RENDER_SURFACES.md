@@ -146,8 +146,8 @@ release. Glow also reads native pixels in the platform test. Backend suites read
 native image pixels for Glow, WGPU and Vulkan.
 
 ```sh
-SDL_VIDEODRIVER=offscreen cargo test --locked -p neocogi-platform-plugin --lib --features test-support -- --include-ignored --test-threads=1
-cargo test --locked -p neocogi-render-gpu --features glow,vulkan,wgpu,test-support --lib backends:: -- --include-ignored --test-threads=1
+SDL_VIDEODRIVER=offscreen cargo test --locked -p neocogi-platform --lib --features platform,glow,test-support -- --include-ignored --test-threads=1
+cargo test --locked -p neocogi-platform --features glow,vulkan,wgpu,test-support --lib gpu::backends:: -- --include-ignored --test-threads=1
 ```
 
 The combined backend command needs a working display and adapters; software
