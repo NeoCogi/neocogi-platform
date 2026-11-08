@@ -2,15 +2,15 @@
 
 Typed GPU recording/resources, optional concrete backends, renderer-owned shader
 compilation and SDL/browser hosting. Canonical schemas and generated contracts
-live in `neocogi-platform-schema`; `render` reexports those exact contract types
+live in `neocogi-platform-contracts`; `render` reexports those exact contract types
 and adds the optional `render::compiler` implementation. Build scripts depend on
-the schema crate with `build-support`, not this implementation crate.
+the contracts crate with `build-support`, not this implementation crate.
 
 SDK defaults are empty. Backend features `glow`, `vulkan`, `wgpu` and `webgl`
 enable their required compiler output. `platform` requires one selected hosting
 backend; GPU-only Rust consumers may combine native backends. Static applications
 link this SDK and register only the platform descriptor. Dynamic clients use the
-schema crate and load the matching platform library from `neocogi-platform-dylib`.
+contracts crate and load the matching platform library from `neocogi-platform-dylib`.
 
 Compiler output is fixed at device construction. Requests contain stage and output
 budget only; results identify their target and export one `code()` byte buffer:

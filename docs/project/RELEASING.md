@@ -2,22 +2,22 @@
 
 The release target is **0.1.0-alpha.2**. Exactly three packages are published:
 
-1. `neocogi-platform-schema`: authored schemas, generated contracts, Rust helpers and build support.
+1. `neocogi-platform-contracts`: schemas, generated bindings, shared types, limits, validation and build support.
 2. `neocogi-platform`: renderer SDK with optional backends, owned compiler and hosting.
 3. `neocogi-platform-dylib`: final platform libraries including renderer-owned compilation.
 
 The four existing example/test packages remain `publish = false`. This supersedes
-the eleven-package release layout. Schema/build helpers and staging belong to the schema archive; implementation
+the eleven-package release layout. Schema/build helpers and staging belong to the contracts archive; implementation
 modules belong to the SDK archive. There are no private path
 or Git dependencies hidden behind a facade. All internal registry requirements
 pin the same exact pre-release version.
 
 ## Package inputs and verification
 
-The schema archive owns all nine authored NCIDL files, its generation build.rs,
+The contracts archive owns all nine authored NCIDL files, its generation build.rs,
 compiled Rust bindings, shared helpers and optional build-support APIs. The SDK
 archive owns implementations and focused tests without a build script or copies
-of generated bindings. Dynamic/build consumers use only the schema crate; it has
+of generated bindings. Dynamic/build consumers use only the contracts crate; it has
 no SDK, Naga, SDL or graphics dependency in any feature configuration. The shim
 archive includes backend-named platform examples, with the selected feature and
 `--examples` choosing the final shared library.
@@ -29,7 +29,7 @@ Run:
 ```sh
 cargo fetch --locked
 cargo check --locked --workspace --all-targets
-cargo test --locked -p neocogi-platform-schema --features build-support,test-support
+cargo test --locked -p neocogi-platform-contracts --features build-support,test-support
 cargo test --locked -p neocogi-platform --features platform,glow,test-support,shader-spirv
 python3 -B -m unittest discover -s scripts -p 'test_*.py'
 python3 -B scripts/check_packages.py --offline --stable-toolchain stable --allow-dirty
@@ -62,7 +62,7 @@ folders. Load only the selected platform; its renderer owns compilation and
 has no external compiler plugin dependency. See [native staging](../contracts/NATIVE_LAYOUT.md).
 
 Run relevant native/browser acceptance and review the actual archives before
-publication. Publication remains a separate explicit action. Publish the schema crate first, then the SDK, then the shim, waiting for each
+publication. Publication remains a separate explicit action. Publish the contracts crate first, then the SDK, then the shim, waiting for each
 dependency version to appear in the crates.io index before publishing its consumer.
 COM/host/IDL dependencies remain the published exact `0.1.0` versions. A successful
 `--list` or `--no-verify` alone is insufficient release evidence.

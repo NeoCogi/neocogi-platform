@@ -6,8 +6,8 @@ The typed `ShaderCompiler` interface is an internal composition boundary; there 
 no separately registered compiler plugin, shared library or per-draw registry lookup.
 The platform shared library includes its renderer and compiler together.
 
-The schema crate owns the `neocogi.renderer` declarations in
-`crates/platform-schema/schemas/neocogi/renderer/compiler.ncidl`. `neocogi_platform_schema::render::abi` supplies
+The contracts crate owns the `neocogi.renderer` declarations in
+`crates/platform-contracts/schemas/neocogi/renderer/compiler.ncidl`. `neocogi_platform_contracts::render::abi` supplies
 the generated contracts; `render::shader` supplies plain reflection and bounded
 readers without Naga, and the SDK uses these same types. The former shader namespace and `Module::Shader` selector
 are removed; build scripts request `Module::Renderer` and include `IDL_NEOCOGI_RENDERER`. The

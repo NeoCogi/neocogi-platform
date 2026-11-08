@@ -1,14 +1,15 @@
 # Platform and graphics ownership
 
-The release contains three packages. `neocogi-platform-schema` owns all authored
-NCIDL declarations, generated renderer/platform bindings and backend-neutral Rust
-helpers. Its `render::abi` contains compiler contracts; `render::shader` owns typed
-snapshots and bounded readers. Upload producers, shared values, typed buffer
-helpers and backend traits live beside these contracts. The optional `build`
-module supplies schema generation and native staging without renderer dependencies.
+The release contains three packages. `neocogi-platform-contracts` owns all authored
+NCIDL declarations, generated renderer/platform bindings, shared types, limits and
+backend-neutral validation. Its `render::abi` contains compiler contracts;
+`render::shader` owns typed snapshots and bounded readers. Upload producers,
+shared values, typed buffer helpers and backend traits live beside these contracts.
+The optional `build` module supplies schema generation and native staging without
+renderer dependencies.
 
 `neocogi-platform` is the implementation SDK. Its `render` module exposes the
-schema crate's exact types and adds the renderer-owned Naga compiler. `gpu` owns
+contracts crate's exact types and adds the renderer-owned Naga compiler. `gpu` owns
 resource versions, recording, validation, quotas and concrete backends; optional
 `platform` owns SDL/DOM hosting and native lifetimes. `neocogi-platform-dylib`
 provides thin final platform discovery roots. Examples and browser/typed-buffer
@@ -31,11 +32,11 @@ before copying code; Rust `ShaderCode` snapshots retain only that format. `test-
 enabling WGPU counters only when WGPU is selected. Applications that load
 providers dynamically use schema contracts and retain no SDK implementation edge.
 
-The schema crate contains the sole authored `schemas/neocogi` declarations and
+The contracts crate contains the sole authored `schemas/neocogi` declarations and
 compiles generated bindings once. Its own build.rs uses its embedded source helper.
-Downstream build scripts depend on `neocogi-platform-schema` with `build-support`,
+Downstream build scripts depend on `neocogi-platform-contracts` with `build-support`,
 then call `build::{sources, build}` with explicit `Module` selections. Generated
-external imports use `neocogi_platform_schema::render::{abi, platform}`. Each
+external imports use `neocogi_platform_contracts::render::{abi, platform}`. Each
 independent projection generates in its own OUT_DIR from embedded canonical bytes;
 no sibling checkout or another package's build output is consulted. The SDK owns
 no schemas, generator, staging implementation or generated binding copies.
@@ -54,10 +55,12 @@ script stages all prebuilt backend libraries from the profile's `examples/`
 directory beside applications. Dynamic examples compile with only `dynamic` and
 choose a library at startup: the sole deployed backend, or an explicit --backend
 when several exist. Cargo backend features select static implementations only.
-No build script invokes Cargo. Schema-crate `build::layout` owns output policy and resource snapshots; ordinary
-build scripts replace the former nightly staging proc macros. See
+No build script invokes Cargo. The contracts crate's `build::layout` owns output
+policy and resource snapshots; ordinary build scripts replace the former nightly
+staging proc macros. See
 [native staging](../contracts/NATIVE_LAYOUT.md).
 
 NeoCogi UI remains a separate consumer owning retained trees, widgets, themes,
-text and composition. It must migrate imports to the SDK module paths; no
-compatibility crates or reexports of former package names are retained.
+text and composition. It uses the contracts crate for shared types and the SDK
+for implementations; no compatibility crates or reexports of former package
+names are retained.

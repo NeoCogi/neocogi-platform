@@ -9,7 +9,7 @@ with [NeoCogi UI](https://github.com/NeoCogi/neocogi-ui).
 
 | Package | Responsibility |
 | --- | --- |
-| `crates/platform-schema` (`neocogi-platform-schema`) | Authored schemas, generated contracts, Rust helpers and build support |
+| `crates/platform-contracts` (`neocogi-platform-contracts`) | Schemas, generated bindings, shared types, limits, validation and build support |
 | `crates/platform` (`neocogi-platform`) | GPU recording/backends, renderer-owned compiler and optional hosting |
 | `crates/platform-dylib` (`neocogi-platform-dylib`) | Thin platform shared-library entrypoints including the renderer compiler |
 | `examples/native`, `tests/*` | Unpublished application and acceptance consumers |
@@ -33,7 +33,7 @@ without network access, even when those dependencies are not used by the current
 ```sh
 cargo fetch --locked
 cargo check --locked --workspace --all-targets
-cargo test --locked -p neocogi-platform-schema --features build-support
+cargo test --locked -p neocogi-platform-contracts --features build-support
 cargo test --locked -p neocogi-platform --features platform,glow,test-support
 cargo run --locked -p neocogi-platform-examples --bin triangle -- 3
 ```
@@ -48,8 +48,8 @@ SDL_VIDEODRIVER=offscreen cargo test --locked -p neocogi-platform --features pla
 The SDK has empty default features. Native GPU features `glow`, `vulkan` and
 `wgpu` are additive under `neocogi_platform::gpu::backends`. Enable `platform`
 with exactly one backend for SDL hosting. Build scripts depend on
-`neocogi-platform-schema` with `build-support` for generation/resource staging.
-Dynamic clients use that schema crate's contracts without depending on the SDK.
+`neocogi-platform-contracts` with `build-support` for generation/resource staging.
+Dynamic clients use its shared types without depending on the SDK.
 Browser hosting uses `platform,webgl` and `wasm32-unknown-unknown`.
 CPU-only consumers need no SDL, graphics loader or compiler implementation.
 Shader output is fixed by each renderer: WGPU uses WGSL, Vulkan uses SPIR-V and

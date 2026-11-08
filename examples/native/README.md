@@ -67,9 +67,9 @@ loads the platform, then acquires its typed root.
 Only final dylib roots export discovery; normal provider implementations are not
 Rust dependencies of a dynamic executable. The compiler is internal to the selected renderer.
 
-Dynamic applications depend only on `neocogi-platform-schema` contracts and the
-example loader. Asset/plugin build scripts use the schema crate's `build-support`
-API through normal Cargo dependencies. The schema crate has no renderer or Naga
+Dynamic applications depend only on `neocogi-platform-contracts` contracts and the
+example loader. Asset/plugin build scripts use the contracts crate's `build-support`
+API through normal Cargo dependencies. The contracts crate has no renderer or Naga
 dependency, so dynamic builds compile neither in host or target units. Linked
 static applications use the SDK and include their renderer/compiler normally.
 

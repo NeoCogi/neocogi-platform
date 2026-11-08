@@ -1,3 +1,13 @@
+# Contracts package naming
+
+`neocogi-platform-contracts` replaces `neocogi-platform-schema` in
+`crates/platform-contracts`. The name covers its authored schemas, generated Rust
+bindings, shared types, limits and validation as well as build support. Rust
+imports and generated external paths use `neocogi_platform_contracts`; the SDK
+continues to expose the same shared contract types. This is a package rename:
+NCIDL namespaces, interface identities and alpha version 1 declarations remain
+unchanged. Older entries retain their historical package names.
+
 # Runtime backend selection for dynamic examples
 
 Native dynamic examples now compile with only --features dynamic. The application

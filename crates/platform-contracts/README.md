@@ -1,10 +1,11 @@
-# NeoCogi Platform schemas and contracts
+# NeoCogi Platform contracts
 
-This package owns the canonical NCIDL sources and generated Rust contracts in
-`render::abi` and `render::platform`. `render::shader` contains typed shader
-snapshots and bounded readers; the remaining render modules provide shared
-values, traits, upload producers and typed buffer conveniences. It contains no
-renderer implementation, Naga, SDL or native graphics loader.
+`neocogi-platform-contracts` owns the canonical NCIDL sources and generated Rust
+bindings in `render::abi` and `render::platform`, together with shared types,
+limits and backend-neutral validation. `render::shader` contains typed shader
+snapshots and bounded readers; the remaining render modules provide frame and
+image constraints, traits, upload producers and typed buffer conveniences. It
+contains no renderer implementation, Naga, SDL or native graphics loader.
 
 Dynamic applications depend on these contracts and load a platform library.
 Static applications use `neocogi-platform`, which exposes the same contract types
