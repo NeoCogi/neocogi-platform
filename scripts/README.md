@@ -61,3 +61,36 @@ before output. This replaces the former Python debugger import hook.
 `package-consumer/` is an independent qualification fixture, copied outside the
 checkout before Cargo is invoked there. `com_dependencies.rs` remains a Rust
 source helper for repository fixtures.
+
+## Using local sources in a consumer workspace
+
+Use an overlay in a consumer that already targets the current contracts, SDK and
+shim package set. Run the following from that consumer's checkout, pointing at
+the Platform checkout whose sources should replace the registry packages:
+
+```sh
+cargo run --locked --manifest-path /path/to/neocogi-platform/scripts/Cargo.toml -- local-sources \
+  --platform /path/to/neocogi-platform > /tmp/neocogi-local.toml
+cargo check --offline --config /tmp/neocogi-local.toml --workspace --all-targets
+```
+
+Overlay generation leaves manifests, lockfiles and global configuration alone.
+Cargo resolution may refresh the consumer's local lockfile while applying
+patches; those development resolutions should not replace its published-source
+lockfile. Omit `--offline` when missing ordinary dependencies need downloading.
+
+Tests that launch Cargo need the overlay in inherited configuration: a top-level
+`--config` argument is not forwarded to their child processes. For a consumer
+using the ordinary registry cache, an isolated Cargo home can hold the temporary
+configuration while sharing that cache:
+
+```sh
+neocogi_cargo_dir=$(mktemp -d)
+cp /tmp/neocogi-local.toml "$neocogi_cargo_dir/config.toml"
+ln -s "${CARGO_HOME:-$HOME/.cargo}/registry" "$neocogi_cargo_dir/registry"
+CARGO_HOME="$neocogi_cargo_dir" CARGO_NET_OFFLINE=true cargo test --workspace
+```
+
+Run the consumer's appropriate test selection and retain the isolated directory
+until all child Cargo processes finish. This is a local integration workflow;
+release qualification uses the [extracted package consumer](../docs/project/RELEASING.md).

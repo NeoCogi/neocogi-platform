@@ -91,6 +91,13 @@ reject reads and uploads with Permission. Textures expose tightly packed row-maj
 RGBA bytes, without native tiling or row padding. Higher layers compose rectangles
 using that layout.
 
+Rust byte-oriented calls use
+`buffer.upload(NcCopyFromBufferOffset::new(byte_offset, &data))` and
+`buffer.read(output.output(byte_offset, byte_count))` with a reusable
+`NcOutputBuffer<u8>`. The offset selects resource bytes; it is independent of
+indices in the supplied source/destination slice. The authoritative interface is
+[gpu.ncidl](../../crates/platform-contracts/schemas/neocogi/renderer/gpu.ncidl).
+
 All offset/length arithmetic is checked before mutation or output. Empty transfers
 at capacity are valid; empty uploads are no-ops and do not need an idle slot.
 Static buffers and groups without write permission reject uploads, including empty
@@ -107,6 +114,8 @@ into the same image. Native transfers remain fallible preparation work. CPU uplo
 success publishes the CPU contents; native preparation may subsequently fail.
 No caller pointer, reference or output destination survives a transfer call.
 
+## Typed Rust buffers
+
 The upper-layer `TypedGpuBufferFactory` takes `ComPtr<IRenderResourcesAbi>`. It
 asks that ordinary untyped factory for storage and returns `TypedGpuBuffer<T>`
 with checked element capacity, stride and index/texel constraints. Application
@@ -120,6 +129,56 @@ COM layout alone does not prove shader packing. Its `underlying_buffer()` return
 the original registered resource observer: COM inheritance does not turn a
 wrapper's address into authenticated driver identity. Rust binding uses
 `as_gpu_buffer()` for that same original resource.
+
+Create a bounded buffer once, retain its owner across frames and upload into it
+when the selected slots are available. This example defines a 16-byte vertex
+with a `Float32x3` position and `Unorm8x4` color; the application's pipeline must
+declare those attributes at offsets 0 and 12 with stride 16:
+
+```rust,no_run
+use neocogi_com::{ComPtr, NcStatus};
+use neocogi_platform_contracts::render::{
+    abi::IRenderResourcesAbi,
+    buffer::{GpuElement, TypedGpuBuffer, TypedGpuBufferDesc, TypedGpuBufferFactory},
+};
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct Vertex {
+    /// Three native little-endian f32 position components.
+    position: [f32; 3],
+    /// Four initialized bytes matching the pipeline's normalized RGBA attribute.
+    color: [u8; 4],
+}
+// SAFETY: The C field layout is exactly 16 initialized bytes with no padding,
+// ownership or restricted bit patterns, matching the declared shader layout.
+unsafe impl GpuElement for Vertex {}
+
+/// Creates the persistent owner and initializes its first selected range.
+fn create_vertices(
+    resources: ComPtr<IRenderResourcesAbi>,
+    frame_vertices: &[Vertex],
+) -> Result<TypedGpuBuffer<Vertex>, NcStatus> {
+    let factory = TypedGpuBufferFactory::new(resources);
+    let mut vertices = factory.create_streamed::<Vertex>(
+        TypedGpuBufferDesc::Vertex { element_count: 1024 },
+    )?;
+    vertices.upload(0, frame_vertices)?;
+    Ok(vertices)
+}
+```
+
+Later `vertices.upload(first_element, &values)` and
+`vertices.read(first_element, &mut output)` count elements, including four-byte
+texture texels. Typed native authoring rejects big-endian hosts and zero-sized
+elements. Bind the original driver resource with
+`view.bind_vertex_buffer(0, vertices.as_gpu_buffer(), 0)`; keep the returned
+`TypedGpuBuffer` owner alive for subsequent capture. The unpublished
+`neocogi-typed-buffer-tests` fixture exercises an application-defined
+`ITypedGpuBuffer<Point>` through actual generated COM calls, including inherited
+methods, byte/element offsets and the original registered identity.
+
+## Uniform ranges and native preparation
 
 Uniforms are persistent Uniform-role buffers. A draw binds a checked nonempty
 range through `bind_uniform_buffer(stage, slot, buffer, offset, byte_len)`.
