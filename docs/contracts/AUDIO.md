@@ -1,13 +1,21 @@
 # PCM audio
 
-Version 1 declarations and Rust conversion/validation belong to
-`neocogi-platform-contracts::render::platform` and its `audio` module.
+Version 1 declarations live in `schemas/neocogi/audio`, alongside the renderer
+and platform schema folders. The independent namespace is `neocogi.audio`;
+generated Rust bindings, PCM conversion/validation, limits and diagnostics belong
+to `neocogi_platform_contracts::audio`. Platform discovery imports those contracts
+for its audio service methods. Audio itself imports no renderer/window namespace.
 `neocogi-platform::audio` implements native SDL and browser Web Audio. Enable
 `audio` for audio-only Rust applications without Naga, graphics or windows.
 `platform` includes audio through the existing platform root/library; no additional
 crate or plugin is deployed.
 Linked Rust applications can import the canonical values and clients directly
 from `neocogi_platform::audio`; dynamic clients use the contracts crate.
+
+Build scripts select `Module::Audio` for independent audio projections. Alpha
+NCIDL versions remain 1; rebuild providers and generated consumers together for
+the namespace move. The former platform-owned audio declarations and Rust module
+are removed rather than retained as compatibility aliases.
 
 ## Rust types and system queries
 

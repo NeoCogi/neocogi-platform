@@ -13,7 +13,4 @@ include!(env!("IDL_NEOCOGI_PLATFORM"));
 
 mod helpers;
 pub use helpers::*;
-/// Portable PCM validation, limits and owned audio diagnostics.
-pub mod audio;
-
 pub mod path;

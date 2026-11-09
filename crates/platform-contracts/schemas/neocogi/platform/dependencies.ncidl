@@ -1,2 +1,4 @@
 extern neocogi.renderer;
 use neocogi.renderer::{IRenderOutcome, IRenderHost, IRgbaImage, Rect, Size};
+extern neocogi.audio;
+use neocogi.audio::{AudioConfig, AudioDirection, IAudioCapabilities, IAudioOpenRequest};

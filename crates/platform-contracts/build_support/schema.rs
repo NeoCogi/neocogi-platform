@@ -1,4 +1,4 @@
-//! Build-time source owner for the renderer and platform interfaces.
+//! Build-time source owner for the renderer, audio and platform interfaces.
 //!
 //! Declare this package under `[build-dependencies]`. Its packaged `schemas`
 //! directory is the only authored source tree for these namespaces. Consumers
@@ -21,7 +21,9 @@ pub use neocogi_idl::cargo::{BuildError, BuildOutput, SharedSources};
 pub enum Module {
     /// Renderer values, compiler results, resource groups and recording in render::abi.
     Renderer,
-    /// Audio, window, input and clipboard interfaces in render::platform.
+    /// Independent PCM interfaces, types, limits and validation in audio.
+    Audio,
+    /// Window, input, clipboard and system-service discovery in render::platform.
     Platform,
 }
 
@@ -30,6 +32,7 @@ impl Module {
     pub const fn name(self) -> &'static str {
         match self {
             Self::Renderer => "neocogi.renderer",
+            Self::Audio => "neocogi.audio",
             Self::Platform => "neocogi.platform",
         }
     }
@@ -38,6 +41,7 @@ impl Module {
     fn rust_path(self) -> &'static str {
         match self {
             Self::Renderer => "neocogi_platform_contracts::render::abi",
+            Self::Audio => "neocogi_platform_contracts::audio",
             Self::Platform => "neocogi_platform_contracts::render::platform",
         }
     }
@@ -46,7 +50,7 @@ impl Module {
 /// Canonical files embedded from the one authored tree. Embedding lets a cached
 /// helper survive Cargo relocating or removing the dependency's source directory.
 const SOURCES: &[(&str, &[u8])] = &[
-    ("neocogi/platform/audio.ncidl", include_bytes!("../schemas/neocogi/platform/audio.ncidl")),
+    ("neocogi/audio/audio.ncidl", include_bytes!("../schemas/neocogi/audio/audio.ncidl")),
     (
         "neocogi/platform/dependencies.ncidl",
         include_bytes!("../schemas/neocogi/platform/dependencies.ncidl"),
@@ -103,7 +107,7 @@ fn materialize(output: &Path) -> Result<PathBuf, BuildError> {
     Ok(root)
 }
 
-/// Configures local generation and imports for the two shared namespaces.
+/// Configures local generation and imports for the three shared namespaces.
 ///
 /// `local` selects independent emissions for this consumer. Other reachable
 /// namespaces use their ordinary library definitions; this matters when Rust
@@ -117,7 +121,7 @@ fn materialize(output: &Path) -> Result<PathBuf, BuildError> {
 pub fn sources(local: &[Module]) -> Result<SharedSources, BuildError> {
     let output = std::env::var_os("OUT_DIR").ok_or(BuildError::MissingEnvironment("OUT_DIR"))?;
     let mut request = SharedSources::new(materialize(Path::new(&output))?);
-    for module in [Module::Renderer, Module::Platform] {
+    for module in [Module::Renderer, Module::Audio, Module::Platform] {
         request = if local.contains(&module) {
             request.module(module.name(), module.rust_path())
         } else {

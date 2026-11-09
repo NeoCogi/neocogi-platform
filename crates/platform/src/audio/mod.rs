@@ -1,14 +1,8 @@
 //! Typed PCM services. No application/COM callback executes on a native audio thread.
 #![deny(missing_docs)]
 use neocogi_com::{ComBox, ComPtr, INcStringAbi, NcCopyFromBufferOffset, NcOutputWriter, NcStatus, NcString, NC_E_NOINTERFACE, com_object};
-use crate::render::platform::{*, audio::*};
 /// Canonical audio values and generated clients, exposed here for linked Rust applications.
-pub use crate::render::platform::{
-    AudioAccess, AudioBackend, AudioCapabilities, AudioChannels, AudioConfig, AudioDeviceCount, AudioDirection, AudioInfo, AudioLimits, AudioOpenState,
-    AudioQueueInfo, AudioRange, AudioState, AudioSupport, IAudioCapabilitiesAbi, IAudioCapabilitiesClient, IAudioCaptureAbi, IAudioCaptureClient,
-    IAudioOpenRequestAbi, IAudioOpenRequestClient, IAudioPlaybackAbi, IAudioPlaybackClient, IAudioStreamAbi, IAudioStreamClient, PcmByteOrder, PcmFormat,
-    PcmType,
-};
+pub use neocogi_platform_contracts::audio::*;
 
 /// Actual browser playback/capture acceptance under the repository's fake-device headless fixture.
 #[cfg(all(target_arch = "wasm32", feature = "test-support"))]

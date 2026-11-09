@@ -372,7 +372,7 @@ impl AudioError {
     /// Bounds retained UTF-8 length and capacity; conversion of the input may allocate first.
     pub fn new(status: NcStatus, message: impl Into<String>) -> Self {
         let status = if status.is_err() { status } else { NC_E_INVALID_ARG };
-        let message = crate::render::diagnostic::bounded_message(message.into(), MAX_AUDIO_ERROR_BYTES);
+        let message = crate::diagnostic::bounded_message(message.into(), MAX_AUDIO_ERROR_BYTES);
         Self { status, message }
     }
 }

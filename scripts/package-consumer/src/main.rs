@@ -8,10 +8,16 @@ mod client {
     include!(env!("IDL_NEOCOGI_RENDERER"));
 }
 
-/// Separately emitted platform caller verifies typed audio enum payloads through the real COM codec.
+/// Consumer-owned platform projection imports the canonical independent audio namespace.
 #[allow(dead_code, clippy::len_without_is_empty)]
 mod platform_client {
     include!(env!("IDL_NEOCOGI_PLATFORM"));
+}
+
+/// Separately emitted audio caller negotiates the canonical audio COM identities and enum codecs.
+#[allow(dead_code, clippy::len_without_is_empty)]
+mod audio_client {
+    include!(env!("IDL_NEOCOGI_AUDIO"));
 }
 
 /// A separately generated caller reads nested enums and typed arrays from a canonical producer.
@@ -82,14 +88,14 @@ fn main() {
     typed_pipeline_contract();
     let audio = neocogi_platform::audio::capabilities()
         .unwrap()
-        .query::<platform_client::IAudioCapabilitiesAbi>()
+        .query::<audio_client::IAudioCapabilitiesAbi>()
         .unwrap();
-    assert_eq!(audio.info().unwrap().backend, platform_client::AudioBackend::Sdl);
-    let mut supported = neocogi_com::NcOutputBuffer::<platform_client::PcmType>::new();
+    assert_eq!(audio.info().unwrap().backend, audio_client::AudioBackend::Sdl);
+    let mut supported = neocogi_com::NcOutputBuffer::<audio_client::PcmType>::new();
     audio.pcm_types(supported.output(0, audio.pcm_type_count().unwrap() as usize)).unwrap();
     drop(audio);
-    assert!(supported.as_slice().contains(&platform_client::PcmType::FixedPoint(32, 16)));
-    assert!(supported.as_slice().contains(&platform_client::PcmType::UnsignedInteger(8)));
+    assert!(supported.as_slice().contains(&audio_client::PcmType::FixedPoint(32, 16)));
+    assert!(supported.as_slice().contains(&audio_client::PcmType::UnsignedInteger(8)));
     let root: ComPtr<client::ShaderCompilerAbi> =
         CompilerObject::from_value(CompilerObject::new(neocogi_platform::render::shader::ShaderTarget::Wgsl).unwrap())
             .query()

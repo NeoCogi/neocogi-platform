@@ -1,12 +1,18 @@
 # Platform and graphics ownership
 
 The release contains three packages. `neocogi-platform-contracts` owns all authored
-NCIDL declarations, generated renderer/platform bindings, shared types, limits and
+NCIDL declarations, generated renderer/audio/platform bindings, shared types, limits and
 backend-neutral validation. Its `render::abi` contains compiler contracts;
 `render::shader` owns typed snapshots and bounded readers. Upload producers,
 shared values, typed buffer helpers and backend traits live beside these contracts.
 The optional `build` module supplies schema generation and native staging without
 renderer dependencies.
+
+The schema folders `neocogi/renderer`, `neocogi/audio` and `neocogi/platform`
+define sibling namespaces. Canonical audio bindings and helpers live at
+`neocogi_platform_contracts::audio`; audio imports no graphics/window namespace.
+Platform discovery imports audio types for its service methods. Alpha versions
+remain 1, and consumers/providers must be rebuilt together after namespace moves.
 
 `neocogi-platform` is the implementation SDK. Its `render` module exposes the
 contracts crate's exact types and adds the renderer-owned Naga compiler. `gpu` owns
@@ -38,7 +44,8 @@ The contracts crate contains the sole authored `schemas/neocogi` declarations an
 compiles generated bindings once. Its own build.rs uses its embedded source helper.
 Downstream build scripts depend on `neocogi-platform-contracts` with `build-support`,
 then call `build::{sources, build}` with explicit `Module` selections. Generated
-external imports use `neocogi_platform_contracts::render::{abi, platform}`. Each
+external imports use `neocogi_platform_contracts::render::{abi, platform}` and
+`neocogi_platform_contracts::audio`. Each
 independent projection generates in its own OUT_DIR from embedded canonical bytes;
 no sibling checkout or another package's build output is consulted. The SDK owns
 no schemas, generator, staging implementation or generated binding copies.

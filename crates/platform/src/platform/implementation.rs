@@ -1,6 +1,7 @@
 // The validated platform implementation expands at crate root from lib.rs.
 // Its public surface and native owners are identical for each legal backend selection.
 use neocogi_platform::render::platform::*;
+use neocogi_platform_contracts::audio::{AudioConfig, AudioDirection, IAudioCapabilitiesAbi, IAudioOpenRequestAbi};
 use neocogi_platform::render::abi::*;
 use neocogi_platform::platform::prepared::{PreparedFrame, Resources};
 use neocogi_com::{ComInterface, ComPtr, ComRef, IUnknown, NcCopyFromBufferOffset, NcStatus, NC_E_INVALID_ARG, com_object};

@@ -1,10 +1,7 @@
 //! Real SDL dummy devices and generated COM calls; no display, GPU or physical microphone is used.
 #![cfg(not(target_arch = "wasm32"))]
 use neocogi_com::{ComBox, INcStringComPtrExt, NcCopyFromBufferOffset, NcOutputBuffer, NC_E_INVALID_ARG, NC_E_NOINTERFACE};
-use neocogi_platform::{
-    audio::open,
-    render::platform::{*, audio::*},
-};
+use neocogi_platform::audio::*;
 use std::time::{Duration, Instant};
 
 /// Encode fixture PCM through the same declared representation an application would supply.

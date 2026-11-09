@@ -34,7 +34,7 @@ impl RenderError {
             message = format!("invalid successful error status {status}: {message}");
             NC_E_INVALID_ARG
         };
-        let message = crate::render::diagnostic::bounded_message(message, MAX_RENDER_ERROR_BYTES);
+        let message = crate::diagnostic::bounded_message(message, MAX_RENDER_ERROR_BYTES);
         Self { status, message }
     }
 

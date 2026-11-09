@@ -4,10 +4,13 @@
 #![deny(missing_docs)]
 extern crate self as neocogi_platform_contracts;
 extern crate alloc;
+/// Independent PCM audio contracts, shared types, limits and validation.
+pub mod audio;
 /// Consumer-owned schema generation and deterministic native resource staging.
 #[cfg(feature = "build-support")]
 #[path = "../build_support/mod.rs"]
 pub mod build;
+mod diagnostic;
 /// Shared renderer, platform and shader contracts, producers and bounded readers.
 pub mod render;
 #[cfg(test)]
