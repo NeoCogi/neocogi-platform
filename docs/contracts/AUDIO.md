@@ -17,6 +17,12 @@ NCIDL versions remain 1; rebuild providers and generated consumers together for
 the namespace move. The former platform-owned audio declarations and Rust module
 are removed rather than retained as compatibility aliases.
 
+Qualification generates an audio-only caller and verifies its source graph reaches
+only `neocogi.audio`, then compiles independent audio/platform/renderer projections
+from the packaged schemas and calls the real audio provider through COM. Native
+platform activation also exercises its imported audio signatures with dummy audio
+and an invalid video driver, including stream use after the platform root drops.
+
 ## Rust types and system queries
 
 Numerical parameters belong to the Rust enum variant:

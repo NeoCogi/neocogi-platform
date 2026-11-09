@@ -169,8 +169,14 @@ mod tests {
         let stale = root.join("neocogi/shader/obsolete.ncidl");
         fs::create_dir_all(stale.parent().unwrap()).unwrap();
         fs::write(&stale, b"obsolete declaration").unwrap();
+        // A cached pre-migration helper left the same audio declarations in platform.
+        // Keeping that file would reintroduce platform-owned audio during resolution.
+        let old_audio = root.join("neocogi/platform/audio.ncidl");
+        fs::write(&old_audio, b"obsolete platform audio declarations").unwrap();
         assert_eq!(materialize(output.path()).unwrap(), root);
         assert!(!stale.exists());
+        assert!(!old_audio.exists());
+        assert!(root.join("neocogi/audio/audio.ncidl").is_file());
         assert_eq!(fs::metadata(keep).unwrap().modified().unwrap(), unchanged);
         assert_eq!(fs::read(changed).unwrap(), SOURCES[1].1);
     }
