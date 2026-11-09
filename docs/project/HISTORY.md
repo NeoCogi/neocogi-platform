@@ -1,3 +1,30 @@
+# 0.2.0-alpha.1
+
+This alpha replaces the former package set with three coordinated releases:
+`neocogi-platform-contracts`, `neocogi-platform` and `neocogi-platform-dylib`.
+The minor-version advance marks incompatible Rust API, generated contract and
+namespace changes since `0.1.0-alpha.2`. Upgrade the package set together and
+regenerate clients; NCIDL declarations remain version 1 during alpha.
+
+- Canonical schemas, generated bindings, shared values, limits and build support
+  have one contracts owner. The implementation SDK and final library shims use
+  those exact types. Dynamic clients no longer compile renderer/Naga code.
+- Shader compilation belongs to the renderer and returns only its backend's
+  selected shader artifact. Dynamic examples select prebuilt platform libraries
+  at runtime; native builds use ordinary Cargo commands.
+- PCM playback, microphone capture and capability queries support native SDL
+  and browser Web Audio. Audio owns the sibling `neocogi.audio` namespace.
+  Audio, input and rendering contracts use Rust enum payloads for typed values.
+- GL uniform backing extents, mutable texture unpack state, final drawable-size
+  admission, owned diagnostics, keypad shortcut aliases and browser process
+  deadlines include focused regressions.
+- Rust repository tools replace Python scripts. Numerical kernels use
+  `rs-math3d` 0.21.0. Current contract docs own worked examples; upgrade steps
+  and earlier designs are recorded below.
+
+The [release guide](RELEASING.md) defines package inputs and qualification;
+the [documentation index](../README.md) points to current contracts and usage.
+
 # Alpha contract upgrade reference
 
 The current release set is `neocogi-platform-contracts`, `neocogi-platform` and

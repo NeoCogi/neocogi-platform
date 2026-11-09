@@ -12,6 +12,12 @@ modules belong to the SDK archive. There are no private path
 or Git dependencies hidden behind a facade. All internal registry requirements
 pin the same exact pre-release version.
 
+The `0.2.0-alpha.1` minor-version advance marks incompatible Rust API and schema
+namespace changes since `0.1.0-alpha.2`; see the [release history](HISTORY.md).
+Upgrade contracts, SDK and shims together and regenerate consumers. All NCIDL
+declarations retain version 1 during alpha, so a matching interface version alone
+does not establish compatibility with older providers.
+
 ## Package inputs and verification
 
 The contracts archive owns all ten authored NCIDL files, its generation build.rs,
