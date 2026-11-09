@@ -15,7 +15,8 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: Owned process scopes and total output deadlines
-        run: cargo test --locked -p neocogi-platform-tools process::tests::
+        run: |
+          cargo test --locked -p neocogi-platform-tools process::tests::
   packages:
     runs-on: ubuntu-latest
     steps:
