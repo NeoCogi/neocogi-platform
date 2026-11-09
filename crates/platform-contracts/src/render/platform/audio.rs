@@ -298,7 +298,10 @@ impl PcmFormat {
                     PcmType::FixedPoint(_, fraction) => fraction,
                     _ => bits - 1,
                 };
-                signed as f64 / (1u64 << fraction) as f64
+                // All admitted signed PCM has at most 32 storage bits and 31 fractional bits.
+                // Align it exactly in one wide fixed format before the library's float conversion;
+                // even i32::MIN shifted by 31 fits i64. Runtime wire widths remain codec metadata.
+                rs_math3d::Fixed::<i64, 31>::from_bits(signed << (31 - fraction)).to_f64()
             }
             PcmType::FloatingPoint(32) => f32::from_bits(raw as u32) as f64,
             PcmType::FloatingPoint(64) => f64::from_bits(raw),
@@ -492,6 +495,87 @@ mod tests {
             assert_eq!(error.status, AUDIO_E_BACKEND);
             assert_eq!(error.message, expected);
             assert!(error.message.capacity() <= MAX_AUDIO_ERROR_BYTES);
+        }
+    }
+
+    /// The wide fixed conversion preserves packed sign extension, all runtime precisions and admission.
+    #[test]
+    fn packed_fixed_decoding_matches_exact_binary_scaling() {
+        for bits in [8, 16, 24, 32] {
+            for fraction in 0..bits {
+                let scale = 1i64 << fraction;
+                let minimum = -(1i64 << (bits - 1));
+                let maximum = (1i64 << (bits - 1)) - 1;
+                let values: Vec<_> = if bits == 8 {
+                    (minimum..=maximum).collect()
+                } else {
+                    vec![
+                        minimum,
+                        minimum + 1,
+                        -scale - 1,
+                        -scale,
+                        -scale + 1,
+                        -1,
+                        0,
+                        1,
+                        scale - 1,
+                        scale,
+                        scale + 1,
+                        maximum,
+                    ]
+                };
+                for byte_order in [PcmByteOrder::LittleEndian, PcmByteOrder::BigEndian] {
+                    let format = PcmFormat {
+                        sample_type: PcmType::FixedPoint(bits, fraction),
+                        byte_order,
+                    };
+                    let size = format.sample_bytes().unwrap();
+                    for raw in values.iter().copied().filter(|raw| (minimum..=maximum).contains(raw)) {
+                        let storage = if byte_order == PcmByteOrder::LittleEndian {
+                            raw.to_le_bytes()
+                        } else {
+                            raw.to_be_bytes()
+                        };
+                        let bytes = if byte_order == PcmByteOrder::LittleEndian {
+                            &storage[..size]
+                        } else {
+                            &storage[8 - size..]
+                        };
+                        let value = raw as f64 / scale as f64;
+                        let expected = if (-1.0..=1.0).contains(&value) {
+                            Ok(value as f32)
+                        } else {
+                            Err(NC_E_INVALID_ARG)
+                        };
+                        assert_eq!(format.decode(bytes), expected, "{bits}.{fraction}, {byte_order:?}, raw={raw}");
+                    }
+                }
+            }
+        }
+    }
+
+    /// PCM quantization intentionally keeps halfway-away rounding instead of fixed conversion ties-to-even.
+    #[test]
+    fn pcm_halfway_rounding_remains_away_from_zero() {
+        for bits in [8, 16, 24, 32] {
+            for fraction in 0..bits {
+                for sample_type in [PcmType::FixedPoint(bits, fraction), PcmType::SignedInteger(bits)] {
+                    let fraction = if matches!(sample_type, PcmType::SignedInteger(_)) {
+                        bits - 1
+                    } else {
+                        fraction
+                    };
+                    let format = PcmFormat {
+                        sample_type,
+                        byte_order: PcmByteOrder::LittleEndian,
+                    };
+                    let size = format.sample_bytes().unwrap();
+                    for sign in [-1i64, 1] {
+                        let halfway = sign as f32 * 0.5 / (1u64 << fraction) as f32;
+                        assert_eq!(&format.encode(halfway).unwrap()[..size], &sign.to_le_bytes()[..size]);
+                    }
+                }
+            }
         }
     }
 }

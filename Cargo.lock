@@ -1738,9 +1738,9 @@ dependencies = [
 
 [[package]]
 name = "rs-math3d"
-version = "0.20.1"
+version = "0.21.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3cbaeb2ff97fb73ddd89959e55529979448f5fc0f5a0fe07f65697970b43d8d8"
+checksum = "3241d808bd9afbf38711e20eb83514c6a8b156d1019daaa91a0fd4cb4ba2faa4"
 dependencies = [
  "num-traits",
 ]

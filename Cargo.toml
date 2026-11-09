@@ -33,7 +33,7 @@ ash-window-handle = { package = "ash-window", version = "0.13" }
 glow = "0.18"
 pollster = "1"
 raw-window-handle = "0.6"
-rs-math3d = "=0.20.1"
+rs-math3d = "=0.21.0"
 sdl2 = { version = "0.38", features = ["raw-window-handle"] }
 tempfile = "3.27"
 wasm-bindgen = "=0.2.127"

@@ -77,7 +77,12 @@ Rates span 8000–192000 Hz, queues 128–65536 complete frames, and each transf
 most 4096 frames. Complete admission precedes initialization and permission.
 Samples must decode to finite normalized [-1,1]. Unsigned silence is the midpoint;
 signed integers divide by 2^(bits-1), fixed point by 2^fractional_bits. Capture
-encoding rounds/saturates integer/fixed endpoints. Backends process float32;
+encoding rounds nearest with halfway cases away from zero and saturates
+integer/fixed endpoints. Signed decoding aligns packed values exactly in
+rs-math3d's wide fixed representation before float conversion. Wire widths and
+fractional precision remain runtime PCM metadata; they do not select a new
+public Rust sample type. The encoder keeps its explicit rounding rule rather
+than adopting the math library's ties-to-even fixed conversion. Backends process float32;
 integer32/floating64 storage does not promise bit-perfect 32/64-bit device precision.
 
 Rust `write_f32`/`read_f32` use ordinary sample slices/vectors with the chosen
