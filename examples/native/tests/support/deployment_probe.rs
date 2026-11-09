@@ -11,7 +11,7 @@ fn main() {
         std::process::exit(24);
     });
     if launch.arguments == ["--audio"] {
-        use neocogi_example_plugins::sdk::render::platform::*;
+        use neocogi_example_plugins::sdk::audio::{AudioConfig, AudioDirection, AudioOpenState};
         use neocogi_com::{NcCopyFromBufferOffset, NcOutputBuffer};
         let capabilities = platform.audio_capabilities().unwrap();
         let config = AudioConfig {
