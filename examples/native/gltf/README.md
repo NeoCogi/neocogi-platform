@@ -139,3 +139,20 @@ An actual fragment probe checks that the midpoint of RGBE-encoded radiance 1 and
 8 is 4.5, catching incorrect interpolation of the encoded exponent bytes.
 Set `NEOCOGI_GLTF_CAPTURE=/tmp/gltf-captures` to retain initial-view PPM images.
 CI also runs both standalone executables on GL, Vulkan and WGPU.
+
+Numerical kernels belong to rs-math3d 0.21: scene TRS/animation uses typed vectors
+and quaternions, bounds use its box and checked vector norm, and GPU matrices use
+its explicit column-major scalar export before little-endian byte encoding.
+The arcball uses shared dot/cross/basis/normalization operations. The library's
+OpenGL perspective is adapted to the renderer's canonical [0,1] depth by changing
+only the two Z coefficients. Near/far clipping, aspect and field of view have
+numeric regressions.
+
+Example policy remains local: glTF LINEAR/STEP timing and shortest-arc spherical
+interpolation, arcball gestures, RGBE encoding, GGX integration and cache identity.
+There is no rs-math3d spherical interpolation API to replace that policy; its
+dot, quaternion arithmetic and normalization implement the numerical operations.
+Likewise the renderer retains its validated wide clipping and exact outward pixel
+rounding; ordinary rectangle intersection/fixed quantization has different empty
+and rounding semantics. No speedup for these consumers is claimed without a
+matching workload measurement.

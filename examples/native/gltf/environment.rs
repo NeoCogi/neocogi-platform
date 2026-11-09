@@ -6,6 +6,7 @@
 //! A checked, versioned cache is keyed by the complete HDR bytes and bake parameters.
 
 use image::ImageDecoder;
+use rs_math3d::{Mat3f, Vec3f, Vector, basis_from_unit_rh};
 use sha2::{Digest, Sha256};
 use std::{
     f32::consts::{PI, TAU},
@@ -27,12 +28,12 @@ pub const UNIFORM_BYTES: u32 = (REGION_COUNT as u32 + 1) * 16;
 /// The renderer's portable RGBA8 image cap; cache validation uses this before allocation.
 const MAX_BYTES: usize = 64 * 1024 * 1024;
 /// Changes whenever sampling, encoding, layout or cache interpretation changes.
-const MAGIC: &[u8; 8] = b"NCIBL001";
+const MAGIC: &[u8; 8] = b"NCIBL002";
 /// Header is magic, source key, payload checksum, dimensions and explicit integer rectangles.
 const HEADER_BYTES: usize = 8 + 32 + 32 + 8 + REGION_COUNT * 16;
 
-/// One owned RGB radiance sample in scene-linear space.
-type Color = [f32; 3];
+/// Shared three-component storage for scene-linear radiance and geometric integration vectors.
+type Color = Vec3f;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 /// Pixel rectangle in the single atlas, with top-left row ordering.
@@ -88,7 +89,7 @@ struct Panorama {
     /// Positive source height.
     height: u32,
     /// Exactly width * height linear RGB samples, each in [0, 65504].
-    pixels: Vec<Color>,
+    pixels: Vec<[f32; 3]>,
 }
 
 impl Environment {
@@ -142,7 +143,7 @@ impl Environment {
             pixels: vec![0; image_bytes(width, next_y).ok_or("environment atlas exceeds the portable image budget")?],
             regions,
         };
-        atlas.fill(0, |x, y| encode_rgbe(source.pixels[(y * source.width + x) as usize]));
+        atlas.fill(0, |x, y| encode_rgbe(Color::from_array(source.pixels[(y * source.width + x) as usize])));
         for index in 1..SPECULAR_LEVELS {
             let roughness = index as f32 / (SPECULAR_LEVELS - 1) as f32;
             let half_vectors: Vec<_> = (0..quality.samples).map(|i| ggx_half(hammersley(i, quality.samples), roughness)).collect();
@@ -150,18 +151,18 @@ impl Environment {
             atlas.fill(index, |x, y| {
                 let n = direction((x as f32 + 0.5) / region.width as f32, (y as f32 + 0.5) / region.height as f32);
                 let basis = tangent_basis(n);
-                let mut sum = [0.; 3];
+                let mut sum = Color::zero();
                 let mut weight = 0.;
                 for &half in &half_vectors {
-                    let half = orient(basis, half);
-                    let light = subtract(multiply(half, 2. * dot(n, half)), n);
-                    let nl = dot(n, light).max(0.);
+                    let half = basis * half;
+                    let light = half * (2. * Color::dot(&n, &half)) - n;
+                    let nl = Color::dot(&n, &light).max(0.);
                     if nl > 0. {
-                        add_weighted(&mut sum, source.sample(light), nl);
+                        sum = sum + source.sample(light) * nl;
                         weight += nl;
                     }
                 }
-                encode_rgbe(multiply(sum, 1. / weight.max(1e-8)))
+                encode_rgbe(sum * (1. / weight.max(1e-8)))
             });
         }
         let diffuse = atlas.regions[DIFFUSE_REGION];
@@ -169,15 +170,15 @@ impl Environment {
             .map(|i| {
                 let [u, v] = hammersley(i, quality.samples);
                 let phi = TAU * v;
-                [u.sqrt() * phi.cos(), u.sqrt() * phi.sin(), (1. - u).sqrt()]
+                Color::new(u.sqrt() * phi.cos(), u.sqrt() * phi.sin(), (1. - u).sqrt())
             })
             .collect();
         atlas.fill(DIFFUSE_REGION, |x, y| {
             let n = direction((x as f32 + 0.5) / diffuse.width as f32, (y as f32 + 0.5) / diffuse.height as f32);
             let basis = tangent_basis(n);
-            let mut sum = [0.; 3];
+            let mut sum = Color::zero();
             for &sample in &cosine_samples {
-                add_weighted(&mut sum, source.sample(orient(basis, sample)), 1. / quality.samples as f32);
+                sum = sum + source.sample(basis * sample) * (1. / quality.samples as f32);
             }
             encode_rgbe(sum)
         });
@@ -285,21 +286,21 @@ impl Panorama {
 
     /// Bilinear sampling in linear radiance, wrapping longitude and clamping polar rows.
     fn sample(&self, direction: Color) -> Color {
-        let u = 0.5 + direction[2].atan2(direction[0]) / TAU;
-        let v = direction[1].clamp(-1., 1.).acos() / PI;
+        let u = 0.5 + direction.z.atan2(direction.x) / TAU;
+        let v = direction.y.clamp(-1., 1.).acos() / PI;
         let x = u * self.width as f32 - 0.5;
         let y = v * self.height as f32 - 0.5;
         let ix = x.floor() as i32;
         let iy = y.floor() as i32;
         let fx = x - x.floor();
         let fy = y - y.floor();
-        let mut result = [0.; 3];
+        let mut result = Color::zero();
         for dy in 0..2 {
             for dx in 0..2 {
                 let px = (ix + dx).rem_euclid(self.width as i32) as u32;
                 let py = (iy + dy).clamp(0, self.height as i32 - 1) as u32;
                 let weight = if dx == 0 { 1. - fx } else { fx } * if dy == 0 { 1. - fy } else { fy };
-                add_weighted(&mut result, self.pixels[(py * self.width + px) as usize], weight);
+                result = result + Color::from_array(self.pixels[(py * self.width + px) as usize]) * weight;
             }
         }
         result
@@ -325,25 +326,21 @@ fn image_bytes(width: u32, height: u32) -> Option<usize> {
     (width as usize).checked_mul(height as usize)?.checked_mul(4).filter(|size| *size <= MAX_BYTES)
 }
 
-/// Encodes radiance with a shared base-two exponent; zero has a unique all-zero representation.
+/// Encodes finite nonnegative radiance with a shared exponent; zero has a unique all-zero representation.
 fn encode_rgbe(color: Color) -> [u8; 4] {
-    let peak = color.into_iter().fold(0., f32::max);
+    let peak = color.max_abs_component();
     if peak < 1e-32 {
         return [0; 4];
     }
     let exponent = peak.log2().floor() as i32 + 1;
     let scale = 2_f32.powi(8 - exponent);
-    [
-        (color[0] * scale) as u8,
-        (color[1] * scale) as u8,
-        (color[2] * scale) as u8,
-        (exponent + 128) as u8,
-    ]
+    let [r, g, b] = color.map(|channel| (channel * scale) as u8).to_array();
+    [r, g, b, (exponent + 128) as u8]
 }
 
 /// Inverse of RGBE encoding, also used by CPU regressions for HDR and convolution invariants.
 #[cfg(test)]
-fn decode_rgbe(pixel: [u8; 4]) -> Color {
+fn decode_rgbe(pixel: [u8; 4]) -> [f32; 3] {
     let scale = if pixel[3] == 0 { 0. } else { 2_f32.powi(i32::from(pixel[3]) - 136) };
     [pixel[0] as f32 * scale, pixel[1] as f32 * scale, pixel[2] as f32 * scale]
 }
@@ -352,7 +349,7 @@ fn decode_rgbe(pixel: [u8; 4]) -> Color {
 fn direction(u: f32, v: f32) -> Color {
     let longitude = (u - 0.5) * TAU;
     let latitude = v * PI;
-    [latitude.sin() * longitude.cos(), latitude.cos(), latitude.sin() * longitude.sin()]
+    Color::new(latitude.sin() * longitude.cos(), latitude.cos(), latitude.sin() * longitude.sin())
 }
 
 /// Low-discrepancy integration sequence with an exact base-two radical inverse.
@@ -366,22 +363,22 @@ fn ggx_half(sample: [f32; 2], roughness: f32) -> Color {
     let phi = TAU * sample[0];
     let cosine = ((1. - sample[1]) / (1. + (alpha2 - 1.) * sample[1])).sqrt();
     let sine = (1. - cosine * cosine).max(0.).sqrt();
-    [sine * phi.cos(), sine * phi.sin(), cosine]
+    Color::new(sine * phi.cos(), sine * phi.sin(), cosine)
 }
 
 /// Integrates separable Smith GGX visibility and Schlick Fresnel scale/bias over the hemisphere.
 fn integrate_brdf(nv: f32, roughness: f32, samples: u32) -> [f32; 2] {
-    let view = [(1. - nv * nv).sqrt(), 0., nv];
+    let view = Color::new((1. - nv * nv).sqrt(), 0., nv);
     let mut integral = [0.; 2];
     let alpha2 = roughness.powi(4);
     let smith = |cosine: f32| 2. * cosine / (cosine + (alpha2 + (1. - alpha2) * cosine * cosine).sqrt()).max(1e-8);
     for index in 0..samples {
         let half = ggx_half(hammersley(index, samples), roughness);
-        let vh = dot(view, half).max(0.);
-        let light = subtract(multiply(half, 2. * vh), view);
-        let nl = light[2].max(0.);
+        let vh = Color::dot(&view, &half).max(0.);
+        let light = half * (2. * vh) - view;
+        let nl = light.z.max(0.);
         if nl > 0. {
-            let visibility = smith(nv) * smith(nl) * vh / (half[2] * nv).max(1e-8);
+            let visibility = smith(nv) * smith(nl) * vh / (half.z * nv).max(1e-8);
             let fresnel = (1. - vh).powi(5);
             integral[0] += (1. - fresnel) * visibility / samples as f32;
             integral[1] += fresnel * visibility / samples as f32;
@@ -390,38 +387,12 @@ fn integrate_brdf(nv: f32, roughness: f32, samples: u32) -> [f32; 2] {
     integral
 }
 
-/// Stable orthonormal basis for either pole as well as ordinary surface directions.
-fn tangent_basis(normal: Color) -> [Color; 3] {
-    let up = if normal[2].abs() < 0.999 { [0., 0., 1.] } else { [1., 0., 0.] };
-    let tangent = cross(up, normal);
-    let tangent = multiply(tangent, 1. / dot(tangent, tangent).sqrt());
-    [tangent, cross(normal, tangent), normal]
-}
-/// Converts local sample coordinates into the panorama's world-space basis.
-fn orient(basis: [Color; 3], value: Color) -> Color {
-    std::array::from_fn(|i| basis[0][i] * value[0] + basis[1][i] * value[1] + basis[2][i] * value[2])
-}
-/// Dot product of owned three-component values.
-fn dot(a: Color, b: Color) -> f32 {
-    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
-}
-/// Right-handed cross product used only for orthonormal sampling bases.
-fn cross(a: Color, b: Color) -> Color {
-    [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
-}
-/// Componentwise difference, used for reflected integration directions.
-fn subtract(a: Color, b: Color) -> Color {
-    std::array::from_fn(|i| a[i] - b[i])
-}
-/// Multiplies linear radiance or a direction by a scalar.
-fn multiply(value: Color, weight: f32) -> Color {
-    value.map(|v| v * weight)
-}
-/// Accumulates a weighted radiance sample without changing its color space.
-fn add_weighted(sum: &mut Color, value: Color, weight: f32) {
-    for i in 0..3 {
-        sum[i] += value[i] * weight;
-    }
+/// Moves the library frame's first (normal) axis to local +Z, preserving right-handedness.
+/// Finite nonzero panorama directions meet the ordinary basis constructor's preconditions.
+/// Cache version 2 accounts for the library's different deterministic tangent selection.
+fn tangent_basis(normal: Color) -> Mat3f {
+    let [normal, tangent, bitangent] = basis_from_unit_rh(&normal);
+    Mat3f { col: [tangent, bitangent, normal] }
 }
 
 #[cfg(test)]

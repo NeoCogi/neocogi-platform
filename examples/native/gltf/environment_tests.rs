@@ -1,5 +1,6 @@
 //! Numerical and raw-storage regressions; ordinary tests never need assets or a GPU.
 use super::*;
+use rs_math3d::RealVector;
 
 /// Small deterministic preparation retains the production math and every atlas region.
 const SMALL: Quality = Quality {
@@ -18,17 +19,40 @@ fn constant() -> Panorama {
     }
 }
 
+/// Reordering the library basis maps the local hemisphere's +Z to its world normal at every pole.
+#[test]
+fn library_tangent_frames_preserve_normal_axis_and_handedness() {
+    use rs_math3d::CrossProduct;
+    for normal in [
+        Color::new(1., 0., 0.),
+        Color::new(-1., 0., 0.),
+        Color::new(0., 1., 0.),
+        Color::new(0., -1., 0.),
+        Color::new(0., 0., 1.),
+        Color::new(0., 0., -1.),
+        Color::new(1., 2., 3.).normalize(),
+    ] {
+        let basis = tangent_basis(normal);
+        assert!((basis * Color::new(0., 0., 1.) - normal).max_abs_component() < 1e-6);
+        for axis in basis.col {
+            assert!(axis.is_finite() && (axis.length() - 1.).abs() < 1e-6);
+        }
+        assert!((Color::cross(&basis.col[0], &basis.col[1]) - basis.col[2]).max_abs_component() < 1e-6);
+        assert!(Color::dot(&basis.col[0], &basis.col[1]).abs() < 1e-6);
+    }
+}
+
 /// RGBE preserves highlights above one and black without any display transfer function.
 #[test]
 fn radiance_encoding_keeps_hdr_range() {
     for color in [[0.; 3], [0.001, 0.5, 2.], [65504., 16., 1.], [1e-20; 3]] {
-        let decoded = decode_rgbe(encode_rgbe(color));
+        let decoded = decode_rgbe(encode_rgbe(Color::from_array(color)));
         let peak = color.into_iter().fold(0., f32::max);
         for channel in 0..3 {
             assert!((decoded[channel] - color[channel]).abs() <= peak / 128. + 1e-30);
         }
     }
-    assert_eq!(encode_rgbe([0.; 3]), [0; 4]);
+    assert_eq!(encode_rgbe(Color::zero()), [0; 4]);
 }
 
 /// Both source interpolation and filtered radiance preserve a constant environment's energy.
@@ -71,15 +95,15 @@ fn equirectangular_orientation_and_seam_are_consistent() {
     for (u, v) in [(0.125, 0.25), (0.375, 0.25), (0.625, 0.75), (0.875, 0.75)] {
         let actual = panorama.sample(direction(u, v));
         let expected = panorama.pixels[((v * 2.) as usize) * 4 + (u * 4.) as usize];
-        for (a, b) in actual.into_iter().zip(expected) {
+        for (a, b) in actual.to_array().into_iter().zip(expected) {
             assert!((a - b).abs() < 1e-5);
         }
     }
     let a = panorama.sample(direction(0.000001, 0.5));
     let b = panorama.sample(direction(0.999999, 0.5));
-    assert!(a.iter().zip(b).all(|(a, b)| (*a - b).abs() < 0.0001));
-    assert!(panorama.sample([0., 1., 0.]).iter().all(|v| v.is_finite()));
-    assert!(panorama.sample([0., -1., 0.]).iter().all(|v| v.is_finite()));
+    assert!((a - b).max_abs_component() < 0.0001);
+    assert!(panorama.sample(Color::new(0., 1., 0.)).is_finite());
+    assert!(panorama.sample(Color::new(0., -1., 0.)).is_finite());
 }
 
 /// GGX filtering broadens a directional signal; all prefiltered samples remain bounded radiance.
@@ -128,6 +152,10 @@ fn cache_validates_payload_and_exact_raw_storage() {
     assert!(Environment::read_cache(&path, cache_key(b"different", SMALL)).is_none());
     assert_ne!(key, cache_key(b"source", Quality { samples: 64, ..SMALL }));
     let original = fs::read(&path).unwrap();
+    let mut old_basis_cache = original.clone();
+    old_basis_cache[..8].copy_from_slice(b"NCIBL001");
+    fs::write(&path, old_basis_cache).unwrap();
+    assert!(Environment::read_cache(&path, key).is_none(), "the former sampling basis requires a rebake");
     for count in [0, 39, HEADER_BYTES - 1, original.len() - 1] {
         fs::write(&path, &original[..count]).unwrap();
         assert!(Environment::read_cache(&path, key).is_none());

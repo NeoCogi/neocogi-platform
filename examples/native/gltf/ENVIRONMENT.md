@@ -21,6 +21,14 @@ is 32 × 16; the BRDF table is 64 × 64. Each integral uses 128 samples. This is
 finite numerical integration, rather than a claim of pixel identity with the
 reference viewer's GPU filtering implementation.
 
+rs-math3d owns the vector operations and right-handed orthonormal frame used by
+the integrator. Its frame places the input normal on the first axis; preparation
+cyclically reorders the columns so the sampled hemisphere's +Z follows that normal.
+Cache version `NCIBL002` replaces `NCIBL001` because the shared frame chooses a
+different deterministic tangent. Existing caches are rebaked once; radiance
+orientation, energy normalization, atlas layout and shader interpretation stay
+the same.
+
 Radiance tiles use RGBE8 to preserve highlights above one through the existing
 RGBA8 texture contract. They must be decoded **before** interpolation. Longitude
 wraps and latitude clamps at the polar rows. Source row zero is north, longitude

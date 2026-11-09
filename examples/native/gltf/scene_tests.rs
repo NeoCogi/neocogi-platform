@@ -122,9 +122,62 @@ fn interpolation_boundaries_and_shortest_arc() {
     assert_eq!(interval(&[1., 2., 3.], 4., false), (2, 2, 0.));
     assert_eq!(interval(&[1.], 1., false), (0, 0, 0.));
     assert_eq!(interval(&[0., 2.], 1., true), (0, 1, 0.));
-    assert_eq!(slerp([0., 0., 0., 1.], [0., 0., 0., -1.], 0.5), [0., 0., 0., 1.]);
-    let halfway = slerp([0., 0., 0., 1.], [0., 0., 1., 0.], 0.5);
-    assert!((halfway[2] - 0.5_f32.sqrt()).abs() < 1e-6);
+    let same = slerp(Quatf::identity(), Quatf::new(0., 0., 0., -1.), 0.5);
+    assert_eq!([same.x, same.y, same.z, same.w], [0., 0., 0., 1.]);
+    let halfway = slerp(Quatf::identity(), Quatf::new(0., 0., 1., 0.), 0.5);
+    assert!((halfway.z - 0.5_f32.sqrt()).abs() < 1e-6);
+    let rotated = halfway.mat4() * Vec4f::new(1., 0., 0., 0.);
+    assert!(rotated.x.abs() < 1e-6 && (rotated.y - 1.).abs() < 1e-6);
+    // Near-parallel keys use the linear limit, with final normalization owned by the library.
+    let small = Quatf::of_axis_angle(&Vec3f::new(0., 0., 1.), 0.001);
+    let midway = slerp(Quatf::identity(), small, 0.5);
+    let rotated = midway.mat4() * Vec4f::new(1., 0., 0., 0.);
+    assert!((rotated.y - 0.0005_f32.sin()).abs() < 1e-6);
+    assert!((midway.length() - 1.).abs() < 1e-6);
+}
+
+/// Bounds remain finite when the radius fits f32 but the old squared-distance sum would overflow.
+#[test]
+fn large_scene_bounds_use_a_representable_radius() {
+    let mut scene = fixture(|_, _| {}).unwrap();
+    for vertex in &mut scene.primitives[0].vertices {
+        vertex.position = [1e30 + vertex.position[0] * 1e25, -1e30 + vertex.position[1] * 1e25, 0.];
+    }
+    let (center, radius) = scene.bounds();
+    assert!(center.iter().all(|v| v.is_finite()) && radius.is_finite() && radius > 1e24);
+    for vertex in &scene.primitives[0].vertices {
+        let distance = vertex
+            .position
+            .into_iter()
+            .zip(center)
+            .map(|(v, c)| (f64::from(v) - f64::from(c)).powi(2))
+            .sum::<f64>()
+            .sqrt();
+        assert!(distance <= f64::from(radius) * 1.02);
+    }
+}
+
+/// Rounding a very narrow large box's center onto an edge must not collapse the camera sphere.
+#[test]
+fn adjacent_large_coordinates_remain_inside_the_camera_sphere() {
+    let mut scene = fixture(|_, _| {}).unwrap();
+    let low = f32::from_bits(1e30_f32.to_bits() | 1);
+    let high = f32::from_bits(low.to_bits() + 1);
+    for (vertex, [x, y]) in scene.primitives[0].vertices.iter_mut().zip([[low, low], [high, low], [low, high]]) {
+        vertex.position = [x, y, 0.];
+    }
+    let (center, radius) = scene.bounds();
+    assert!(radius.is_finite() && radius >= (high - low) * 1.4);
+    for vertex in &scene.primitives[0].vertices {
+        let distance = vertex
+            .position
+            .into_iter()
+            .zip(center)
+            .map(|(v, c)| (f64::from(v) - f64::from(c)).powi(2))
+            .sum::<f64>()
+            .sqrt();
+        assert!(distance <= f64::from(radius) * 1.000001);
+    }
 }
 
 /// Upload bytes have the documented stride and little-endian joint/matrix offsets.
@@ -137,6 +190,20 @@ fn explicit_gpu_encoding() {
     assert_eq!(&bytes[48..52], &1_f32.to_le_bytes());
     matrix_bytes(&mut bytes, translate(Vec3f::new(2., 3., 4.)));
     assert_eq!(&bytes[112..116], &2_f32.to_le_bytes());
+}
+
+/// Matrix packing preserves all sixteen column-major scalar bit patterns and appends to owned bytes.
+#[test]
+fn column_major_packing_preserves_exact_scalar_bits() {
+    let bits = [
+        0x80000000, 0x7fc12345, 0x3f800000, 0xbf800000, 0x40000000, 0x40400000, 0x40800000, 0x40a00000, 0x40c00000, 0x40e00000, 0x41000000, 0x41100000,
+        0x41200000, 0x41300000, 0x41400000, 0x41500000,
+    ];
+    let columns = std::array::from_fn(|column| std::array::from_fn(|row| f32::from_bits(bits[column * 4 + row])));
+    let mut bytes = vec![0x5a; 3];
+    matrix_bytes(&mut bytes, matrix_from_columns(columns));
+    assert_eq!(&bytes[..3], &[0x5a; 3]);
+    assert_eq!(&bytes[3..], bits.into_iter().flat_map(u32::to_le_bytes).collect::<Vec<_>>());
 }
 
 /// Explicit asset acceptance runs after the pinned download; ordinary tests stay offline.

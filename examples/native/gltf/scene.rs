@@ -4,7 +4,7 @@
 //! triangles, normals, UV0, four joint influences, opaque materials and LINEAR/STEP TRS.
 //! Unsupported topology, morphing and animation interpolation fail explicitly.
 
-use rs_math3d::{Mat4f, Quatf, Vec3f, Vec4f, scale, translate};
+use rs_math3d::{Box3f, Mat4f, Quatf, RealVector, Vec3f, Vec4f, Vector, scale, translate};
 use std::path::Path;
 
 /// Palette capacity shared with the example vertex shader (4 KiB, below portable limits).
@@ -84,19 +84,17 @@ pub struct Image {
 /// Rest or sampled node transform; glTF multiplication order is T * R * S.
 struct Transform {
     /// Parent-local translation.
-    translation: [f32; 3],
-    /// Normalized XYZW rotation quaternion.
-    rotation: [f32; 4],
+    translation: Vec3f,
+    /// Parent-local XYZW orientation; matrix realization normalizes it.
+    rotation: Quatf,
     /// Parent-local axis scales.
-    scale: [f32; 3],
+    scale: Vec3f,
 }
 
 impl Transform {
     /// Builds a column-major matrix, keeping the file's quaternion ordering explicit.
     fn matrix(&self) -> Mat4f {
-        translate(Vec3f::new(self.translation[0], self.translation[1], self.translation[2]))
-            * Quatf::new(self.rotation[0], self.rotation[1], self.rotation[2], self.rotation[3]).mat4()
-            * scale(Vec3f::new(self.scale[0], self.scale[1], self.scale[2]))
+        translate(self.translation) * self.rotation.mat4() * scale(self.scale)
     }
 }
 
@@ -121,11 +119,11 @@ struct Skin {
 /// Typed animation outputs prevent rotation data from being treated as translation/scale.
 enum Values {
     /// Translation keys in parent space.
-    Translation(Vec<[f32; 3]>),
-    /// Quaternion XYZW keys, interpolated along the shortest spherical arc.
-    Rotation(Vec<[f32; 4]>),
+    Translation(Vec<Vec3f>),
+    /// Finite nonzero XYZW keys; shortest-arc sampling returns a unit orientation.
+    Rotation(Vec<Quatf>),
     /// Axis-scale keys.
-    Scale(Vec<[f32; 3]>),
+    Scale(Vec<Vec3f>),
 }
 
 /// One validated channel in the first clip; time is in seconds.
@@ -177,10 +175,14 @@ impl Scene {
         let mut nodes: Vec<_> = document
             .nodes()
             .map(|node| {
-                let (translation, rotation, scale) = node.transform().decomposed();
+                let (translation, [x, y, z, w], scale) = node.transform().decomposed();
                 Node {
                     parent: None,
-                    rest: Transform { translation, rotation, scale },
+                    rest: Transform {
+                        translation: Vec3f::from_array(translation),
+                        rotation: Quatf::new(x, y, z, w),
+                        scale: Vec3f::from_array(scale),
+                    },
                     matrix: match node.transform() {
                         gltf::scene::Transform::Matrix { matrix } => Some(matrix_from_columns(matrix)),
                         gltf::scene::Transform::Decomposed { .. } => None,
@@ -365,18 +367,14 @@ impl Scene {
                 }
                 use gltf::animation::util::ReadOutputs;
                 let values = match reader.read_outputs().ok_or("animation lacks output keys")? {
-                    ReadOutputs::Translations(v) => Values::Translation(v.collect()),
-                    ReadOutputs::Rotations(v) => Values::Rotation(v.into_f32().collect()),
-                    ReadOutputs::Scales(v) => Values::Scale(v.collect()),
+                    ReadOutputs::Translations(v) => Values::Translation(v.map(Vec3f::from_array).collect()),
+                    ReadOutputs::Rotations(v) => Values::Rotation(v.into_f32().map(|[x, y, z, w]| Quatf::new(x, y, z, w)).collect()),
+                    ReadOutputs::Scales(v) => Values::Scale(v.map(Vec3f::from_array).collect()),
                     ReadOutputs::MorphTargetWeights(_) => return Err("morph animation is unsupported".into()),
                 };
                 let valid = match &values {
-                    Values::Translation(v) | Values::Scale(v) => v.len() == times.len() && v.iter().flatten().all(|v| v.is_finite()),
-                    Values::Rotation(v) => {
-                        v.len() == times.len()
-                            && v.iter()
-                                .all(|q| q.iter().all(|v| v.is_finite()) && q.iter().map(|v| v * v).sum::<f32>() > 1e-12)
-                    }
+                    Values::Translation(v) | Values::Scale(v) => v.len() == times.len() && v.iter().all(|v| v.is_finite()),
+                    Values::Rotation(v) => v.len() == times.len() && v.iter().all(|q| q.checked_length().is_ok_and(|length| length > 1e-6)),
                 };
                 if !valid {
                     return Err("invalid animation output keys".into());
@@ -432,8 +430,8 @@ impl Scene {
             let (a, b, factor) = interval(&channel.times, time, channel.step);
             let transform = &mut transforms[channel.node];
             match &channel.values {
-                Values::Translation(v) => transform.translation = std::array::from_fn(|i| v[a][i] + (v[b][i] - v[a][i]) * factor),
-                Values::Scale(v) => transform.scale = std::array::from_fn(|i| v[a][i] + (v[b][i] - v[a][i]) * factor),
+                Values::Translation(v) => transform.translation = v[a] + (v[b] - v[a]) * factor,
+                Values::Scale(v) => transform.scale = v[a] + (v[b] - v[a]) * factor,
                 Values::Rotation(v) => transform.rotation = slerp(v[a], v[b], factor),
             }
         }
@@ -463,8 +461,8 @@ impl Scene {
     /// Computes initial animated world-space bounds, including weighted bind matrices.
     pub fn bounds(&self) -> ([f32; 3], f32) {
         let pose = self.pose(0.0);
-        let mut min = [f32::INFINITY; 3];
-        let mut max = [f32::NEG_INFINITY; 3];
+        let mut min = Vec3f::from_array([f32::INFINITY; 3]);
+        let mut max = Vec3f::from_array([f32::NEG_INFINITY; 3]);
         for primitive in &self.primitives {
             let palette = self.palette(primitive, &pose);
             for vertex in &primitive.vertices {
@@ -474,15 +472,20 @@ impl Scene {
                         + (palette[vertex.joints[i] as usize] * Vec4f::new(vertex.position[0], vertex.position[1], vertex.position[2], 1.0))
                             * vertex.weights[i];
                 }
-                for (axis, value) in [position.x, position.y, position.z].into_iter().enumerate() {
-                    min[axis] = min[axis].min(value);
-                    max[axis] = max[axis].max(value);
-                }
+                let point = Vec3f::new(position.x, position.y, position.z);
+                min = Vec3f::min(&min, &point);
+                max = Vec3f::max(&max, &point);
             }
         }
-        let center = std::array::from_fn(|i| (min[i] + max[i]) * 0.5);
-        let radius = (0..3).map(|i| (max[i] - min[i]).powi(2)).sum::<f32>().sqrt() * 0.5;
-        (center, radius.max(0.001))
+        let bounds = Box3f::new(&min, &max);
+        let center = bounds.center();
+        // A rounded center can lie on one edge for adjacent large coordinates. Keep the
+        // farther distance on each axis so the camera sphere encloses both original corners.
+        let extent = Vec3f::max(&(bounds.max - center), &(center - bounds.min));
+        // Scale-aware length keeps a representable radius even when squaring its components
+        // would overflow. An unrepresentable or nonfinite radius is reported as infinity.
+        let radius = extent.checked_length().unwrap_or(f32::INFINITY);
+        (center.to_array(), radius.max(0.001))
     }
 }
 
@@ -499,10 +502,10 @@ fn interval(times: &[f32], time: f32, step: bool) -> (usize, usize, f32) {
 }
 
 /// Normalized shortest-path quaternion interpolation, including antipodal equivalent keys.
-fn slerp(a: [f32; 4], mut b: [f32; 4], t: f32) -> [f32; 4] {
-    let dot: f32 = a.iter().zip(b).map(|(a, b)| a * b).sum();
+fn slerp(a: Quatf, mut b: Quatf, t: f32) -> Quatf {
+    let dot = Quatf::dot(&a, &b);
     if dot < 0.0 {
-        b.iter_mut().for_each(|v| *v = -*v);
+        b = Quatf::neg(&b);
     }
     let dot = dot.abs().min(1.0);
     let (left, right) = if dot > 0.9995 {
@@ -511,17 +514,12 @@ fn slerp(a: [f32; 4], mut b: [f32; 4], t: f32) -> [f32; 4] {
         let angle = dot.acos();
         (((1.0 - t) * angle).sin() / angle.sin(), (t * angle).sin() / angle.sin())
     };
-    let mut q: [f32; 4] = std::array::from_fn(|i| a[i] * left + b[i] * right);
-    let norm = q.iter().map(|v| v * v).sum::<f32>().sqrt();
-    q.iter_mut().for_each(|v| *v /= norm);
-    q
+    Quatf::normalize(&(a * left + b * right))
 }
 
 /// Converts glTF's explicit column vectors to the math crate without transposition.
 fn matrix_from_columns(columns: [[f32; 4]; 4]) -> Mat4f {
-    Mat4f {
-        col: columns.map(|v| Vec4f::new(v[0], v[1], v[2], v[3])),
-    }
+    Mat4f { col: columns.map(Vec4f::from_array) }
 }
 
 /// Appends GPU f32 scalars without relying on Rust struct layout or unsafe casts.
@@ -531,9 +529,7 @@ pub fn floats(bytes: &mut Vec<u8>, values: impl IntoIterator<Item = f32>) {
 
 /// Serializes one std140-compatible column-major matrix (64 bytes).
 pub fn matrix_bytes(bytes: &mut Vec<u8>, matrix: Mat4f) {
-    for column in matrix.col {
-        floats(bytes, [column.x, column.y, column.z, column.w]);
-    }
+    floats(bytes, matrix.to_cols_array());
 }
 
 #[cfg(test)]

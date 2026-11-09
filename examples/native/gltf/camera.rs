@@ -3,7 +3,7 @@ use neocogi_platform_examples::sdk::render::{
     abi::Size,
     platform::{Point, UiInput},
 };
-use rs_math3d::{Mat4f, Quatf, Vec3f, Vec4f, translate};
+use rs_math3d::{CrossProduct, Mat4f, Quatf, RealVector, Vec3f, Vector, basis_from_unit_rh, perspective, translate};
 
 /// Vertical field of view; horizontal fitting accounts for portrait windows as well.
 const FOV: f32 = std::f32::consts::FRAC_PI_4;
@@ -40,10 +40,10 @@ impl Camera {
     /// Fits a finite positive bounding sphere in both axes with a small margin.
     pub fn new(center: [f32; 3], radius: f32, size: Size) -> Self {
         let mut camera = Self {
-            center: Vec3f::new(center[0], center[1], center[2]),
+            center: Vec3f::from_array(center),
             radius,
             size,
-            rotation: Quatf::new(0., 0., 0., 1.),
+            rotation: Quatf::identity(),
             pan: [0.; 2],
             distance: radius,
             drag: Drag::Idle,
@@ -57,7 +57,7 @@ impl Camera {
         let aspect = self.size.width.max(1) as f32 / self.size.height.max(1) as f32;
         let half_angle = ((FOV * 0.5).tan() * aspect.min(1.0)).atan();
         self.distance = self.radius / half_angle.sin() * 1.15;
-        self.rotation = Quatf::new(0., 0., 0., 1.);
+        self.rotation = Quatf::identity();
         self.pan = [0.; 2];
         self.drag = Drag::Idle;
     }
@@ -86,19 +86,11 @@ impl Camera {
                 Drag::Idle => {}
                 Drag::Rotate(previous) => {
                     let next = self.sphere(position);
-                    let dot = (previous.x * next.x + previous.y * next.y + previous.z * next.z).clamp(-1., 1.);
-                    let axis = Vec3f::new(
-                        previous.y * next.z - previous.z * next.y,
-                        previous.z * next.x - previous.x * next.z,
-                        previous.x * next.y - previous.y * next.x,
-                    );
+                    let dot = Vec3f::dot(&previous, &next).clamp(-1., 1.);
+                    let axis = Vec3f::cross(&previous, &next);
                     // At opposite rim points choose a stable orthogonal half-turn axis.
                     let delta = if dot < -0.99999 {
-                        let axis = if previous.x.abs() < 0.9 {
-                            Vec3f::new(0., previous.z, -previous.y)
-                        } else {
-                            Vec3f::new(-previous.z, 0., previous.x)
-                        };
+                        let [_, axis, _] = basis_from_unit_rh(&previous);
                         Quatf::new(axis.x, axis.y, axis.z, 0.)
                     } else {
                         Quatf::new(axis.x, axis.y, axis.z, 1. + dot)
@@ -135,41 +127,27 @@ impl Camera {
         if squared <= 1. {
             Vec3f::new(x, y, (1. - squared).sqrt())
         } else {
-            Vec3f::new(x / squared.sqrt(), y / squared.sqrt(), 0.)
+            Vec3f::new(x, y, 0.).normalize()
         }
     }
 
     /// Returns right-handed perspective * view with renderer-canonical depth in [0,1].
     pub fn view_projection(&self) -> Mat4f {
         let aspect = self.size.width.max(1) as f32 / self.size.height.max(1) as f32;
-        let f = 1. / (FOV * 0.5).tan();
         let near = self.radius * 0.001;
         let far = self.radius * 250.;
-        let projection = Mat4f::new(
-            f / aspect,
-            0.,
-            0.,
-            0.,
-            0.,
-            f,
-            0.,
-            0.,
-            0.,
-            0.,
-            far / (near - far),
-            -1.,
-            0.,
-            0.,
-            near * far / (near - far),
-            0.,
-        );
+        let mut projection = perspective(FOV, aspect, near, far);
+        // rs-math3d projects to OpenGL depth [-1,1]. The platform contract uses [0,1]:
+        // z' = (z + w) / 2 changes only these two coefficients of this perspective matrix.
+        projection.col[2].z = (projection.col[2].z - 1.) * 0.5;
+        projection.col[3].z *= 0.5;
         projection * translate(Vec3f::new(self.pan[0], self.pan[1], -self.distance)) * self.rotation.mat4() * translate(-self.center)
     }
 
     /// Camera position in scene coordinates for view-dependent fragment lighting.
     pub fn eye(&self) -> [f32; 3] {
-        let offset = Quatf::conjugate(&self.rotation).mat4() * Vec4f::new(-self.pan[0], -self.pan[1], self.distance, 0.);
-        [self.center.x + offset.x, self.center.y + offset.y, self.center.z + offset.z]
+        let offset = Quatf::conjugate(&self.rotation).mat3() * Vec3f::new(-self.pan[0], -self.pan[1], self.distance);
+        (self.center + offset).to_array()
     }
 
     /// Perspective ray basis for an infinitely distant skybox. Only camera rotation and
@@ -185,6 +163,7 @@ impl Camera {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rs_math3d::Vec4f;
 
     /// Test viewport centered on the virtual sphere and a translated world-space pivot.
     fn camera() -> Camera {
@@ -194,6 +173,28 @@ mod tests {
     fn project(camera: &Camera, point: [f32; 3]) -> [f32; 3] {
         let p = camera.view_projection() * Vec4f::new(point[0], point[1], point[2], 1.);
         [p.x / p.w, p.y / p.w, p.z / p.w]
+    }
+
+    /// Library perspective retains canonical near/far depth and both screen edges across aspect ratios.
+    #[test]
+    fn perspective_depth_and_field_of_view_remain_canonical() {
+        for size in [
+            Size { width: 800, height: 600 },
+            Size { width: 300, height: 800 },
+            Size { width: 800, height: 800 },
+        ] {
+            let c = Camera::new([0.; 3], 1., size);
+            let near = c.radius * 0.001;
+            let far = c.radius * 250.;
+            assert!(project(&c, [0., 0., c.distance - near])[2].abs() < 5e-4);
+            assert!((project(&c, [0., 0., c.distance - far])[2] - 1.).abs() < 1e-6);
+            let y = far * (FOV * 0.5).tan();
+            let x = y * size.width as f32 / size.height as f32;
+            for sign in [-1., 1.] {
+                let edge = project(&c, [sign * x, sign * y, c.distance - far]);
+                assert!((edge[0] - sign).abs() < 1e-6 && (edge[1] - sign).abs() < 1e-6);
+            }
+        }
     }
     /// Arcball rotates around the fitted pivot, remains normalized and stops on button release.
     #[test]
