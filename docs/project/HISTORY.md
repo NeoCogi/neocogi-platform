@@ -1,3 +1,55 @@
+# Alpha contract upgrade reference
+
+The current release set is `neocogi-platform-contracts`, `neocogi-platform` and
+`neocogi-platform-dylib`. The entries below record earlier layouts and APIs;
+current behavior belongs to the linked contracts. All NCIDL declarations retain
+version 1 during alpha, so rebuild generated clients and providers together.
+
+- Replace former package names and aliases with the contracts crate for schemas,
+  generated bindings, shared types, limits and validation; the SDK for renderer,
+  compiler, audio and hosting implementations; and the shim for final platform
+  libraries. Dynamic applications use contracts without an SDK dependency.
+  Static applications enable their SDK backend and hosting features, initialize
+  one COM host and register `platform::plugin_descriptor()`. See
+  [component ownership](../architecture/COMPONENTS.md).
+- Build scripts use the contracts crate's `build-support` feature and
+  `build::{Module, sources, build}`. Select `Module::Renderer` for shader and GPU
+  declarations; `Module::Shader` and the separate shader namespace are removed.
+  Replace staging macros and artifact dependencies with `build::layout` calls
+  and rerun directives for returned inputs and outputs. Canonical schema bytes
+  are reconstructed in each consumer's OUT_DIR. See
+  [component ownership](../architecture/COMPONENTS.md) and
+  [native staging](../contracts/NATIVE_LAYOUT.md).
+- Build backend-named shim library examples before running dynamic applications,
+  using the same profile and target. Dynamic examples need only `dynamic`; the
+  sole deployed backend or an explicit `--backend` chooses the library at
+  startup. The renderer owns compilation inside that platform library; remove
+  external compiler registration and deployment. Current two-command invocations
+  are in [native staging](../contracts/NATIVE_LAYOUT.md) and the
+  [native examples](../../examples/native/README.md).
+- Remove `ShaderCompileRequest.target`: output is fixed at compiler construction.
+  Replace the three code getters with `code() -> INcBytes`, and the three format
+  lengths with `ShaderInfo.target` and `code_byte_count`. Results retain `target()`
+  for backend validation. Rust snapshots use one `ShaderCode` enum;
+  `PreparedShader::new` takes the expected target before entry bytes. Replace
+  `GpuDevice::new(core, compiler)` with fallible `GpuDevice::new(core)`. Standalone
+  CPU compilation uses `shader-compiler` plus selected output features; backends
+  enable their own output. See [shader compilation](../contracts/SHADER_COMPILATION.md).
+- Replace optional initial buffer data, update methods, separate `IGpuTexture`
+  and copied per-draw uniforms with persistent `IGpuBuffer` resources. Choose
+  static storage with exact initial bytes, or zero-initialized dynamic/streamed
+  storage with `upload`/`read`; bind uniform ranges through
+  `bind_uniform_buffer`. The [GPU contract](../contracts/GPU_RENDERING.md)
+  contains the typed vertex example, transfer units and storage lifetimes.
+- Audio moved from `neocogi.platform` to sibling `neocogi.audio`, authored under
+  `schemas/neocogi/audio`. Use `neocogi_platform_contracts::audio` and
+  `Module::Audio` for independent projections. Platform discovery imports those
+  service types. See [PCM audio](../contracts/AUDIO.md).
+
+For consumers already targeting this package set, the
+[repository tools guide](../../scripts/README.md) describes temporary local-source
+overlays and configuration inherited by child Cargo processes.
+
 # Bounded owned diagnostic storage
 
 Audio/render diagnostic normalization now bounds retained String capacity as
@@ -168,11 +220,11 @@ evolve independently; a Platform revision does not require a corresponding UI
 commit. Manifests and lockfiles select reproducible dependencies, and integration
 tests qualify supported combinations.
 
-UI selects the Platform package release `0.1.0-alpha.2`. That dependency graph
-is independent of repository commit pairing. Upgrade related Platform packages
-together and avoid resolving shared Rust contract types from different Cargo
-sources. See the [platform migration guide](PLATFORM_PLUGIN_MIGRATION.md).
-The current manifests pin the published COM, host and IDL packages to `0.1.0`;
+Consumer manifests and lockfiles select their Platform dependencies independently
+of repository commit pairing. Upgrade related Platform packages together and
+resolve shared Rust contract types from one Cargo source. See
+[component ownership](../architecture/COMPONENTS.md) for current package roles.
+The Platform manifests pin the published COM, host and IDL packages to `0.1.0`;
 these dependency choices do not require synchronizing repository commits.
 
 Static consumers must resolve compatible shared Rust types. Dynamically loaded

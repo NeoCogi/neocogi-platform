@@ -23,6 +23,14 @@ archive includes backend-named platform examples, with the selected feature and
 `--examples` choosing the final shared library.
 
 All packages include their README and combined license notices.
+Their explicit manifest include lists keep repository documentation outside the
+crate archives; each package's README is its packaged Markdown entry point.
+The [documentation index](../README.md) points to current contracts and
+architecture, examples, tools and maintainer release/history records in the
+repository. Git source archives include these tracked documents. Keep worked
+examples with their current contract and record replaced APIs in
+[history](HISTORY.md), retiring separate migration guides after preserving their
+useful content.
 
 Run:
 
