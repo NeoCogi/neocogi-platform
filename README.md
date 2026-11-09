@@ -110,7 +110,7 @@ See [documentation](docs/README.md), [component ownership](docs/architecture/COM
 [GPU contracts](docs/contracts/GPU_RENDERING.md), [shader compilation](docs/contracts/SHADER_COMPILATION.md),
 and [dependency compatibility and revision history](docs/project/HISTORY.md).
 
-The current release target is `0.1.0-alpha.2`. See [release preparation](docs/project/RELEASING.md)
+The current release target is `0.2.0-alpha.1`. See [release preparation](docs/project/RELEASING.md)
 for the published package set, self-contained build inputs and verification.
 
 Asset downloads, package qualification, browser tests and local debugging helpers

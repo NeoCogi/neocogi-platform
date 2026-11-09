@@ -1,6 +1,6 @@
 # Preparing and publishing Platform packages
 
-The release target is **0.1.0-alpha.2**. Exactly three packages are published:
+The release target is **0.2.0-alpha.1**. Exactly three packages are published:
 
 1. `neocogi-platform-contracts`: schemas, generated bindings, shared types, limits, validation and build support.
 2. `neocogi-platform`: renderer SDK with optional backends, owned compiler and hosting.
