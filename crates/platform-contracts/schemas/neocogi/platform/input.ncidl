@@ -11,6 +11,7 @@ struct Point {
 /// Logical keyboard identity normalized independently of native scan codes.
 enum KeyCode: u8 {
     /// Printable shortcut key carrying a Unicode scalar, validated before delivery.
+    /// Keypad +, -, * and / share the corresponding ordinary character identity.
     Character(u32),
     /// Removes the previous character.
     Backspace,

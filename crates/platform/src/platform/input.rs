@@ -118,11 +118,16 @@ fn button(button: MouseButton) -> Option<u8> {
 }
 
 /// Preserves logical shortcut identity without deriving committed text from key presses.
+/// SDL encodes keypad arithmetic as masked scancodes; normalize those aliases before Unicode fallback.
 fn key(code: Keycode) -> Option<KeyCode> {
     let key = match code {
         Keycode::Backspace => KeyCode::Backspace,
         Keycode::Delete => KeyCode::Delete,
         Keycode::Return | Keycode::KpEnter => KeyCode::Enter,
+        Keycode::KpPlus => KeyCode::Character(u32::from('+')),
+        Keycode::KpMinus => KeyCode::Character(u32::from('-')),
+        Keycode::KpMultiply => KeyCode::Character(u32::from('*')),
+        Keycode::KpDivide => KeyCode::Character(u32::from('/')),
         Keycode::Escape => KeyCode::Escape,
         Keycode::Space => KeyCode::Space,
         Keycode::Tab => KeyCode::Tab,
@@ -238,6 +243,21 @@ impl IPlatformWindow for WindowObject {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Masked keypad arithmetic and ordinary operators share the logical shortcut domain.
+    #[test]
+    fn keypad_arithmetic_aliases_match_ordinary_logical_keys() {
+        for (keypad, ordinary, character) in [
+            (Keycode::KpPlus, Keycode::Plus, '+'),
+            (Keycode::KpMinus, Keycode::Minus, '-'),
+            (Keycode::KpMultiply, Keycode::Asterisk, '*'),
+            (Keycode::KpDivide, Keycode::Slash, '/'),
+        ] {
+            let expected = Some(KeyCode::Character(u32::from(character)));
+            assert_eq!(key(keypad), expected, "keypad {keypad:?}");
+            assert_eq!(key(ordinary), expected, "ordinary {ordinary:?}");
+        }
+    }
 
     /// Key identities, complete modifier snapshots and pointer scaling are platform-independent
     /// contracts; exercise their SDL translation without opening a display or constructing a GPU.
