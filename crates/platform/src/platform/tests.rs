@@ -4,6 +4,7 @@ use super::*;
 use neocogi_com::ComBox;
 use neocogi_platform::gpu::source::{Bytes, PipelineDesc};
 
+mod keyboard;
 mod owned_errors;
 mod surface_targets;
 #[cfg(feature = "glow")]

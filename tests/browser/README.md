@@ -36,7 +36,10 @@ on rejection and successful next-frame recovery, as well as
 mip-zero texel reads with adversarial coordinates, sampled and zero-initialized
 storage pixels, actual WebGL context loss, DOM composition/paste, keyboard,
 fractional wheel, pointer chords/cancellation and listener teardown. Synthetic
-pointer capture is stubbed because trusted browser input is required for that
+ordinary/keypad arithmetic and Enter events also cross public COM polling for
+press, repeat, release, all sixteen modifier snapshots and empty text arguments.
+The native SDL acceptance exercises the same logical values and both modifier sides.
+Synthetic pointer capture is stubbed because trusted browser input is required for that
 primitive. These checks do not claim interactive OS IME, clipboard permissions,
 or every browser/GPU combination.
 

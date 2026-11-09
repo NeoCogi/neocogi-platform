@@ -463,6 +463,13 @@ export function record_panic(text) {
 export function next_test_task() {
     return new Promise(resolve => setTimeout(resolve, 0));
 }
+export function exercise_shortcut(target, key, code, location, modifiers) {
+    const init = {key, code, location, altKey:!!(modifiers & 1), ctrlKey:!!(modifiers & 2),
+        shiftKey:!!(modifiers & 4), metaKey:!!(modifiers & 8)};
+    target.dispatchEvent(new KeyboardEvent('keydown', {...init, repeat:false}));
+    target.dispatchEvent(new KeyboardEvent('keydown', {...init, repeat:true}));
+    target.dispatchEvent(new KeyboardEvent('keyup', init));
+}
 export function exercise(target, name) {
     if (name === 'compose-start') {
         target.dispatchEvent(new CompositionEvent('compositionstart'));
@@ -503,7 +510,61 @@ extern "C" {
     fn lose_test_context(context: &web_sys::WebGl2RenderingContext);
     /// Dispatches one deterministic DOM sequence against the actual installed Rust listeners.
     fn exercise(target: &EventTarget, name: &str);
+    /// Dispatches press/repeat/release with an explicit logical key, physical location and modifiers.
+    fn exercise_shortcut(target: &EventTarget, key: &str, code: &str, location: u32, modifiers: u8);
     fn next_test_task() -> js_sys::Promise;
+}
+
+#[com_object(interfaces(IInputSink))]
+/// Copies synchronous COM delivery without retaining the window or any event-buffer borrow.
+struct ShortcutSink {
+    /// COM requires a shared receiver; each short observation borrow ends before polling resumes.
+    received: Rc<RefCell<Vec<(UiInput, String)>>>,
+}
+impl IInputSink for ShortcutSink {
+    /// Preserves the complete canonical event and exact text argument for comparison after dispatch.
+    fn input(&self, event: UiInput, text: NcCopyFromBufferOffset<'_, u8>) -> Result<(), NcStatus> {
+        self.received
+            .borrow_mut()
+            .push((event, std::str::from_utf8(text.as_slice()).unwrap().to_owned()));
+        Ok(())
+    }
+}
+
+/// Ordinary and keypad operators/Enter cross production DOM listeners and public window COM polling.
+/// Synthetic location/code values cover logical normalization, not trusted physical keyboard input.
+fn browser_shortcuts_through_com() {
+    let native = PlatformObject::new().window("browser shortcut contract", Size { width: 8, height: 8 }).unwrap();
+    let canvas = native.device.window.clone();
+    let window: ComPtr<IPlatformWindowAbi> = WindowObject::from_value(native).query().unwrap();
+    let received = Rc::new(RefCell::new(Vec::new()));
+    let sink: ComPtr<IInputSinkAbi> = ShortcutSink::from_value(ShortcutSink { received: received.clone() }).query().unwrap();
+    for modifiers in 0u8..16 {
+        for (text, code, location, key) in [
+            ("+", "NumpadAdd", 3, KeyCode::Character(u32::from('+'))),
+            ("+", "Equal", 0, KeyCode::Character(u32::from('+'))),
+            ("-", "NumpadSubtract", 3, KeyCode::Character(u32::from('-'))),
+            ("-", "Minus", 0, KeyCode::Character(u32::from('-'))),
+            ("*", "NumpadMultiply", 3, KeyCode::Character(u32::from('*'))),
+            ("*", "Digit8", 0, KeyCode::Character(u32::from('*'))),
+            ("/", "NumpadDivide", 3, KeyCode::Character(u32::from('/'))),
+            ("/", "Slash", 0, KeyCode::Character(u32::from('/'))),
+            ("Enter", "NumpadEnter", 3, KeyCode::Enter),
+            ("Enter", "Enter", 0, KeyCode::Enter),
+        ] {
+            exercise_shortcut(canvas.unchecked_ref(), text, code, location, modifiers);
+            let actions = [KeyAction::Pressed { repeat: false }, KeyAction::Pressed { repeat: true }, KeyAction::Released];
+            for _ in actions {
+                assert_eq!(window.poll(sink.as_com_ref()), Ok(PollStatus::Event));
+            }
+            assert_eq!(window.poll(sink.as_com_ref()), Ok(PollStatus::Idle));
+            let expected = actions.map(|action| (UiInput::Key(KeyStroke { key, action, modifiers }), String::new()));
+            assert_eq!(received.borrow().as_slice(), expected, "{code}, modifiers {modifiers}");
+            received.borrow_mut().clear();
+        }
+    }
+    drop(sink);
+    assert_eq!(Rc::strong_count(&received), 1, "polling does not retain the borrowed sink");
 }
 
 /// Runs WebGL target/ownership checks and DOM composition, paste, keyboard, wheel, pointer and teardown assertions.
@@ -520,6 +581,7 @@ pub async fn run_platform_input_tests() {
     ] {
         assert_eq!(map_key(native), expected);
     }
+    browser_shortcuts_through_com();
     canonical_browser_derivatives().await;
     browser_surface_targets();
     crate::platform::extent_tests::run();
