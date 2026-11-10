@@ -63,6 +63,10 @@ lowering before the normal renderer call. Actual in-flight owners remain charged
 public release does not promise immediate refunds. Native transaction exits also
 maintain completed work on success and failure, including preparation without a
 target. This changes neither CPU-frame abort nor actual GPU-completion rules.
+Frame teardown may already observe a signaled fence and release its receipts;
+frame return does not guarantee a nonzero pending balance. Retention assertions
+must precede that observation, while refund assertions follow completion and
+maintenance.
 
 `IRenderResources` creates a single exclusive `IGpuBuffer` object for Vertex,
 Index, Uniform or Texture data. `create_static_buffer(desc, data)` requires exact

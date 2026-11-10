@@ -226,7 +226,8 @@ fn ui_draws_clears_and_uploads_survive_application_gl_state() {
 }
 
 /// Actual native execution retains logical allocation charges after every public owner disappears.
-/// Explicit completion and abandonment both wait for observed GPU completion before refunding.
+/// Observe retention before frame teardown can collect an already-signaled fence,
+/// then require complete refunds after explicit native completion and collection.
 #[test]
 #[ignore = "requires SDL GL; run with SDL_VIDEODRIVER=offscreen"]
 fn native_completion_owns_resource_and_command_charges() {
@@ -254,7 +255,17 @@ fn native_completion_owns_resource_and_command_charges() {
     )
     .unwrap();
     let info = FrameInfo::try_new(Dimensioni::new(8, 8), color(0, 0, 0, 255)).unwrap();
-    for phase in 0..3 {
+    /// Each ownership handoff must work independently of the driver's completion speed.
+    #[derive(Clone, Copy, Debug)]
+    enum CompletionPath {
+        /// Publish the executed frame, whose teardown may collect completed work.
+        Finish,
+        /// Abandon publication while retaining and servicing already-issued draws.
+        Abandon,
+        /// Realize native uploads without ever acquiring or executing a frame.
+        UploadOnly,
+    }
+    for path in [CompletionPath::Finish, CompletionPath::Abandon, CompletionPath::UploadOnly] {
         let device = GpuDevice::new(renderer.core()).unwrap();
         let controller = device
             .create_client(
@@ -311,19 +322,39 @@ fn native_completion_owns_resource_and_command_charges() {
         drop((view, session, recording, owner, block, pipeline, vs, fs));
         let pending = device.recording_usage(resources.as_com_ref()).unwrap().0;
         assert!(pending > 0);
-        if phase != 2 {
-            let mut frame = renderer.frame(info).unwrap();
-            frame.execute_block(&prepared);
-            if phase == 0 {
-                frame.finish().unwrap();
-            } else {
-                drop(frame);
+        // The executor must own issued work after the last public/prepared owner
+        // disappears, before any subsequent fence poll is allowed to release it.
+        let assert_retained = || {
+            assert!(device.live_bytes(resources.as_com_ref()).unwrap() > 0, "{path:?}");
+            assert_eq!(device.recording_usage(resources.as_com_ref()).unwrap(), (pending, 0), "{path:?}");
+        };
+        match path {
+            CompletionPath::Finish | CompletionPath::Abandon => {
+                // Retire preparation uploads first, so their capacity receipts
+                // cannot hide a missing owner for the subsequently issued draw.
+                renderer.generic.complete().unwrap();
+                // SAFETY: This live current context owns the preparatory uploads.
+                unsafe { gl.finish() };
+                renderer.generic.collect().unwrap();
+                let mut frame = renderer.frame(info).unwrap();
+                frame.execute_block(&prepared);
+                drop(prepared);
+                assert_retained();
+                if matches!(path, CompletionPath::Finish) {
+                    frame.finish().unwrap();
+                } else {
+                    drop(frame);
+                }
+                assert_eq!(pixel(&gl, 4, 4), [255, 0, 0, 255]);
+                // Readback completes these draws. An eager poll is legal here;
+                // it must not make retention assertions depend on driver timing.
+                renderer.generic.collect().unwrap();
             }
-            assert_eq!(pixel(&gl, 4, 4), [255, 0, 0, 255]);
+            CompletionPath::UploadOnly => {
+                drop(prepared);
+                assert_retained();
+            }
         }
-        drop(prepared);
-        assert!(device.live_bytes(resources.as_com_ref()).unwrap() > 0);
-        assert_eq!(device.recording_usage(resources.as_com_ref()).unwrap(), (pending, 0));
         // Finish immediate draws, seal any abandoned batch, then observe its fence. Tests avoid
         // assuming that an immediately issued fence has already signaled on every native driver.
         renderer.generic.complete().unwrap();
