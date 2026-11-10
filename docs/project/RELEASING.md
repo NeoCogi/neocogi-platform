@@ -1,7 +1,6 @@
 # Preparing and publishing Platform packages
 
-The release target is **0.2.0**, pending successful CI and publication.
-The current published release is **0.2.0-alpha.2**. The release set
+The current published release is **0.2.0**. The release set
 contains three publishable packages:
 
 1. `neocogi-platform-contracts`: schemas, generated bindings, shared types, limits, validation and build support.

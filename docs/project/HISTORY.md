@@ -6,8 +6,11 @@ There are no runtime, API or schema changes from alpha.2. Upgrade the package
 set together; internal registry dependencies remain pinned to the exact release.
 All NCIDL declarations remain version 1.
 
-Publication follows successful CI for the tagged source. See the
-[release guide](RELEASING.md) for qualification and publication order.
+All three crates are published as `0.2.0` after all eight
+[CI jobs](https://github.com/NeoCogi/neocogi-platform/actions/runs/42822747992)
+passed for the tagged source. Tag `v0.2.0` identifies the published source
+commit `55fbd04`. See the [release guide](RELEASING.md) for qualification
+and publication order.
 
 # 0.2.0-alpha.2
 
