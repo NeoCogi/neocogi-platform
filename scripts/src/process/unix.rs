@@ -32,7 +32,68 @@ impl Scope {
             return Ok(());
         }
         let error = io::Error::last_os_error();
+        // Darwin skips zombies in killpg1's process-group walk and returns EPERM
+        // when none remain signalable. Confirm that case through libproc rather
+        // than hiding a genuine denial for a live member. Keep the leader unreaped.
+        #[cfg(target_os = "macos")]
+        if error.raw_os_error() == Some(libc::EPERM) && self.only_zombies()? {
+            return Ok(());
+        }
         if error.raw_os_error() == Some(libc::ESRCH) { Ok(()) } else { Err(error) }
+    }
+
+    /// Inspect Darwin's owned group after EPERM; incomplete/denied inspection fails.
+    /// The unreaped leader must be present, and every remaining member must have
+    /// exited. Ordinary live descendants remain errors, not successful cleanup.
+    #[cfg(target_os = "macos")]
+    fn only_zombies(&self) -> io::Result<bool> {
+        // SAFETY: A null output requests a PID-count capacity estimate, not data.
+        let capacity = unsafe { libc::proc_listpgrppids(self.group, std::ptr::null_mut(), 0) };
+        if capacity <= 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let capacity = capacity as usize;
+        let bytes = capacity
+            .checked_mul(std::mem::size_of::<libc::pid_t>())
+            .and_then(|bytes| libc::c_int::try_from(bytes).ok())
+            .ok_or_else(|| io::Error::other("process-group PID list is too large"))?;
+        let mut members = Vec::<libc::pid_t>::new();
+        members.try_reserve_exact(capacity).map_err(io::Error::other)?;
+        members.resize(capacity, 0);
+        // SAFETY: The initialized PID array owns exactly the advertised writable bytes.
+        let count = unsafe { libc::proc_listpgrppids(self.group, members.as_mut_ptr().cast(), bytes) };
+        if count <= 0 {
+            return Err(io::Error::last_os_error());
+        }
+        if count as usize >= capacity {
+            // A full buffer cannot establish whether additional live members exist.
+            return Err(io::Error::other("process-group PID list may be truncated"));
+        }
+        let mut found_leader = false;
+        for &pid in &members[..count as usize] {
+            let mut info = std::mem::MaybeUninit::<libc::proc_bsdinfo>::zeroed();
+            let bytes = std::mem::size_of::<libc::proc_bsdinfo>() as libc::c_int;
+            // SAFETY: libproc synchronously writes the complete typed BSD record;
+            // arg=1 includes zombies, and only a full result is read below.
+            let written = unsafe { libc::proc_pidinfo(pid, libc::PROC_PIDTBSDINFO, 1, info.as_mut_ptr().cast(), bytes) };
+            if written == 0 {
+                let error = io::Error::last_os_error();
+                if error.raw_os_error() == Some(libc::ESRCH) && pid != self.group {
+                    continue; // An exited descendant may already have been reaped.
+                }
+                return Err(error);
+            }
+            if written != bytes {
+                return Err(io::Error::other("incomplete process-group member record"));
+            }
+            // SAFETY: Success initialized the complete C record; all fields are plain values.
+            let info = unsafe { info.assume_init() };
+            if info.pbi_pgid != self.group as u32 || info.pbi_status != libc::SZOMB {
+                return Ok(false);
+            }
+            found_leader |= pid == self.group;
+        }
+        Ok(found_leader)
     }
 }
 

@@ -44,6 +44,10 @@ keeps the leader unreaped until group termination to prevent PID reuse; Windows
 assigns the child to its job atomically at creation. Windows tooling uses the
 workspace's pinned nightly Rust process-attribute API for this assignment. This
 private tooling requirement does not change the published SDK's stable support.
+On macOS, an unreaped zombie-only group can report `EPERM` when signalled.
+The tool accepts that result only after inspecting the group through libproc,
+finding its owned leader and confirming all remaining members have exited.
+Live members, denied inspection and incomplete snapshots remain failures.
 
 For trimmed native debugging, generate a command file after building:
 

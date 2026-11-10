@@ -65,6 +65,23 @@ fn drains_pipes_and_preserves_status() {
     }
 }
 
+/// Deliberately leave a completed leader unreaped before terminating its group.
+/// Darwin's zombie-only group reports EPERM even though no execution remains.
+#[test]
+fn reaps_an_already_exited_group_without_losing_its_status() {
+    for (mode, code) in [("output", 0), ("fail", 7)] {
+        let mut command = fixture_command(mode);
+        command.stdout(Stdio::null()).stderr(Stdio::null());
+        let mut process = ProcessTree::spawn(&mut command).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !process.finished().unwrap() {
+            assert!(Instant::now() < deadline, "fixture did not exit");
+            thread::sleep(Duration::from_millis(2));
+        }
+        assert_eq!(process.finish().unwrap().code(), Some(code));
+    }
+}
+
 /// A stuck direct child is reaped under the total deadline.
 #[test]
 fn timeout_reaps_child() {
