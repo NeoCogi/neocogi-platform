@@ -1,13 +1,13 @@
 [package]
 name = "neocogi-package-consumer"
-version = "0.2.0-alpha.1"
+version = "0.2.0-alpha.2"
 edition = "2024"
 publish = false
 [dependencies]
-neocogi-platform-contracts = { version = "=0.2.0-alpha.1", default-features = false }
+neocogi-platform-contracts = { version = "=0.2.0-alpha.2", default-features = false }
 neocogi-com = { version = "=0.1.0", features = ["std", "macros", "runtime"] }
 neocogi-com-host = "=0.1.0"
-neocogi-platform = { version = "=0.2.0-alpha.1", default-features = false, features = ["shader-compiler", "shader-wgsl", "audio"] }
+neocogi-platform = { version = "=0.2.0-alpha.2", default-features = false, features = ["shader-compiler", "shader-wgsl", "audio"] }
 [build-dependencies]
-neocogi-platform-contracts = { version = "=0.2.0-alpha.1", default-features = false, features = ["build-support"] }
+neocogi-platform-contracts = { version = "=0.2.0-alpha.2", default-features = false, features = ["build-support"] }
 serde_json = "1"
