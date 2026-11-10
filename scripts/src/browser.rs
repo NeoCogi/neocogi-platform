@@ -260,6 +260,23 @@ pub(crate) fn run(browser: Option<PathBuf>, bindgen: Option<PathBuf>) -> Result<
 mod tests {
     use super::*;
 
+    /// tiny_http drops its accept listener on another thread. Observe actual TCP
+    /// refusal under a finite deadline; an HTTP error alone cannot prove closure.
+    fn assert_listener_stops(address: SocketAddr) {
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            let attempt = std::net::TcpStream::connect_timeout(&address, Duration::from_millis(50));
+            if matches!(&attempt, Err(error) if error.kind() == std::io::ErrorKind::ConnectionRefused) {
+                return;
+            }
+            // Close successful probes immediately instead of keeping connection
+            // readers alive while waiting for the library's listener to stop.
+            drop(attempt);
+            assert!(std::time::Instant::now() < deadline, "HTTP listener {address} did not stop");
+            thread::sleep(Duration::from_millis(2));
+        }
+    }
+
     /// A source literal, missing/stuck result, duplicate result or explicit failure cannot acknowledge execution.
     #[test]
     fn exact_completed_result() {
@@ -300,7 +317,19 @@ mod tests {
         assert!(ureq::get(format!("http://{}/../Cargo.toml", server.address)).call().is_err());
         let address = server.address;
         drop(server);
-        assert!(std::net::TcpStream::connect(address).is_err());
+        assert_listener_stops(address);
+    }
+
+    /// Shutdown also closes listeners whose accept thread may not have run yet.
+    #[test]
+    fn unused_servers_release_their_listeners() {
+        let directory = tempfile::tempdir().unwrap();
+        for _ in 0..8 {
+            let server = WebServer::start(directory.path().canonicalize().unwrap()).unwrap();
+            let address = server.address;
+            drop(server);
+            assert_listener_stops(address);
+        }
     }
 
     /// An outstanding completion barrier must not block modules/Wasm, and explicit completion releases it.
@@ -320,5 +349,7 @@ mod tests {
             204
         );
         assert_eq!(pending.join().unwrap(), 204);
+        drop(server);
+        assert_listener_stops(address);
     }
 }

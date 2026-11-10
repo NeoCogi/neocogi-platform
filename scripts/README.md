@@ -34,6 +34,10 @@ generated bindings and fresh browser profile are disposable and shut down on
 success or failure. A load-event completion barrier uses real wall time so capture
 and worklet processing finish before DOM capture; an 80-second capture timeout
 precedes the 90-second process deadline.
+The worker that serves files is joined before fixture files are removed.
+`tiny_http` closes its accept listener asynchronously; shutdown regressions wait
+for actual connection refusal under a finite deadline. They cover idle listeners,
+served assets and the asynchronous completion barrier.
 
 That deadline covers spawning, execution and collection of both diagnostic
 streams. Output spools concurrently to temporary regular files, so inherited
