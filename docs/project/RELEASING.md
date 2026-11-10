@@ -1,5 +1,6 @@
 # Preparing and publishing Platform packages
 
+The release target is **0.2.0**, pending successful CI and publication.
 The current published release is **0.2.0-alpha.2**. The release set
 contains three publishable packages:
 
@@ -11,12 +12,12 @@ The five example/test/tool packages remain `publish = false`. This supersedes
 the eleven-package release layout. Schema/build helpers and staging belong to the contracts archive; implementation
 modules belong to the SDK archive. There are no private path
 or Git dependencies hidden behind a facade. All internal registry requirements
-pin the same exact pre-release version.
+pin the same exact release version.
 
 The `0.2.0-alpha.1` minor-version advance marks incompatible Rust API and schema
 namespace changes since `0.1.0-alpha.2`; see the [release history](HISTORY.md).
 Upgrade contracts, SDK and shims together and regenerate consumers. All NCIDL
-declarations retain version 1 during alpha, so a matching interface version alone
+declarations retain version 1 for `0.2.0`, so a matching interface version alone
 does not establish compatibility with older providers.
 
 ## Package inputs and verification
@@ -87,7 +88,7 @@ Shader qualification must include isolated `shader-wgsl`, `shader-spirv` and
 release compiler should enable all outputs implicitly. Stage the backend-suffixed
 platform library including its compiler. Requests never select an output; results
 identify it for backend validation. Rebuild generated consumers and platforms for
-this alpha contract replacement; all NCIDL versions remain 1.
+the contract replacement introduced in the alphas; all NCIDL versions remain 1.
 
 Minimal output ABI regressions run `cargo test -p neocogi-platform
 --no-default-features --features shader-compiler,shader-wgsl --test shader_targets`

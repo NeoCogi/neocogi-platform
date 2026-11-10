@@ -1,3 +1,14 @@
+# 0.2.0
+
+This release promotes `0.2.0-alpha.2` to `0.2.0` with coordinated versions for
+`neocogi-platform-contracts`, `neocogi-platform` and `neocogi-platform-dylib`.
+There are no runtime, API or schema changes from alpha.2. Upgrade the package
+set together; internal registry dependencies remain pinned to the exact release.
+All NCIDL declarations remain version 1.
+
+Publication follows successful CI for the tagged source. See the
+[release guide](RELEASING.md) for qualification and publication order.
+
 # 0.2.0-alpha.2
 
 This tag advances the three coordinated package versions and includes the
