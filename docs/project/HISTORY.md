@@ -4,8 +4,9 @@ This tag advances the three coordinated package versions and includes the
 post-alpha.1 CI repairs: the workflow's YAML process filter, macOS cleanup of
 zombie-only process groups, GL completion ownership assertions before teardown
 polling, and bounded observation of asynchronous HTTP listener shutdown.
-Publication of this version is pending. NCIDL declarations remain version 1;
+All three crates are published as `0.2.0-alpha.2`. NCIDL declarations remain version 1;
 the published renderer and audio runtime contracts are unchanged.
+Tag `v0.2.0-alpha.2` identifies the published source commit `13f8fbd`.
 
 # 0.2.0-alpha.1
 
