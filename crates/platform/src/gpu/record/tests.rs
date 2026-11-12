@@ -187,15 +187,14 @@ fn floats(values: &[f32]) -> Vec<u8> {
 }
 
 /// Ordinary shader with one float3 stream and no semantic transforms.
-const VERTICES: &str = r#"
-@vertex fn vs(@location(0) position: vec3<f32>) -> @builtin(position) vec4<f32> { return vec4<f32>(position, 1.0); }
-@fragment fn fs() -> @location(0) vec4<f32> { return vec4<f32>(0.2, 0.4, 0.8, 1.0); }
-"#;
+const VERTICES: &str = r#"(module
+  (vertex vs ((position vec3 (location 0))) (returns vec4 (builtin position)) (return (vec4 position 1.0)))
+  (fragment fs () (returns vec4 (location 0)) (return (vec4 0.2 0.4 0.8 1.0))))"#;
 /// A generic procedural pipeline needs no vertex-buffer binding at all.
-const PROCEDURAL: &str = r#"
-@vertex fn vs(@builtin(vertex_index) index: u32) -> @builtin(position) vec4<f32> { return vec4<f32>(f32(index % 2u), 0.0, 0.5, 1.0); }
-@fragment fn fs() -> @location(0) vec4<f32> { return vec4<f32>(1.0); }
-"#;
+const PROCEDURAL: &str = r#"(module
+  (vertex vs ((index u32 (builtin vertex_index))) (returns vec4 (builtin position))
+    (return (vec4 (f32 (% index 2u)) 0.0 0.5 1.0)))
+  (fragment fs () (returns vec4 (location 0)) (return (vec4 1.0))))"#;
 
 /// Explicit depth permissions control initialization and clearing without assigning a rendering role.
 #[test]
@@ -795,12 +794,10 @@ fn unbalanced_stack_and_root_pop_reject_even_after_cancel() {
 /// Per-instance streams need their own coverage; vertex count cannot certify their bounds.
 #[test]
 fn instance_streams_are_validated_independently_and_capture_each_binding() {
-    const CODE: &str = r#"
-@vertex fn vs(@location(0) position: vec3<f32>, @location(1) offset: vec2<f32>) -> @builtin(position) vec4<f32> {
-    return vec4<f32>(position.xy + offset, position.z, 1.0);
-}
-@fragment fn fs() -> @location(0) vec4<f32> { return vec4<f32>(1.0); }
-"#;
+    const CODE: &str = r#"(module
+  (vertex vs ((position vec3 (location 0)) (offset vec2 (location 1))) (returns vec4 (builtin position))
+    (return (vec4 (+ (. position xy) offset) (. position z) 1.0)))
+  (fragment fs () (returns vec4 (location 0)) (return (vec4 1.0))))"#;
     for valid in [false, true] {
         let device = new_device(
             neocogi_platform::render::compiler::CompilerObject::from_value(
@@ -873,15 +870,14 @@ fn instance_streams_are_validated_independently_and_capture_each_binding() {
 /// Uniform pushes and texture updates between draws cannot rewrite earlier recorded data.
 #[test]
 fn sampled_and_uniform_versions_are_captured_per_draw() {
-    const CODE: &str = r#"
-struct Tint { color: vec4<f32> }
-@group(3) @binding(0) var<uniform> tint: Tint;
-@group(2) @binding(0) var image: texture_2d<f32>;
-@group(2) @binding(1) var image_sampler: sampler;
-struct Out { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32> }
-@vertex fn vs(@location(0) position: vec3<f32>) -> Out { return Out(vec4<f32>(position, 1.0), vec2<f32>(0.5)); }
-@fragment fn fs(input: Out) -> @location(0) vec4<f32> { return textureSample(image, image_sampler, input.uv) * tint.color; }
-"#;
+    const CODE: &str = r#"(module
+  (struct Tint (color vec4))
+  (uniform tint Tint fragment 0)
+  (texture image fragment 0)
+  (struct Out (position vec4 (builtin position)) (uv vec2 (location 0)))
+  (vertex vs ((position vec3 (location 0))) (returns Out) (return (Out (vec4 position 1.0) (vec2 0.5))))
+  (fragment fs ((input Out)) (returns vec4 (location 0))
+    (return (* (sample image (. input uv)) (. tint color)))))"#;
     let device = new_device(
         neocogi_platform::render::compiler::CompilerObject::from_value(
             neocogi_platform::render::compiler::CompilerObject::new(neocogi_platform::render::shader::ShaderTarget::Wgsl).unwrap(),

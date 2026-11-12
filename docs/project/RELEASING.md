@@ -61,7 +61,7 @@ run validates the same consumer without repository nightly configuration. It doe
 adapters or browser execution are qualified on stable.
 
 Native builds require SDL2 development libraries; Vulkan needs its loader.
-The development workspace still pins nightly for build-std and its min-size
+The development workspace uses the rolling nightly toolchain for build-std and its min-size
 profile, independently of the package architecture. Build-only APIs use stable
 Rust and have no proc-macro tracking or Cargo artifact-dependency requirement.
 

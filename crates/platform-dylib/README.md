@@ -19,4 +19,18 @@ applications link the SDK directly and register only the platform descriptor.
 
 Each renderer constructs a compiler fixed to its required shader format. Requests
 contain no target; successful results identify their format for backend validation.
-GL retains its internal guarded SPIR-V roundtrip without exporting those words.
+The built-in compiler parses and validates S-expressions and directly emits the
+selected WGSL, GLSL ES300, or SPIR-V artifact. The platform root exposes the
+`ShaderCompilerFactory` COM interface through QueryInterface. The shader service
+has no separate feature, descriptor, registration, or shared library.
+
+
+The complete Vulkan platform bundle is qualified against the 524,288-byte goal
+with nightly, rebuilt std, and immediate-abort panics:
+
+```sh
+cargo build --profile min-size -p neocogi-platform-dylib --no-default-features --features vulkan --examples
+```
+
+Deploy only `libnc_platform_vulkan.so` on Linux (the corresponding platform
+filename on macOS/Windows). See [shader qualification](../../docs/contracts/SHADER_COMPILATION.md).

@@ -144,11 +144,10 @@ fn uploads_obey_permission_independently_of_creation_and_drawing() {
 fn pipeline_color_write_depth_write_and_depth_read_permissions_are_separate() {
     let device = device();
     let source = crate::gpu::source::Bytes::source(
-        br#"
-        @vertex fn vs() -> @builtin(position) vec4<f32> { return vec4(0.0,0.0,0.5,1.0); }
-        @fragment fn fs() -> @location(0) vec4<f32> { return vec4(1.0); }
-    "#
-        .to_vec(),
+        br#"(module
+  (vertex vs () (returns vec4 (builtin position)) (return (vec4 0.0 0.0 0.5 1.0)))
+  (fragment fs () (returns vec4 (location 0)) (return (vec4 1.0))))"#
+            .to_vec(),
     );
     for permission in 0..8 {
         let permissions = RenderClientPermissions {

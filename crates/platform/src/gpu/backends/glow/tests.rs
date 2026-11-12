@@ -276,16 +276,14 @@ fn native_completion_owns_resource_and_command_charges() {
             .unwrap();
         let resources = controller.resources().unwrap();
         let source = Bytes::source(
-            br#"
-            struct Values { shift:vec4<f32> }
-            @group(1) @binding(0) var<uniform> values:Values;
-            @vertex fn vs(@builtin(vertex_index) i:u32) -> @builtin(position) vec4<f32> {
-                let p = array<vec2<f32>, 3>(vec2(-1.,-1.), vec2(3.,-1.), vec2(-1.,3.));
-                return vec4(p[i] + values.shift.xy, 0.5, 1.);
-            }
-            @fragment fn fs() -> @location(0) vec4<f32> { return vec4(1.,0.,0.,1.); }
-        "#
-            .to_vec(),
+            br#"(module
+  (struct Values (shift vec4))
+  (uniform values Values vertex 0)
+  (vertex vs ((i u32 (builtin vertex_index))) (returns vec4 (builtin position))
+    (let p ((array vec2 3) (vec2 (- 1.0) (- 1.0)) (vec2 3.0 (- 1.0)) (vec2 (- 1.0) 3.0)))
+    (return (vec4 (+ (index p i) (. (. values shift) xy)) 0.5 1.0)))
+  (fragment fs () (returns vec4 (location 0)) (return (vec4 1.0 0.0 0.0 1.0))))"#
+                .to_vec(),
         );
         let vs = resources
             .create_shader(GpuShaderStage::Vertex, source.as_com_ref(), NcCopyFromBufferOffset::new(0, b"vs"))
@@ -403,18 +401,17 @@ fn dynamic_shader_indices_cannot_escape_uniform_or_private_storage() {
         .unwrap();
     let resources = controller.resources().unwrap();
     let source = Bytes::source(
-        br#"
-        @vertex fn vs(@builtin(vertex_index) i:u32) -> @builtin(position) vec4<f32> {
-            let p=array<vec2<f32>,3>(vec2(-1.,-1.),vec2(3.,-1.),vec2(-1.,3.));return vec4(p[i],0.5,1.);
-        }
-        struct Values { items:array<vec4<f32>,2>, indices:vec4<u32> }
-        @group(3) @binding(0) var<uniform> data:Values;
-        @fragment fn fs() -> @location(0) vec4<f32> {
-            var local=array<vec4<f32>,2>(vec4(0.25),vec4(0.75));
-            local[data.indices.x]=vec4(1.0);return data.items[data.indices.y]+local[0];
-        }
-    "#
-        .to_vec(),
+        br#"(module
+  (vertex vs ((i u32 (builtin vertex_index))) (returns vec4 (builtin position))
+    (let p ((array vec2 3) (vec2 (- 1.0) (- 1.0)) (vec2 3.0 (- 1.0)) (vec2 (- 1.0) 3.0)))
+    (return (vec4 (index p i) 0.5 1.0)))
+  (struct Values (items (array vec4 2)) (indices uvec4))
+  (uniform data Values fragment 0)
+  (fragment fs () (returns vec4 (location 0))
+    (var local ((array vec4 2) (vec4 0.25) (vec4 0.75)))
+    (set (index local (. (. data indices) x)) (vec4 1.0))
+    (return (+ (index (. data items) (. (. data indices) y)) (index local 0)))))"#
+            .to_vec(),
     );
     let vs = resources
         .create_shader(GpuShaderStage::Vertex, source.as_com_ref(), NcCopyFromBufferOffset::new(0, b"vs"))
@@ -495,14 +492,13 @@ fn fragment_identifiers_containing_builtin_names_compile_and_render() {
         .unwrap();
     let resources = controller.resources().unwrap();
     let source = Bytes::source(
-        br#"
-        fn my_gl_FragCoord_color(v:vec4<f32>) -> vec4<f32> { return v; }
-        @vertex fn vs(@builtin(vertex_index) i:u32) -> @builtin(position) vec4<f32> {
-            let p=array<vec2<f32>,3>(vec2(-1.,-1.),vec2(3.,-1.),vec2(-1.,3.));return vec4(p[i],0.5,1.);
-        }
-        @fragment fn fs() -> @location(0) vec4<f32> { return my_gl_FragCoord_color(vec4(0.25,0.5,0.75,1.)); }
-    "#
-        .to_vec(),
+        br#"(module
+  (fn my_gl_FragCoord_color ((v vec4)) (returns vec4) (return v))
+  (vertex vs ((i u32 (builtin vertex_index))) (returns vec4 (builtin position))
+    (let p ((array vec2 3) (vec2 (- 1.0) (- 1.0)) (vec2 3.0 (- 1.0)) (vec2 (- 1.0) 3.0)))
+    (return (vec4 (index p i) 0.5 1.0)))
+  (fragment fs () (returns vec4 (location 0)) (return (my_gl_FragCoord_color (vec4 0.25 0.5 0.75 1.0)))))"#
+            .to_vec(),
     );
     let vs = resources
         .create_shader(GpuShaderStage::Vertex, source.as_com_ref(), NcCopyFromBufferOffset::new(0, b"vs"))

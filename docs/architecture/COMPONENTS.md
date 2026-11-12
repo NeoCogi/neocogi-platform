@@ -15,7 +15,7 @@ Platform discovery imports audio types for its service methods. Alpha versions
 remain 1, and consumers/providers must be rebuilt together after namespace moves.
 
 `neocogi-platform` is the implementation SDK. Its `render` module exposes the
-contracts crate's exact types and adds the renderer-owned Naga compiler. `gpu` owns
+contracts crate's exact types and adds the built-in S-expression COM compiler. `gpu` owns
 resource versions, recording, validation, quotas and concrete backends; optional
 `platform` owns SDL/DOM hosting and native lifetimes. `audio` owns bounded PCM
 playback/capture on SDL/Web Audio without requiring any renderer or Naga.
@@ -32,11 +32,11 @@ unchanged; see [drawing targets](../contracts/RENDER_SURFACES.md).
 Default SDK features are empty. GPU backends `glow`, `vulkan` and `wgpu` are
 additive; `webgl` reuses GL execution on Wasm. `platform` enables hosting and
 requires exactly one legal target/backend selection. `shader-compiler` enables
-Naga WGSL parsing; output features `shader-wgsl`, `shader-spirv` and `shader-glsl`
+the bounded S-expression parser and typed IR; output features `shader-wgsl`, `shader-spirv` and `shader-glsl`
 select emitters independently of graphics dependencies. Backends enable their
 compiler and selected output. Each compiler instance has one immutable target;
 requests contain no target. Reports identify their format, which backends validate
-before copying code; Rust `ShaderCode` snapshots retain only that format. `test-support` includes WGSL fixtures and the compiler, weakly
+before copying code; Rust `ShaderCode` snapshots retain only that format. `test-support` includes S-expression fixtures and WGSL output and the compiler, weakly
 enabling WGPU counters only when WGPU is selected. Applications that load
 providers dynamically use schema contracts and retain no SDK implementation edge.
 
@@ -56,6 +56,9 @@ These targets provide backend-specific filenames within Cargo's one-main-library
 package model. Each links ordinary SDK implementations and exports exactly one
 discovery symbol. The SDK exports no discovery symbol. Only the platform is
 registered or loaded; it has no external compiler dependency.
+The platform root also exposes `ShaderCompilerFactory` through QueryInterface.
+The compiler is built into that same platform library and registers no separate
+plugin descriptor.
 The executable owns the one COM host; providers receive its typed runtime.
 
 `cargo build -p neocogi-platform-dylib --no-default-features --features glow --examples`

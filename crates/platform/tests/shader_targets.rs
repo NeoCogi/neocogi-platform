@@ -8,7 +8,12 @@ use neocogi_platform::{
 };
 
 /// Portable layout with one selected uniform and one unused declaration.
-const SOURCE: &str = "struct U { value:vec4<f32> } @group(1) @binding(0) var<uniform> u:U; @group(1) @binding(1) var<uniform> unused:U; @vertex fn vs(@location(0) p:vec2<f32>)->@builtin(position) vec4<f32> {return vec4<f32>(p,0.,1.)+u.value;}";
+const SOURCE: &str = r#"(module
+  (struct U (value vec4))
+  (uniform u U vertex 0)
+  (uniform unused U vertex 1)
+  (vertex vs ((p vec2 (location 0))) (returns vec4 (builtin position))
+    (return (+ (vec4 p 0.0 1.0) (. u value)))))"#;
 
 /// This test is built separately for each output feature, including no outputs.
 fn supported(target: ShaderTarget) -> bool {
@@ -62,7 +67,7 @@ fn compiled_formats_match_explicit_output_features() {
         assert_eq!(snapshot.byte_len(), prepared.byte_len());
         assert_eq!(snapshot.code.target(), target);
         match snapshot.code {
-            ShaderCode::Wgsl(text) => assert_eq!(text, SOURCE),
+            ShaderCode::Wgsl(text) => assert!(text.contains("@vertex")),
             ShaderCode::SpirV(words) => assert_eq!(words[0], 0x07230203),
             ShaderCode::GlslEs300(text) => assert!(text.contains(snapshot.uniforms[0].gl_block.as_deref().unwrap())),
         }
@@ -210,14 +215,14 @@ fn text_shader_bytes_require_utf8_without_losing_non_ascii_source() {
         if !supported(target) {
             continue;
         }
-        let source = format!("// shader π 🦀\n{SOURCE}");
+        let source = format!("; shader π 🦀\n{SOURCE}");
         let inner = compile_source(target, &source);
         let bytes = inner.code().unwrap().to_vec().unwrap();
         assert!(std::str::from_utf8(&bytes).is_ok());
         let prepared = PreparedShader::new(inner.clone(), GpuShaderStage::Vertex, target, b"vs", 4194304).unwrap();
         let shader = prepared.copy().unwrap();
         if target == ShaderTarget::Wgsl {
-            assert_eq!(shader.code.wgsl().unwrap(), source);
+            assert!(shader.code.wgsl().unwrap().contains("@vertex"));
         } else {
             assert!(shader.code.glsl().unwrap().starts_with("#version 300 es"));
         }

@@ -65,17 +65,13 @@ fn image_block(host: &ComPtr<IRenderHostAbi>, resources: &ComPtr<IRenderResource
         .unwrap();
     let sampler = resources.create_sampler(GpuSamplerDesc::default()).unwrap();
     let source = Bytes::source(
-        br#"
-        @group(2) @binding(0) var image: texture_2d<f32>;
-        @group(2) @binding(1) var filtering: sampler;
-        @vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {
-            let p = array<vec2<f32>,3>(vec2(-1.0,-1.0), vec2(3.0,-1.0), vec2(-1.0,3.0));
-            return vec4(p[i],0.5,1.0);
-        }
-        @fragment fn fs(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
-            return textureSample(image,filtering,p.xy/vec2(64.0,64.0));
-        }
-    "#
+        br#"(module
+  (texture image fragment 0)
+  (vertex vs ((i u32 (builtin vertex_index))) (returns vec4 (builtin position))
+    (let p ((array vec2 3) (vec2 (- 1.0) (- 1.0)) (vec2 3.0 (- 1.0)) (vec2 (- 1.0) 3.0)))
+    (return (vec4 (index p i) 0.5 1.0)))
+  (fragment fs ((p vec4 (builtin position))) (returns vec4 (location 0))
+    (return (sample image (/ (. p xy) (vec2 64.0 64.0))))))"#
         .to_vec(),
     );
     let vs = resources

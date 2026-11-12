@@ -1,3 +1,16 @@
+# Unreleased
+
+## S-expression shader COM plugin
+
+The renderer's Naga frontend/writers are replaced by the platform crate's bounded
+S-expression parser, typed IR, whole-module validation, and direct WGSL, ES300,
+and SPIR-V writers. Shader compilation is built into each platform backend's
+existing COM plugin and library. `ShaderCompilerFactory` is queried from its
+platform root; no separate feature, plugin registration, or library is introduced.
+The complete min-size Vulkan platform bundle targets less than 512 KiB with
+rebuilt std and immediate-abort panics. All shader fixtures and examples use the
+new frontend. The workspace follows `channel = "nightly"`.
+
 # 0.2.0
 
 This release promotes `0.2.0-alpha.2` to `0.2.0` with coordinated versions for

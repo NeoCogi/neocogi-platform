@@ -299,14 +299,9 @@ fn hdr_interpolation_probe() {
     let sampler = target.resources.create_sampler(GpuSamplerDesc::default()).unwrap();
     let shader = Bytes::source(shader_source(
         r#"
-        @vertex fn vs(@builtin(vertex_index) index: u32) -> @builtin(position) vec4<f32> {
-            let points=array<vec2<f32>,3>(vec2(-1.0,-1.0),vec2(3.0,-1.0),vec2(-1.0,3.0));
-            return vec4(points[index],0.5,1.0);
-        }
-        @fragment fn fs() -> @location(0) vec4<f32> {
-            return vec4(environment_tile(0u,vec2(0.5),true,true)/8.0,1.0);
-        }
-    "#,
+(vertex vs ((index u32 (builtin vertex_index))) (returns vec4 (builtin position)) (let points ((array vec2 3) (vec2 (- 1.0) (- 1.0)) (vec2 3.0 (- 1.0)) (vec2 (- 1.0) 3.0))) (return (vec4 (index points index) 0.5 1.0)))
+(fragment fs () (returns vec4 (location 0)) (return (vec4 (/ (environment_tile 0u (vec2 0.5) true true) 8.0) 1.0)))
+"#,
     ));
     let vs = target
         .resources

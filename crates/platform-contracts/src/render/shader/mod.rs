@@ -84,7 +84,7 @@ impl Shader {
 /// One immutable backend representation. Text and aligned words retain distinct types.
 #[derive(Debug)]
 pub enum ShaderCode {
-    /// Original Naga-validated WGSL for WGPU.
+    /// Generated validated WGSL for WGPU.
     Wgsl(String),
     /// Guarded Vulkan words in aligned owned storage.
     SpirV(Vec<u32>),

@@ -39,7 +39,6 @@ tempfile = "3.27"
 wasm-bindgen = "=0.2.127"
 web-sys = "=0.3.104"
 wgpu = "30"
-naga = { version = "=30.0.1", default-features = false }
 
 [profile.release]
 overflow-checks = false

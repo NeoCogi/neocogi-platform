@@ -1,14 +1,23 @@
 //! Owned report graph: reports own exports, collections own items, items own only
 //! their own metadata/name. There are no back edges or whole-code item captures.
-use neocogi_platform::render::abi::*;
-use crate::render::compiler::compile::{Compiler, CompileError};
+use neocogi_platform_contracts::render::abi::*;
+use super::{Compiler, CompileError};
 use neocogi_com::{
     com_object, ComPtr, NcStatus, NcString, NcBytes, NcCopyFromBufferOffset, INcStringAbi, INcBytesAbi, NC_E_INVALID_ARG, NC_E_OUT_OF_RANGE, NC_E_OUT_OF_MEMORY,
 };
-use neocogi_platform::render::shader::{Shader, ShaderCode, MAX_DIAGNOSTIC_BYTES};
+use neocogi_platform_contracts::render::shader::{Shader, ShaderCode, MAX_DIAGNOSTIC_BYTES};
 
-/// Renderer-owned fixed-format compiler; no mutable diagnostics or session state.
-#[com_object(interfaces(neocogi_platform::render::abi::ShaderCompiler))]
+/// Stateless COM factory used by linked tools and the platform plugin's factory interface.
+#[com_object(interfaces(neocogi_platform_contracts::render::abi::ShaderCompilerFactory))]
+pub struct Factory;
+impl ShaderCompilerFactory for Factory {
+    fn create(&self, target: ShaderTarget) -> Result<ComPtr<ShaderCompilerAbi>, NcStatus> {
+        CompilerObject::from_value(CompilerObject::new(target)?).query()
+    }
+}
+
+/// Fixed-format shader compiler plugin instance; no mutable diagnostics or session state.
+#[com_object(interfaces(neocogi_platform_contracts::render::abi::ShaderCompiler))]
 pub struct CompilerObject {
     /// Owned configuration never changes between requests or foreign callbacks.
     compiler: Compiler,
@@ -26,7 +35,7 @@ impl CompilerObject {
 fn error_status(error: &CompileError) -> NcStatus {
     match error {
         CompileError::Invalid(_) => NC_E_INVALID_ARG,
-        CompileError::Unavailable => neocogi_platform::render::shader::SHADER_E_TARGET_UNAVAILABLE,
+        CompileError::Unavailable => neocogi_platform_contracts::render::shader::SHADER_E_TARGET_UNAVAILABLE,
         CompileError::Limit => NC_E_OUT_OF_RANGE,
         CompileError::Allocation => NC_E_OUT_OF_MEMORY,
     }
@@ -45,7 +54,7 @@ impl ShaderCompiler for CompilerObject {
             let source = std::str::from_utf8(source.as_slice()).map_err(|_| CompileError::Invalid("shader is not UTF-8".into()))?;
             let entry = std::str::from_utf8(entry.as_slice()).map_err(|_| CompileError::Invalid("entry is not UTF-8".into()))?;
             self.compiler
-                .compile_bounded(request.stage, source, entry, usize::try_from(request.max_output_bytes).unwrap_or(usize::MAX))
+                .compile(request.stage, source, entry, usize::try_from(request.max_output_bytes).unwrap_or(usize::MAX))
         })();
         let outcome = match result {
             Ok(shader) => Outcome::Succeeded(Exports::new(shader)?),
@@ -95,7 +104,7 @@ struct Exports {
 }
 /// Exactly one exported code owner; unused representations are never allocated.
 enum ExportCode {
-    /// Original validated WGSL text.
+    /// Generated validated WGSL text.
     Wgsl(ComPtr<INcBytesAbi>),
     /// Guarded SPIR-V bytes in little-endian wire order.
     SpirV(ComPtr<INcBytesAbi>),
@@ -131,7 +140,7 @@ impl Exports {
             target: shader.code.target(),
             code_byte_count: shader.code.byte_len() as u64,
         };
-        let locations = |values: Vec<neocogi_platform::render::shader::IoLocation>, direction| -> Result<ComPtr<IShaderLocationsAbi>, NcStatus> {
+        let locations = |values: Vec<neocogi_platform_contracts::render::shader::IoLocation>, direction| -> Result<ComPtr<IShaderLocationsAbi>, NcStatus> {
             let items = values
                 .into_iter()
                 .map(|value| {
@@ -210,7 +219,7 @@ impl Exports {
     }
 }
 /// One immutable report, with exhaustive access to success versus rejection.
-#[com_object(interfaces(neocogi_platform::render::abi::IShaderCompilation))]
+#[com_object(interfaces(neocogi_platform_contracts::render::abi::IShaderCompilation))]
 struct Report {
     /// Complete immutable outcome.
     outcome: Outcome,
@@ -264,7 +273,7 @@ impl IShaderCompilation for Report {
     }
 }
 /// Independent numeric location item.
-#[com_object(interfaces(neocogi_platform::render::abi::IShaderLocation))]
+#[com_object(interfaces(neocogi_platform_contracts::render::abi::IShaderLocation))]
 struct Location {
     /// No parent owner.
     info: ShaderLocationInfo,
@@ -275,7 +284,7 @@ impl IShaderLocation for Location {
     }
 }
 /// Independent uniform item and native name.
-#[com_object(interfaces(neocogi_platform::render::abi::IShaderUniform))]
+#[com_object(interfaces(neocogi_platform_contracts::render::abi::IShaderUniform))]
 struct Uniform {
     /// Copied layout.
     info: ShaderUniformInfo,
@@ -291,7 +300,7 @@ impl IShaderUniform for Uniform {
     }
 }
 /// Independent sampled-pair item and native name.
-#[com_object(interfaces(neocogi_platform::render::abi::IShaderSampledTexture))]
+#[com_object(interfaces(neocogi_platform_contracts::render::abi::IShaderSampledTexture))]
 struct Texture {
     /// Copied slot.
     info: ShaderSampledTextureInfo,
@@ -325,11 +334,21 @@ macro_rules! collection {
         }
     };
 }
-collection!(Locations, neocogi_platform::render::abi::IShaderLocations, IShaderLocations, IShaderLocationAbi);
-collection!(Uniforms, neocogi_platform::render::abi::IShaderUniforms, IShaderUniforms, IShaderUniformAbi);
+collection!(
+    Locations,
+    neocogi_platform_contracts::render::abi::IShaderLocations,
+    IShaderLocations,
+    IShaderLocationAbi
+);
+collection!(
+    Uniforms,
+    neocogi_platform_contracts::render::abi::IShaderUniforms,
+    IShaderUniforms,
+    IShaderUniformAbi
+);
 collection!(
     Textures,
-    neocogi_platform::render::abi::IShaderSampledTextures,
+    neocogi_platform_contracts::render::abi::IShaderSampledTextures,
     IShaderSampledTextures,
     IShaderSampledTextureAbi
 );

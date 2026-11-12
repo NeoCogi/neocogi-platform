@@ -107,13 +107,11 @@ fn info() -> RenderInfo {
 /// Captures a generic procedural triangle; all client shader semantics live in this fixture.
 fn graphics(resources: &ComPtr<IRenderResourcesAbi>, broker: &ComPtr<IRenderViewBrokerAbi>, root: RenderViewRoot) -> ComBox<IRenderViewBlockAbi> {
     let code = Bytes::source(
-        br#"
-        @vertex fn vs(@builtin(vertex_index) i:u32) -> @builtin(position) vec4<f32> {
-            let p = array<vec2<f32>,3>(vec2(-0.9,-0.9),vec2(0.9,-0.9),vec2(0.0,0.9));
-            return vec4(p[i],0.5,1.0);
-        }
-        @fragment fn fs() -> @location(0) vec4<f32> { return vec4(0.0,0.0,1.0,1.0); }
-    "#
+        br#"(module
+  (vertex vs ((i u32 (builtin vertex_index))) (returns vec4 (builtin position))
+    (let p ((array vec2 3) (vec2 (- 0.9) (- 0.9)) (vec2 0.9 (- 0.9)) (vec2 0.0 0.9)))
+    (return (vec4 (index p i) 0.5 1.0)))
+  (fragment fs () (returns vec4 (location 0)) (return (vec4 0.0 0.0 1.0 1.0))))"#
         .to_vec(),
     );
     let vs = resources

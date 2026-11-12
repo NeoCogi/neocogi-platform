@@ -9,7 +9,11 @@ use neocogi_platform::{
 // The contracts crate compiles these generated callers independently of the implementation.
 use neocogi_platform_contracts::render::abi as client;
 
-const SOURCE: &str = "struct U { value:vec4<f32> } @group(1) @binding(0) var<uniform> u:U; @vertex fn vs(@location(0) p:vec2<f32>)->@builtin(position) vec4<f32> {return vec4<f32>(p,0.25,1.0)+u.value;}";
+const SOURCE: &str = r#"(module
+  (struct U (value vec4))
+  (uniform u U vertex 0)
+  (vertex vs ((p vec2 (location 0))) (returns vec4 (builtin position))
+    (return (+ (vec4 p 0.25 1.0) (. u value)))))"#;
 
 /// Build flags determine availability, while each compiler instance retains its renderer-selected representation.
 fn targets() -> Vec<ShaderTarget> {
@@ -57,7 +61,7 @@ fn exactly_one_owned_format_and_target_specific_names() {
                 let code = report.code().unwrap();
                 assert_eq!(info.code_byte_count, code.len().unwrap());
                 drop(report);
-                assert_eq!(code.to_vec().unwrap(), SOURCE.as_bytes());
+                assert!(String::from_utf8(code.to_vec().unwrap()).unwrap().contains("@vertex"));
             }
             ShaderTarget::SpirV => {
                 assert_eq!(uniform.glsl_block_name().unwrap_err(), NC_E_NOINTERFACE);
@@ -88,10 +92,6 @@ fn exactly_one_owned_format_and_target_specific_names() {
 fn complete_module_profile_admission_precedes_selected_exports() {
     for target in targets() {
         for case in shader::testing::cases() {
-            let module = naga::front::wgsl::parse_str(&case.source).unwrap();
-            naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::empty())
-                .validate(&module)
-                .unwrap();
             for (stage, entry) in [(GpuShaderStage::Vertex, "selected"), (case.stage, "outside")] {
                 let report = compile(stage, target, &case.source, entry, 4194304);
                 assert_eq!(report.status().unwrap(), NC_E_INVALID_ARG.code(), "{} / {entry} / {target:?}", case.name);

@@ -1,6 +1,5 @@
 //! Runs independently generated COM calls against packaged platform and renderer providers.
 use neocogi_com::{ComPtr, INcBytesComPtrExt, NcCopyFromBufferOffset, Runtime, NC_OK};
-use neocogi_platform::render::compiler::CompilerObject;
 
 /// Consumer-owned generated definitions negotiate by COM identity.
 #[allow(dead_code, clippy::len_without_is_empty)]
@@ -96,11 +95,12 @@ fn main() {
     drop(audio);
     assert!(supported.as_slice().contains(&audio_client::PcmType::FixedPoint(32, 16)));
     assert!(supported.as_slice().contains(&audio_client::PcmType::UnsignedInteger(8)));
-    let root: ComPtr<client::ShaderCompilerAbi> =
-        CompilerObject::from_value(CompilerObject::new(neocogi_platform::render::shader::ShaderTarget::Wgsl).unwrap())
+    let factory: ComPtr<client::ShaderCompilerFactoryAbi> =
+        neocogi_platform::render::compiler::Factory::from_value(neocogi_platform::render::compiler::Factory)
             .query()
             .unwrap();
-    let source = b"@vertex fn vs()->@builtin(position) vec4<f32>{return vec4<f32>(0.,0.,0.,1.);}";
+    let root = factory.create(client::ShaderTarget::Wgsl).unwrap();
+    let source = b"(module (vertex vs () (returns vec4 (builtin position)) (return (vec4 0.0 0.0 0.0 1.0))))";
     let report = root
         .compile_result(
             client::ShaderCompileRequest {
@@ -129,9 +129,12 @@ fn main() {
     assert_eq!(prepared.copy().unwrap().code.target(), ShaderTarget::Wgsl);
     drop(prepared);
     let code = report.code().unwrap();
+    let emitted = code.to_vec().unwrap();
+    assert!(std::str::from_utf8(&emitted).unwrap().contains("@vertex"));
     drop(report);
     drop(root);
-    assert_eq!(code.to_vec().unwrap(), source);
+    drop(factory);
+    assert_eq!(code.to_vec().unwrap(), emitted);
     assert_eq!(
         std::fs::read(std::path::Path::new(env!("NEOCOGI_NATIVE_OUTPUT_DIR")).join("asset.txt")).unwrap(),
         include_bytes!("../asset.txt")

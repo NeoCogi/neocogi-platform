@@ -10,7 +10,7 @@ use neocogi_platform::gpu::{
 pub struct Case {
     /// Names the operation and overload for diagnostic output.
     pub name: &'static str,
-    /// Original WGSL containing both legal graphics entries.
+    /// S-expression module containing both legal graphics entries.
     pub source: String,
     /// Canonical red channel, rounded to RGBA8.
     pub red: u8,
@@ -18,30 +18,45 @@ pub struct Case {
 
 /// Positive/negative gradients, every float/vector overload, fine/coarse and unchanged controls.
 pub fn cases() -> Vec<Case> {
-    let vertex = "@vertex fn vs(@builtin(vertex_index) i:u32)->@builtin(position) vec4<f32>{let p=array<vec2<f32>,3>(vec2(-1.,-1.),vec2(3.,-1.),vec2(-1.,3.));return vec4(p[i],0.5,1.);}";
+    let vertex = "(vertex vs ((i u32 (builtin vertex_index))) (returns vec4 (builtin position)) (let p ((array vec2 3) (vec2 -1.0 -1.0) (vec2 3.0 -1.0) (vec2 -1.0 3.0))) (return (vec4 (index p i) 0.5 1.0)))";
     let mut cases: Vec<_> = [
-        ("positive scalar", "dpdy(p.y)", 191),
-        ("negative scalar", "dpdy(-p.y)", 64),
-        ("vec2", "dpdy(p.xy).y", 191),
-        ("vec3", "dpdy(p.xyz).y", 191),
-        ("vec4", "dpdy(p).y", 191),
-        ("fine", "dpdyFine(p.y)", 191),
-        ("coarse", "dpdyCoarse(p.y)", 191),
-        ("x control", "dpdx(p.x)", 191),
-        ("width control", "fwidth(p.y)", 191),
-        ("constant control", "2.", 255),
+        ("positive scalar", "(dpdy (. p y))", 191),
+        ("negative scalar", "(dpdy (- (. p y)))", 64),
+        ("vec2", "(. (dpdy (. p xy)) y)", 191),
+        ("vec3", "(. (dpdy (. p xyz)) y)", 191),
+        ("vec4", "(. (dpdy p) y)", 191),
+        ("fine", "(dpdyFine (. p y))", 191),
+        ("coarse", "(dpdyCoarse (. p y))", 191),
+        ("x control", "(dpdx (. p x))", 191),
+        ("width control", "(fwidth (. p y))", 191),
+        ("constant control", "2.0", 255),
     ]
     .into_iter()
     .map(|(name, expression, red)| Case {
         name,
         red,
         source: format!(
-            "{vertex} @fragment fn fs(@builtin(position) p:vec4<f32>)->@location(0) vec4<f32>{{return vec4(clamp(.5+.25*({expression}),0.,1.),0.,0.,1.);}}"
+            r#"(module
+  {vertex}
+  (fragment fs ((p vec4 (builtin position))) (returns vec4 (location 0))
+    (return (vec4 (clamp (+ 0.5 (* 0.25 {expression})) 0.0 1.0) 0.0 0.0 1.0))))"#
         ),
     })
     .collect();
-    for (name, expression, red) in [("varying only", "dpdy(y)", 191), ("negative varying", "dpdy(-y)", 64)] {
-        cases.push(Case { name, red, source: format!("struct V{{@builtin(position) p:vec4<f32>,@location(0) y:f32}} @vertex fn vs(@builtin(vertex_index) i:u32)->V{{let p=array<vec2<f32>,3>(vec2(-1.,-1.),vec2(3.,-1.),vec2(-1.,3.));return V(vec4(p[i],.5,1.),(1.-p[i].y)*4.);}} @fragment fn fs(@location(0) y:f32)->@location(0) vec4<f32>{{return vec4(clamp(.5+.25*({expression}),0.,1.),0.,0.,1.);}}") });
+    for (name, expression, red) in [("varying only", "(dpdy y)", 191), ("negative varying", "(dpdy (- y))", 64)] {
+        cases.push(Case {
+            name,
+            red,
+            source: format!(
+                r#"(module
+  (struct V (p vec4 (builtin position)) (y f32 (location 0)))
+  (vertex vs ((i u32 (builtin vertex_index))) (returns V)
+    (let p ((array vec2 3) (vec2 -1.0 -1.0) (vec2 3.0 -1.0) (vec2 -1.0 3.0)))
+    (return (V (vec4 (index p i) 0.5 1.0) (* (- 1.0 (. (index p i) y)) 4.0))))
+  (fragment fs ((y f32 (location 0))) (returns vec4 (location 0))
+    (return (vec4 (clamp (+ 0.5 (* 0.25 {expression})) 0.0 1.0) 0.0 0.0 1.0))))"#
+            ),
+        });
     }
     cases
 }

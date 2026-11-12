@@ -19,20 +19,20 @@ pub struct Fixture {
 /// The final member supplies red=1; a prefix before an offset binding contains sentinel bytes.
 pub fn fixture<B: NativeResources>(gpu: &GpuDevice<B>, resources: &ComPtr<IRenderResourcesAbi>, members: u32, offset: u64, usage: GpuBufferUsage) -> Fixture {
     assert!((1..=8).contains(&members));
-    let fields = (0..members).map(|index| format!("v{index}:f32,")).collect::<String>();
-    let wgsl = format!(
-        r#"
-        struct Values {{ {fields} }}
-        @group(3) @binding(0) var<uniform> values:Values;
-        @vertex fn vs(@builtin(vertex_index) i:u32)->@builtin(position) vec4<f32> {{
-            let p=array<vec2<f32>,3>(vec2(-1.,-1.),vec2(3.,-1.),vec2(-1.,3.));
-            return vec4(p[i],0.5,1.);
-        }}
-        @fragment fn fs()->@location(0) vec4<f32> {{ return vec4(values.v{},0.,0.,1.); }}
-    "#,
-        members - 1
+    let fields = (0..members).map(|index| format!("(v{index} f32)")).collect::<String>();
+    let source = Bytes::source(
+        format!(
+            r#"(module
+  (struct Values {fields})
+  (uniform values Values fragment 0)
+  (vertex vs ((i u32 (builtin vertex_index))) (returns vec4 (builtin position))
+    (let p ((array vec2 3) (vec2 -1.0 -1.0) (vec2 3.0 -1.0) (vec2 -1.0 3.0)))
+    (return (vec4 (index p i) 0.5 1.0)))
+  (fragment fs () (returns vec4 (location 0)) (return (vec4 (. values v{}) 0.0 0.0 1.0))))"#,
+            members - 1
+        )
+        .into_bytes(),
     );
-    let source = Bytes::source(wgsl.into_bytes());
     let vertex = resources
         .create_shader(GpuShaderStage::Vertex, source.as_com_ref(), NcCopyFromBufferOffset::new(0, b"vs"))
         .unwrap();

@@ -54,6 +54,8 @@ with exactly one backend for SDL hosting. Build scripts depend on
 Dynamic clients use its shared types without depending on the SDK.
 Browser hosting uses `platform,webgl` and `wasm32-unknown-unknown`.
 CPU-only consumers need no SDL, graphics loader or compiler implementation.
+The built-in COM compiler validates S-expression programs and directly emits backend shaders.
+The platform root exposes `ShaderCompilerFactory` through QueryInterface.
 Shader output is fixed by each renderer: WGPU uses WGSL, Vulkan uses SPIR-V and
 GLES3/WebGL uses ES300. Backends enable their compiler and `shader-wgsl`, `shader-spirv` or
 `shader-glsl`; standalone compilers select these without graphics dependencies.
@@ -86,7 +88,7 @@ cargo run --locked -p neocogi-platform-examples --bin gltf_damaged_helmet
 cargo run --locked -p neocogi-platform-examples --bin gltf_brainstem
 ```
 
-Load shared shader/platform objects in the examples with:
+Load the platform shared object in the examples with:
 
 ~~~sh
 cargo build --locked -p neocogi-platform-dylib --no-default-features --features glow --examples

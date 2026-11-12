@@ -1,44 +1,103 @@
-//! Shared WGSL inputs reach independent compiler COM and GPU resource-factory callers.
+//! Shared S-expression admission cases exercised through compiler and renderer COM calls.
 use neocogi_platform_contracts::render::abi::GpuShaderStage;
 
-/// Naga-valid module containing one ordinary selected vertex and an invalid portable entry/declaration.
+/// A valid selected entry followed by an independently forbidden declaration or entry.
 pub struct Case {
-    /// Identifies the independently exercised rule in assertion output.
+    /// Rule identified in assertion output.
     pub name: &'static str,
-    /// Complete original module; both selection attempts must reject it.
+    /// Whole module; both selected entries must reject it.
     pub source: String,
-    /// Stage of the second entry, named `outside`.
+    /// Stage of the second entry, named `outside` when present.
     pub stage: GpuShaderStage,
 }
-
-/// Ordinary entry has no resources or locations and cannot itself cause the rejection.
-const SELECTED: &str = "@vertex fn selected()->@builtin(position) vec4<f32>{return vec4<f32>(0.,0.,0.,1.);}";
-
-/// Isolated inactive-entry and whole-declaration profile violations.
+/// Resource-free entry cannot itself cause rejection.
+const SELECTED: &str = "(vertex selected () (returns vec4 (builtin position)) (return (vec4 0.0 0.0 0.0 1.0)))";
+/// Whole-module admission includes inactive functions, declarations, and stage interfaces.
 pub fn cases() -> Vec<Case> {
     [
-        ("location sixteen", "@vertex fn outside(@location(16) p:vec4<f32>)->@builtin(position) vec4<f32>{return p;}", GpuShaderStage::Vertex),
-        ("signed input", "@vertex fn outside(@location(0) p:vec4<i32>)->@builtin(position) vec4<f32>{return vec4<f32>(p);}", GpuShaderStage::Vertex),
-        ("signed output", "struct V{@builtin(position) p:vec4<f32>,@location(0) @interpolate(flat) n:i32} @vertex fn outside()->V{return V(vec4(0.,0.,0.,1.),1);}", GpuShaderStage::Vertex),
-        ("wrong stage uniform", "struct U{v:vec4<f32>} @group(3) @binding(0) var<uniform> u:U; @vertex fn outside()->@builtin(position) vec4<f32>{return u.v;}", GpuShaderStage::Vertex),
-        ("oversized uniform", "struct U{v:array<vec4<f32>,1025>} @group(1) @binding(0) var<uniform> u:U; @vertex fn outside()->@builtin(position) vec4<f32>{return u.v[0];}", GpuShaderStage::Vertex),
-        ("unused oversized declaration", "struct U{v:array<vec4<f32>,1025>} @group(1) @binding(0) var<uniform> u:U; @vertex fn outside()->@builtin(position) vec4<f32>{return vec4(1.);}", GpuShaderStage::Vertex),
-        ("non-structure uniform", "@group(1) @binding(0) var<uniform> u:vec4<f32>; @vertex fn outside()->@builtin(position) vec4<f32>{return u;}", GpuShaderStage::Vertex),
-        ("image load without pair", "@group(2) @binding(0) var t:texture_2d<f32>; @group(2) @binding(1) var s:sampler; @fragment fn outside()->@location(0) vec4<f32>{return textureLoad(t,vec2<i32>(0),0);}", GpuShaderStage::Fragment),
-        ("image query without pair", "@group(2) @binding(0) var t:texture_2d<f32>; @fragment fn outside()->@location(0) vec4<f32>{return vec4(vec2<f32>(textureDimensions(t)),0.,1.);}", GpuShaderStage::Fragment),
-        ("paired nonzero load", "@group(2) @binding(0) var t:texture_2d<f32>; @group(2) @binding(1) var s:sampler; @fragment fn outside()->@location(0) vec4<f32>{return textureSample(t,s,vec2(.5))+textureLoad(t,vec2<i32>(0),1);}", GpuShaderStage::Fragment),
-        ("paired dynamic load", "@group(2) @binding(0) var t:texture_2d<f32>; @group(2) @binding(1) var s:sampler; @fragment fn outside(@builtin(position) p:vec4<f32>)->@location(0) vec4<f32>{return textureSample(t,s,vec2(.5))+textureLoad(t,vec2<i32>(0),i32(p.x));}", GpuShaderStage::Fragment),
-        ("paired mip count", "@group(2) @binding(0) var t:texture_2d<f32>; @group(2) @binding(1) var s:sampler; @fragment fn outside()->@location(0) vec4<f32>{return textureSample(t,s,vec2(.5))+vec4(f32(textureNumLevels(t)));}", GpuShaderStage::Fragment),
-        ("paired nonzero dimension", "@group(2) @binding(0) var t:texture_2d<f32>; @group(2) @binding(1) var s:sampler; @fragment fn outside()->@location(0) vec4<f32>{return textureSample(t,s,vec2(.5))/f32(textureDimensions(t,1).x);}", GpuShaderStage::Fragment),
-        ("unused mip-count helper", "@group(2) @binding(0) var t:texture_2d<f32>; fn unused()->u32{return textureNumLevels(t);} @fragment fn outside()->@location(0) vec4<f32>{return vec4(1.);}", GpuShaderStage::Fragment),
-        ("wrong sampler slot", "@group(2) @binding(0) var t:texture_2d<f32>; @group(2) @binding(3) var s:sampler; @fragment fn outside()->@location(0) vec4<f32>{return textureSample(t,s,vec2(.5));}", GpuShaderStage::Fragment),
-        ("wrong stage image", "@group(0) @binding(0) var t:texture_2d<f32>; @group(0) @binding(1) var s:sampler; @fragment fn outside()->@location(0) vec4<f32>{return textureSample(t,s,vec2(.5));}", GpuShaderStage::Fragment),
-    ].into_iter().map(|(name, body, stage)| Case { name, source: format!("{SELECTED} {body}"), stage }).collect()
+        (
+            "location sixteen",
+            "(vertex outside ((p vec4 (location 16))) (returns vec4 (builtin position)) (return p))",
+            GpuShaderStage::Vertex,
+        ),
+        (
+            "signed input",
+            "(vertex outside ((p ivec4 (location 0))) (returns vec4 (builtin position)) (return (vec4 p)))",
+            GpuShaderStage::Vertex,
+        ),
+        (
+            "signed output",
+            "(struct V (p vec4 (builtin position)) (n i32 (location 0) (interpolate flat))) (vertex outside () (returns V) (return (V (vec4 1.0) 1)))",
+            GpuShaderStage::Vertex,
+        ),
+        (
+            "wrong stage uniform",
+            "(struct U (v vec4)) (uniform u U fragment 0) (vertex outside () (returns vec4 (builtin position)) (return (. u v)))",
+            GpuShaderStage::Vertex,
+        ),
+        (
+            "oversized uniform",
+            "(struct U (v (array vec4 1025))) (uniform u U vertex 0) (vertex outside () (returns vec4 (builtin position)) (return (index (. u v) 0)))",
+            GpuShaderStage::Vertex,
+        ),
+        (
+            "unused oversized declaration",
+            "(struct U (v (array vec4 1025))) (uniform u U vertex 0)",
+            GpuShaderStage::Vertex,
+        ),
+        ("non-structure uniform", "(uniform u vec4 vertex 0)", GpuShaderStage::Vertex),
+        (
+            "image load without pair",
+            "(texture t fragment 0) (fragment outside () (returns vec4 (location 0)) (return (load t (ivec2 0))))",
+            GpuShaderStage::Fragment,
+        ),
+        (
+            "image query without pair",
+            "(texture t fragment 0) (fragment outside () (returns vec4 (location 0)) (return (vec4 (vec2 (dimensions t)) 0.0 1.0)))",
+            GpuShaderStage::Fragment,
+        ),
+        (
+            "nonzero load level",
+            "(texture t fragment 0) (fragment outside () (returns vec4 (location 0)) (return (+ (sample t (vec2 0.5)) (load t (ivec2 0) 1))))",
+            GpuShaderStage::Fragment,
+        ),
+        (
+            "dynamic load level",
+            "(texture t fragment 0) (fragment outside ((p vec4 (builtin position))) (returns vec4 (location 0)) (return (load t (ivec2 0) (i32 (. p x)))))",
+            GpuShaderStage::Fragment,
+        ),
+        (
+            "mip count",
+            "(texture t fragment 0) (fn unused () (returns u32) (return (textureNumLevels t)))",
+            GpuShaderStage::Fragment,
+        ),
+        (
+            "nonzero dimensions level",
+            "(texture t fragment 0) (fn unused () (returns uvec2) (return (dimensions t 1)))",
+            GpuShaderStage::Fragment,
+        ),
+        (
+            "duplicate sampled slot",
+            "(texture t fragment 0) (texture other fragment 0)",
+            GpuShaderStage::Fragment,
+        ),
+        (
+            "wrong stage image",
+            "(texture t vertex 0) (fragment outside () (returns vec4 (location 0)) (return (sample t (vec2 0.5))))",
+            GpuShaderStage::Fragment,
+        ),
+    ]
+    .into_iter()
+    .map(|(name, body, stage)| Case {
+        name,
+        source: format!("(module {SELECTED} {body})"),
+        stage,
+    })
+    .collect()
 }
-
-/// Query use is legal when the entry also samples the same correctly paired image.
+/// Query use is valid when that entry samples the same implicitly paired texture.
 pub fn valid_mixed_module() -> String {
     format!(
-        "{SELECTED} @group(2) @binding(0) var t:texture_2d<f32>; @group(2) @binding(1) var s:sampler; @fragment fn outside()->@location(0) vec4<f32>{{let size=vec2<f32>(textureDimensions(t,0)); return textureSample(t,s,vec2(.5))/size.x;}}"
+        "(module {SELECTED} (texture t fragment 0) (fragment outside () (returns vec4 (location 0)) (let size (vec2 (dimensions t))) (return (/ (sample t (vec2 0.5)) (. size x)))))"
     )
 }

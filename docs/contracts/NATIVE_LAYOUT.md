@@ -1,7 +1,7 @@
 # Native application staging
 
 `neocogi-platform-dylib` supplies one platform shared library per backend, including
-its renderer-owned shader compiler. Build the selected library
+its built-in S-expression COM shader compiler. Build the selected library
 with `cargo build -p neocogi-platform-dylib --no-default-features --features glow --examples`
 (or vulkan/wgpu). Cargo selects the backend-named platform library example through their
 required features. The application build script stages every known backend library

@@ -235,7 +235,7 @@ varying-only shaders. X derivatives and unsigned `fwidth` retain their native
 values. The device fixes its compiler's output format at construction, while the existing native
 program variant owns window/image coordinate, winding, depth and differential-axis adaptation.
 
-WGSL is the canonical source. The renderer-owned compiler validates and returns
+S-expressions are the canonical source. The shader COM plugin validates and returns
 its configured format with typed portable reflection; requests contain no target:
 WGSL for WGPU, GLSL ES300 for GL/WebGL, or guarded SPIR-V for Vulkan.
 The renderer imports only that artifact, rejecting target disagreement. See
@@ -247,25 +247,18 @@ including unused declarations. A fragment entry emits exactly one `vec4<f32>`
 color at location zero. Portable location inputs use f32/u32 scalars or vectors.
 Shader linkage compares locations, shapes, interpolation and sampling qualifiers.
 
-Dynamic array and uniform-buffer accesses remain within valid storage. GL and
-Vulkan explicitly return zero for out-of-bounds reads and skip out-of-bounds
-private array writes. SPIR-V contains these guards. GLSL is emitted from the
-guarded SPIR-V imported back into compiler IR, because the GLSL writer does not
-itself lower array/buffer bounds policies. WGPU applies its checked translation
-to canonical WGSL; that translation may clamp an invalid index instead. Clients
-must not depend on a particular out-of-bounds result. Exact texel reads support
-only constant mip 0, and dimension queries accept omitted/constant mip 0. Paired
-image operations traverse complete native emission, not only source admission.
-Dynamic/nonzero levels and mip/layer/sample-count queries reject throughout the
-module. GL specializes generated level-count guards to the known one-mip binding
-while preserving coordinate bounds; Vulkan consumes the original guarded SPIR-V. Native robustness extensions
-are not required by the GL/Vulkan guards. Fragment-coordinate adaptation recognizes
-complete built-in identifier tokens and preserves ordinary identifiers containing
-the same text.
+Dynamic array and uniform-buffer accesses remain within valid storage. Each direct
+writer emits guards returning zero for out-of-range reads and skipping out-of-range
+local writes. The same checks appear in generated WGSL, ES300, and SPIR-V. Exact
+texel reads and dimension queries use mip zero. Dynamic/nonzero mip selection and
+mip/layer/sample-count queries reject throughout the module. Native robustness
+extensions are not required by these explicit checks. Fragment-coordinate
+adaptation recognizes complete builtin identifier tokens and preserves ordinary
+identifiers containing the same text.
 
-WGSL input is limited to one MiB. The selected artifact plus entry name is
+S-expression input is limited to one MiB. The selected artifact plus entry name is
 limited to four MiB per shader and the domain's remaining live-byte quota.
-Unused formats are neither retained nor charged; GL's intermediate SPIR-V is scratch. During COM import the provider and receiving copy each retain a charge
+Unused formats are neither retained nor charged; each writer directly consumes the typed IR. During COM import the provider and receiving copy each retain a charge
 for their actual live code payload; receiving admission can therefore reject a
 compilation that succeeded before copying. Reflection is excluded from the byte
 charge but independently bounded to 16 input/output locations and four uniform/

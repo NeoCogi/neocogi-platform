@@ -26,16 +26,14 @@ fn device_with_limits(limits: wgpu::Limits) -> (wgpu::Device, wgpu::Queue) {
 }
 
 /// A client shader owns its color and depth semantics; the renderer only sees reflected bindings.
-const SHADER: &str = r#"
-struct Values { color:vec4<f32>, params:vec4<f32> }
-@group(1) @binding(0) var<uniform> vertex_values:Values;
-@group(3) @binding(0) var<uniform> fragment_values:Values;
-@vertex fn vs(@builtin(vertex_index) i:u32) -> @builtin(position) vec4<f32> {
-    let p = array<vec2<f32>,3>(vec2(-1.,-1.), vec2(3.,-1.), vec2(-1.,3.));
-    return vec4(p[i],vertex_values.params.x,1.);
-}
-@fragment fn fs() -> @location(0) vec4<f32> { return fragment_values.color; }
-"#;
+const SHADER: &str = r#"(module
+  (struct Values (color vec4) (params vec4))
+  (uniform vertex_values Values vertex 0)
+  (uniform fragment_values Values fragment 0)
+  (vertex vs ((i u32 (builtin vertex_index))) (returns vec4 (builtin position))
+    (let p ((array vec2 3) (vec2 (- 1.0) (- 1.0)) (vec2 3.0 (- 1.0)) (vec2 (- 1.0) 3.0)))
+    (return (vec4 (index p i) (. (. vertex_values params) x) 1.0)))
+  (fragment fs () (returns vec4 (location 0)) (return (. fragment_values color))))"#;
 
 /// Publishes the explicit per-stage uniform layout through generated descriptor/source calls.
 fn pipeline(resources: &ComPtr<IRenderResourcesAbi>, mask: u8) -> ComBox<IGpuPipelineAbi> {
@@ -267,20 +265,20 @@ fn indexed_texture_case(operation: GpuBlendEquation, imported: bool) {
     .unwrap();
     let resources = controller.resources().unwrap();
     let source = Bytes::source(
-        br#"
-        struct Output { @builtin(position) pos:vec4<f32>, @location(0) uv:vec2<f32>, @location(1) color:vec4<f32> }
-        @vertex fn vs(@location(0) p:vec2<f32>, @location(1) color:vec4<f32>) -> Output {
-            var out:Output; out.pos=vec4(p,0.5,1.); out.uv=vec2(p.x*0.5+0.5,0.5-p.y*0.5); out.color=color; return out;
-        }
-        struct Values { tint:vec4<f32> }
-        @group(2) @binding(0) var image:texture_2d<f32>;
-        @group(2) @binding(1) var image_sampler:sampler;
-        @group(3) @binding(0) var<uniform> values:Values;
-        @fragment fn fs(input:Output) -> @location(0) vec4<f32> {
-            return textureSample(image,image_sampler,input.uv)*input.color*values.tint;
-        }
-    "#
-        .to_vec(),
+        br#"(module
+  (struct Output (pos vec4 (builtin position)) (uv vec2 (location 0)) (color vec4 (location 1)))
+  (vertex vs ((p vec2 (location 0)) (color vec4 (location 1))) (returns Output)
+    (var out Output)
+    (set (. out pos) (vec4 p 0.5 1.0))
+    (set (. out uv) (vec2 (+ (* (. p x) 0.5) 0.5) (- 0.5 (* (. p y) 0.5))))
+    (set (. out color) color)
+    (return out))
+  (struct Values (tint vec4))
+  (texture image fragment 0)
+  (uniform values Values fragment 0)
+  (fragment fs ((input Output)) (returns vec4 (location 0))
+    (return (* (* (sample image (. input uv)) (. input color)) (. values tint)))))"#
+            .to_vec(),
     );
     let vs = resources
         .create_shader(GpuShaderStage::Vertex, source.as_com_ref(), NcCopyFromBufferOffset::new(0, b"vs"))
@@ -584,15 +582,13 @@ fn partial_preparation_failure_keeps_resource_versions_charged_through_upload_co
             .unwrap();
         let resources = controller.resources().unwrap();
         let source = Bytes::source(
-            br#"
-        @vertex fn vs(@location(0) p:vec3<f32>) -> @builtin(position) vec4<f32> { return vec4(p,1.); }
-        @group(2) @binding(0) var image:texture_2d<f32>;
-        @group(2) @binding(1) var image_sampler:sampler;
-        struct Values { tint:vec4<f32> }
-        @group(3) @binding(0) var<uniform> values:Values;
-        @fragment fn fs() -> @location(0) vec4<f32> { return textureSample(image,image_sampler,vec2(0.5))*values.tint; }
-    "#
-            .to_vec(),
+            br#"(module
+  (vertex vs ((p vec3 (location 0))) (returns vec4 (builtin position)) (return (vec4 p 1.0)))
+  (texture image fragment 0)
+  (struct Values (tint vec4))
+  (uniform values Values fragment 0)
+  (fragment fs () (returns vec4 (location 0)) (return (* (sample image (vec2 0.5)) (. values tint)))))"#
+                .to_vec(),
         );
         let vs = resources
             .create_shader(GpuShaderStage::Vertex, source.as_com_ref(), NcCopyFromBufferOffset::new(0, b"vs"))

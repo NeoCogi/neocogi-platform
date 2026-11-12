@@ -9,7 +9,7 @@ type GpuDevice = crate::gpu::GpuDevice<crate::gpu::testing::Backend>;
 use neocogi_platform::render::abi::*;
 use neocogi_com::{INcStringAbi, INcBytesAbi, NcBytes};
 /// Valid source with a small deterministic artifact.
-const SOURCE: &str = "@vertex fn vs()->@builtin(position) vec4<f32>{return vec4<f32>(0.,0.,0.,1.);}";
+const SOURCE: &str = "(module\n(vertex vs () (returns vec4 (builtin position)) (return (vec4 0.0 0.0 0.0 1.0)))\n)";
 
 use neocogi_platform::render::shader::testing as admission;
 
@@ -398,7 +398,7 @@ fn receiving_copy_headroom_and_final_retention_are_exact() {
 #[test]
 fn shader_errors_outlive_success_and_device_destruction() {
     let (device, domain, factory, _probe) = fixture(Fault::None, 8 * 1024 * 1024);
-    let bad = crate::gpu::source::Bytes::source(b"invalid wgsl".to_vec());
+    let bad = crate::gpu::source::Bytes::source(b"invalid S-expression".to_vec());
     let error = factory
         .create_shader(GpuShaderStage::Vertex, bad.as_com_ref(), NcCopyFromBufferOffset::new(0, b"vs"))
         .unwrap_err();
@@ -423,7 +423,7 @@ fn shader_errors_outlive_success_and_device_destruction() {
 fn failed_diagnostic_exports_preserve_compilation_status() {
     for fault in [Fault::Diagnostic, Fault::LongDiagnostic] {
         let (_device, _domain, factory, _probe) = fixture(fault, 8 * 1024 * 1024);
-        let bad = crate::gpu::source::Bytes::source(b"invalid wgsl".to_vec());
+        let bad = crate::gpu::source::Bytes::source(b"invalid S-expression".to_vec());
         let error = factory
             .create_shader(GpuShaderStage::Vertex, bad.as_com_ref(), NcCopyFromBufferOffset::new(0, b"vs"))
             .unwrap_err();

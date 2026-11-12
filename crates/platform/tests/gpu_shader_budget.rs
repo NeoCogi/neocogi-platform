@@ -44,14 +44,12 @@ unsafe impl GlobalAlloc for Allocator {
     }
 }
 
-/// A tiny valid input expands to over one MiB when zero-initialized arrays are emitted in GLSL.
-const EXPANDING: &str = r#"
-@fragment fn fs(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
-    var values: array<vec4<f32>, 100000>;
-    values[u32(p.x)] = vec4<f32>(0.25);
-    return values[0];
-}
-"#;
+/// A tiny valid input expands to over 32 KiB when zero-initialized arrays are emitted in GLSL.
+const EXPANDING: &str = r#"(module
+  (fragment fs ((p vec4 (builtin position))) (returns vec4 (location 0))
+    (var values (array vec4 4096))
+    (set (index values (u32 (. p x))) (vec4 0.25))
+    (return (index values 0))))"#;
 
 /// The factory must stop output expansion before allocating the artifact it cannot admit.
 #[test]
@@ -66,7 +64,7 @@ fn generated_output_obeys_remaining_domain_quota_before_large_allocation() {
     );
     let domain = device
         .create_client(
-            RenderClientLimits { live_bytes: 65536, ..Default::default() },
+            RenderClientLimits { live_bytes: 8192, ..Default::default() },
             device.surface_target(neocogi_platform::render::abi::RenderSurfaceKind::Framebuffer).unwrap(),
             neocogi_platform::render::abi::RenderClientPermissions::default(),
         )
@@ -111,7 +109,7 @@ fn generated_output_obeys_remaining_domain_quota_before_large_allocation() {
     .copy()
     .unwrap();
     assert!(
-        artifact.code.glsl().unwrap().len() > 1024 * 1024,
+        artifact.code.glsl().unwrap().len() > 32 * 1024,
         "the fixture must exercise real output amplification"
     );
 }

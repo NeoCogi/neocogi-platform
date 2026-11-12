@@ -27,8 +27,8 @@ use std::{
 
 /// Initial physical viewport. Subsequent frames always query the current drawable extent.
 const SIZE: Size = Size { width: 960, height: 720 };
-/// Canonical WGSL remains an example asset, compiled through the normal shader provider.
-const SHADER: &str = include_str!("viewer.wgsl");
+/// Canonical S-expression code remains an example asset, compiled through the normal shader provider.
+const SHADER: &str = include_str!("viewer.sexp");
 
 #[com_object(interfaces(IRenderStream))]
 /// One immutable owned block, retained through synchronous render and captured GPU work.
@@ -134,12 +134,12 @@ fn prepare_materials(scene: &Scene) -> scene::Result<Vec<MaterialAtlas>> {
 
 /// Builds both programs from one lighting implementation and authoritative Rust region counts.
 fn shader_source(body: &str) -> Vec<u8> {
-    let shared = include_str!("lighting.wgsl")
+    let shared = include_str!("lighting.sexp")
         .replace("@REGION_COUNT@", &environment::REGION_COUNT.to_string())
         .replace("@LAST_SPECULAR@", &(environment::SPECULAR_LEVELS - 1).to_string())
         .replace("@DIFFUSE_REGION@", &environment::DIFFUSE_REGION.to_string())
         .replace("@BRDF_REGION@", &environment::BRDF_REGION.to_string());
-    (shared + body).into_bytes()
+    format!("(module\n{shared}\n{body}\n)").into_bytes()
 }
 
 impl Graphics {
@@ -244,7 +244,7 @@ impl Graphics {
             environment.pixels.clone(),
         )?;
         let sampler = resources.create_sampler(GpuSamplerDesc::default())?;
-        let sky_code = Bytes::source(shader_source(include_str!("skybox.wgsl")));
+        let sky_code = Bytes::source(shader_source(include_str!("skybox.sexp")));
         let sky_vs = resources.create_shader(GpuShaderStage::Vertex, sky_code.as_com_ref(), NcCopyFromBufferOffset::new(0, b"vs"))?;
         let sky_fs = resources.create_shader(GpuShaderStage::Fragment, sky_code.as_com_ref(), NcCopyFromBufferOffset::new(0, b"fs"))?;
         let sky_description = PipelineDesc {

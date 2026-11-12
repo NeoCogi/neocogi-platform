@@ -25,7 +25,7 @@ pub fn block_initial<B: neocogi_platform::gpu::native::NativeResources>(
     size: Size,
     pixels: Option<&[u8]>,
 ) -> ComBox<IRenderViewBlockAbi> {
-    block_fragment(gpu, resources, root, size, pixels, "textureSample(image,image_sampler,v.uv)")
+    block_fragment(gpu, resources, root, size, pixels, "(sample image (. v uv))")
 }
 
 /// Builds the same real resource path with an explicit fragment result.
@@ -57,7 +57,7 @@ pub fn buffer_block<B: neocogi_platform::gpu::native::NativeResources>(
     root: Rect,
     texture: ComRef<'_, IGpuBufferAbi>,
 ) -> ComBox<IRenderViewBlockAbi> {
-    record_fragment(gpu, resources, root, texture, "textureSample(image,image_sampler,v.uv)")
+    record_fragment(gpu, resources, root, texture, "(sample image (. v uv))")
 }
 
 /// Recording owns immutable snapshots independently of how the caller created its texture.
@@ -68,17 +68,14 @@ fn record_fragment<B: neocogi_platform::gpu::native::NativeResources>(
     texture: ComRef<'_, IGpuBufferAbi>,
     expression: &str,
 ) -> ComBox<IRenderViewBlockAbi> {
-    let source = r#"
-        @group(2) @binding(0) var image:texture_2d<f32>;
-        @group(2) @binding(1) var image_sampler:sampler;
-        struct V { @builtin(position) p:vec4<f32>, @location(0) uv:vec2<f32> }
-        @vertex fn vs(@builtin(vertex_index) i:u32) -> V {
-            let p=array<vec2<f32>,3>(vec2(-1.,-1.),vec2(3.,-1.),vec2(-1.,3.));
-            return V(vec4(p[i],0.0,1.0),p[i]*vec2(0.5,-0.5)+vec2(0.5));
-        }
-        @fragment fn fs(v:V) -> @location(0) vec4<f32> { return REPLACEMENT; }
-    "#
-    .replace("REPLACEMENT", expression);
+    let source = r#"(module
+  (texture image fragment 0)
+  (struct V (p vec4 (builtin position)) (uv vec2 (location 0)))
+  (vertex vs ((i u32 (builtin vertex_index))) (returns V)
+    (let p ((array vec2 3) (vec2 (- 1.0) (- 1.0)) (vec2 3.0 (- 1.0)) (vec2 (- 1.0) 3.0)))
+    (return (V (vec4 (index p i) 0.0 1.0) (+ (* (index p i) (vec2 0.5 (- 0.5))) (vec2 0.5)))))
+  (fragment fs ((v V)) (returns vec4 (location 0)) (return REPLACEMENT)))"#
+        .replace("REPLACEMENT", expression);
     let code = Bytes::source(source.into_bytes());
     let vs = resources
         .create_shader(GpuShaderStage::Vertex, code.as_com_ref(), NcCopyFromBufferOffset::new(0, b"vs"))
@@ -114,7 +111,7 @@ fn record_fragment<B: neocogi_platform::gpu::native::NativeResources>(
 pub struct LoadCase {
     /// Coordinate scenario for diagnostics.
     pub name: &'static str,
-    /// WGSL integer-vector coordinate expression.
+    /// S-expression integer-vector coordinate expression.
     coordinate: &'static str,
     /// Whether portable WGPU may choose a clamped result instead of zero.
     pub outside: bool,
@@ -122,14 +119,14 @@ pub struct LoadCase {
 /// Tests both coordinate edges and very large signed/unsigned values through actual shaders.
 pub fn load_cases() -> Vec<LoadCase> {
     [
-        ("signed origin", "vec2<i32>(0)", false),
-        ("unsigned origin", "vec2<u32>(0u)", false),
-        ("negative x", "vec2<i32>(-1,0)", true),
-        ("negative y", "vec2<i32>(0,-1)", true),
-        ("upper x", "vec2<i32>(1,0)", true),
-        ("upper y", "vec2<i32>(0,1)", true),
-        ("maximum signed", "vec2<i32>(2147483647,0)", true),
-        ("maximum unsigned", "vec2<u32>(4294967295u,0u)", true),
+        ("signed origin", "(ivec2 0)", false),
+        ("unsigned origin", "(uvec2 0u)", false),
+        ("negative x", "(ivec2 (- 1) 0)", true),
+        ("negative y", "(ivec2 0 (- 1))", true),
+        ("upper x", "(ivec2 1 0)", true),
+        ("upper y", "(ivec2 0 1)", true),
+        ("maximum signed", "(ivec2 2147483647 0)", true),
+        ("maximum unsigned", "(uvec2 4294967295u 0u)", true),
     ]
     .into_iter()
     .map(|(name, coordinate, outside)| LoadCase { name, coordinate, outside })
@@ -147,7 +144,7 @@ pub fn load_block<B: neocogi_platform::gpu::native::NativeResources>(
         Rect { x: 0, y: 0, width: 8, height: 8 },
         Size { width: 1, height: 1 },
         Some(&[191, 63, 127, 255]),
-        &format!("textureLoad(image,{},0)+textureSample(image,image_sampler,v.uv)*0.000001", case.coordinate),
+        &format!("(+ (load image {}) (* (sample image (. v uv)) 0.000001))", case.coordinate),
     )
 }
 
@@ -159,15 +156,13 @@ pub fn zero_storage_block<B: neocogi_platform::gpu::native::NativeResources>(
     resources: &ComPtr<IRenderResourcesAbi>,
 ) -> ComBox<IRenderViewBlockAbi> {
     let source = Bytes::source(
-        br#"
-        struct V { @builtin(position) p:vec4<f32>, @location(0) color:vec4<f32> }
-        @vertex fn vs(@builtin(vertex_index) i:u32,@location(0) color:vec4<f32>)->V {
-            let p=array<vec2<f32>,3>(vec2(-1.,-1.),vec2(3.,-1.),vec2(-1.,3.));
-            return V(vec4(p[i],.5,1.),color);
-        }
-        @fragment fn fs(@location(0) color:vec4<f32>)->@location(0) vec4<f32>{return color;}
-    "#
-        .to_vec(),
+        br#"(module
+  (struct V (p vec4 (builtin position)) (color vec4 (location 0)))
+  (vertex vs ((i u32 (builtin vertex_index)) (color vec4 (location 0))) (returns V)
+    (let p ((array vec2 3) (vec2 (- 1.0) (- 1.0)) (vec2 3.0 (- 1.0)) (vec2 (- 1.0) 3.0)))
+    (return (V (vec4 (index p i) 0.5 1.0) color)))
+  (fragment fs ((color vec4 (location 0))) (returns vec4 (location 0)) (return color)))"#
+            .to_vec(),
     );
     let vs = resources
         .create_shader(GpuShaderStage::Vertex, source.as_com_ref(), NcCopyFromBufferOffset::new(0, b"vs"))

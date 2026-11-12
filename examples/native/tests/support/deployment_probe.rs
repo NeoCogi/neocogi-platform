@@ -10,6 +10,32 @@ fn main() {
         eprintln!("{error}");
         std::process::exit(24);
     });
+    // The compiler is a COM capability of this same platform root and requires no second library.
+    {
+        use neocogi_example_plugins::sdk::render::abi::*;
+        let factory = platform.query::<ShaderCompilerFactoryAbi>().unwrap();
+        let mut supported = 0;
+        for target in [ShaderTarget::Wgsl, ShaderTarget::GlslEs300, ShaderTarget::SpirV] {
+            let compiler = match factory.create(target) {
+                Ok(compiler) => compiler,
+                Err(status) if status == neocogi_example_plugins::sdk::render::shader::SHADER_E_TARGET_UNAVAILABLE => continue,
+                Err(status) => panic!("compiler creation failed: {status}"),
+            };
+            let report = compiler
+                .compile(
+                    ShaderCompileRequest {
+                        stage: GpuShaderStage::Vertex,
+                        max_output_bytes: 4194304,
+                    },
+                    neocogi_com::NcCopyFromBufferOffset::new(0, b"(module (vertex vs () (returns vec4 (builtin position)) (return (vec4 0.0 0.0 0.5 1.0))))"),
+                    neocogi_com::NcCopyFromBufferOffset::new(0, b"vs"),
+                )
+                .unwrap();
+            assert_eq!(report.target().unwrap(), target);
+            supported += 1;
+        }
+        assert!(supported >= 1);
+    }
     if launch.arguments == ["--audio"] {
         use neocogi_example_plugins::sdk::audio::{AudioConfig, AudioDirection, AudioOpenState};
         use neocogi_com::{NcCopyFromBufferOffset, NcOutputBuffer};

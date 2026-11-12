@@ -26,7 +26,10 @@ compile_error!("select exactly one native backend for static assembly: glow, vul
 #[cfg(any(all(feature = "glow", any(feature = "vulkan", feature = "wgpu")), all(feature = "vulkan", feature = "wgpu")))]
 compile_error!("native backend features are mutually exclusive for static assembly");
 #[cfg(all(feature = "dynamic", any(feature = "glow", feature = "vulkan", feature = "wgpu")))]
-compile_error!("backend Cargo features select static implementations; select exactly dynamic and use --backend at runtime");
+compile_error!(
+    "backend Cargo features select static implementations; select exactly dynamic.\n\
+     Build the application with --no-default-features --features dynamic, then run it with --backend vulkan (or glow/wgpu)."
+);
 
 // Invalid selections emit only the diagnostics above, without implementation expansion.
 #[cfg(all(

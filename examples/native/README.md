@@ -60,7 +60,8 @@ is shared by the executable and the real linked/shared-library regression test.
 ## Ownership and deployment
 
 Static assembly registers the platform descriptor and acquires its typed root
-through the SDK. The renderer creates and owns its fixed-format compiler.
+through the SDK. That same root exposes `ShaderCompilerFactory` through
+QueryInterface; the renderer owns its built-in fixed-format compiler.
 Dynamic assembly uses final cdylib artifacts explicitly prepared by
 `cargo build --examples`; `neocogi-example-plugins` stages their exact named outputs,
 loads the platform, then acquires its typed root.

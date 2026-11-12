@@ -1,14 +1,14 @@
-//! Platform roots keep compilation internal and audio independent of native video services.
+//! Platform roots expose built-in COM compilation and audio independent of native video services.
 #![cfg(not(target_arch = "wasm32"))]
 use neocogi_platform::render::platform::PlatformAbi;
 
 /// Registering only the platform creates owned roots without adding a compiler plugin to the catalog.
 #[test]
-fn renderer_owns_compilation_without_a_separate_compiler_plugin() {
+fn platform_plugin_exposes_its_builtin_shader_factory() {
     const CHILD: &str = "NEOCOGI_OWNED_COMPILER_ACTIVATION";
     if std::env::var_os(CHILD).is_none() {
         let output = std::process::Command::new(std::env::current_exe().unwrap())
-            .args(["--exact", "renderer_owns_compilation_without_a_separate_compiler_plugin", "--nocapture"])
+            .args(["--exact", "platform_plugin_exposes_its_builtin_shader_factory", "--nocapture"])
             .env(CHILD, "1")
             .env("SDL_VIDEODRIVER", "deliberately-invalid")
             .output()
@@ -28,6 +28,26 @@ fn renderer_owns_compilation_without_a_separate_compiler_plugin() {
     unsafe { runtime.register_plugin_descriptor(descriptor) }.unwrap();
     let first = runtime.acquire_plugin_root::<PlatformAbi>(descriptor.plugin_id).unwrap();
     let second = runtime.acquire_plugin_root::<PlatformAbi>(descriptor.plugin_id).unwrap();
+    let factory = first.query::<neocogi_platform::render::abi::ShaderCompilerFactoryAbi>().unwrap();
+    let target = if cfg!(feature = "vulkan") {
+        neocogi_platform::render::shader::ShaderTarget::SpirV
+    } else if cfg!(feature = "wgpu") {
+        neocogi_platform::render::shader::ShaderTarget::Wgsl
+    } else {
+        neocogi_platform::render::shader::ShaderTarget::GlslEs300
+    };
+    let compiler = factory.create(target).unwrap();
+    let result = compiler
+        .compile(
+            neocogi_platform::render::abi::ShaderCompileRequest {
+                stage: neocogi_platform::render::abi::GpuShaderStage::Vertex,
+                max_output_bytes: 4194304,
+            },
+            neocogi_com::NcCopyFromBufferOffset::new(0, b"(module (vertex vs () (returns vec4 (builtin position)) (return (vec4 0.0 0.0 0.5 1.0))))"),
+            neocogi_com::NcCopyFromBufferOffset::new(0, b"vs"),
+        )
+        .unwrap();
+    assert_eq!(result.target().unwrap(), target);
     drop((first, second));
     assert!(
         runtime

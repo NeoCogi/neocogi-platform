@@ -49,7 +49,7 @@ enum ShaderSampling: u8 {
 #[version(1)]
 /// Actual compiler output; the receiving backend validates this format.
 enum ShaderTarget: u8 {
-    /// Original validated source for WGPU's checked native translation.
+    /// Generated validated WGSL for WGPU's checked native translation.
     Wgsl,
     /// Guarded aligned SPIR-V for Vulkan.
     SpirV,
@@ -127,10 +127,17 @@ struct ShaderSampledTextureInfo {
 }
 
 #[version(1)]
-/// Renderer-owned CPU compiler with immutable output configuration; native realization stays fallible.
+/// S-expression COM compiler with immutable output configuration; native realization stays fallible.
 interface ShaderCompiler {
     /// Returns a complete success or a rejected report; no partial artifacts.
     fn compile_result(&self, request: ShaderCompileRequest, source: &[u8], entry: &[u8]) -> Result<ComPtr<IShaderCompilation>>;
+}
+
+#[version(1)]
+/// Native-free compiler factory queried from the platform COM root; creates immutable target configurations.
+interface ShaderCompilerFactory {
+    /// Rejects disabled or invalid targets; no backend or window initialization occurs.
+    fn create(&self, target: ShaderTarget) -> Result<ComPtr<ShaderCompiler>>;
 }
 
 #[version(1)]

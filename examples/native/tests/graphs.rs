@@ -76,7 +76,7 @@ fn static_and_dynamic_graphs_keep_provider_implementation_ownership_distinct() {
         let linked = graph("static", Some(backend), "normal");
         assert!(linked.contains("neocogi-platform"));
         assert!(linked.contains("neocogi-platform-contracts"));
-        assert!(linked.contains("naga"));
+        assert_eq!(linked.contains("naga"), backend == "wgpu");
         assert!(linked.contains("sdl2"));
         assert!(!linked.contains("neocogi-example-plugins"));
     }

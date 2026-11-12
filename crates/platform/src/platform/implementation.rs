@@ -32,7 +32,7 @@ use resources::TextureRecord;
 /// Prepared resources are concrete native records, never erased objects or callbacks.
 type Prepared = PreparedFrame<gpu::Backend>;
 
-#[com_object(neocogi_platform::render::platform::Platform)]
+#[com_object(interfaces(neocogi_platform::render::platform::Platform, neocogi_platform::render::abi::ShaderCompilerFactory))]
 /// Native bootstrap; initialization is fallible and no native subsystem crosses the COM boundary.
 pub struct PlatformObject {
     /// One SDL event pump shared by this platform's windows.
@@ -53,6 +53,14 @@ impl PlatformObject {
 impl Default for PlatformObject {
     /// Same native-free construction as `new`.
     fn default() -> Self { Self::new() }
+}
+
+/// Shader compilation is a native-free COM service on the existing platform plugin root.
+/// Each returned compiler owns its fixed target and independently owned result graphs.
+impl ShaderCompilerFactory for PlatformObject {
+    fn create(&self, target: ShaderTarget) -> Result<ComPtr<ShaderCompilerAbi>, NcStatus> {
+        ShaderCompilerFactory::create(&crate::render::compiler::Factory, target)
+    }
 }
 
 impl Platform for PlatformObject {

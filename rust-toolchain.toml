@@ -1,7 +1,7 @@
 # The workspace build-std settings and complete min-size profile use nightly. Portable SDK consumers keep stable Rust outside this
 # development workspace. rust-src supplies target std for ordinary Cargo builds.
 [toolchain]
-channel = "nightly-2026-09-29"
+channel = "nightly"
 profile = "minimal"
 components = ["rust-src", "rustfmt", "clippy"]
 targets = ["wasm32-unknown-unknown"]

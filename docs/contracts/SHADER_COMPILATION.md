@@ -1,131 +1,199 @@
 # Portable shader compilation, version 1
 
-Shader compilation belongs to the renderer. Each device constructs and retains
-one `render::compiler::CompilerObject` fixed to its native backend's output format.
-The typed `ShaderCompiler` interface is an internal composition boundary; there is
-no separately registered compiler plugin, shared library or per-draw registry lookup.
-The platform shared library includes its renderer and compiler together.
+`neocogi-platform::render::compiler` implements the shader service built into the
+existing platform COM plugin. Each backend is delivered in its one existing
+platform library, such as `libnc_platform_vulkan.so`. The platform crate owns the
+parser, typed IR, validation, direct backend writers, and immutable report objects.
+The existing platform-dylib shim exports only the platform descriptor. There is
+no shader feature to select, no separate shader descriptor or registration, and
+no additional shared library to deploy. WGPU retains its internal translation dependency.
 
-The contracts crate owns the `neocogi.renderer` declarations in
-`crates/platform-contracts/schemas/neocogi/renderer/compiler.ncidl`. `neocogi_platform_contracts::render::abi` supplies
-the generated contracts; `render::shader` supplies plain reflection and bounded
-readers without Naga, and the SDK uses these same types. The former shader namespace and `Module::Shader` selector
-are removed; build scripts request `Module::Renderer` and include `IDL_NEOCOGI_RENDERER`. The
-renderer compiler's private implementation owns Naga. Stage, request and result
-types now share one generated renderer ABI.
+The contracts crate owns `neocogi.renderer` compiler declarations in
+`schemas/neocogi/renderer/compiler.ncidl`. Static and loaded clients use exactly
+these generated interfaces and `render::shader` snapshots/readers.
 
-## Outcomes and owned exports
+## COM acquisition and outcomes
 
-The Rust `compile(request, source, entry)` facade accepts canonical UTF-8 WGSL, a selected entry,
-a stage and an output byte cap. `ShaderCompileRequest` never contains a target;
-output selection is immutable compiler configuration. There is one supported read-only graphics
-contract, documented in [GPU rendering](GPU_RENDERING.md). The compiler has no
-viewport, surface, Window/Texture, target height or arbitrary profile selector.
+Register or load only the selected platform descriptor. Its root implements both
+`Platform` and `ShaderCompilerFactory`; QueryInterface obtains the typed shader
+factory without initializing SDL, a window, or a graphics device. `create(target)`
+returns an independent `ShaderCompiler` fixed to an enabled output format.
 
-Rust callers receive `Result<ComPtr<IShaderCompilationAbi>, RenderError>`: an error
-owns its status and message before the call returns. Raw COM clients use
-`compile_result` to obtain the report for that same operation.
+Each renderer device constructs and retains its built-in compiler with its native
+output format. Shader creation and drawing perform no plugin lookup. Linked
+CPU-only tools may instantiate the same `render::compiler::Factory` COM object,
+or use the pure Rust `Compiler` facade. There is no global runtime lookup, erased
+payload, downcast registry, or mutable last-error slot.
 
-A report is either complete success or rejection with an original failing status
-and diagnostic. Success requires parsing, whole-module admission/validation,
-selected-stage/entry agreement and emission of the renderer-selected artifact within
-quota. Forbidden unused declarations and other entries cannot bypass admission.
-WGPU's native checked translation and native linking/allocation stay fallible.
+`ShaderCompileRequest` carries a graphics stage and output quota. The source is
+UTF-8 S-expressions, and the separate entry argument selects an exact named entry.
+WGSL source input has been removed. Requests cannot change a compiler's target.
+`compile_result` returns either complete success or a rejection report containing
+its original status and diagnostic. The Rust `compile` facade reads that same
+report and returns an owned `RenderError` on rejection.
 
-Portable admission uses the complete Naga-validated module: every entry's IO,
-stage-local resource use and image/sampler combinations must satisfy the profile.
-Every declared uniform has a named structure root with portable layout and at most
-16 KiB, including unused blocks. A used image must participate in its entry's valid
-sampled pair; load/query-only use does not invent that pair. Paired textureLoad
-reads at constant mip level 0 and textureDimensions with omitted/constant level 0
-produce complete native artifacts. Signed and unsigned integer coordinates are
-accepted. Other levels, dynamic level selection, mip-count, layer-count and
-sample-count queries reject, including operations in unused functions/entries.
-This is the common single-mip 2D image contract, not admission-only support.
-Only the requested entry is emitted/reflected; inactive entries cannot alter its
-selected collections.
+Each successful report owns one `INcBytes` code export, its entry name, typed
+input/output/uniform/texture collections, and an empty diagnostic. Code, collection
+items, and GL native names independently outlive the report and factory. An item
+retains no unrelated code. `info()` summarizes the same exports and is optional;
+`target()` independently authenticates the actual encoding. Rejection exposes no
+partial artifacts. Invalid source/configuration, unavailable targets, exhausted
+quotas, and fallible output reservations retain distinct statuses. Outer COM
+transport or report-allocation errors remain outer failures.
 
-## Selected target and build features
+Syntax and validation diagnostics include one-based line/column, a bounded source
+excerpt, and a caret. Raw COM diagnostics are capped at 4096 UTF-8 bytes without
+splitting a character. Allocation failures in infallible parser/IR/SDK allocations
+may abort; the quota is an exported-artifact bound, not a total scratch-memory or
+shader-execution-time guarantee.
 
-| Device | Fixed compiler target | Compiler output features | Naga features |
-| --- | --- | --- | --- |
-| Vulkan | `SpirV` | `shader-spirv` | `wgsl-in,spv-out` |
-| GLES3 / WebGL2 | `GlslEs300` | `shader-glsl` | `wgsl-in,spv-out,spv-in,glsl-out` |
-| WGPU | `Wgsl` | `shader-wgsl` | `wgsl-in` |
+## S-expression frontend
 
-Each backend enables the renderer compiler and its corresponding output feature.
-CPU-only tools can select `shader-compiler` plus output features without SDL, a
-Vulkan loader or WGPU, then construct a fixed-format compiler instance. Features
-are additive, allowing different renderer instances in one Rust program to use
-different outputs; each compiler instance always returns its one configured format.
-`test-support` includes WGSL for CPU fixtures and does not enable either native writer.
-Naga defaults are disabled; no WGSL emitter is required. WGPU's own native drivers
-can independently enable Naga writers through Cargo feature unification.
+The parser accepts exactly one `(module ...)`, ASCII atoms, parentheses, whitespace,
+and semicolon comments. Unicode is allowed in comments. Strings, quoting, macros,
+implicit native-source escape hatches, storage/workgroup resources, and compute
+entries are unsupported and reject. Identifiers start with a letter and contain
+at most 128 ASCII letters, digits, or underscores. Source identifiers are resolved
+before emission and backend symbols are generated independently.
 
-The device's immutable native resource family chooses the compiler format at
-construction. `GpuDevice::new(core)` owns that composition; normal callers cannot
-inject another compiler. Test-support exposes typed injection for hostile report
-regressions. Configuring a disabled output returns `SHADER_E_TARGET_UNAVAILABLE`
-before compilation; invalid configuration tags reject. Compilation requests cannot
-change the output. There is no output substitution or fallback to the source.
+```lisp
+(module
+  (struct Camera (transform mat4))
+  (struct Surface
+    (clip vec4 (builtin position))
+    (uv vec2 (location 0)))
+  (uniform camera Camera vertex 0)
+  (texture image fragment 0)
 
-A successful report has an independent `target()` getter and exactly one code
-export: `code() -> ComPtr<INcBytes>`. It contains only that renderer's backend
-shader. `Wgsl` and `GlslEs300` encode UTF-8 with no added terminator; `SpirV`
-encodes little-endian u32 words. The three format-specific getters are removed.
-`ShaderInfo.target` and `code_byte_count` summarize those same objects, replacing the
-former three mandatory format lengths. An importer authenticates its backend
-target against both getters and the actual selected export. It does not acquire,
-copy or retain unselected formats. Rust snapshots use `ShaderCode::{Wgsl,SpirV,GlslEs300}`.
+  (vertex vs ((position vec3 (location 0)) (uv vec2 (location 1)))
+    (returns Surface)
+    (return (Surface (* (. camera transform) (vec4 position 1.0)) uv)))
 
-WGSL output is the exact original validated source. SPIR-V output is guarded Vulkan
-code. GL still emits and reimports guarded SPIR-V as temporary compiler scratch to
-lower array/buffer checks before emitting ES300; those words are never exported or
-retained by a GL shader. Only GL items have generated block/combined-sampler names;
-the corresponding getters return `NC_E_NOINTERFACE` for WGSL/SPIR-V, while portable
-slot/layout/IO metadata remains available for every target.
-
-Failure of the selected emitter rejects the whole result. Unselected emitters are
-not invoked and cannot veto success. Outer COM transport/result-construction
-failures remain outer errors. Invalid source, output bounds and fallible reservation
-retain distinct statuses. Diagnostics are per-report, capped at 4096 UTF-8 bytes;
-infallible SDK/Naga allocation aborts are not promised to become diagnostics.
-
-During alpha all NCIDL versions remain 1. Rebuild generated SDK consumers and
-platform providers together after this contract replacement. The old request
-target field and external compiler plugin have no compatibility path.
-
-The code getter returns one immutable `INcBytes` object. Text imports validate
-UTF-8 and retain the same allocation as a Rust String; binary imports decode
-aligned words using bounded scratch. Entry points and diagnostics remain `INcString`. Inputs, outputs,
-uniforms and sampled pairs return explicitly named typed collections, each with
-`len` and `get`. Out-of-range `get` returns `NC_E_OUT_OF_RANGE`. Items expose plain
-metadata and, for GL only, independently owned native names. Every export survives report/root
-release; an item survives collection release and retains no unrelated code.
-`info()` is an optional summary of those same objects, never a prerequisite:
-
-```rust,ignore
-// This compiler instance was constructed for WGSL; requests do not select a format.
-let report = compiler.compile(request, NcCopyFromBufferOffset::new(0, source), NcCopyFromBufferOffset::new(0, entry))?;
-let uniforms = report.uniforms()?;
-for index in 0..uniforms.len()? {
-    let uniform = uniforms.get(index)?;
-    let layout = uniform.info()?;
-    // Native GL names are queried only for a GlslEs300 result.
-    // Both layout and name are usable without consulting report.info().
-}
-let backend_code = report.code()?;
-drop(report); // backend_code remains independently owned and readable.
+  (fragment fs ((surface Surface)) (returns vec4 (location 0))
+    (return (sample image (. surface uv)))))
 ```
 
-SPIR-V exports encode little-endian u32 words. Readers check word divisibility,
-minimum five-word header and magic, allocate aligned `Vec<u32>` fallibly, and
-copy/decode bounded stack chunks. They do not allocate an intermediate full byte
-vector or reinterpret unaligned byte storage. SDK string/byte `copy_to` promises
-complete initialization on successful status; it returns no written count.
-This is distinct from counted `IGpuDataSource` reads. Readers do not promise to
-detect ABI-invalid success after a partial write or every semantic truncation.
-The selected provider remains responsible for validated artifact semantics.
+| Form | Meaning |
+| --- | --- |
+| `(struct NAME (FIELD TYPE [ATTRS...])...)` | Ordered value structure; referenced types are declared first. |
+| `(uniform NAME TYPE STAGE SLOT)` | Named structure with portable WGSL/std140 layout, at most 16 KiB. |
+| `(texture NAME STAGE SLOT)` | Read-only float 2D texture and its implicit ordinary paired sampler. |
+| `(fn NAME (PARAMS...) (returns TYPE) BODY...)` | Value-returning helper, with forward function calls and no recursion. |
+| `(vertex NAME (PARAMS...) (returns TYPE [ATTRS...]) BODY...)` | Vertex entry requiring exactly one position builtin. |
+| `(fragment NAME (PARAMS...) (returns TYPE [ATTRS...]) BODY...)` | Fragment entry requiring exactly one vec4 color at location zero. |
+
+STAGE is `vertex` or `fragment`. Parameters use `(NAME TYPE [ATTRS...])`. Interface attributes are `(location N)`,
+`(builtin position|vertex_index|instance_index|front_facing)`, and
+`(interpolate perspective|flat [center|centroid])`. Builtin stage/direction/types
+are checked, including inactive entries. Integer varyings are flat. Linear
+interpolation and sample-frequency qualifiers reject because ES 3.00 cannot
+represent the complete requested portable contract. User locations admit f32/u32
+scalars or vectors only, with no duplicates and locations below sixteen.
+Entry structure members have direct builtin/location bindings; nested IO
+structures and IO attributes on helper signatures reject.
+
+Types are `f32`, `i32`, `u32`, `bool`, `vec2`..`vec4`, `ivec2`..`ivec4`,
+`uvec2`..`uvec4`, `bvec2`..`bvec4`, `mat2`..`mat4`, rectangular `matCxR`,
+`(array TYPE COUNT)`, and named structures. Decimal/exponent literals are finite
+f32 values; integral literals are i32 unless suffixed `u`. Explicit constructors
+perform numeric conversions. Booleans do not implicitly convert to numbers.
+Vector constructors pack components or splat one scalar; matrix constructors
+supply columns; arrays/structures supply every element/member. No value exceeds
+64 KiB. Arrays contain 1..4096 elements; direct arrays of arrays reject for ES300
+portability (structure elements may contain arrays). Uniform matrix rows and array/member
+strides must agree with std140; incompatible layouts reject before emission.
+Uniform reflection retains exact WGSL bytes, with native trailing padding private
+to the backend.
+
+Statements are `(let NAME VALUE)`, `(var NAME VALUE)`,
+`(var NAME TYPE [VALUE])`, `(set LVALUE VALUE)`,
+`(if CONDITION (then BODY...) [(else BODY...)])`, `(while CONDITION BODY...)`,
+`(break)`, `(continue)`, and `(return [VALUE])`. Typed variables without an
+initializer start at zero. Assignment requires a mutable local or its member,
+single component, or indexed element. Resource writes and mutable globals are
+absent. Conditions are bool; every path of a value-returning function must return.
+
+Expressions include `(. VALUE MEMBER_OR_SWIZZLE)`, `(index VALUE INDEX)`, typed
+constructors, helper calls, unary `- ! ~`, arithmetic `+ - * / %`, comparisons,
+integer bit operations/shifts, and scalar `&& ||`. Numeric scalar/vector arithmetic
+broadcasts scalars explicitly during lowering. Matrix multiplication uses column
+semantics. Intrinsics include min/max/clamp, rounding, trigonometry, exponential
+functions, vector products, normalize/reflect, mix/select, all/any, and graphics
+derivatives. Intrinsic overloads and arities are validated independently of output.
+Selection is eager in every writer. Derivatives and implicit `sample` operations
+are restricted to unconditional fragment control flow, including transitive
+helpers and paths following a possibly divergent return. Use explicit mip-zero
+sampling in conditional helpers. This conservative rule is deliberate, not a claim
+of a general uniformity analysis.
+
+`(sample IMAGE UV)` and `(sample-level IMAGE UV 0.0)` use the declaration's paired
+sampler. `(load IMAGE INTEGER_VEC2)` and `(dimensions IMAGE)` operate at mip zero;
+other levels and count queries reject. Every used image must also be sampled by
+that entry's reachable functions. Binding groups follow the renderer contract:
+vertex texture/sampler pairs use group 0, vertex uniforms 1, fragment pairs 2,
+fragment uniforms 3. Pair bindings are `2*slot` and `2*slot+1`; slots are below four.
+Stage-crossing resource use rejects.
+
+Admission checks the complete module, including unused structures/resources,
+helpers, and other entries, before output selection. Parsing is bounded to 96
+levels and 100,000 nodes; a module has at most 256 declarations, a structure 64
+fields, a function sixteen parameters and 1024 locals. These limits prevent
+unbounded syntax expansion. Only the requested entry and reachable helpers and
+resources are emitted or reflected.
+
+## Backend artifacts and build features
+
+| Renderer | Fixed output | Features |
+| --- | --- | --- |
+| WGPU | Generated UTF-8 WGSL | `shader-compiler,shader-wgsl` |
+| GLES3/WebGL2 | Generated UTF-8 GLSL ES 3.00 | `shader-compiler,shader-glsl` |
+| Vulkan | SPIR-V 1.0 words, little-endian byte export | `shader-compiler,shader-spirv` |
+
+Backends enable their output automatically. CPU-only tools select these features
+without SDL, GL, Vulkan, or WGPU. Outputs are additive, but each compiler instance
+returns only its configured target. The SPIR-V writer uses the small `spirv`
+opcode/enumeration crate. No Naga frontend, Naga writer, external compiler process,
+or temporary cross-language round trip is used by the plugin. WGPU's independent
+native translation may still depend on Naga.
+
+All writers consume the same validated typed IR. Generated shaders return
+zero for out-of-range array/vector/matrix/image reads; local writes outside the
+index range are skipped. Guards execute before an indexed pointer or texel fetch
+is formed. WGSL uses the same explicit checks, in addition to native validation.
+GL exports reflected block and combined-sampler names; other outputs return
+`NC_E_NOINTERFACE` for these getters.
+
+GLSL has standard `main`. Canonical vertex position `(x,y,z,w)` becomes
+`(x,-y,2*z-w,w)` once. Vulkan negates clip Y once. The renderer continues to own
+presentation restoration, fragment-height normalization, winding, viewport/scissor,
+and target policy. Derivatives retain the existing canonical signed axis.
+
+The complete Vulkan platform bundle exports exactly `nc_get_plugin_descriptor_v1`
+and does not embed the COM host. The executable supplies its one process-lived
+host. Build and qualify this single library with the repository's
+`channel = "nightly"`, rebuilt std, `min-size`, and immediate-abort panics:
+
+```sh
+cargo build --locked -p neocogi-platform-dylib --no-default-features \
+  --features vulkan --examples --profile min-size
+NEOCOGI_PLATFORM_DYLIB="$PWD/target/min-size/examples/libnc_platform_vulkan.so" \
+NEOCOGI_TEST_BACKEND=vulkan NEOCOGI_PLATFORM_SIZE_LIMIT=524288 \
+  cargo test --locked -p neocogi-platform --features test-support,shader-glsl,shader-spirv \
+  --test compiler_plugin -- --ignored --exact dynamic_platform_plugin_exposes_its_builtin_compiler
+NEOCOGI_SHADER_VALIDATORS=1 cargo test --locked -p neocogi-platform \
+  --features test-support,shader-glsl,shader-spirv --test sexp_compiler
+```
+
+The dynamic probe loads the actual platform library, checks its requested size
+limit, queries the built-in COM factory, compiles its native output, and checks
+code/diagnostic ownership after root release. Use the target's `.dll`/`.dylib`
+filename on Windows/macOS. Numeric emission uses Display/explicit bits rather
+than Debug so min-size formatting cannot erase literals or symbol identity.
+
+The CPU `shader_compile` example accepts
+`wgsl|glsl|spirv vertex|fragment ENTRY INPUT OUTPUT`. Native validation tests run
+`glslangValidator` and `spirv-val` when available; setting
+`NEOCOGI_SHADER_VALIDATORS=1` makes missing validators fail qualification.
 
 ## Admission and transfer lifetime
 
@@ -159,36 +227,16 @@ with no foreign compiler calls during drawing or destruction.
 
 ## Renderer handoff and diagnostics
 
-Vulkan consumes returned aligned guarded SPIR-V and entry. WGPU consumes returned
-validated WGSL and entry through `ShaderSource::Wgsl`, preserving checked native
-translation; it never falls back to request source on an export failure. Glow and
-WebGL consume returned ES300 and reflected native names.
+Vulkan consumes aligned guarded SPIR-V and the selected entry; WGPU consumes
+emitted WGSL and the entry through its checked native module/pipeline path;
+Glow/WebGL consume ES300 and reflected native names. Native linking and resource
+allocation remain fallible. An export failure never falls back to the input.
 
-Exact texel reads retain the guarded SPIR-V coordinate/level branches in native
-GLSL. The GL IR specializes compiler-generated mip-count checks to one, matching
-every admitted texture allocation. Its writer does not add a redundant image
-guard requiring unavailable ES300 texture-level queries. Explicit source count
-queries are rejected before this specialization; Vulkan retains complete guarded
-SPIR-V and WGPU uses its checked WGSL translation. Out-of-bounds results remain
-backend-dependent as documented in the GPU contract; clients must not rely on
-a particular value.
+Shader creation returns the exclusive shader or an owned `RenderError`. The
+renderer reads the compilation report before publishing its creation result.
+Failure text remains valid after later calls and compiler/resource-group release.
+No shader operation reads, clears, or replaces a device-wide diagnostic.
 
-ES300 has standard `main`. For canonical vertex output `(x,y,z,w)` its completion
-produces `(x,-y,2*z-w,w)`. Coordinate writer/importer options are explicit, applying
-that conversion once. Fragment position uses raw GL `gl_FragCoord`. A shared small
-renderer token adapter renames standard vertex main and restores Y after it for
-window presentation; offscreen retains compiled Y. The renderer owns fragment
-height normalization, winding, viewport/scissor and target policy. Comments,
-identifier substrings and whitespace do not depend on Naga's epilogue spelling.
-
-Shader creation returns either the exclusive shader or `RenderError { status,
-message }`. The renderer reads its compiler report before publishing its own
-one-shot creation result. Text export failures preserve the original compilation
-status and supply a local explanation. Each error remains valid across later
-successes, later failures, and destruction of the compiler or resource group.
-No shader operation reads, clears or replaces a device-wide diagnostic.
-
-The min-size profile preserves Naga/naga-types formatting needed for executable
-float literals and distinct symbols while stripping debug symbols. WGPU may
-legitimately retain its own internal Naga dependency. No measured binary-size,
-compile-time or frame-time improvement is implied by this separation.
+Alpha NCIDL versions remain 1. Rebuild generated consumers and providers together.
+The factory interface and source-language replacement intentionally supersede the
+previous WGSL/Naga contract without a compatibility parser.

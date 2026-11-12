@@ -11,7 +11,6 @@ panic-immediate-abort = true
 # rebuilt. libtest isolates panic expectations in child processes for abort mode.
 panic-abort-tests = true
 profile-rustflags = true
-trim-paths = true
 
 # Deployed binaries and embedded panic/debug locations must not disclose the
 # checkout, Cargo home or compiler installation. Debug unremap sidecars stay local.

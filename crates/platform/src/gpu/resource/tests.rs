@@ -533,10 +533,9 @@ impl IGpuPipelineSource for PipelineSource {
 }
 
 /// Shader source used by a generic float3 position pipeline, with no scene object.
-const GRAPHICS: &str = r#"
-@vertex fn vs(@location(0) position: vec3<f32>) -> @builtin(position) vec4<f32> { return vec4<f32>(position, 1.0); }
-@fragment fn fs() -> @location(0) vec4<f32> { return vec4<f32>(0.2, 0.4, 0.8, 1.0); }
-"#;
+const GRAPHICS: &str = r#"(module
+  (vertex vs ((position vec3 (location 0))) (returns vec4 (builtin position)) (return (vec4 position 1.0)))
+  (fragment fs () (returns vec4 (location 0)) (return (vec4 0.2 0.4 0.8 1.0))))"#;
 
 /// Creates an actual typed shader owner through the public factory ABI.
 fn shader(factory: &ComPtr<IRenderResourcesAbi>, stage: GpuShaderStage, entry: &[u8]) -> ComBox<IGpuShaderAbi> {
@@ -671,10 +670,10 @@ fn packed_color_footprint_uses_webgpu_alignment() {
         .unwrap(),
     );
     let (_controller, factory) = client(&device, RenderClientLimits::default());
-    let code = r#"
-@vertex fn vs(@location(0) color: vec4<f32>) -> @builtin(position) vec4<f32> { return vec4<f32>(color.xy, 0.0, 1.0); }
-@fragment fn fs() -> @location(0) vec4<f32> { return vec4<f32>(1.0); }
-"#;
+    let code = r#"(module
+  (vertex vs ((color vec4 (location 0))) (returns vec4 (builtin position))
+    (return (vec4 (. color xy) 0.0 1.0)))
+  (fragment fs () (returns vec4 (location 0)) (return (vec4 1.0))))"#;
     let (input, _, _) = source(code.as_bytes().to_vec(), ReadMode::Exact);
     let vertex = factory
         .create_shader(GpuShaderStage::Vertex, input.as_com_ref(), NcCopyFromBufferOffset::new(0, b"vs"))
@@ -722,13 +721,12 @@ fn independent_shader_stages_require_matching_interpolation() {
         .unwrap(),
     );
     let (_controller, factory) = client(&device, RenderClientLimits::default());
-    for (vertex_interpolation, expected) in [("@interpolate(flat)", false), ("", true)] {
+    for (vertex_interpolation, expected) in [("(interpolate flat)", false), ("", true)] {
         let code = format!(
-            r#"
-struct V {{ @builtin(position) p:vec4<f32>, @location(0) {vertex_interpolation} color:vec4<f32> }}
-@vertex fn vs() -> V {{ return V(vec4<f32>(0.0,0.0,0.5,1.0),vec4<f32>(1.0)); }}
-@fragment fn fs(@location(0) color:vec4<f32>) -> @location(0) vec4<f32> {{ return color; }}
-"#
+            r#"(module
+  (struct V (p vec4 (builtin position)) (color vec4 (location 0) {vertex_interpolation}))
+  (vertex vs () (returns V) (return (V (vec4 0.0 0.0 0.5 1.0) (vec4 1.0))))
+  (fragment fs ((color vec4 (location 0))) (returns vec4 (location 0)) (return color)))"#
         );
         let input = crate::gpu::source::Bytes::source(code.into_bytes());
         let vertex = factory
@@ -939,17 +937,13 @@ fn typed_binding_payloads_match_reflection_and_fail_without_leaking_quota() {
     let device = GpuDevice::new(crate::gpu::testing::Core::with_target(ShaderTarget::Wgsl)).unwrap();
     let (_controller, factory) = client(&device, Default::default());
     let code = Upload::source(
-        br#"
-        struct Params { color: vec4<f32> }
-        @group(3) @binding(0) var<uniform> params: Params;
-        @group(2) @binding(0) var image: texture_2d<f32>;
-        @group(2) @binding(1) var image_sampler: sampler;
-        @vertex fn vs() -> @builtin(position) vec4<f32> { return vec4(0.,0.,0.,1.); }
-        @fragment fn fs() -> @location(0) vec4<f32> {
-            return params.color * textureSample(image, image_sampler, vec2(0.5));
-        }
-    "#
-        .to_vec(),
+        br#"(module
+  (struct Params (color vec4))
+  (uniform params Params fragment 0)
+  (texture image fragment 0)
+  (vertex vs () (returns vec4 (builtin position)) (return (vec4 0.0 0.0 0.0 1.0)))
+  (fragment fs () (returns vec4 (location 0)) (return (* (. params color) (sample image (vec2 0.5))))))"#
+            .to_vec(),
     );
     let vertex = factory
         .create_shader(GpuShaderStage::Vertex, code.as_com_ref(), NcCopyFromBufferOffset::new(0, b"vs"))
