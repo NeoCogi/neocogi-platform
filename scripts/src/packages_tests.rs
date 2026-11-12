@@ -2,6 +2,25 @@
 use super::*;
 use flate2::{Compression, write::GzEncoder};
 
+/// Cargo's receipt must name the normal native cdylib; examples and metadata cannot mask a missing library.
+#[test]
+fn normal_platform_artifact_is_required() {
+    let path = format!("/output/{}nc_platform.{}", std::env::consts::DLL_PREFIX, std::env::consts::DLL_EXTENSION);
+    let receipt = serde_json::json!({
+        "reason": "compiler-artifact",
+        "target": { "name": "nc_platform", "kind": ["cdylib"] },
+        "filenames": ["/output/libnc_platform.rmeta", path]
+    });
+    let output = format!("{{\"reason\":\"build-finished\",\"success\":true}}\n{receipt}\n");
+    assert_eq!(platform_artifact(output.as_bytes()).unwrap(), PathBuf::from(&path));
+    assert!(platform_artifact(format!("{receipt}\n{receipt}\n").as_bytes()).is_err());
+    let mut example = receipt.clone();
+    example["target"]["kind"] = serde_json::json!(["example"]);
+    assert!(platform_artifact(example.to_string().as_bytes()).is_err());
+    assert!(platform_artifact(b"").is_err());
+    assert!(platform_artifact(b"not JSON").is_err());
+}
+
 /// Fixture registry identity, independently checked against the archived manifest.
 fn package(name: &str) -> Package {
     Package {

@@ -26,8 +26,8 @@ compiled Rust bindings, shared helpers and optional build-support APIs. The SDK
 archive owns implementations and focused tests without a build script or copies
 of generated bindings. Dynamic/build consumers use only the contracts crate; it has
 no SDK, Naga, SDL or graphics dependency in any feature configuration. The shim
-archive includes backend-named platform examples, with the selected feature and
-`--examples` choosing the final shared library.
+archive exposes one normal `nc_platform` cdylib target. Its selected backend
+feature controls the implementation while its filename remains backend-independent.
 
 All packages include their README and combined license notices.
 Their explicit manifest include lists keep repository documentation outside the
@@ -56,8 +56,11 @@ ownership, extracts them outside this checkout and uses only extracted contents
 for internal registry patches. It builds all targets, runs focused SDK tests and
 executes an independent generated COM consumer with retained shader exports and
 real build-script resource staging, including restoration of deleted outputs and
-propagation of changed authored bytes through Cargo rebuilds. The optional stable
-run validates the same consumer without repository nightly configuration. It does not claim all native
+propagation of changed authored bytes through Cargo rebuilds. It also builds the
+shim as a nonmember registry-style dependency with ordinary `cargo build --lib`,
+reads Cargo's artifact receipt, loads the actual library, and calls its built-in
+compiler through independently generated COM bindings. The optional stable run
+builds both the shim and consumer without repository nightly configuration. It does not claim all native
 adapters or browser execution are qualified on stable.
 
 Native builds require SDL2 development libraries; Vulkan needs its loader.
@@ -67,12 +70,11 @@ Rust and have no proc-macro tracking or Cargo artifact-dependency requirement.
 
 ## Deployment and publication
 
-Before dynamic acceptance, run `cargo build -p neocogi-platform-dylib --no-default-features --features glow --examples`
+Before dynamic acceptance, run `cargo build -p neocogi-platform-dylib --no-default-features --features glow`
 (or vulkan/wgpu), then build/run applications with the same target/profile and
-dynamic assembly. Runtime backend selection uses --backend, independently of the
-example executable's features. Qualify the same dynamic-only executable with
-multiple separately built backend libraries and verify ambiguous/missing choices
-reject before asset/HDR work. Copy the executable with its `lib` and optional assets
+dynamic assembly. The shim's Cargo features choose its backend; optional runtime
+--backend verifies that choice. Qualify automatic descriptor identification and
+mismatched requests before asset/HDR work. Copy the executable with its `lib` and optional assets
 folders. Load only the selected platform; its renderer owns compilation and
 has no external compiler plugin dependency. See [native staging](../contracts/NATIVE_LAYOUT.md).
 
@@ -84,7 +86,7 @@ COM/host/IDL dependencies remain the published exact `0.1.0` versions. A success
 
 Shader qualification must include isolated `shader-wgsl`, `shader-spirv` and
 `shader-glsl` compiler graphs. GPU features forward the selected target, and no
-release compiler should enable all outputs implicitly. Stage the backend-suffixed
+release compiler should enable all outputs implicitly. Stage the normal
 platform library including its compiler. Requests never select an output; results
 identify it for backend validation. Rebuild generated consumers and platforms for
 the contract replacement introduced in the alphas; all NCIDL versions remain 1.

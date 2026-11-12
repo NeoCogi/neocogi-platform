@@ -8,7 +8,7 @@ the repository root, `cargo tools` expands to
 | Command | Behavior |
 | --- | --- |
 | `cargo tools fetch-gltf-examples [--output DIR]` | Download the pinned models/HDR over Rust HTTPS, verify SHA-256, then atomically install each file. Verified cached files need no network. |
-| `cargo tools check-packages [--offline] [--allow-dirty] [--stable-toolchain stable]` | Construct and inspect the three release archives, extract outside the checkout, and build/test them with an independent generated COM consumer. Never publishes. |
+| `cargo tools check-packages [--offline] [--allow-dirty] [--stable-toolchain stable]` | Construct and inspect the three release archives, extract outside the checkout, and build/test them with an independent generated COM consumer, including a normally built and dynamically loaded platform library. Never publishes. |
 | `cargo tools install-wasm-bindgen` | Install `wasm-bindgen-cli` at the exact workspace pin using Cargo. |
 | `cargo tools test-browser [--browser PATH] [--wasm-bindgen PATH]` | Build the real Wasm fixture, generate web bindings and execute DOM/WebGL/audio tests in headless Chrome/Chromium with fake microphone devices. |
 | `cargo tools lldb-source-map EXECUTABLE [--output FILE]` | Translate Cargo's adjacent `.trim-paths.json` into native LLDB commands; absent sidecars produce no commands. |
@@ -26,6 +26,9 @@ schema ownership before extraction. Only contracts, SDK and final shims are
 release packages; this tools package and application/test fixtures stay private.
 Qualification uses one target directory sequentially, removes its temporary
 workspace, and tests staging restoration plus propagation of changed input bytes.
+The shim is resolved as a nonmember registry dependency, built as a normal
+library, then loaded through its real COM export by the independent consumer.
+The stable option builds and runs both the library and caller on stable.
 
 The browser runner requires exactly one `<pre id="result">PASS</pre>` in the
 captured DOM. Missing/stuck/failed or duplicate results, mismatched binding tools,

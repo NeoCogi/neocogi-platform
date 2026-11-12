@@ -8,6 +8,8 @@ neocogi-platform-contracts = { version = "=0.2.0", default-features = false }
 neocogi-com = { version = "=0.1.0", features = ["std", "macros", "runtime"] }
 neocogi-com-host = "=0.1.0"
 neocogi-platform = { version = "=0.2.0", default-features = false, features = ["shader-compiler", "shader-wgsl", "audio"] }
+# A deployment artifact selected with cargo build -p, never imported as a Rust API.
+neocogi-platform-dylib = { version = "=0.2.0", default-features = false, features = ["glow"] }
 [build-dependencies]
 neocogi-platform-contracts = { version = "=0.2.0", default-features = false, features = ["build-support"] }
 serde_json = "1"

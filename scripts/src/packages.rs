@@ -176,6 +176,26 @@ fn copy_tree(source: &Path, destination: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Read Cargo's artifact receipt for the one normal platform cdylib, without assuming a profile path.
+/// Library-example targets and intermediate metadata cannot satisfy the packaged-library check.
+fn platform_artifact(output: &[u8]) -> Result<PathBuf> {
+    let mut artifact = None;
+    for line in output.split(|byte| *byte == b'\n').filter(|line| !line.is_empty()) {
+        let message: serde_json::Value = serde_json::from_slice(line).context("invalid Cargo JSON message")?;
+        if message["reason"] != "compiler-artifact" || message["target"]["name"] != "nc_platform" || message["target"]["kind"] != serde_json::json!(["cdylib"])
+        {
+            continue;
+        }
+        for filename in message["filenames"].as_array().context("missing Cargo artifact filenames")? {
+            let filename = PathBuf::from(filename.as_str().context("artifact filename is not a string")?);
+            if filename.extension().and_then(|value| value.to_str()) == Some(std::env::consts::DLL_EXTENSION) {
+                ensure!(artifact.replace(filename).is_none(), "multiple normal platform libraries in Cargo output");
+            }
+        }
+    }
+    artifact.context("Cargo did not produce the normal platform cdylib")
+}
+
 /// Construct, inspect and exercise actual Cargo archives from an isolated temporary workspace.
 pub(crate) fn qualify(allow_dirty: bool, offline: bool, stable: Option<&str>) -> Result<()> {
     use crate::process::{capture, cargo, run};
@@ -197,6 +217,7 @@ pub(crate) fn qualify(allow_dirty: bool, offline: bool, stable: Option<&str>) ->
     let packages = outside.path().join("packages");
     fs::create_dir(&packages)?;
     let mut members = vec!["consumer".to_owned()];
+    let mut excluded = Vec::new();
     let mut manifest = toml::toml! { workspace = { resolver = "3" } };
     let mut patches = toml::map::Map::new();
     for (name, package) in &selected {
@@ -206,7 +227,13 @@ pub(crate) fn qualify(allow_dirty: bool, offline: bool, stable: Option<&str>) ->
         // duplicate members and parent traversal before any archive bytes are unpacked.
         tar::Archive::new(GzDecoder::new(fs::File::open(&archive)?)).unpack(&packages)?;
         let path = format!("packages/{prefix}");
-        members.push(path.clone());
+        if *name == "neocogi-platform-dylib" {
+            // The shim must also work as a consumer's registry dependency, rather
+            // than relying on being a member of this repository's workspace.
+            excluded.push(toml::Value::String(path.clone()));
+        } else {
+            members.push(path.clone());
+        }
         let mut dependency = toml::map::Map::new();
         dependency.insert("path".into(), toml::Value::String(path));
         patches.insert((*name).to_owned(), toml::Value::Table(dependency));
@@ -216,6 +243,10 @@ pub(crate) fn qualify(allow_dirty: bool, offline: bool, stable: Option<&str>) ->
         .and_then(toml::Value::as_table_mut)
         .expect("authored workspace table")
         .insert("members".into(), toml::Value::Array(members.into_iter().map(toml::Value::String).collect()));
+    manifest["workspace"]
+        .as_table_mut()
+        .expect("authored workspace table")
+        .insert("exclude".into(), toml::Value::Array(excluded));
     manifest.insert(
         "patch".into(),
         toml::Value::Table(toml::map::Map::from_iter([("crates-io".into(), toml::Value::Table(patches))])),
@@ -232,14 +263,18 @@ pub(crate) fn qualify(allow_dirty: bool, offline: bool, stable: Option<&str>) ->
     }
     run(&mut clean)?;
     let execute = |toolchain: &str, arguments: &[&str]| -> Result<()> {
+        // Cargo options must precede the executable's argument separator; otherwise
+        // --target-dir reaches the consumer and silently creates a second build tree.
+        let (cargo_arguments, executable_arguments) = arguments.split_at(arguments.iter().position(|argument| *argument == "--").unwrap_or(arguments.len()));
         run(cargo(Some(toolchain))
             .current_dir(outside.path())
-            .args(arguments)
+            .args(cargo_arguments)
             // Archive qualification must not depend on a desktop audio daemon or physical microphone.
             .env("SDL_AUDIODRIVER", "dummy")
             .args(&flags)
             .arg("--target-dir")
-            .arg(&metadata.target_directory))
+            .arg(&metadata.target_directory)
+            .args(executable_arguments))
     };
     execute(toolchain, &["build", "--workspace", "--all-targets"])?;
     execute(toolchain, &["test", "-p", CONTRACTS, "--features", "build-support,test-support"])?;
@@ -258,15 +293,49 @@ pub(crate) fn qualify(allow_dirty: bool, offline: bool, stable: Option<&str>) ->
             "test-support,platform,glow,shader-spirv",
         ],
     )?;
-    let consumer = ["run", "-p", "neocogi-package-consumer"];
+    // Build the shim as an ordinary library from extracted registry-style inputs.
+    // Read the final path from Cargo rather than accepting a library-example artifact.
+    let library = |toolchain: &str| -> Result<PathBuf> {
+        platform_artifact(&capture(
+            cargo(Some(toolchain))
+                .current_dir(outside.path())
+                .args(["build", "--lib", "-p", "neocogi-platform-dylib", "--message-format=json"])
+                .args(&flags)
+                .arg("--target-dir")
+                .arg(&metadata.target_directory),
+        )?)
+    };
+    let platform = library(toolchain)?;
+    let consumer = [
+        "run",
+        "-p",
+        "neocogi-package-consumer",
+        "--",
+        platform.to_str().context("platform path is not UTF-8")?,
+    ];
     execute(toolchain, &consumer)?;
     fs::remove_file(outside.path().join("consumer/staged/asset.txt"))?;
     execute(toolchain, &consumer)?;
     fs::write(outside.path().join("consumer/asset.txt"), b"changed packaged staging input\n")?;
     execute(toolchain, &consumer)?;
     if let Some(stable) = stable {
-        execute(stable, &consumer)?;
+        // Qualify the actual stable-built plugin as well as the stable-built caller.
+        let platform = library(stable)?;
+        execute(
+            stable,
+            &[
+                "run",
+                "-p",
+                "neocogi-package-consumer",
+                "--",
+                platform.to_str().context("stable platform path is not UTF-8")?,
+            ],
+        )?;
     }
+    ensure!(
+        !outside.path().join("target").exists(),
+        "package qualification created a second target directory"
+    );
     println!(
         "PASS: {} archives and external consumer; internal sources came only from extracted archives",
         selected.len()

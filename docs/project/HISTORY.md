@@ -1,5 +1,16 @@
 # Unreleased
 
+## Normal platform library packaging
+
+The shim now exposes only its normal `nc_platform` cdylib. Backend features select
+the implementation inside `libnc_platform.so` (target-specific suffix/prefix on
+macOS/Windows). The backend-named library-example targets are removed; ordinary
+`cargo build -p neocogi-platform-dylib` builds the deployable library. Dynamic
+examples stage that one output and identify its backend through the descriptor.
+Optional `--backend` verifies the compiled backend rather than choosing another
+file. Package qualification builds and loads the shim as a consumer's registry-style
+dependency outside the repository workspace on nightly and stable.
+
 ## S-expression shader COM plugin
 
 The renderer's Naga frontend/writers are replaced by the platform crate's bounded
@@ -84,10 +95,9 @@ version 1 during alpha, so rebuild generated clients and providers together.
   are reconstructed in each consumer's OUT_DIR. See
   [component ownership](../architecture/COMPONENTS.md) and
   [native staging](../contracts/NATIVE_LAYOUT.md).
-- Build backend-named shim library examples before running dynamic applications,
-  using the same profile and target. Dynamic examples need only `dynamic`; the
-  sole deployed backend or an explicit `--backend` chooses the library at
-  startup. The renderer owns compilation inside that platform library; remove
+- Build the shim's normal library before running dynamic applications, using
+  the same profile and target. Dynamic examples need only `dynamic`; the library's
+  feature selects the backend and optional `--backend` verifies its descriptor. The renderer owns compilation inside that platform library; remove
   external compiler registration and deployment. Current two-command invocations
   are in [native staging](../contracts/NATIVE_LAYOUT.md) and the
   [native examples](../../examples/native/README.md).
@@ -246,7 +256,10 @@ the external compiler and request-target arrangements described in older entries
 
 # Native builds with ordinary Cargo
 
-Dynamic examples now use two standard Cargo commands: build the shim package's
+The library-example packaging described here is superseded by the normal
+`nc_platform` library target in Unreleased above.
+
+Dynamic examples used two standard Cargo commands: build the shim package's
 backend-named library examples, then build/run the application with the same
 backend/profile/target. The application's Rust build script stages the exact
 prebuilt pair and tracks inputs and deployed outputs for rebuilds. The Python

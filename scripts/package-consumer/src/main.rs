@@ -1,5 +1,5 @@
 //! Runs independently generated COM calls against packaged platform and renderer providers.
-use neocogi_com::{ComPtr, INcBytesComPtrExt, NcCopyFromBufferOffset, Runtime, NC_OK};
+use neocogi_com::{ComPtr, INcBytesComPtrExt, INcStringComPtrExt, NcCopyFromBufferOffset, Runtime, NC_OK};
 
 /// Consumer-owned generated definitions negotiate by COM identity.
 #[allow(dead_code, clippy::len_without_is_empty)]
@@ -80,10 +80,51 @@ fn typed_pipeline_contract() {
     );
 }
 
+/// A normal packaged cdylib exposes the built-in compiler through independently generated COM bindings.
+/// No SDK descriptor registration or renderer linkage in the caller supplies the loaded provider.
+fn dynamic_platform_contract(runtime: Runtime, path: std::path::PathBuf) {
+    // SAFETY: The qualification command supplies the trusted library built from the extracted shim archive.
+    // Runtime validates its descriptor and pins the provider code for process lifetime.
+    let id = unsafe { runtime.load_plugin_library(path) };
+    assert_eq!(id, neocogi_com::guid_from_qualified_name("neocogi.platform.glow"));
+    let platform = runtime.acquire_plugin_root::<platform_client::PlatformAbi>(id).unwrap();
+    let factory = platform.query::<client::ShaderCompilerFactoryAbi>().unwrap();
+    drop(platform);
+    let compiler = factory.create(client::ShaderTarget::GlslEs300).unwrap();
+    drop(factory);
+    let request = client::ShaderCompileRequest {
+        stage: client::GpuShaderStage::Vertex,
+        max_output_bytes: 4194304,
+    };
+    let source = b"(module (vertex vs () (returns vec4 (builtin position)) (return (vec4 0.25 0.5 0.75 1.0))))";
+    let report = compiler
+        .compile_result(request, NcCopyFromBufferOffset::new(0, source), NcCopyFromBufferOffset::new(0, b"vs"))
+        .unwrap();
+    assert_eq!(report.status().unwrap(), NC_OK.code());
+    assert_eq!(report.target().unwrap(), client::ShaderTarget::GlslEs300);
+    let code = report.code().unwrap();
+    drop(report);
+    let error = compiler
+        .compile_result(request, NcCopyFromBufferOffset::new(0, b"(module"), NcCopyFromBufferOffset::new(0, b"vs"))
+        .unwrap();
+    assert_eq!(error.status().unwrap(), neocogi_com::NC_E_INVALID_ARG.code());
+    let diagnostic = error.diagnostic().unwrap();
+    drop((error, compiler));
+    let emitted = code.to_vec().unwrap();
+    let emitted = std::str::from_utf8(&emitted).unwrap();
+    assert!(emitted.starts_with("#version 300 es"));
+    assert!(emitted.contains("0.25"));
+    assert!(diagnostic.to_string().unwrap().contains("unclosed parenthesis"));
+    println!("PASS: normal packaged platform library and independent COM factory calls");
+}
+
 /// Retained artifact exports stay usable after their report and compiler are released.
 fn main() {
     // SAFETY: This executable owns the process-lived immutable host tables.
-    let _runtime = unsafe { Runtime::__from_host_api(neocogi_com_host::initialize_process()) }.unwrap();
+    let runtime = unsafe { Runtime::__from_host_api(neocogi_com_host::initialize_process()) }.unwrap();
+    if let Some(path) = std::env::args_os().nth(1) {
+        dynamic_platform_contract(runtime, path.into());
+    }
     typed_pipeline_contract();
     let audio = neocogi_platform::audio::capabilities()
         .unwrap()

@@ -261,3 +261,13 @@ consumers of extracted package archives passed, including nightly and stable
 package checks. CI enforces the direct validators, native WGSL validation, and
 the complete Vulkan library's COM lifetime and byte limit; other backend and
 target sizes require their own qualification.
+
+The same day's normal-library packaging qualification retained the 399,720-byte
+Vulkan result as `libnc_platform.so`, with the same sole COM discovery export.
+All three min-size applications identified Vulkan automatically and rendered
+three frames each. Relocated dynamic examples and descriptor/missing-library
+regressions passed on Glow, Vulkan, and WGPU. Independently generated COM callers
+built and loaded the shim as a nonmember registry-style dependency from extracted
+archives on both nightly and stable, retaining code and diagnostics after provider
+release. These checks use one shared Cargo target directory; library-example
+targets are no longer part of packaging or qualification.
