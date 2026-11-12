@@ -178,7 +178,7 @@ fn copy_tree(source: &Path, destination: &Path) -> Result<()> {
 
 /// Read Cargo's artifact receipt for the one normal platform cdylib, without assuming a profile path.
 /// Library-example targets and intermediate metadata cannot satisfy the packaged-library check.
-fn platform_artifact(output: &[u8]) -> Result<PathBuf> {
+pub(crate) fn platform_artifact(output: &[u8]) -> Result<PathBuf> {
     let mut artifact = None;
     for line in output.split(|byte| *byte == b'\n').filter(|line| !line.is_empty()) {
         let message: serde_json::Value = serde_json::from_slice(line).context("invalid Cargo JSON message")?;
@@ -287,6 +287,10 @@ pub(crate) fn qualify(allow_dirty: bool, offline: bool, stable: Option<&str>) ->
             "compiler",
             "--test",
             "shader_targets",
+            "--test",
+            "sexp_compiler",
+            "--test",
+            "shader_optimization",
             "-p",
             "neocogi-platform",
             "--features",

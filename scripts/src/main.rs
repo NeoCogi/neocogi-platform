@@ -8,6 +8,7 @@ mod browser;
 mod local_sources;
 mod packages;
 mod process;
+mod shader_perf;
 mod source_map;
 
 use anyhow::{Context, Result};
@@ -26,6 +27,33 @@ struct Arguments {
 /// Each operation owns its own files and external tool requirements.
 #[derive(Subcommand)]
 enum Operation {
+    /// Qualify every example shader and compare min-size native workloads with perf and driver costs.
+    ProfileShaders {
+        /// Backend compiled into the one platform library.
+        #[arg(long, value_enum, default_value = "vulkan")]
+        backend: shader_perf::Backend,
+        /// Fresh report/deployment directory outside Cargo targets.
+        #[arg(long)]
+        output: PathBuf,
+        /// Optional prior deployment containing the same three applications and lib/nc_platform.
+        #[arg(long)]
+        reference: Option<PathBuf>,
+        /// Rendered frames per timed application invocation; startup is included explicitly.
+        #[arg(long, default_value_t = 300)]
+        frames: u32,
+        /// Alternating repetitions per application and variant, after warmup.
+        #[arg(long, default_value_t = 3)]
+        runs: u32,
+        /// Maximum candidate/reference median elapsed-time ratio when a reference is supplied.
+        #[arg(long, default_value_t = 1.2)]
+        max_slowdown: f64,
+        /// Collect Linux perf task-clock and context-switch counters for each timed run.
+        #[arg(long)]
+        perf: bool,
+        /// Require Intel driver diagnostics, zero spills and at most 4096 instructions per shader.
+        #[arg(long)]
+        intel_stats: bool,
+    },
     /// Fetch pinned glTF/HDR assets, preserving existing files unless checksums pass.
     FetchGltfExamples {
         /// Destination directory; defaults to examples/native/gltf/assets.
@@ -88,6 +116,25 @@ fn bindgen_version() -> Result<String> {
 /// Dispatch explicitly selected operations and return owned, contextual errors.
 fn main() -> Result<()> {
     match Arguments::parse().command {
+        Operation::ProfileShaders {
+            backend,
+            output,
+            reference,
+            frames,
+            runs,
+            max_slowdown,
+            perf,
+            intel_stats,
+        } => shader_perf::run(shader_perf::Options {
+            backend,
+            output,
+            reference,
+            frames,
+            runs,
+            max_slowdown,
+            perf,
+            intel_stats,
+        }),
         Operation::FetchGltfExamples { output } => assets::fetch(&output.unwrap_or_else(|| root().join("examples/native/gltf/assets"))),
         Operation::CheckPackages { allow_dirty, offline, stable_toolchain } => packages::qualify(allow_dirty, offline, stable_toolchain.as_deref()),
         Operation::TestBrowser { browser, wasm_bindgen } => browser::run(browser, wasm_bindgen),

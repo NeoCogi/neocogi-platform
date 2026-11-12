@@ -10,6 +10,14 @@ evaluation retain their semantics. Structural budgets and real native/WebGL
 pixels exercise the same aggregate corpus, and the applications share one exact
 production shader inventory with qualification tests.
 
+`cargo tools profile-shaders` validates that inventory, builds normal min-size
+libraries, compares all three applications with a preserved reference and retains
+raw samples, perf counters and optional Intel instruction/spill diagnostics.
+On the qualified Intel Arc/Mesa system, Vulkan BrainStem improves from 14.8 to
+83.3 FPS with zero shader spills; all backend comparisons pass. The complete
+Vulkan library is 415,432 bytes. See the shader contract for conditions and all
+backend measurements.
+
 ## Normal platform library packaging
 
 The shim now exposes only its normal `nc_platform` cdylib. Backend features select

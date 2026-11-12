@@ -36,7 +36,8 @@ jobs:
       - name: Formatting and direct backend validation
         run: |
           cargo fmt --all -- --check
-          NEOCOGI_SHADER_VALIDATORS=1 cargo test --locked -p neocogi-platform --features test-support,shader-glsl,shader-spirv --test compiler --test sexp_compiler --test compiler_plugin --test gpu_shader_budget
+          NEOCOGI_SHADER_VALIDATORS=1 cargo test --locked -p neocogi-platform --features test-support,shader-glsl,shader-spirv --test compiler --test sexp_compiler --test compiler_plugin --test gpu_shader_budget --test shader_optimization
+          NEOCOGI_SHADER_VALIDATORS=1 cargo test --locked -p neocogi-platform-examples --no-default-features --features static,vulkan,test-support,provider/shader-wgsl,provider/shader-glsl,provider/shader-spirv --test shader_corpus
       - name: Built-in Vulkan COM compiler and complete platform byte cap
         run: |
           cargo build --locked -p neocogi-platform-dylib --no-default-features --features vulkan --profile min-size
@@ -87,7 +88,7 @@ jobs:
           cargo tools fetch-gltf-examples
       - name: glTF import, arcball and native pixel regressions
         run: |
-          xvfb-run -a cargo test --locked -p neocogi-platform-examples --test gltf_scene --test gltf_environment --test gltf_material --test gltf_camera --test gltf_viewer --no-default-features --features static,${{ matrix.backend }},test-support -- --include-ignored --test-threads=1
+          xvfb-run -a cargo test --locked -p neocogi-platform-examples --test shader_corpus --test gltf_scene --test gltf_environment --test gltf_material --test gltf_camera --test gltf_viewer --no-default-features --features static,${{ matrix.backend }},test-support -- --include-ignored --test-threads=1
       - name: Standalone glTF applications
         run: |
           xvfb-run -a cargo run --locked -p neocogi-platform-examples --bin gltf_damaged_helmet --no-default-features --features static,${{ matrix.backend }} -- --frames 3

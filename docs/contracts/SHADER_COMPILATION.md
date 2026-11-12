@@ -305,3 +305,67 @@ built and loaded the shim as a nonmember registry-style dependency from extracte
 archives on both nightly and stable, retaining code and diagnostics after provider
 release. These checks use one shared Cargo target directory; library-example
 targets are no longer part of packaging or qualification.
+
+## Performance qualification
+
+`cargo tools profile-shaders` qualifies the exact production inventory exposed by
+`examples/native/src/shaders.rs`: Triangle, the skinned PBR mesh and HDR skybox,
+including shared lighting helpers. The applications consume these same sources;
+qualification cannot silently substitute a simpler shader. The corpus also
+contains twelve aggregate workloads covering nested fields, captured indices,
+private snapshots, computed indexing and helpers with branches, nested loops,
+early returns, short-circuiting and writable indices.
+
+CI checks GLSL/SPIR-V validity, bounded private storage and palette-capacity
+independence. Actual native Vulkan/GLES3/WGPU and Chromium WebGL2 executions check
+the corpus pixels through the production COM compiler, pipelines and recording.
+WGPU additionally validates generated WGSL for eager derivative arguments and
+helper expansion falling back at its depth bound. Existing operator, diagnostic,
+reflection, quota and ownership suites remain required.
+
+For hardware qualification, fetch the assets and run, for each backend:
+
+```sh
+cargo tools profile-shaders --backend vulkan --output /tmp/shaders-current \
+  --reference /tmp/shaders-previous/candidate --perf --intel-stats
+```
+
+Use `glow` and `wgpu` for the other backends. The command builds the normal single
+min-size library, exports all three shader encodings, and runs Triangle, Damaged
+Helmet and BrainStem. It alternates reference/candidate samples after warmup,
+uses a fixed pose, requires all requested frames to render, and retains every raw
+sample. Timings include process startup, presentation and teardown. Frame pacing
+can limit throughput, so separate driver diagnostics check every reported SIMD
+variant for zero spills/fills and at most 4096 instructions. A supplied reference
+also enforces a configurable median elapsed-time ratio, default 1.2. See
+[the tools guide](../../scripts/README.md) for requirements and report layout.
+
+These workload gates do not establish a performance bound on arbitrary source
+programs. Intel diagnostics require an appropriate Mesa driver; other devices
+need equivalent native profiler evidence. Reports and copied deployments belong
+outside Cargo targets so they survive the required clean builds.
+
+On 2026-11-12, Intel Arc Meteor Lake with Mesa 26.0.8, Linux 7.0.0-42 and
+rustc 1.102.0-nightly (`3ef0c22cd`) passed these gates against unoptimized source
+`10eba17`. Each value is the median of three alternating 300-frame process runs,
+after three-frame warmups, with cached HDR data and animation time 1. Builds and
+uncached driver diagnostics ran separately from timing.
+
+| Backend | Triangle FPS, before → after | Helmet FPS, before → after | BrainStem FPS, before → after | Complete library bytes |
+| --- | --- | --- | --- | --- |
+| Vulkan / SPIR-V | 869.0 → 921.2 | 63.4 → 76.9 | 14.8 → 83.3 | 415,432 |
+| GLES3 / GLSL ES3 | 56.9 → 56.0 | 47.5 → 47.8 | 55.0 → 55.4 | 471,872 |
+| WGPU / WGSL | 777.4 → 741.2 | 74.2 → 74.2 | 67.1 → 67.7 | 2,351,376 |
+
+All three applications passed the 1.2 elapsed-time ratio gate on every backend.
+Every reported native shader variant had zero spills/fills and fewer than 4096
+instructions. The Vulkan mesh vertex shader fell from 20,215 instructions,
+4181 spills and 298 fills to 319 instructions without spills. Its complete
+library remains below 524,288 bytes, as does GLES3; WGPU includes its larger
+native translation stack and has a separately reported size. These measurements
+qualify this device/driver combination, rather than predicting other hardware.
+
+Raw reports, all emitted corpus artifacts, deployments, Intel dumps and per-run
+perf counters are retained locally under `/tmp/neocogi-shader-optimization/`
+in `qualified-vulkan/`, `qualified-glow/` and `qualified-wgpu/`. The reusable
+command regenerates this evidence; these temporary paths are not SDK inputs.

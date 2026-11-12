@@ -7,6 +7,7 @@ the repository root, `cargo tools` expands to
 
 | Command | Behavior |
 | --- | --- |
+| `cargo tools profile-shaders --backend vulkan --output DIR [--reference DIR] [--perf] [--intel-stats]` | Validate every production shader and aggregate workload, build the normal min-size library and applications, then measure repeated fixed-frame native runs. Retains artifacts, raw logs and a JSON report outside Cargo targets. |
 | `cargo tools fetch-gltf-examples [--output DIR]` | Download the pinned models/HDR over Rust HTTPS, verify SHA-256, then atomically install each file. Verified cached files need no network. |
 | `cargo tools check-packages [--offline] [--allow-dirty] [--stable-toolchain stable]` | Construct and inspect the three release archives, extract outside the checkout, and build/test them with an independent generated COM consumer, including a normally built and dynamically loaded platform library. Never publishes. |
 | `cargo tools install-wasm-bindgen` | Install `wasm-bindgen-cli` at the exact workspace pin using Cargo. |
@@ -19,6 +20,37 @@ external tar/gzip programs. Browser execution additionally requires Chrome or
 Chromium and the matching wasm-bindgen CLI. Package builds retain their ordinary
 native prerequisites, such as SDL2 development libraries. Downloads are explicit;
 application builds and build scripts never invoke these tools.
+
+Shader qualification requires fetched glTF assets, `glslangValidator`, `spirv-val`
+and a working native display/GPU. Choose `vulkan`, `glow` or `wgpu`; each invocation
+validates all three shader encodings before building only the selected library.
+The default is three 300-frame samples per application, with a three-frame warmup
+and fixed glTF animation time 1. Measurements include process startup/teardown;
+they are not GPU-only frame times. No builds run during timed workloads.
+
+```sh
+cargo tools fetch-gltf-examples
+cargo tools profile-shaders --backend vulkan --output /tmp/shaders-current \
+  --reference /tmp/shaders-previous/candidate --perf --intel-stats
+```
+
+The optional reference must be a trusted deployment of the same three programs,
+including its matching `lib/libnc_platform.so` and assets. Runs alternate reference
+and candidate. A candidate/reference median elapsed-time ratio above 1.2 fails;
+`--max-slowdown`, `--frames` and `--runs` set explicit qualification conditions.
+The report directory must be new or empty and outside Cargo targets. Copy its
+`candidate/` deployment before cleaning if it will be the next reference. Logs,
+all emitted corpus artifacts, library byte count and individual samples survive
+`cargo clean`.
+
+`--perf` requires Linux perf permissions and records task-clock/context switches
+for each timed run. `--intel-stats` requires an Intel Mesa driver providing
+`INTEL_DEBUG=vs,fs` diagnostics; a separate uncached run checks every reported SIMD
+variant for zero spills/fills and at most 4096 native instructions. Missing driver
+diagnostics fail this option. These are qualification gates for the shipped
+workloads, not universal limits on accepted user shaders. The complete Vulkan
+library must remain below 524288 bytes. Other vendors should use their native
+shader profiler and retain equivalent evidence.
 
 Package inspection rejects paths outside the versioned root, links, duplicate
 members, missing regular manifests/notices, nonregistry dependencies and duplicate

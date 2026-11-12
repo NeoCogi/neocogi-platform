@@ -41,6 +41,13 @@ verifies the deployed library's descriptor; it does not change the implementatio
 To change backends, rebuild the shim and application staging with the same profile.
 The dynamic executable has no backend implementation dependency and needs no
 source changes. Only Cargo and Rust are needed for building and staging libraries.
+
+For repeatable shader performance checks, use `cargo tools profile-shaders
+--backend vulkan --output /tmp/shaders-current` after fetching the assets. It
+validates the exact Triangle, mesh and skybox sources for all three shader outputs,
+then measures the three min-size applications. See [the tools guide](../../scripts/README.md)
+for reference comparisons, Linux perf counters and Intel instruction/spill gates.
+
 Startup checks the platform library and returns an owned error with
 the matching preparation command when a file is missing. This check runs before
 model import and HDR lighting preparation. It never starts Cargo from a build script
