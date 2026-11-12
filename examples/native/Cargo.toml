@@ -35,6 +35,10 @@ serde_json = "1"
 name = "deployment"
 required-features = ["dynamic"]
 
+[[test]]
+name = "shader_corpus"
+required-features = ["static", "test-support"]
+
 [[bin]]
 name = "deployment_probe"
 path = "tests/support/deployment_probe.rs"

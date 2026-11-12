@@ -270,6 +270,8 @@ pub fn device(compiler: neocogi_com::ComPtr<neocogi_platform::render::abi::Shade
 
 /// Canonical derivative inputs and recorders shared by native and browser acceptance.
 pub mod derivatives;
+/// Aggregate access, aliasing and helper-call semantics shared by every native backend.
+pub mod optimization;
 /// Real COM shader/image fixtures shared by native and browser acceptance.
 pub mod sampled;
 /// Exact logical uniform spans exercised through native GL and browser WebGL.

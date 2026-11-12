@@ -38,14 +38,7 @@ pub fn render_frames(window: ComPtr<IPlatformWindowAbi>, frames: u32) -> Result<
     let resources = domain.resources()?;
     let host = window.graphics_host()?;
     let broker = host.recording_broker()?;
-    let source = Bytes::source(
-        br#"(module
-  (vertex vs ((i u32 (builtin vertex_index))) (returns vec4 (builtin position))
-    (let p ((array vec2 3) (vec2 (- 0.8) (- 0.8)) (vec2 0.8 (- 0.8)) (vec2 0.0 0.8)))
-    (return (vec4 (index p i) 0.5 1.0)))
-  (fragment fs () (returns vec4 (location 0)) (return (vec4 0.2 0.7 1.0 1.0))))"#
-            .to_vec(),
-    );
+    let source = Bytes::source(neocogi_platform_examples::shaders::TRIANGLE.as_bytes().to_vec());
     let vertex = resources.create_shader(GpuShaderStage::Vertex, source.as_com_ref(), NcCopyFromBufferOffset::new(0, b"vs"))?;
     let fragment = resources.create_shader(GpuShaderStage::Fragment, source.as_com_ref(), NcCopyFromBufferOffset::new(0, b"fs"))?;
     let description = PipelineDesc::default().source()?;

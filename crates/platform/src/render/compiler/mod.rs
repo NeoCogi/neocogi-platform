@@ -2,8 +2,10 @@
 //! The platform COM plugin exposes this built-in service in static and shared-library builds.
 #![deny(missing_docs)]
 
+mod access;
 mod ir;
 mod objects;
+mod optimize;
 #[cfg(feature = "shader-spirv")]
 mod spv;
 mod syntax;
@@ -106,7 +108,8 @@ impl Compiler {
         }
         let available = budget.min(MAX_SHADER_ARTIFACT_BYTES).checked_sub(entry.len()).ok_or(CompileError::Limit)?;
         let root = syntax::parse(source).map_err(|d| CompileError::Invalid(d.render(source)))?;
-        let module = ir::Module::validate(&root).map_err(|d| CompileError::Invalid(d.render(source)))?;
+        let mut module = ir::Module::validate(&root).map_err(|d| CompileError::Invalid(d.render(source)))?;
+        optimize::run(&mut module);
         let index = module
             .functions
             .iter()

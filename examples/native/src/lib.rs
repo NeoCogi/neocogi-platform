@@ -2,6 +2,9 @@
 #![deny(missing_docs)]
 extern crate self as neocogi_platform_examples;
 
+/// Production shader sources and the lighting uniform layout, shared with qualification.
+pub mod shaders;
+
 /// SDK contracts and the implementations selected by this example assembly.
 #[cfg(all(
     feature = "static",

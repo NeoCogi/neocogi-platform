@@ -15,16 +15,9 @@ use std::{
     path::Path,
 };
 
-/// Includes the unfiltered source at roughness zero, then eight filtered GGX levels.
-pub const SPECULAR_LEVELS: usize = 9;
-/// The cosine-weighted radiance integral is irradiance / pi, ready to multiply by albedo.
-pub const DIFFUSE_REGION: usize = SPECULAR_LEVELS;
-/// R/G hold the scale/bias of the integrated GGX response (ordinary linear UNORM).
-pub const BRDF_REGION: usize = DIFFUSE_REGION + 1;
-/// All regions, including the unfiltered source used by the skybox.
-pub const REGION_COUNT: usize = BRDF_REGION + 1;
-/// Explicit vec4 rectangles followed by exposure, IBL intensity and two reserved scalars.
-pub const UNIFORM_BYTES: u32 = (REGION_COUNT as u32 + 1) * 16;
+/// Lighting layout is shared with the exact shader sources qualified by the native corpus.
+pub use neocogi_platform_examples::shaders::{SPECULAR_LEVELS, DIFFUSE_REGION, BRDF_REGION, REGION_COUNT, UNIFORM_BYTES};
+
 /// The renderer's portable RGBA8 image cap; cache validation uses this before allocation.
 const MAX_BYTES: usize = 64 * 1024 * 1024;
 /// Changes whenever sampling, encoding, layout or cache interpretation changes.

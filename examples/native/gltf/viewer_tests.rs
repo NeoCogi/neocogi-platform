@@ -297,12 +297,12 @@ fn hdr_interpolation_probe() {
     };
     let image = texture(&target.resources, Size { width: 2, height: 1 }, data.pixels.clone()).unwrap();
     let sampler = target.resources.create_sampler(GpuSamplerDesc::default()).unwrap();
-    let shader = Bytes::source(shader_source(
+    let shader = Bytes::source(neocogi_platform_examples::shaders::lighting(
         r#"
 (vertex vs ((index u32 (builtin vertex_index))) (returns vec4 (builtin position)) (let points ((array vec2 3) (vec2 (- 1.0) (- 1.0)) (vec2 3.0 (- 1.0)) (vec2 (- 1.0) 3.0))) (return (vec4 (index points index) 0.5 1.0)))
 (fragment fs () (returns vec4 (location 0)) (return (vec4 (/ (environment_tile 0u (vec2 0.5) true true) 8.0) 1.0)))
 "#,
-    ));
+    ).into_bytes());
     let vs = target
         .resources
         .create_shader(GpuShaderStage::Vertex, shader.as_com_ref(), NcCopyFromBufferOffset::new(0, b"vs"))

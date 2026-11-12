@@ -1,6 +1,8 @@
 //! WGSL and GLSL ES 3.00 writers sharing structural traversal, not native source parsing.
 use super::ir::*;
 #[cfg(any(test, feature = "shader-wgsl", feature = "shader-glsl"))]
+use super::access;
+#[cfg(any(test, feature = "shader-wgsl", feature = "shader-glsl"))]
 use super::CompileError;
 #[cfg(any(test, feature = "shader-wgsl", feature = "shader-glsl"))]
 use neocogi_platform_contracts::render::{
@@ -79,6 +81,30 @@ struct Writer<'a> {
     temp: usize,
     /// Current function index for stable local and type lookup.
     function: usize,
+    /// Immutable declaration aliases retain captured paths and indices instead of aggregate copies.
+    aliases: Vec<Option<ReadPath>>,
+}
+/// Proven bounds are shared by text reads and writes; constant cases emit no branch.
+#[cfg(any(test, feature = "shader-wgsl", feature = "shader-glsl"))]
+#[derive(Clone)]
+enum Bounds {
+    /// Every projection is statically in range.
+    Always,
+    /// At least one projection is statically out of range.
+    Never,
+    /// Captured scalar indices supply a runtime conjunction.
+    Dynamic(String),
+}
+/// A declaration-rooted text expression can select its leaf without intermediate aggregate temporaries.
+#[cfg(any(test, feature = "shader-wgsl", feature = "shader-glsl"))]
+#[derive(Clone)]
+struct ReadPath {
+    /// Native access expression, evaluated only when bounds permit.
+    value: String,
+    /// Bounds for the complete chain, including immutable aliases.
+    bounds: Bounds,
+    /// Uniforms and immutable snapshots cannot change between declaration and use.
+    stable: bool,
 }
 /// Emits one complete bounded text artifact.
 #[cfg(any(test, feature = "shader-wgsl", feature = "shader-glsl"))]
@@ -89,6 +115,7 @@ pub(crate) fn emit(m: &Module, index: usize, gl: bool, limit: usize) -> Result<S
         out: Output { text: String::new(), limit, error: None },
         temp: 0,
         function: index,
+        aliases: Vec::new(),
     };
     w.module(index);
     if let Some(error) = w.out.error { Err(error) } else { Ok(w.out.text) }
@@ -194,6 +221,18 @@ impl Writer<'_> {
         });
         id
     }
+    /// Capture reused operands once as immutable WGSL values; GLSL promotes the same local to SSA.
+    fn snapshot(&mut self, t: &Ty, value: &str) -> String {
+        let id = format!("nc_t{}", self.temp);
+        self.temp += 1;
+        let declaration = self.decl(t, &id);
+        self.line(if self.gl {
+            format!("{declaration} = {value};")
+        } else {
+            format!("let {declaration} = {value};")
+        });
+        id
+    }
     /// Interface qualifiers are emitted only on WGSL entry parameters and structure members.
     fn attribute(&self, binding: &Option<Binding>) -> String {
         match binding {
@@ -272,6 +311,7 @@ impl Writer<'_> {
         self.function = index;
         self.temp = 0;
         let f = &self.m.functions[index];
+        self.aliases = vec![None; f.locals.len()];
         let params = f
             .params
             .iter()
@@ -322,8 +362,38 @@ impl Writer<'_> {
     fn statements(&mut self, statements: &[Stmt]) {
         for statement in statements {
             match statement {
+                Stmt::Borrow(i, expression) => {
+                    if let Some(path) = self.read_path(expression) {
+                        self.aliases[*i] = Some(path);
+                    } else {
+                        let value = self.expr(expression);
+                        let decl = self.decl(&expression.ty, &format!("v{i}"));
+                        self.line(if self.gl {
+                            format!("{decl} = {value};")
+                        } else {
+                            format!("let {decl} = {value};")
+                        });
+                    }
+                }
                 Stmt::Let(i, value) => {
                     let local = &self.m.functions[self.function].locals[*i];
+                    if !local.mutable
+                        && let Some(expression) = value
+                        && let Some(path) = self.read_path(expression)
+                    {
+                        if path.stable {
+                            self.aliases[*i] = Some(path);
+                            continue;
+                        }
+                        let value = self.read(path, &local.ty);
+                        let decl = self.decl(&local.ty, &format!("v{i}"));
+                        self.line(if self.gl {
+                            format!("{decl} = {value};")
+                        } else {
+                            format!("let {decl} = {value};")
+                        });
+                        continue;
+                    }
                     let value = if let Some(e) = value { self.expr(e) } else { self.zero(&local.ty) };
                     let decl = self.decl(&local.ty, &format!("v{i}"));
                     self.line(if self.gl {
@@ -334,14 +404,11 @@ impl Writer<'_> {
                 }
                 Stmt::Store(target, value) => {
                     let value = self.expr(value);
-                    let mut guards = Vec::new();
-                    let target = self.lvalue(target, &mut guards);
-                    if !guards.is_empty() {
-                        self.line(format!("if ({}) {{", guards.join(" && ")));
-                    }
-                    self.line(format!("{target} = {value};"));
-                    if !guards.is_empty() {
-                        self.line("}");
+                    let path = self.read_path(target).expect("validated writable local path");
+                    match path.bounds {
+                        Bounds::Never => {}
+                        Bounds::Always => self.line(format!("{} = {value};", path.value)),
+                        Bounds::Dynamic(condition) => self.line(format!("if ({condition}) {{ {} = {value}; }}", path.value)),
                     }
                 }
                 Stmt::Return(value) => {
@@ -371,25 +438,75 @@ impl Writer<'_> {
         }
     }
     /// Index guards use unsigned comparisons to reject negative and oversized indices together.
-    fn index(&mut self, index: &Expr, count: u32) -> (String, String) {
+    fn index(&mut self, index: &Expr, count: u32) -> (String, Bounds) {
+        if let Some(index) = access::constant_index(index) {
+            return (format!("{index}u"), if index < count { Bounds::Always } else { Bounds::Never });
+        }
         let value = self.expr(index);
-        let value = self.temporary(&index.ty, Some(&value));
+        let value = self.snapshot(&index.ty, &value);
         let cast = if self.gl { "uint" } else { "u32" };
-        (value.clone(), format!("{cast}({value}) < {count}u"))
+        (value.clone(), Bounds::Dynamic(format!("{cast}({value}) < {count}u")))
     }
-    /// Writable paths collect bounds predicates; no indexed pointer is formed before admission.
-    fn lvalue(&mut self, e: &Expr, guards: &mut Vec<String>) -> String {
-        match &e.kind {
-            ExprKind::Local(i) => format!("v{i}"),
-            ExprKind::Field(base, i) => format!("{}.m{i}", self.lvalue(base, guards)),
-            ExprKind::Swizzle(base, lanes) => format!("{}.{}", self.lvalue(base, guards), Self::swizzle(lanes)),
-            ExprKind::Index(base, index, count) => {
-                let base = self.lvalue(base, guards);
-                let (index, guard) = self.index(index, *count);
-                guards.push(guard);
-                format!("{base}[{index}]")
+    /// Bounds compose without branches or comparisons for static projections.
+    fn and_bounds(a: Bounds, b: Bounds) -> Bounds {
+        match (a, b) {
+            (Bounds::Never, _) | (_, Bounds::Never) => Bounds::Never,
+            (Bounds::Always, other) | (other, Bounds::Always) => other,
+            (Bounds::Dynamic(a), Bounds::Dynamic(b)) => Bounds::Dynamic(format!("({a}) && ({b})")),
+        }
+    }
+    /// Capture every nested index before guarding one leaf access. Aliases reuse
+    /// their declaration-time indices, including when the source index later changes.
+    fn read_path(&mut self, expression: &Expr) -> Option<ReadPath> {
+        let path = access::path(expression)?;
+        let (mut result, mut parent) = match path.root {
+            access::Root::Local(i) => (
+                self.aliases[i].clone().unwrap_or_else(|| ReadPath {
+                    value: format!("v{i}"),
+                    bounds: Bounds::Always,
+                    stable: !self.m.functions[self.function].locals[i].mutable,
+                }),
+                &self.m.functions[self.function].locals[i].ty,
+            ),
+            access::Root::Uniform(i) => (
+                ReadPath {
+                    value: format!("nc_r{i}"),
+                    bounds: Bounds::Always,
+                    stable: true,
+                },
+                &self.m.resources[i].ty,
+            ),
+        };
+        for step in path.steps {
+            match step {
+                access::Step::Member { index, ty } => {
+                    result.value = if matches!(parent, Ty::Struct(_)) {
+                        format!("({}).m{index}", result.value)
+                    } else {
+                        format!("({}).{}", result.value, b"xyzw"[index as usize] as char)
+                    };
+                    parent = ty;
+                }
+                access::Step::Index { value, count, ty } => {
+                    let (index, bounds) = self.index(value, count);
+                    result.bounds = Self::and_bounds(result.bounds, bounds);
+                    result.value = format!("({})[{index}]", result.value);
+                    parent = ty;
+                }
             }
-            _ => unreachable!("validated lvalue"),
+        }
+        Some(result)
+    }
+    /// Only the selected leaf gets a zero/result temporary when runtime bounds need one.
+    fn read(&mut self, path: ReadPath, ty: &Ty) -> String {
+        match path.bounds {
+            Bounds::Always => path.value,
+            Bounds::Never => self.zero(ty),
+            Bounds::Dynamic(condition) => {
+                let result = self.temporary(ty, None);
+                self.line(format!("if ({condition}) {{ {result} = {}; }}", path.value));
+                result
+            }
         }
     }
     /// Swizzle spelling always uses one alphabet for both target languages.
@@ -398,6 +515,9 @@ impl Writer<'_> {
     }
     /// Emits pure expressions, materializing guards before any unsafe native indexing/load.
     fn expr(&mut self, e: &Expr) -> String {
+        if let Some(path) = self.read_path(e) {
+            return self.read(path, &e.ty);
+        }
         match &e.kind {
             ExprKind::Literal(l) => match l {
                 Literal::Float(v) => {
@@ -419,11 +539,19 @@ impl Writer<'_> {
             ExprKind::Field(base, i) => format!("({}).m{i}", self.expr(base)),
             ExprKind::Swizzle(base, lanes) => format!("({}).{}", self.expr(base), Self::swizzle(lanes)),
             ExprKind::Index(base, index, count) => {
-                let b = self.expr(base);
-                let (i, guard) = self.index(index, *count);
-                let result = self.temporary(&e.ty, None);
-                self.line(format!("if ({guard}) {{ {result} = ({b})[{i}]; }}"));
-                result
+                let base_value = self.expr(base);
+                // A computed base may be expensive (including a helper call).
+                // Evaluate it once, before index calls and the bounds branch.
+                let base_value = self.snapshot(&base.ty, &base_value);
+                let (index, bounds) = self.index(index, *count);
+                self.read(
+                    ReadPath {
+                        value: format!("({base_value})[{index}]"),
+                        bounds,
+                        stable: true,
+                    },
+                    &e.ty,
+                )
             }
             ExprKind::Unary(Unary::Not, a) if self.gl && a.ty.lanes() > 1 => format!("not({})", self.expr(a)),
             ExprKind::Unary(op, a) => format!(
@@ -448,14 +576,20 @@ impl Writer<'_> {
             ExprKind::Binary(op, a, b) => {
                 let mut left = self.expr(a);
                 let mut right = self.expr(b);
+                if self.gl && *op == Binary::Remainder && a.ty.scalar() == Some(Scalar::Float) {
+                    // GLSL ES lacks floating remainder. Its expansion reuses both
+                    // operands, so helper/texture expressions must be captured once.
+                    left = self.snapshot(&a.ty, &left);
+                    right = self.snapshot(&b.ty, &right);
+                }
                 if !self.gl
                     && *op == Binary::Divide
                     && let Ty::Matrix(columns, _) = e.ty
                 {
                     // WGSL divides vectors by scalars, but has no matrix division.
                     // Capture operands once and rebuild the result by columns.
-                    let left = self.temporary(&a.ty, Some(&left));
-                    let right = self.temporary(&b.ty, Some(&right));
+                    let left = self.snapshot(&a.ty, &left);
+                    let right = self.snapshot(&b.ty, &right);
                     let columns = (0..columns).map(|i| format!("{left}[{i}] / {right}")).collect::<Vec<_>>();
                     return format!("{}({})", self.ty(&e.ty), columns.join(", "));
                 }
@@ -550,7 +684,7 @@ impl Writer<'_> {
                     };
                 }
                 Load => {
-                    let coordinate = self.temporary(&args[1].ty, Some(&a[0]));
+                    let coordinate = self.snapshot(&args[1].ty, &a[0]);
                     let result = self.temporary(ty, None);
                     let all = if self.gl {
                         format!("all(lessThan(uvec2({coordinate}), uvec2(textureSize({image}, 0))))")
@@ -575,7 +709,7 @@ impl Writer<'_> {
             // GLSL ternaries cover float, integer, and boolean selections. Materialize
             // each argument first to preserve eager evaluation and derivative uniformity.
             for (value, argument) in a.iter_mut().zip(args) {
-                *value = self.temporary(&argument.ty, Some(value));
+                *value = self.snapshot(&argument.ty, value);
             }
             if args[2].ty.lanes() == 1 {
                 return format!("({} ? {} : {})", a[2], a[1], a[0]);

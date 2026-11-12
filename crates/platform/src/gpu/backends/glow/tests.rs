@@ -147,6 +147,35 @@ fn canonical_signed_derivatives_match_window_and_texture_pixels() {
             );
         }
     }
+    for case in crate::gpu::testing::optimization::cases() {
+        let owner = crate::gpu::testing::optimization::block(&gpu, &resources, &case);
+        let snapshot = gpu.block_snapshot(owner.as_com_ref()).unwrap();
+        for offscreen in [false, true] {
+            let prepared = renderer.prepare_block(&snapshot, offscreen).unwrap();
+            let info = FrameInfo::try_new(Dimensioni::new(8, 8), color(0, 0, 0, 255)).unwrap();
+            let mut frame = if offscreen {
+                let output = renderer.create_render_texture(Size { width: 8, height: 8 }).unwrap();
+                renderer.texture_frame(info, output).unwrap()
+            } else {
+                renderer.frame(info).unwrap()
+            };
+            frame.execute_block(&prepared);
+            let mut pixels = [0; 8 * 8 * 4];
+            // SAFETY: The current framebuffer is 8x8 and the writable array holds every RGBA byte.
+            unsafe {
+                let target = gl.get_parameter_framebuffer(glow::DRAW_FRAMEBUFFER_BINDING);
+                gl.bind_framebuffer(glow::READ_FRAMEBUFFER, target);
+                gl.read_pixels(0, 0, 8, 8, glow::RGBA, glow::UNSIGNED_BYTE, PixelPackData::Slice(Some(&mut pixels)));
+                assert_eq!(gl.get_error(), glow::NO_ERROR);
+            }
+            frame.finish().unwrap();
+            if offscreen {
+                crate::gpu::testing::optimization::assert_pixels(&case, &pixels);
+            } else {
+                crate::gpu::testing::optimization::assert_opaque_pixels(&case, &pixels);
+            }
+        }
+    }
 }
 
 /// Reads the default framebuffer regardless of the application-side read-target binding.

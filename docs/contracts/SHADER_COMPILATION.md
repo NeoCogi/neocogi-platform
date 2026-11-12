@@ -163,6 +163,40 @@ is formed. WGSL uses the same explicit checks, in addition to native validation.
 GL exports reflected block and combined-sampler names; other outputs return
 `NC_E_NOINTERFACE` for these getters.
 
+### Projection and helper lowering
+
+All writers share the decomposition of local/uniform member and index paths.
+An addressable read checks the complete path and loads its selected leaf; it does
+not copy an array or structure merely to select one element. Proven integer
+indices omit runtime bounds branches. Dynamic indices evaluate once, including
+when an earlier projection is invalid. Constant invalid reads return typed zero
+and invalid writes are skipped. No floating-point algebra is reassociated or
+folded by this optimization.
+
+Immutable uniform views retain their declaration-time index values. Immutable
+locals can share stable storage, while mutable locals and snapshots of mutable
+values retain separate owned storage. SPIR-V keeps ordinary immutable scalar and
+vector values in SSA; real owned aggregates receive one function allocation at
+their declaration. Only an unaddressable computed aggregate requiring dynamic
+selection needs temporary storage. Conditional reads, short-circuit expressions
+and guarded image loads join their results with SSA Phi instructions.
+
+After whole-module validation, a shared IR pass expands small value-returning
+helpers with array/matrix parameters or structures containing them. During an
+expanded call, aggregate arguments may borrow caller storage: helpers cannot
+write caller locals or resources, and the caller is suspended. Ordinary lets and
+returned snapshots keep their value semantics. Scalar arguments still evaluate
+eagerly, even when unused; short-circuit operands stay conditional. Expanded
+returns terminate remaining callee work, and loop conditions reevaluate after
+continue. Fresh typed locals preserve lexical scopes without name collisions.
+
+Expansion stops after eight nested levels, for helper costs above 512, or after
+65,536 units of additional IR work across the module. Remaining helpers use
+ordinary calls with value semantics. These are code-growth limits, not promises
+that every accepted algorithm has bounded GPU cost. Resource reflection and
+stage/derivative admission retain the original validated module's requirements.
+No output uses a runtime optimizer process or a shader-specific source rewrite.
+
 GLSL has standard `main`. Canonical vertex position `(x,y,z,w)` becomes
 `(x,-y,2*z-w,w)` once. Vulkan negates clip Y once. The renderer continues to own
 presentation restoration, fragment-height normalization, winding, viewport/scissor,

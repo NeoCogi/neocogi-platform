@@ -313,6 +313,11 @@ pub(crate) struct Local {
 pub(crate) enum Stmt {
     /// Local index and optional initializer; absence means zero initialization.
     Let(usize, Option<Expr>),
+    /// Optimizer-only immutable parameter view. The expanded callee cannot write
+    /// caller storage; the caller is suspended until that expansion completes.
+    /// A view retains its origin's stability so escaping values still snapshot
+    /// mutable storage instead of accidentally aliasing it.
+    Borrow(usize, Expr),
     /// Validated mutable local path and same-typed value; invalid indices skip the store.
     Store(Expr, Expr),
     /// Scalar condition and two lexical branches.
@@ -815,6 +820,11 @@ impl Module {
             match statement {
                 Stmt::Let(_, value) => {
                     if value.as_ref().is_some_and(|e| !self.uniform_expression(e, conditional)) {
+                        return (false, exits);
+                    }
+                }
+                Stmt::Borrow(_, value) => {
+                    if !self.uniform_expression(value, conditional) {
                         return (false, exits);
                     }
                 }

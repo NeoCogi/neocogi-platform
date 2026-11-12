@@ -24,7 +24,9 @@ remain 1. CPU-only tools may enable `shader-compiler` and output features direct
 
 The compiler parses and validates the entire S-expression module, then directly
 emits WGSL, GLSL ES 3.00, or SPIR-V with shared typed reflection and explicit bounds
-checks. Parse/type/profile failures carry line/column diagnostics. The COM
+checks. Shared lowering reads aggregate leaves directly and expands small aggregate
+helpers within a fixed code-growth budget. Mutable snapshots keep value semantics.
+Parse/type/profile failures carry line/column diagnostics. The COM
 service is `ShaderCompilerFactory`; it creates immutable target-specific compiler
 instances. See [the shader contract](../../docs/contracts/SHADER_COMPILATION.md)
 for grammar, limits, error/lifetime semantics, validation, and the <512 KiB

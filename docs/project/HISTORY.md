@@ -1,5 +1,15 @@
 # Unreleased
 
+## Portable shader projection performance
+
+WGSL, GLSL ES3 and SPIR-V now share bounded aggregate-helper expansion and direct
+member/index path lowering. Uniform selection reads a leaf without copying the
+palette; immutable SPIR-V values use SSA, while real mutable snapshots retain
+their own storage. Bounds, captured indices, eager arguments and conditional
+evaluation retain their semantics. Structural budgets and real native/WebGL
+pixels exercise the same aggregate corpus, and the applications share one exact
+production shader inventory with qualification tests.
+
 ## Normal platform library packaging
 
 The shim now exposes only its normal `nc_platform` cdylib. Backend features select

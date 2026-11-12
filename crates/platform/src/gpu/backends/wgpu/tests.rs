@@ -203,6 +203,18 @@ fn independent_texture_frames_preserve_pixels_and_native_surface_configuration()
         let output = pixels(&renderer, &image);
         assert!((i32::from(output[(4 * 8 + 4) * 4]) - i32::from(case.red)).abs() <= 1, "{}", case.name);
     }
+    // Optimized aggregate views retain exact bounds, snapshot and helper-return semantics.
+    for case in crate::gpu::testing::optimization::cases() {
+        let owner = crate::gpu::testing::optimization::block(&gpu, &resources, &case);
+        let prepared = renderer.prepare_block(&gpu.block_snapshot(owner.as_com_ref()).unwrap(), true).unwrap();
+        let output = renderer.create_render_texture(Size { width: 8, height: 8 }).unwrap();
+        let mut frame = renderer
+            .texture_frame(FrameInfo::try_new(Dimensioni::new(8, 8), color(0, 0, 0, 255)).unwrap(), output)
+            .unwrap();
+        frame.execute_block(&prepared);
+        let image = frame.finish().unwrap().unwrap();
+        crate::gpu::testing::optimization::assert_pixels(&case, &pixels(&renderer, &image));
+    }
     // Exact texel reads use real COM artifacts; GL/Vulkan must preserve explicit zero guards.
     for case in sampled::load_cases() {
         // WGPU's checked WGSL translation may clamp out-of-range coordinates.

@@ -1,5 +1,5 @@
 //! Direct SPIR-V 1.0 emission for Vulkan. No other shader compiler is linked.
-use super::{CompileError, ir::*, text::reachable};
+use super::{CompileError, access, ir::*, text::reachable};
 use neocogi_platform_contracts::render::{
     abi::GpuShaderStage,
     shader::{ShaderInterpolation, ShaderSampling},
@@ -28,6 +28,54 @@ enum NativeResource {
     Uniform { variable: u32 },
     /// Independently decorated image and sampler descriptors form one admitted source texture.
     Texture { image: u32, sampler: u32 },
+}
+/// Bounds facts compose across nested paths without forming an invalid pointer.
+#[derive(Clone, Copy)]
+enum Guard {
+    /// Every component is statically in bounds.
+    Always,
+    /// A constant component is out of bounds; index expressions still evaluate.
+    Never,
+    /// One scalar boolean result dominates the eventual read or write.
+    Dynamic(u32),
+}
+/// Native projection retains both pointer indices and SSA extraction information.
+#[derive(Clone)]
+struct Projection {
+    /// Integer SSA value consumed by a native access chain or dynamic vector extraction.
+    index: u32,
+    /// Literal member/index, when legal for OpCompositeExtract.
+    constant: Option<u32>,
+    /// Value type after this projection, needed when walking SSA composites.
+    ty: Ty,
+}
+/// Resolved declaration origin; storage classes never use sentinel pointer IDs.
+#[derive(Clone, Copy)]
+enum Origin {
+    /// Immutable scalar/vector or a structure without address-requiring members.
+    Value(u32),
+    /// Uniform or function storage; access chains are delayed until guards succeed.
+    Pointer { variable: u32, storage: Storage },
+}
+/// Captured read-only path; immutable uniform aliases retain evaluated indices, not a palette copy.
+#[derive(Clone)]
+struct Access {
+    /// Original value or declaration, preserving its native storage class.
+    origin: Origin,
+    /// All projections, including captured indices of a uniform alias.
+    projections: Vec<Projection>,
+    /// Conjunction of bounds checks for the complete leaf selection.
+    guard: Guard,
+    /// Contents cannot change during this invocation; immutable aliases may share this path.
+    stable: bool,
+}
+/// A local is bound once at its lexical declaration; mutable bindings own one function variable.
+#[derive(Clone)]
+enum LocalValue {
+    /// Not yet declared in the current lexical traversal; validation excludes reads in this state.
+    Undeclared,
+    /// An SSA value, owned local storage, or an immutable captured uniform path.
+    Bound(Access),
 }
 /// One logical module with globally unique IDs and ordered SPIR-V sections.
 struct Writer<'a> {
@@ -76,12 +124,14 @@ struct Body {
     variables: Vec<u32>,
     /// Basic blocks and executable instructions, excluding the prologue.
     code: Vec<u32>,
-    /// Function-storage pointer IDs by resolved local index.
-    locals: Vec<u32>,
+    /// Resolved local values and storage; immutable values need no store/load round trip.
+    locals: Vec<LocalValue>,
     /// Pointee types mirror the local pointer table for zero initialization.
     local_types: Vec<Ty>,
     /// A terminator has closed the current block; a label opens the next one.
     closed: bool,
+    /// Last emitted label, used to join guarded values with SSA Phi instructions.
+    label: u32,
     /// Enclosing merge/continue labels, used by typed loop-control statements.
     loops: Vec<(u32, u32)>,
 }
@@ -93,6 +143,7 @@ impl Body {
             self.closed = true;
         } else if op == Op::Label {
             self.closed = false;
+            self.label = args[0];
         }
     }
 }
@@ -378,15 +429,24 @@ impl Writer<'_> {
             locals: Vec::new(),
             local_types: Vec::new(),
             closed: false,
+            label,
             loops: Vec::new(),
         };
-        for local in &f.locals {
-            let pointer = self.variable(&mut b, &local.ty);
-            b.locals.push(pointer);
-            b.local_types.push(local.ty.clone());
+        b.locals.resize(f.locals.len(), LocalValue::Undeclared);
+        b.local_types = f.locals.iter().map(|local| local.ty.clone()).collect();
+        for (i, local) in f.locals.iter().enumerate() {
+            if local.mutable {
+                let variable = self.variable(&mut b, &local.ty);
+                b.locals[i] = LocalValue::Bound(Access {
+                    origin: Origin::Pointer { variable, storage: Storage::Function },
+                    projections: Vec::new(),
+                    guard: Guard::Always,
+                    stable: false,
+                });
+            }
         }
         for (i, value) in values.into_iter().enumerate() {
-            b.op(Op::Store, &[b.locals[i], value]);
+            b.locals[i] = LocalValue::Bound(self.owned_value(&mut b, &f.locals[i].ty, value));
         }
         self.statements(&mut b, &f.body);
         if !b.closed {
@@ -404,29 +464,48 @@ impl Writer<'_> {
                 break;
             }
             match statement {
-                Stmt::Let(i, value) => {
-                    let value = if let Some(e) = value {
-                        self.expr(b, e)
+                Stmt::Borrow(i, expression) => {
+                    let path = if let Some(path) = self.access(b, expression) {
+                        path
                     } else {
-                        let t = b.local_types[*i].clone();
-                        self.zero(&t)
+                        let value = self.expr(b, expression);
+                        self.owned_value(b, &expression.ty, value)
                     };
-                    b.op(Op::Store, &[b.locals[*i], value]);
+                    b.locals[*i] = LocalValue::Bound(path);
+                }
+                Stmt::Let(i, value) => {
+                    let ty = b.local_types[*i].clone();
+                    if matches!(b.locals[*i], LocalValue::Undeclared) {
+                        let expression = value.as_ref().expect("immutable declarations have an initializer");
+                        if let Some(path) = self.access(b, expression) {
+                            // Uniform memory cannot change during an invocation. Keep the
+                            // captured path, including index snapshots, instead of copying it.
+                            if path.stable {
+                                b.locals[*i] = LocalValue::Bound(path);
+                                continue;
+                            }
+                            let value = self.read_access(b, &path, &ty);
+                            b.locals[*i] = LocalValue::Bound(self.owned_value(b, &ty, value));
+                        } else {
+                            let value = self.expr(b, expression);
+                            b.locals[*i] = LocalValue::Bound(self.owned_value(b, &ty, value));
+                        }
+                    } else {
+                        let value = if let Some(e) = value { self.expr(b, e) } else { self.zero(&ty) };
+                        let LocalValue::Bound(path) = b.locals[*i].clone() else { unreachable!() };
+                        let pointer = self.access_pointer(b, &path, &ty);
+                        b.op(Op::Store, &[pointer, value]);
+                    }
                 }
                 Stmt::Store(target, value) => {
                     let value = self.expr(b, value);
-                    let mut guards = Vec::new();
-                    let path = self.path(b, target, &mut guards);
-                    let merge = if guards.is_empty() {
-                        None
-                    } else {
-                        let mut cond = guards[0];
-                        for &g in &guards[1..] {
-                            cond = self.value(b, Op::LogicalAnd, &Ty::Scalar(Scalar::Bool), &[cond, g]);
-                        }
-                        Some(self.begin_guard(b, cond))
+                    let path = self.access(b, target).expect("validated local write path");
+                    let merge = match path.guard {
+                        Guard::Never => continue,
+                        Guard::Always => None,
+                        Guard::Dynamic(condition) => Some(self.begin_guard(b, condition)),
                     };
-                    let pointer = self.path_pointer(b, path, &target.ty);
+                    let pointer = self.access_pointer(b, &path, &target.ty);
                     b.op(Op::Store, &[pointer, value]);
                     if let Some(merge) = merge {
                         b.op(Op::Branch, &[merge]);
@@ -503,55 +582,157 @@ impl Writer<'_> {
         b.op(Op::Label, &[yes]);
         merge
     }
-    /// Dynamic indices are reinterpreted unsigned, so one comparison rejects negative values too.
-    fn index_guard(&mut self, b: &mut Body, index: &Expr, count: u32) -> (u32, u32) {
+    /// Preserve immutable SSA values; aggregates requiring dynamic addressing own
+    /// one storage allocation initialized at their declaration, never once per read.
+    fn owned_value(&mut self, b: &mut Body, ty: &Ty, value: u32) -> Access {
+        fn storage(m: &Module, ty: &Ty) -> bool {
+            match ty {
+                Ty::Array(..) | Ty::Matrix(..) => true,
+                Ty::Struct(i) => m.structures[*i].fields.iter().any(|f| storage(m, &f.ty)),
+                _ => false,
+            }
+        }
+        let origin = if storage(self.m, ty) {
+            let variable = self.variable(b, ty);
+            b.op(Op::Store, &[variable, value]);
+            Origin::Pointer { variable, storage: Storage::Function }
+        } else {
+            Origin::Value(value)
+        };
+        Access {
+            origin,
+            projections: Vec::new(),
+            guard: Guard::Always,
+            stable: true,
+        }
+    }
+    /// Combine proven bounds without emitting redundant constant comparisons.
+    fn and_guard(&mut self, b: &mut Body, a: Guard, c: Guard) -> Guard {
+        match (a, c) {
+            (Guard::Never, _) | (_, Guard::Never) => Guard::Never,
+            (Guard::Always, guard) | (guard, Guard::Always) => guard,
+            (Guard::Dynamic(a), Guard::Dynamic(c)) => Guard::Dynamic(self.value(b, Op::LogicalAnd, &Ty::Scalar(Scalar::Bool), &[a, c])),
+        }
+    }
+    /// Indices evaluate once; unsigned comparisons also reject signed negatives.
+    fn index_guard(&mut self, b: &mut Body, index: &Expr, count: u32) -> (u32, Guard) {
         let value = self.expr(b, index);
+        if let Some(index) = access::constant_index(index) {
+            return (value, if index < count { Guard::Always } else { Guard::Never });
+        }
         let unsigned = if index.ty == Ty::Scalar(Scalar::Uint) {
             value
         } else {
             self.value(b, Op::Bitcast, &Ty::Scalar(Scalar::Uint), &[value])
         };
         let size = self.constant(&Ty::Scalar(Scalar::Uint), count);
-        let guard = self.value(b, Op::ULessThan, &Ty::Scalar(Scalar::Bool), &[unsigned, size]);
-        (value, guard)
+        (
+            value,
+            Guard::Dynamic(self.value(b, Op::ULessThan, &Ty::Scalar(Scalar::Bool), &[unsigned, size])),
+        )
     }
-    /// Collects local lvalue indices without forming an out-of-range pointer.
-    fn path(&mut self, b: &mut Body, e: &Expr, guards: &mut Vec<u32>) -> (u32, Vec<u32>) {
-        match &e.kind {
-            ExprKind::Local(i) => (b.locals[*i], Vec::new()),
-            ExprKind::Field(base, i) => {
-                let (p, mut path) = self.path(b, base, guards);
-                path.push(self.constant(&Ty::Scalar(Scalar::Uint), *i as u32));
-                (p, path)
+    /// Capture the complete projection chain before a branch. No pointer or
+    /// aggregate load is formed while bounds can still be invalid.
+    fn access(&mut self, b: &mut Body, expression: &Expr) -> Option<Access> {
+        let path = access::path(expression)?;
+        let mut result = match path.root {
+            access::Root::Local(i) => match b.locals[i].clone() {
+                LocalValue::Bound(value) => value,
+                LocalValue::Undeclared => unreachable!("validated declaration dominates every use"),
+            },
+            access::Root::Uniform(i) => {
+                let NativeResource::Uniform { variable } = self.resources[&i] else {
+                    unreachable!()
+                };
+                Access {
+                    origin: Origin::Pointer { variable, storage: Storage::Uniform },
+                    projections: vec![Projection {
+                        index: self.constant(&Ty::Scalar(Scalar::Uint), 0),
+                        constant: Some(0),
+                        ty: self.m.resources[i].ty.clone(),
+                    }],
+                    guard: Guard::Always,
+                    stable: true,
+                }
             }
-            ExprKind::Swizzle(base, lanes) => {
-                let (p, mut path) = self.path(b, base, guards);
-                path.push(self.constant(&Ty::Scalar(Scalar::Uint), u32::from(lanes[0])));
-                (p, path)
+        };
+        for step in path.steps {
+            let projection = match step {
+                access::Step::Member { index, ty } => Projection {
+                    index: self.constant(&Ty::Scalar(Scalar::Uint), index),
+                    constant: Some(index),
+                    ty: ty.clone(),
+                },
+                access::Step::Index { value, count, ty } => {
+                    let (index, guard) = self.index_guard(b, value, count);
+                    result.guard = self.and_guard(b, result.guard, guard);
+                    Projection {
+                        index,
+                        constant: access::constant_index(value),
+                        ty: ty.clone(),
+                    }
+                }
+            };
+            result.projections.push(projection);
+        }
+        Some(result)
+    }
+    /// Materialize only a proven-safe leaf pointer, retaining Uniform/Function storage.
+    fn access_pointer(&mut self, b: &mut Body, path: &Access, ty: &Ty) -> u32 {
+        let Origin::Pointer { variable, storage } = path.origin else {
+            unreachable!("SSA values are not writable")
+        };
+        if path.projections.is_empty() {
+            return variable;
+        }
+        let ty = self.ty(ty);
+        let pointer = self.pointer(storage, ty);
+        let mut operands = vec![variable];
+        operands.extend(path.projections.iter().map(|step| step.index));
+        self.raw_value(b, Op::AccessChain, pointer, &operands)
+    }
+    /// Load one leaf, or extract it directly from an immutable SSA parameter/value.
+    fn access_value(&mut self, b: &mut Body, path: &Access, ty: &Ty) -> u32 {
+        match path.origin {
+            Origin::Pointer { .. } => {
+                let pointer = self.access_pointer(b, path, ty);
+                self.value(b, Op::Load, ty, &[pointer])
             }
-            ExprKind::Index(base, index, count) => {
-                let (p, mut path) = self.path(b, base, guards);
-                let (index, guard) = self.index_guard(b, index, *count);
-                guards.push(guard);
-                path.push(index);
-                (p, path)
+            Origin::Value(mut value) => {
+                for step in &path.projections {
+                    value = if let Some(index) = step.constant {
+                        self.value(b, Op::CompositeExtract, &step.ty, &[value, index])
+                    } else {
+                        self.value(b, Op::VectorExtractDynamic, &step.ty, &[value, step.index])
+                    };
+                }
+                value
             }
-            _ => unreachable!("validated mutable path"),
         }
     }
-    /// Forms a function-storage access chain only inside all required guards.
-    fn path_pointer(&mut self, b: &mut Body, (base, path): (u32, Vec<u32>), t: &Ty) -> u32 {
-        if path.is_empty() {
-            return base;
+    /// A failed nested index contributes zero without loading/copying its parent.
+    /// Phi values avoid a function variable and a store/load pair for each check.
+    fn read_access(&mut self, b: &mut Body, path: &Access, ty: &Ty) -> u32 {
+        match path.guard {
+            Guard::Always => self.access_value(b, path, ty),
+            Guard::Never => self.zero(ty),
+            Guard::Dynamic(condition) => {
+                let zero = self.zero(ty);
+                let before = b.label;
+                let merge = self.begin_guard(b, condition);
+                let value = self.access_value(b, path, ty);
+                let after = b.label;
+                b.op(Op::Branch, &[merge]);
+                b.op(Op::Label, &[merge]);
+                self.value(b, Op::Phi, ty, &[value, after, zero, before])
+            }
         }
-        let ty = self.ty(t);
-        let pointer = self.pointer(Storage::Function, ty);
-        let mut args = vec![base];
-        args.extend(path);
-        self.raw_value(b, Op::AccessChain, pointer, &args)
     }
     /// Typed expression translation shares constructor and operator rules with text writers.
     fn expr(&mut self, b: &mut Body, e: &Expr) -> u32 {
+        if let Some(path) = self.access(b, e) {
+            return self.read_access(b, &path, &e.ty);
+        }
         match &e.kind {
             ExprKind::Literal(l) => self.constant(
                 &e.ty,
@@ -562,16 +743,10 @@ impl Writer<'_> {
                     Literal::Bool(v) => u32::from(*v),
                 },
             ),
-            ExprKind::Local(i) => self.value(b, Op::Load, &e.ty, &[b.locals[*i]]),
+            ExprKind::Local(_) => unreachable!("locals use the shared access path"),
             ExprKind::Resource(i) => match self.resources[i] {
                 NativeResource::Texture { image, .. } => self.raw_value(b, Op::Load, self.image, &[image]),
-                NativeResource::Uniform { variable } => {
-                    let ty = self.ty(&e.ty);
-                    let pointer_type = self.pointer(Storage::Uniform, ty);
-                    let zero = self.constant(&Ty::Scalar(Scalar::Uint), 0);
-                    let pointer = self.raw_value(b, Op::AccessChain, pointer_type, &[variable, zero]);
-                    self.value(b, Op::Load, &e.ty, &[pointer])
-                }
+                NativeResource::Uniform { .. } => unreachable!("uniforms use the shared access path"),
             },
             ExprKind::Field(base, index) => {
                 let value = self.expr(b, base);
@@ -588,20 +763,24 @@ impl Writer<'_> {
                 }
             }
             ExprKind::Index(base, index, count) => {
-                let base_value = self.expr(b, base);
-                let spill = self.variable(b, &base.ty);
-                b.op(Op::Store, &[spill, base_value]);
-                let (index, guard) = self.index_guard(b, index, *count);
-                let result = self.variable(b, &e.ty);
-                let zero = self.zero(&e.ty);
-                b.op(Op::Store, &[result, zero]);
-                let merge = self.begin_guard(b, guard);
-                let pointer = self.path_pointer(b, (spill, vec![index]), &e.ty);
-                let value = self.value(b, Op::Load, &e.ty, &[pointer]);
-                b.op(Op::Store, &[result, value]);
-                b.op(Op::Branch, &[merge]);
-                b.op(Op::Label, &[merge]);
-                self.value(b, Op::Load, &e.ty, &[result])
+                // Computed rvalues have no declaration to address. Constant projections
+                // extract directly; only dynamic array/matrix rvalues need one spill.
+                let value = self.expr(b, base);
+                let (index_value, guard) = self.index_guard(b, index, *count);
+                if matches!(guard, Guard::Never) {
+                    return self.zero(&e.ty);
+                }
+                if let Some(index) = access::constant_index(index) {
+                    return self.value(b, Op::CompositeExtract, &e.ty, &[value, index]);
+                }
+                let mut path = self.owned_value(b, &base.ty, value);
+                path.projections.push(Projection {
+                    index: index_value,
+                    constant: None,
+                    ty: e.ty.clone(),
+                });
+                path.guard = guard;
+                self.read_access(b, &path, &e.ty)
             }
             ExprKind::Unary(op, a) => {
                 let a = self.expr(b, a);
@@ -624,19 +803,18 @@ impl Writer<'_> {
             }
             ExprKind::Binary(op, left, right) if matches!(op, Binary::And | Binary::Or) => {
                 let first = self.expr(b, left);
-                let result = self.variable(b, &e.ty);
-                b.op(Op::Store, &[result, first]);
                 let condition = if *op == Binary::And {
                     first
                 } else {
                     self.value(b, Op::LogicalNot, &e.ty, &[first])
                 };
+                let before = b.label;
                 let merge = self.begin_guard(b, condition);
                 let second = self.expr(b, right);
-                b.op(Op::Store, &[result, second]);
+                let after = b.label;
                 b.op(Op::Branch, &[merge]);
                 b.op(Op::Label, &[merge]);
-                self.value(b, Op::Load, &e.ty, &[result])
+                self.value(b, Op::Phi, &e.ty, &[second, after, first, before])
             }
             ExprKind::Binary(op, a, c) => {
                 let left = self.expr(b, a);
@@ -854,15 +1032,14 @@ impl Writer<'_> {
             };
             let compare = self.value(b, Op::ULessThan, &Ty::Vector(Scalar::Bool, 2), &[coord, dimensions]);
             let guard = self.value(b, Op::All, &Ty::Scalar(Scalar::Bool), &[compare]);
-            let result = self.variable(b, t);
             let empty = self.zero(t);
-            b.op(Op::Store, &[result, empty]);
+            let before = b.label;
             let merge = self.begin_guard(b, guard);
             let read = self.value(b, Op::ImageFetch, t, &[image, values[1], spirv::ImageOperands::LOD.bits(), zero]);
-            b.op(Op::Store, &[result, read]);
+            let after = b.label;
             b.op(Op::Branch, &[merge]);
             b.op(Op::Label, &[merge]);
-            return self.value(b, Op::Load, t, &[result]);
+            return self.value(b, Op::Phi, t, &[read, after, empty, before]);
         }
         if op == Select {
             let mut cond = values[2];
@@ -1019,6 +1196,7 @@ impl Writer<'_> {
             locals: Vec::new(),
             local_types: Vec::new(),
             closed: false,
+            label,
             loops: Vec::new(),
         };
         let f = &self.m.functions[index];
