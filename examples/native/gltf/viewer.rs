@@ -453,7 +453,7 @@ impl Target {
 
 /// CLI values are parsed before host/window creation, including help and error handling.
 struct Options {
-    /// Optional runtime backend; absent discovers the sole deployed dynamic library.
+    /// Optional expected backend; absent accepts the deployed platform library's compiled backend.
     backend: Option<String>,
     /// Default pinned model path, or an explicitly supplied local compatible glTF/GLB.
     asset: PathBuf,

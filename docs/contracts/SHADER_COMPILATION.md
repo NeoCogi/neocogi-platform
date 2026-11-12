@@ -2,7 +2,7 @@
 
 `neocogi-platform::render::compiler` implements the shader service built into the
 existing platform COM plugin. Each backend is delivered in its one existing
-platform library, such as `libnc_platform_vulkan.so`. The platform crate owns the
+platform library, `libnc_platform.so` on Linux. The platform crate owns the
 parser, typed IR, validation, direct backend writers, and immutable report objects.
 The existing platform-dylib shim exports only the platform descriptor. There is
 no shader feature to select, no separate shader descriptor or registration, and
@@ -175,8 +175,8 @@ host. Build and qualify this single library with the repository's
 
 ```sh
 cargo build --locked -p neocogi-platform-dylib --no-default-features \
-  --features vulkan --examples --profile min-size
-NEOCOGI_PLATFORM_DYLIB="$PWD/target/min-size/examples/libnc_platform_vulkan.so" \
+  --features vulkan --profile min-size
+NEOCOGI_PLATFORM_DYLIB="$PWD/target/min-size/libnc_platform.so" \
 NEOCOGI_TEST_BACKEND=vulkan NEOCOGI_PLATFORM_SIZE_LIMIT=524288 \
   cargo test --locked -p neocogi-platform --features test-support,shader-glsl,shader-spirv \
   --test compiler_plugin -- --ignored --exact dynamic_platform_plugin_exposes_its_builtin_compiler

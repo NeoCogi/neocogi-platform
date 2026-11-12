@@ -15,39 +15,39 @@ cargo run --locked -p neocogi-platform-examples --bin gltf_brainstem
 ~~~
 
 Static builds select one assembly and backend feature. Dynamic examples need only
-`--features dynamic`; select the library at runtime with `--backend NAME` when
-several are deployed. To load shared objects:
+`--features dynamic`; the library's build selects its backend. To load shared objects:
 
 ~~~sh
-cargo build --locked -p neocogi-platform-dylib --no-default-features --features glow --examples
+cargo build --locked -p neocogi-platform-dylib --no-default-features --features glow
 cargo run --locked -p neocogi-platform-examples --bin triangle --no-default-features --features dynamic -- 3
-cargo build --locked -p neocogi-platform-dylib --no-default-features --features vulkan --examples
+cargo build --locked -p neocogi-platform-dylib --no-default-features --features vulkan
 cargo run --locked -p neocogi-platform-examples --bin gltf_damaged_helmet --no-default-features --features dynamic -- --backend vulkan --frames 3
-cargo build --locked -p neocogi-platform-dylib --no-default-features --features wgpu --examples
+cargo build --locked -p neocogi-platform-dylib --no-default-features --features wgpu
 cargo run --locked -p neocogi-platform-examples --bin gltf_brainstem --no-default-features --features dynamic -- --backend wgpu --frames 3 --time 1
 ~~~
 
 For a min-size dynamic build, prepare the same profile before running:
 
 ~~~sh
-cargo build --profile min-size -p neocogi-platform-dylib --no-default-features --features vulkan --examples
+cargo build --profile min-size -p neocogi-platform-dylib --no-default-features --features vulkan
 cargo run --profile min-size -p neocogi-platform-examples --bin gltf_brainstem --no-default-features --features dynamic
 ~~~
 
-Both commands must use the same profile and target. The first builds the selected
-backend's named Cargo platform library example; the second automatically stages
-all available backend-named platform libraries from that profile's `examples/`
-directory into `lib/`. With one deployed library, no runtime option is needed.
-With several, append `-- --backend vulkan` (or glow/wgpu). The same dynamic
-executable can load any of them without recompilation. Only Cargo and Rust are
-needed for building and staging libraries.
+Both commands must use the same profile and target. The first builds the normal
+`nc_platform` library target; the second automatically stages `libnc_platform.so`
+from that profile's output directory into `lib/` (target-specific suffix/prefix
+on macOS/Windows). No runtime option is needed. Optional `-- --backend vulkan`
+verifies the deployed library's descriptor; it does not change the implementation.
+To change backends, rebuild the shim and application staging with the same profile.
+The dynamic executable has no backend implementation dependency and needs no
+source changes. Only Cargo and Rust are needed for building and staging libraries.
 Startup checks the platform library and returns an owned error with
 the matching preparation command when a file is missing. This check runs before
 model import and HDR lighting preparation. It never starts Cargo from a build script
 or application. Existing library validation still follows the SDK loader policy.
 
 Use static,vulkan or static,wgpu for linked alternatives. Backend Cargo features
-are only valid for static assembly. Dynamic selection occurs once during startup;
+are only valid for static assembly. Dynamic loading occurs once during startup;
 each acquired renderer/device retains its immutable backend and shader format.
 SDL offscreen works for Glow. Vulkan/WGPU require a native display/adapter.
 
@@ -63,7 +63,7 @@ Static assembly registers the platform descriptor and acquires its typed root
 through the SDK. That same root exposes `ShaderCompilerFactory` through
 QueryInterface; the renderer owns its built-in fixed-format compiler.
 Dynamic assembly uses final cdylib artifacts explicitly prepared by
-`cargo build --examples`; `neocogi-example-plugins` stages their exact named outputs,
+`cargo build`; `neocogi-example-plugins` stages the normal library output,
 loads the platform, then acquires its typed root.
 Only final dylib roots export discovery; normal provider implementations are not
 Rust dependencies of a dynamic executable. The compiler is internal to the selected renderer.
@@ -86,9 +86,10 @@ is introduced.
 Build and run use the same assembly; only static builds select a backend feature. For a debug deployment, copy the
 selected executable from target/debug together with lib/ and assets/gltf/ into
 a fresh application directory. Release/min-size use their corresponding output
-profile. Executables load lib beside themselves and locate artwork in
-assets/gltf, independent of CWD or checkout paths. Keep the matching selected
-libraries together when building several backend variants into one Cargo profile.
+profile. Executables load `lib/nc_platform.dll`, `lib/libnc_platform.dylib`, or
+`lib/libnc_platform.so` beside themselves and locate artwork in
+assets/gltf, independent of CWD or checkout paths. Each deployment contains the
+one platform library built for its selected backend.
 
 The explicit asset download remains separate from compilation. When all pinned
 models/HDR are present, build stages their files and checked-in license notices
@@ -113,17 +114,16 @@ SDL_VIDEODRIVER=offscreen cargo test --locked -p neocogi-platform-examples --no-
 
 For Vulkan/WGPU acceptance, build that library and set NEOCOGI_TEST_BACKEND=vulkan
 or wgpu while running the same dynamic-only tests with a native display.
-NEOCOGI_TEST_BACKEND is an acceptance-test selector when several libraries are
-built in the same profile; application selection uses --backend. Ordinary deployment tests copy and rename actual executables/libraries, remove
+NEOCOGI_TEST_BACKEND states the expected build-selected backend for acceptance.
+Ordinary deployment tests copy and rename actual executables/libraries, remove
 Cargo loader paths, and acquire through COM without a GPU. Isolated children
 exercise missing platform libraries and prove activation needs no compiler plugin.
 Opt-in deployment acceptance renders all three real examples after relocation.
 Static GL pixel acceptance retains animation, arcball, material/HDR and skybox
 checks. Dependency regressions use the selected Cargo tree and verify that dynamic
 applications enable no SDL, graphics-loader or compiler implementation dependency.
-The ignored multi-library acceptance test needs two platform variants built in
-the same profile. It loads each using one unchanged executable, rejects ambiguity
-before model/HDR work, and rejects a valid library with a mismatched descriptor.
+The descriptor acceptance test identifies the deployed backend automatically and
+rejects mismatched explicit requests before model/HDR work.
 The triangle regression renders a real framebuffer whose extent differs from its
 initial request, checks recorded bounds and successful submissions, counts size
 queries, and tests a suspended iteration. It does not require a particular monitor's

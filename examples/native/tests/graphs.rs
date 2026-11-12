@@ -2,9 +2,9 @@
 #![cfg(not(target_arch = "wasm32"))]
 use std::{collections::HashSet, fs, path::Path, process::Command};
 
-/// Cargo itself must select one backend-named platform library from the shim package.
+/// Published shim artifacts come from one normal cdylib target, without library-example targets.
 #[test]
-fn cargo_library_examples_declare_exact_backend_libraries() {
+fn cargo_declares_one_normal_platform_library() {
     let output = Command::new(env!("CARGO"))
         .current_dir(env!("CARGO_MANIFEST_DIR"))
         .args(["metadata", "--no-deps", "--offline", "--locked", "--format-version=1"])
@@ -18,19 +18,11 @@ fn cargo_library_examples_declare_exact_backend_libraries() {
         .iter()
         .find(|package| package["name"] == "neocogi-platform-dylib")
         .unwrap();
-    let examples: Vec<_> = shim["targets"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .filter(|target| target["kind"] == serde_json::json!(["example"]))
-        .collect();
-    assert_eq!(examples.len(), 3);
-    for backend in ["glow", "vulkan", "wgpu"] {
-        let name = format!("nc_platform_{backend}");
-        let target = examples.iter().find(|target| target["name"] == name).unwrap();
-        assert_eq!(target["crate_types"], serde_json::json!(["cdylib"]));
-        assert_eq!(target["required-features"], serde_json::json!([backend]));
-    }
+    let targets = shim["targets"].as_array().unwrap();
+    assert_eq!(targets.len(), 1);
+    assert_eq!(targets[0]["name"], "nc_platform");
+    assert_eq!(targets[0]["kind"], serde_json::json!(["cdylib"]));
+    assert_eq!(targets[0]["crate_types"], serde_json::json!(["cdylib"]));
 }
 
 /// Resolve one isolated consumer, explicitly selecting normal and/or build dependency edges.

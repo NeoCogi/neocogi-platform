@@ -8,15 +8,13 @@ repository.workspace = true
 description = "Thin final COM shared-library entrypoints for NeoCogi Platform"
 publish = ["crates-io"]
 readme = "README.md"
-autoexamples = false
-include = ["Cargo.toml", "README.md", "LICENSE", "src/**", "examples/**", "tests/**"]
+include = ["Cargo.toml", "README.md", "LICENSE", "src/**", "tests/**"]
 
 [lib]
 name = "nc_platform"
 crate-type = ["cdylib"]
 
-# Cargo's named library-example targets provide one final root per backend.
-# required-features selects exactly the library requested by the first cargo build.
+# The selected backend is part of this one normal Cargo library target.
 [features]
 default = ["glow"]
 glow = ["neocogi-platform/glow"]
@@ -26,21 +24,3 @@ wgpu = ["neocogi-platform/wgpu"]
 [dependencies]
 neocogi-platform = { workspace = true, features = ["platform"] }
 neocogi-com = { workspace = true, features = ["std"] }
-
-[[example]]
-name = "nc_platform_glow"
-path = "examples/nc_platform_glow.rs"
-crate-type = ["cdylib"]
-required-features = ["glow"]
-
-[[example]]
-name = "nc_platform_vulkan"
-path = "examples/nc_platform_vulkan.rs"
-crate-type = ["cdylib"]
-required-features = ["vulkan"]
-
-[[example]]
-name = "nc_platform_wgpu"
-path = "examples/nc_platform_wgpu.rs"
-crate-type = ["cdylib"]
-required-features = ["wgpu"]

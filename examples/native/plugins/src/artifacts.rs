@@ -1,6 +1,6 @@
-//! One authoritative backend/target filename table shared by staging and runtime loading.
+//! Target library naming and build-selected backend identities for staging and loading.
 
-/// Runtime platform choices, shared by staging and executable-relative discovery.
+/// Known build-selected platform identities; an optional runtime request verifies the deployed one.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Backend {
     /// GLES3 provider and its GLSL compiler.
@@ -21,7 +21,7 @@ pub enum System {
     Unix,
 }
 impl Backend {
-    /// Every supported native library is eligible for staging and runtime discovery.
+    /// Every recognized native platform descriptor.
     pub const ALL: [Self; 3] = [Self::Glow, Self::Vulkan, Self::Wgpu];
     /// Exact public CLI value, also used by the platform build command.
     pub const fn name(self) -> &'static str {
@@ -35,7 +35,7 @@ impl Backend {
     pub fn parse(name: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|backend| backend.name() == name)
     }
-    /// Expected descriptor identity; a mislabeled file cannot silently select another backend.
+    /// Expected descriptor identity; the deployed library must match an explicit request.
     pub const fn plugin_name(self) -> &'static str {
         match self {
             Self::Glow => "neocogi.platform.glow",
@@ -54,30 +54,22 @@ impl System {
         }
     }
 }
-/// Exact name of the selected platform library; its renderer owns shader compilation.
-pub const fn libraries(backend: Backend, system: System) -> [&'static str; 1] {
-    match (backend, system) {
-        (Backend::Glow, System::Windows) => ["nc_platform_glow.dll"],
-        (Backend::Glow, System::Macos) => ["libnc_platform_glow.dylib"],
-        (Backend::Glow, System::Unix) => ["libnc_platform_glow.so"],
-        (Backend::Vulkan, System::Windows) => ["nc_platform_vulkan.dll"],
-        (Backend::Vulkan, System::Macos) => ["libnc_platform_vulkan.dylib"],
-        (Backend::Vulkan, System::Unix) => ["libnc_platform_vulkan.so"],
-        (Backend::Wgpu, System::Windows) => ["nc_platform_wgpu.dll"],
-        (Backend::Wgpu, System::Macos) => ["libnc_platform_wgpu.dylib"],
-        (Backend::Wgpu, System::Unix) => ["libnc_platform_wgpu.so"],
+/// One normal Cargo cdylib filename on each native target, independent of its compiled backend.
+pub const fn library_filename(system: System) -> &'static str {
+    match system {
+        System::Windows => "nc_platform.dll",
+        System::Macos => "libnc_platform.dylib",
+        System::Unix => "libnc_platform.so",
     }
 }
 #[cfg(test)]
 mod tests {
     use super::*;
-    /// Platform libraries have unambiguous target/backend names with no paths.
+    /// Native targets use exactly the public library target's filename, with no backend suffix.
     #[test]
-    fn platform_filenames_follow_target_conventions_and_remain_backend_specific() {
-        for (backend, name) in [(Backend::Glow, "glow"), (Backend::Vulkan, "vulkan"), (Backend::Wgpu, "wgpu")] {
-            for (system, prefix, suffix) in [(System::Windows, "", ".dll"), (System::Macos, "lib", ".dylib"), (System::Unix, "lib", ".so")] {
-                assert_eq!(libraries(backend, system), [format!("{prefix}nc_platform_{name}{suffix}")]);
-            }
+    fn platform_filenames_follow_target_conventions() {
+        for (system, prefix, suffix) in [(System::Windows, "", ".dll"), (System::Macos, "lib", ".dylib"), (System::Unix, "lib", ".so")] {
+            assert_eq!(library_filename(system), format!("{prefix}nc_platform{suffix}"));
         }
     }
 }

@@ -21,8 +21,8 @@ fn stage_test_plugins() -> neocogi_example_plugins::Backend {
     let directory = executable.parent().unwrap().join("lib");
     std::fs::create_dir_all(&directory).unwrap();
     let requested = std::env::var("NEOCOGI_TEST_BACKEND").ok();
-    let backend = neocogi_example_plugins::select_backend(requested.as_deref(), &profile.join("lib")).unwrap();
-    let filename = neocogi_example_plugins::library_filename(backend);
+    let backend = neocogi_example_plugins::Backend::parse(requested.as_deref().unwrap_or("glow")).expect("known test backend");
+    let filename = neocogi_example_plugins::library_filename();
     std::fs::copy(profile.join("lib").join(filename), directory.join(filename)).unwrap();
     backend
 }

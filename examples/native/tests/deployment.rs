@@ -14,8 +14,6 @@ struct Deployment {
     root: PathBuf,
     /// Runtime backend selected for this isolated fixture.
     backend: neocogi_example_plugins::Backend,
-    /// Original Cargo deployment used only for copying fixtures, never passed to child code.
-    profile: PathBuf,
 }
 impl Deployment {
     /// Copies Cargo-built final artifacts and all real example executables.
@@ -36,8 +34,8 @@ impl Deployment {
             .map(PathBuf::from)
             .unwrap_or_else(|| Path::new(binaries[0]).parent().unwrap().to_path_buf());
         let requested = std::env::var("NEOCOGI_TEST_BACKEND").ok();
-        let backend = neocogi_example_plugins::select_backend(requested.as_deref(), &profile.join("lib")).unwrap();
-        let filename = neocogi_example_plugins::library_filename(backend);
+        let backend = neocogi_example_plugins::Backend::parse(requested.as_deref().unwrap_or("glow")).expect("known test backend");
+        let filename = neocogi_example_plugins::library_filename();
         fs::copy(profile.join("lib").join(filename), before.join("lib").join(filename)).unwrap();
         if assets {
             let source = profile.join("assets/gltf");
@@ -63,12 +61,7 @@ impl Deployment {
         }
         let root = directory.path().join("relocated");
         fs::rename(before, &root).unwrap();
-        Self {
-            _directory: directory,
-            root,
-            backend,
-            profile,
-        }
+        Self { _directory: directory, root, backend }
     }
     /// Launches directly with a neutral CWD and no Cargo-supplied loader search path.
     fn run(&self, binary: &str, args: &[&str], native: bool) -> Output {
@@ -101,55 +94,37 @@ fn relocated_audio_uses_platform_library_without_window_or_compiler_plugin() {
     assert!(String::from_utf8_lossy(&output.stdout).contains("Dynamic audio playback and capture acquired"));
 }
 
-/// One unchanged executable loads distinct backends using runtime arguments after relocation.
+/// The descriptor supplies the deployed backend; optional requests verify it without selecting another file.
 #[test]
-#[ignore = "requires two separately built platform libraries; no graphics device needed"]
-fn one_dynamic_executable_selects_multiple_backends_and_rejects_mislabeled_libraries() {
-    use neocogi_example_plugins::{Backend, library_filename};
+fn one_normal_library_identifies_its_backend_and_rejects_mismatched_requests() {
+    use neocogi_example_plugins::Backend;
     let app = Deployment::new(false);
-    let available: Vec<_> = Backend::ALL
-        .into_iter()
-        .filter(|backend| app.profile.join("lib").join(library_filename(*backend)).is_file())
-        .collect();
-    assert!(available.len() >= 2, "build two platform variants before runtime selection acceptance");
-    for backend in &available {
-        let filename = library_filename(*backend);
-        fs::copy(app.profile.join("lib").join(filename), app.root.join("lib").join(filename)).unwrap();
-    }
     let executable = app.root.join(format!("deployment_probe{}", std::env::consts::EXE_SUFFIX));
     let original = fs::read(&executable).unwrap();
-    let ambiguous = app.run("deployment_probe", &[], false);
-    assert_eq!(ambiguous.status.code(), Some(24));
-    assert!(String::from_utf8_lossy(&ambiguous.stderr).contains("Multiple platform libraries"));
-    for binary in ["gltf_brainstem", "gltf_damaged_helmet"] {
-        let result = app.run(binary, &["--frames", "1"], false);
-        assert_eq!(result.status.code(), Some(1));
-        let message = String::from_utf8_lossy(&result.stderr);
-        assert!(message.contains("--backend"), "{message}");
-        assert!(!String::from_utf8_lossy(&result.stdout).contains("Preparing HDR"));
-    }
-    for backend in &available {
-        let selected = app.run("deployment_probe", &["--backend", backend.name()], false);
-        assert!(selected.status.success(), "{}", String::from_utf8_lossy(&selected.stderr));
-        assert!(String::from_utf8_lossy(&selected.stdout).contains(backend.plugin_name()));
-        assert_eq!(fs::read(&executable).unwrap(), original, "runtime choices cannot alter the executable");
+    let automatic = app.run("deployment_probe", &[], false);
+    assert!(automatic.status.success(), "{}", String::from_utf8_lossy(&automatic.stderr));
+    assert!(String::from_utf8_lossy(&automatic.stdout).contains(app.backend.plugin_name()));
+    for requested in Backend::ALL {
+        let output = app.run("deployment_probe", &["--backend", requested.name()], false);
+        if requested == app.backend {
+            assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+            assert!(String::from_utf8_lossy(&output.stdout).contains(app.backend.plugin_name()));
+        } else {
+            assert_eq!(output.status.code(), Some(24));
+            assert!(String::from_utf8_lossy(&output.stderr).contains("does not identify the requested"));
+            for binary in ["gltf_brainstem", "gltf_damaged_helmet"] {
+                let mismatch = app.run(binary, &["--backend", requested.name(), "--frames", "1"], false);
+                assert_eq!(mismatch.status.code(), Some(1));
+                let error = String::from_utf8_lossy(&mismatch.stderr);
+                assert!(error.contains("does not identify the requested"), "{error}");
+                assert!(!String::from_utf8_lossy(&mismatch.stdout).contains("Preparing HDR"));
+            }
+        }
+        assert_eq!(fs::read(&executable).unwrap(), original);
     }
     let unknown = app.run("deployment_probe", &["--backend", "metal"], false);
     assert_eq!(unknown.status.code(), Some(24));
     assert!(String::from_utf8_lossy(&unknown.stderr).contains("Unknown backend"));
-    // A valid library's descriptor must still belong to the requested backend.
-    // Fresh child processes keep process-lived catalog registration independent.
-    let wrong = available[0];
-    let requested = available[1];
-    let path = app.root.join("lib").join(library_filename(requested));
-    let held = app.root.join("held-library");
-    fs::rename(&path, &held).unwrap();
-    fs::copy(app.root.join("lib").join(library_filename(wrong)), &path).unwrap();
-    let mislabeled = app.run("deployment_probe", &["--backend", requested.name()], false);
-    assert_eq!(mislabeled.status.code(), Some(24));
-    assert!(String::from_utf8_lossy(&mislabeled.stderr).contains("does not identify the requested"));
-    fs::remove_file(path).unwrap();
-    fs::rename(held, app.root.join("lib").join(library_filename(requested))).unwrap();
 }
 
 /// A single real platform library must activate with no compiler registration or extra library.
@@ -159,7 +134,7 @@ fn relocated_platform_owns_compilation_and_missing_library_reports_setup() {
     let valid = app.run("deployment_probe", &["valid"], false);
     assert!(valid.status.success(), "{}", String::from_utf8_lossy(&valid.stderr));
     assert!(String::from_utf8_lossy(&valid.stdout).contains("Dynamic platform root acquired"));
-    for filename in [neocogi_example_plugins::library_filename(app.backend)] {
+    for filename in [neocogi_example_plugins::library_filename()] {
         let source = app.root.join("lib").join(filename);
         let held = app.root.join(filename);
         fs::rename(&source, &held).unwrap();
@@ -186,7 +161,7 @@ fn relocated_platform_owns_compilation_and_missing_library_reports_setup() {
     }
 }
 
-/// The same public render loop draws models through separately loaded shader/platform libraries.
+/// The same public render loop draws models through the one loaded platform library.
 #[test]
 #[ignore = "requires fetched glTF/HDR assets and a native display/driver; GL permits SDL offscreen"]
 fn relocated_dynamic_examples_render_triangle_helmet_and_animated_brainstem() {

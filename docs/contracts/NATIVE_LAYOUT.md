@@ -1,21 +1,21 @@
 # Native application staging
 
-`neocogi-platform-dylib` supplies one platform shared library per backend, including
+`neocogi-platform-dylib` supplies one normal platform shared-library target, including
 its built-in S-expression COM shader compiler. Build the selected library
-with `cargo build -p neocogi-platform-dylib --no-default-features --features glow --examples`
-(or vulkan/wgpu). Cargo selects the backend-named platform library example through their
-required features. The application build script stages every known backend library
-present in the same Cargo profile's `examples/` directory. It never invokes Cargo, and dynamic
+with `cargo build -p neocogi-platform-dylib --no-default-features --features glow`
+(or vulkan/wgpu). Cargo features select the backend inside the `nc_platform` library.
+The application build script stages that normal library from the same Cargo
+profile's output directory. It never invokes Cargo, and dynamic
 executables have no provider dependency.
-The library stages as `libnc_platform_{backend}.so` (target-specific suffix/prefix
+The library stages as `libnc_platform.so` (target-specific suffix/prefix
 on macOS/Windows). No independent compiler library is deployed or loaded.
 Use the same profile/target/output as the application. Dynamic applications build
 with only their `dynamic` feature; backend features belong to static implementations.
-At startup an explicit `--backend NAME` selects exactly that library. Without the
-option, one deployed library is selected automatically; none produces preparation
-instructions, and several require an explicit choice. Selection never probes or
-loads unchosen libraries, never silently chooses another on activation failure,
-and validates the loaded descriptor identity against the requested backend. The compiler
+At startup the executable loads that one file and identifies its backend from the
+descriptor. Optional `--backend NAME` verifies the compiled backend; a mismatch
+rejects before native initialization or asset work. Missing files produce
+preparation instructions. Loading never probes another file or silently chooses
+another implementation on activation failure. The compiler
 contains only that backend's required output support; formats never fall back to
 another representation. Missing libraries
 remain errors; there is no alternative backend fallback.
@@ -103,11 +103,12 @@ package qualification exercises a real consumer build script on stable Rust.
 Dynamic examples preflight the executable-relative platform library path before loading
 its provider. Missing/inaccessible files return an owned `RenderError` with
 `NC_E_LOAD_FAILED`, the actual missing selected path and a backend/profile preparation command.
-Automatic discovery with no deployed backend lists a library preparation command;
-an ambiguous deployment names the available choices and runtime option.
+A missing library lists a normal Cargo library preparation command. Unknown
+backend names reject before loading, and a mismatched requested backend reports
+the actual descriptor and required rebuild.
 The build-script hint records only Cargo's profile name, without embedding private
 build paths. `debug` maps to Cargo's `dev` profile. For min-size Vulkan, run
-`cargo build --profile min-size -p neocogi-platform-dylib --no-default-features --features vulkan --examples` before the
+`cargo build --profile min-size -p neocogi-platform-dylib --no-default-features --features vulkan` before the
 matching `cargo run --profile min-size ... --features dynamic` invocation.
 Both commands default to dev and must select the same profile/target. The build
 script tracks both prebuilt inputs and staged outputs; rebuilding a shim refreshes

@@ -32,8 +32,8 @@ impl LaunchArguments {
     }
 }
 
-/// Acquire one process-lived platform root using linked static code or a runtime-selected library.
-/// Static requests may name only the compiled backend; dynamic requests never enable SDK features.
+/// Acquire one process-lived platform root using linked static code or the deployed platform library.
+/// Requests verify the compiled backend; dynamic requests never enable SDK features.
 pub fn acquire_platform(requested: Option<&str>) -> Result<ComPtr<PlatformAbi>, RenderError> {
     #[cfg(feature = "static")]
     if let Some(requested) = requested {

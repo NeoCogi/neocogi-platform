@@ -50,23 +50,23 @@ independent projection generates in its own OUT_DIR from embedded canonical byte
 no sibling checkout or another package's build output is consulted. The SDK owns
 no schemas, generator, staging implementation or generated binding copies.
 
-The shim's main library exports the platform descriptor. Its backend-named library
-examples export the selected platform descriptor with its renderer-owned compiler.
-These targets provide backend-specific filenames within Cargo's one-main-library
-package model. Each links ordinary SDK implementations and exports exactly one
-discovery symbol. The SDK exports no discovery symbol. Only the platform is
+The shim's normal `nc_platform` cdylib exports the selected platform descriptor
+with its renderer-owned compiler. Cargo features select the one backend; the
+filename remains `libnc_platform.so` (target-specific suffix/prefix on macOS/Windows).
+It links ordinary SDK implementations and exports exactly one discovery symbol.
+The SDK exports no discovery symbol. Only the platform is
 registered or loaded; it has no external compiler dependency.
 The platform root also exposes `ShaderCompilerFactory` through QueryInterface.
 The compiler is built into that same platform library and registers no separate
 plugin descriptor.
 The executable owns the one COM host; providers receive its typed runtime.
 
-`cargo build -p neocogi-platform-dylib --no-default-features --features glow --examples`
-builds the selected platform with a backend-specific filename. The application build
-script stages all prebuilt backend libraries from the profile's `examples/`
-directory beside applications. Dynamic examples compile with only `dynamic` and
-choose a library at startup: the sole deployed backend, or an explicit --backend
-when several exist. Cargo backend features select static implementations only.
+`cargo build -p neocogi-platform-dylib --no-default-features --features glow`
+builds the normal platform library. The application build script stages it from
+the profile's output directory beside applications. Dynamic examples compile with
+only `dynamic` and load that one deployed library. Its descriptor identifies the
+backend; optional --backend verifies it. Application Cargo backend features select
+static implementations only.
 No build script invokes Cargo. The contracts crate's `build::layout` owns output
 policy and resource snapshots; ordinary build scripts replace the former nightly
 staging proc macros. See

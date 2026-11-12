@@ -39,8 +39,8 @@ jobs:
           NEOCOGI_SHADER_VALIDATORS=1 cargo test --locked -p neocogi-platform --features test-support,shader-glsl,shader-spirv --test compiler --test sexp_compiler --test compiler_plugin --test gpu_shader_budget
       - name: Built-in Vulkan COM compiler and complete platform byte cap
         run: |
-          cargo build --locked -p neocogi-platform-dylib --no-default-features --features vulkan --examples --profile min-size
-          NEOCOGI_PLATFORM_DYLIB="$PWD/target/min-size/examples/libnc_platform_vulkan.so" NEOCOGI_TEST_BACKEND=vulkan NEOCOGI_PLATFORM_SIZE_LIMIT=524288 cargo test --locked -p neocogi-platform --features test-support,shader-glsl,shader-spirv --test compiler_plugin -- --ignored --exact dynamic_platform_plugin_exposes_its_builtin_compiler
+          cargo build --locked -p neocogi-platform-dylib --no-default-features --features vulkan --profile min-size
+          NEOCOGI_PLATFORM_DYLIB="$PWD/target/min-size/libnc_platform.so" NEOCOGI_TEST_BACKEND=vulkan NEOCOGI_PLATFORM_SIZE_LIMIT=524288 cargo test --locked -p neocogi-platform --features test-support,shader-glsl,shader-spirv --test compiler_plugin -- --ignored --exact dynamic_platform_plugin_exposes_its_builtin_compiler
   native:
     runs-on: ubuntu-latest
     strategy:
@@ -94,8 +94,7 @@ jobs:
           xvfb-run -a cargo run --locked -p neocogi-platform-examples --bin gltf_brainstem --no-default-features --features static,${{ matrix.backend }} -- --frames 3 --time 1
       - name: Dynamic example graphs and relocated shared objects
         run: |
-          cargo build --locked -p neocogi-platform-dylib --no-default-features --features ${{ matrix.backend }} --examples
-          cargo build --locked -p neocogi-platform-dylib --no-default-features --features ${{ matrix.backend == 'glow' && 'vulkan' || 'glow' }} --examples
+          cargo build --locked -p neocogi-platform-dylib --no-default-features --features ${{ matrix.backend }}
           NEOCOGI_TEST_BACKEND=${{ matrix.backend }} xvfb-run -a cargo test --locked -p neocogi-platform-examples --no-default-features --features dynamic --test graphs --test deployment --test triangle -- --include-ignored --test-threads=1
       - name: Backend warnings
         run: |
