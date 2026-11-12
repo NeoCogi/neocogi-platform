@@ -240,3 +240,24 @@ No shader operation reads, clears, or replaces a device-wide diagnostic.
 Alpha NCIDL versions remain 1. Rebuild generated consumers and providers together.
 The factory interface and source-language replacement intentionally supersede the
 previous WGSL/Naga contract without a compatibility parser.
+
+## Qualification baseline
+
+On 2026-11-12, Linux x86_64 with rustc 1.102.0-nightly
+(`3ef0c22cd`, 2026-11-11) produced a **399,720-byte complete Vulkan platform
+library**, below the 524,288-byte limit, using the min-size command above with
+rebuilt std and immediate-abort panics. Its sole defined dynamic export was
+`nc_get_plugin_descriptor_v1`. The dynamic probe compiled through the queried
+factory after releasing both the platform root and factory, and retained code
+and diagnostic exports after compiler/report release. The dynamic min-size
+BrainStem application rendered three Vulkan frames with this single library.
+
+Fresh qualification also passed the CPU/COM suites, all five compiler-output
+feature configurations, GLSL/SPIR-V validators, native WGPU validation of emitted
+WGSL, and native tests and Clippy for Glow, Vulkan, and WGPU. Triangle, Damaged
+Helmet, and BrainStem ran with each backend through static builds and relocated
+dynamic bundles. Real Chromium DOM/WebGL/audio regressions and independent COM
+consumers of extracted package archives passed, including nightly and stable
+package checks. CI enforces the direct validators, native WGSL validation, and
+the complete Vulkan library's COM lifetime and byte limit; other backend and
+target sizes require their own qualification.
