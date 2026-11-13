@@ -154,6 +154,25 @@ pub fn build(request: SharedSources) -> Result<Vec<BuildOutput>, BuildError> {
 mod tests {
     use super::*;
 
+    /// Authored modules use the current IDL spelling without deprecated identity policies.
+    #[test]
+    fn canonical_modules_have_no_idl_warnings() {
+        for module in [Module::Renderer, Module::Audio, Module::Platform] {
+            let directory = module.name().replace('.', "/");
+            let directory = Path::new(&directory);
+            let parts: Vec<_> = SOURCES
+                .iter()
+                .filter(|(name, _)| Path::new(name).parent() == Some(directory))
+                .map(|(name, bytes)| neocogi_idl::ModuleSource {
+                    path: Path::new(name),
+                    text: std::str::from_utf8(bytes).unwrap(),
+                })
+                .collect();
+            let parsed = neocogi_idl::parse_module_parts(directory, &parts).unwrap();
+            assert!(parsed.warnings.is_empty(), "{}: {:?}", module.name(), parsed.warnings);
+        }
+    }
+
     /// Warm reuse restores changed bytes, removes obsolete inputs and keeps unchanged mtimes.
     #[test]
     fn materialized_sources_are_complete_owned_and_reusable() {

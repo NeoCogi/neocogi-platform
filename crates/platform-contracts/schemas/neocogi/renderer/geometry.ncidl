@@ -1,4 +1,3 @@
-#[version(1)]
 /// Canonical copied pixel dimensions shared by platform, GFX, and renderer contracts.
 struct Size {
     /// Horizontal extent in pixels.
@@ -7,7 +6,6 @@ struct Size {
     height: i32,
 }
 
-#[version(1)]
 /// Copied axis-aligned rectangle in the coordinate system documented by its caller.
 struct Rect {
     /// Horizontal origin.
@@ -20,7 +18,6 @@ struct Rect {
     height: i32,
 }
 
-#[version(1)]
 /// Simple RGBA color stored with independently addressable 8-bit components.
 /// Persistence uses the ordinary ordered NCB fields; the former sequence policy is retired.
 struct Color {

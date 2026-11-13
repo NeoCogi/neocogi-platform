@@ -1152,9 +1152,9 @@ dependencies = [
 
 [[package]]
 name = "neocogi-com"
-version = "0.1.0"
+version = "0.2.0-alpha.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "97c73e6b10fdee9ede43cb9d8aa396569da11d75f34569423cab6e5c4020eab8"
+checksum = "8d30ab201c2e7cb50874427dd2ed30ad752866551e8ff370dd7ef9dbab0e6eed"
 dependencies = [
  "neocogi-com-core",
  "neocogi-com-macros",
@@ -1162,28 +1162,38 @@ dependencies = [
 
 [[package]]
 name = "neocogi-com-core"
-version = "0.1.0"
+version = "0.2.0-alpha.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "caf1ee02e5dd10965b55d643a3a453109eceb31c98fc12cc53663aacdd04e823"
+checksum = "5936d9c6712e0c559eff92270688c910d7f9419e0ba28cf78a52403173f28d67"
 
 [[package]]
 name = "neocogi-com-host"
-version = "0.1.0"
+version = "0.2.0-alpha.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c1ccfe87b37a70ff9eaa0930763edae0338a7706df41bde88b75bec0a83b71f4"
+checksum = "c3978914e0ec0894145f0049ecb02e666adb6601666816e3a8ccedddb9b9f257"
 dependencies = [
  "neocogi-com",
  "neocogi-com-core",
+ "neocogi-com-serialization",
 ]
 
 [[package]]
 name = "neocogi-com-macros"
-version = "0.1.0"
+version = "0.2.0-alpha.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "32673a3fef6696ad59f95da42bdbe6877e2e781a50508ef9aa1547b7122ee825"
+checksum = "729beac29d1d0f1a30c5048a4a5962075b426268230b859f16a067bc320baf0c"
 dependencies = [
  "neocogi-idl",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "neocogi-com-serialization"
+version = "0.2.0-alpha.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f7dec17774406faf1707e756a2dc4bf9970c4df3398e11fd9d8e2d9b5ff90e8b"
+dependencies = [
+ "neocogi-com",
 ]
 
 [[package]]
@@ -1197,9 +1207,9 @@ dependencies = [
 
 [[package]]
 name = "neocogi-idl"
-version = "0.1.0"
+version = "0.2.0-alpha.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0a9f2b1bb8b6b8d82df63f761422e9a4d741ce7b5f22e9a2131cd50976275310"
+checksum = "11340b6761f6a90ad28851eb4581145f58e8703b24972540519585cfd904173c"
 dependencies = [
  "neocogi-com-core",
  "prettyplease",
@@ -1240,6 +1250,7 @@ version = "0.2.0"
 dependencies = [
  "neocogi-com",
  "neocogi-com-host",
+ "neocogi-com-serialization",
  "neocogi-idl",
  "quote",
  "rs-math3d",

@@ -32,4 +32,5 @@ quote.workspace = true
 
 [dev-dependencies]
 neocogi-com-host.workspace = true
+neocogi-com-serialization = { workspace = true, features = ["alloc", "json"] }
 tempfile.workspace = true

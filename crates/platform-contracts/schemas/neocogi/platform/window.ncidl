@@ -1,4 +1,3 @@
-#[version(1)]
 /// Native window and event-pump capability with no exposed toolkit or graphics handles.
 interface IPlatformWindow {
     /// Returns a separate trusted graphics assembly object. It retains native graphics lifetime
@@ -21,14 +20,12 @@ interface IPlatformWindow {
     fn text_input(&self, area: TextInputArea) -> Result<()>;
 }
 
-#[version(1)]
 /// Exclusive result of one window construction, with no shared diagnostic dependency.
 interface IWindowCreationResult: IRenderOutcome {
     /// Transfers a fully constructed shareable window once; dropping an untaken result closes it.
     fn take_window(&mut self) -> Result<ComPtr<IPlatformWindow>>;
 }
 
-#[version(1)]
 /// Constructible platform root for typed system services and independent native windows.
 interface Platform {
     /// Queries the audio implementation and application PCM profile without opening a microphone or window.
@@ -45,7 +42,6 @@ interface Platform {
     ) -> Result<ComBox<IWindowCreationResult>>;
 }
 
-#[version(1)]
 /// Completion of one bounded clipboard operation; implementations may deliver asynchronously.
 interface IClipboardCompletion {
     /// Status is zero on success or a failing NcStatus code. Successful reads supply UTF-8 at
@@ -53,7 +49,6 @@ interface IClipboardCompletion {
     fn complete(&self, status: i32, text: &[u8]) -> Result<()>;
 }
 
-#[version(1)]
 /// System text clipboard independent of SDL, DOM, and widget ownership.
 interface ITextClipboard {
     /// Retains the completion until exactly one success/failure is delivered, or fails immediately.

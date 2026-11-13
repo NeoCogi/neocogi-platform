@@ -30,7 +30,16 @@ fn all_contract_features_exclude_renderer_shader_compiler_and_native_backends() 
         .lines()
         .map(|line| line.split_whitespace().next().unwrap())
         .collect();
-    for forbidden in ["neocogi-platform", "naga", "sdl2", "ash", "wgpu", "glow"] {
+    for forbidden in [
+        "neocogi-platform",
+        "naga",
+        "sdl2",
+        "ash",
+        "wgpu",
+        "glow",
+        "neocogi-com-host",
+        "neocogi-com-serialization",
+    ] {
         assert!(!names.contains(forbidden), "contracts package enabled {forbidden}: {names:?}");
     }
     assert!(names.contains("neocogi-com"));

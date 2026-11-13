@@ -1,4 +1,3 @@
-#[version(1)]
 /// Portable 32-bit location scalar families.
 enum ShaderScalar: u8 {
     /// IEEE floating point.
@@ -7,7 +6,6 @@ enum ShaderScalar: u8 {
     Uint32,
 }
 
-#[version(1)]
 /// Direction relative to the selected entry point.
 enum ShaderDirection: u8 {
     /// Entry argument location.
@@ -16,7 +14,6 @@ enum ShaderDirection: u8 {
     Output,
 }
 
-#[version(1)]
 /// Cross-stage interpolation, including absent qualifiers.
 enum ShaderInterpolation: u8 {
     /// None interpolation.
@@ -29,7 +26,6 @@ enum ShaderInterpolation: u8 {
     Flat,
 }
 
-#[version(1)]
 /// Cross-stage sampling qualifier, including absent qualifiers.
 enum ShaderSampling: u8 {
     /// None sampling.
@@ -46,7 +42,6 @@ enum ShaderSampling: u8 {
     Either,
 }
 
-#[version(1)]
 /// Actual compiler output; the receiving backend validates this format.
 enum ShaderTarget: u8 {
     /// Generated validated WGSL for WGPU's checked native translation.
@@ -57,7 +52,6 @@ enum ShaderTarget: u8 {
     GlslEs300,
 }
 
-#[version(1)]
 /// Synchronous read-only graphics compilation request.
 struct ShaderCompileRequest {
     /// Selected vertex or fragment stage.
@@ -66,7 +60,6 @@ struct ShaderCompileRequest {
     max_output_bytes: u64,
 }
 
-#[version(1)]
 /// Optional immutable summary derived from the exported objects.
 struct ShaderInfo {
     /// Selected graphics stage.
@@ -87,7 +80,6 @@ struct ShaderInfo {
     code_byte_count: u64,
 }
 
-#[version(1)]
 /// One portable scalar/vector location.
 struct ShaderLocationInfo {
     /// Selected graphics stage.
@@ -106,7 +98,6 @@ struct ShaderLocationInfo {
     sampling: ShaderSampling,
 }
 
-#[version(1)]
 /// One active read-only uniform block.
 struct ShaderUniformInfo {
     /// Selected graphics stage.
@@ -117,7 +108,6 @@ struct ShaderUniformInfo {
     byte_len: u32,
 }
 
-#[version(1)]
 /// One active paired texture and sampler.
 struct ShaderSampledTextureInfo {
     /// Selected graphics stage.
@@ -126,21 +116,18 @@ struct ShaderSampledTextureInfo {
     slot: u32,
 }
 
-#[version(1)]
 /// S-expression COM compiler with an optional Python-like frontend and immutable output configuration.
 interface ShaderCompiler {
     /// Returns a complete success or a rejected report; no partial artifacts.
     fn compile_result(&self, request: ShaderCompileRequest, source: &[u8], entry: &[u8]) -> Result<ComPtr<IShaderCompilation>>;
 }
 
-#[version(1)]
 /// Native-free compiler factory queried from the platform COM root; creates immutable target configurations.
 interface ShaderCompilerFactory {
     /// Rejects disabled or invalid targets; no backend or window initialization occurs.
     fn create(&self, target: ShaderTarget) -> Result<ComPtr<ShaderCompiler>>;
 }
 
-#[version(1)]
 /// Immutable outcome whose exports independently outlive the report.
 interface IShaderCompilation {
     /// Compilation status; transport errors remain outer failures.
@@ -168,7 +155,6 @@ interface IShaderCompilation {
     fn sampled_textures(&self) -> Result<ComPtr<IShaderSampledTextures>>;
 }
 
-#[version(1)]
 /// Immutable bounded typed collection; returned items survive collection release.
 interface IShaderLocations {
     /// Number of items.
@@ -177,7 +163,6 @@ interface IShaderLocations {
     fn get(&self, index: u32) -> Result<ComPtr<IShaderLocation>>;
 }
 
-#[version(1)]
 /// Immutable bounded typed collection; returned items survive collection release.
 interface IShaderUniforms {
     /// Number of items.
@@ -186,7 +171,6 @@ interface IShaderUniforms {
     fn get(&self, index: u32) -> Result<ComPtr<IShaderUniform>>;
 }
 
-#[version(1)]
 /// Immutable bounded typed collection; returned items survive collection release.
 interface IShaderSampledTextures {
     /// Number of items.
@@ -195,14 +179,12 @@ interface IShaderSampledTextures {
     fn get(&self, index: u32) -> Result<ComPtr<IShaderSampledTexture>>;
 }
 
-#[version(1)]
 /// Independent immutable reflection item with no parent or code owner.
 interface IShaderLocation {
     /// Copied portable metadata.
     fn info(&self) -> Result<ShaderLocationInfo>;
 }
 
-#[version(1)]
 /// Independent immutable reflection item with no parent or code owner.
 interface IShaderUniform {
     /// Copied portable metadata.
@@ -211,7 +193,6 @@ interface IShaderUniform {
     fn glsl_block_name(&self) -> Result<ComPtr<INcString>>;
 }
 
-#[version(1)]
 /// Independent immutable reflection item with no parent or code owner.
 interface IShaderSampledTexture {
     /// Copied portable metadata.

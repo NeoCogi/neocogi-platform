@@ -1,4 +1,3 @@
-#[version(1)]
 /// Native path representation carried by an immutable path capability.
 enum PathEncoding: u8 {
     /// Exact Unix filename bytes; invalid UTF-8 is preserved.
@@ -7,7 +6,6 @@ enum PathEncoding: u8 {
     WindowsUtf16 = 1,
 }
 
-#[version(1)]
 /// Immutable native path snapshot with explicit encoding and separate display-only text.
 interface INativePath {
     /// Reports which typed copy method applies; callers reject incompatible host encodings.

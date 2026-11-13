@@ -100,6 +100,7 @@ jobs:
           xvfb-run -a cargo run --locked -p neocogi-platform-examples --bin gltf_brainstem --no-default-features --features static,${{ matrix.backend }} -- --frames 3 --time 1
       - name: Dynamic example graphs and relocated shared objects
         run: |
+          cargo test --locked -p neocogi-platform-dylib --no-default-features --features ${{ matrix.backend }}
           cargo build --locked -p neocogi-platform-dylib --no-default-features --features ${{ matrix.backend }}
           NEOCOGI_TEST_BACKEND=${{ matrix.backend }} xvfb-run -a cargo test --locked -p neocogi-platform-examples --no-default-features --features dynamic --test graphs --test deployment --test triangle -- --include-ignored --test-threads=1
       - name: Backend warnings

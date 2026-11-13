@@ -904,9 +904,9 @@ fn driver_identity_is_stable_without_owning_the_driver() {
     assert!(first_id.query::<IRenderDriverIdentityAbi>().is_ok());
 }
 
-/// The pre-release v1 numeral does not bypass the generated structural signature.
+/// A matching nominal interface identity still requires the exact generated contract signature.
 #[test]
-fn version_one_keeps_structural_query_admission() {
+fn nominal_identity_requires_an_exact_contract_signature() {
     struct StaleShape;
     // SAFETY: Only QueryInterface uses this marker. The readable vtable prefix matches,
     // and no method is dispatched under the deliberately incompatible signature.

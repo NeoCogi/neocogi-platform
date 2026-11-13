@@ -1,4 +1,3 @@
-#[version(1)]
 /// Integer point or delta in drawable or UI-local coordinates documented by its caller.
 struct Point {
     /// Horizontal coordinate or displacement.
@@ -7,7 +6,6 @@ struct Point {
     y: i32,
 }
 
-#[version(1)]
 /// Logical keyboard identity normalized independently of native scan codes.
 enum KeyCode: u8 {
     /// Printable shortcut key carrying a Unicode scalar, validated before delivery.
@@ -55,7 +53,6 @@ enum KeyCode: u8 {
     Super,
 }
 
-#[version(1)]
 /// A key release or press; repeat belongs only to a press.
 enum KeyAction: u8 {
     /// A platform key-down transition, including operating-system repeats.
@@ -67,7 +64,6 @@ enum KeyAction: u8 {
     Released,
 }
 
-#[version(1)]
 /// Complete logical key transition shared by platform producers and UI consumers.
 struct KeyStroke {
     /// Logical key identity with only its applicable payload.
@@ -78,7 +74,6 @@ struct KeyStroke {
     modifiers: u8,
 }
 
-#[version(1)]
 /// Ordered native input before a UI implementation computes drag, hover, and local coordinates.
 enum UiInput: u8 {
     /// Native focus or capture was lost; clears held state in input order.
@@ -108,7 +103,6 @@ enum UiInput: u8 {
     Text,
 }
 
-#[version(1)]
 /// Synchronous normalized-input destination implemented by a UI runtime or application adapter.
 interface IInputSink {
     /// Copies one ordered event. Text requires complete UTF-8 at offset zero; every other event
@@ -116,7 +110,6 @@ interface IInputSink {
     fn input(&self, event: UiInput, text: &[u8]) -> Result<()>;
 }
 
-#[version(1)]
 /// Outcome of removing one relevant native transition from a window's queue.
 enum PollStatus: u8 {
     /// No relevant transition remains; update and render the accumulated input.
@@ -127,7 +120,6 @@ enum PollStatus: u8 {
     Close = 2,
 }
 
-#[version(1)]
 /// Committed native text-input placement expressed in physical drawable pixels.
 enum TextInputArea: u8 {
     /// No editable focus currently requests IME or text composition.

@@ -1,4 +1,3 @@
-#[version(1)]
 /// Metadata for one synchronous submission of sealed generic graphics blocks.
 struct RenderInfo {
     /// Exact positive target dimensions in physical pixels, as reported by the window or image surface.
@@ -13,7 +12,6 @@ struct RenderInfo {
     block_count: u32,
 }
 
-#[version(1)]
 /// Owned sealed contributions readable only during one active synchronous submission.
 interface IRenderStream {
     /// Observes a block without manufacturing another public resource owner.
@@ -21,7 +19,6 @@ interface IRenderStream {
     fn view(&self, invocation: u64, block: u32) -> Result<WeakComBox<IRenderViewBlock>>;
 }
 
-#[version(1)]
 /// Device accepts only complete generic graphics blocks, with no UI layout or atlas state.
 interface IRenderer: IRenderDriverBound {
     /// Prepares all resources before target acquisition, executes in order and explicitly submits.
@@ -30,7 +27,6 @@ interface IRenderer: IRenderDriverBound {
     fn render_result(&self, info: RenderInfo, stream: &IRenderStream) -> Result<ComPtr<IRenderOutcome>>;
 }
 
-#[version(1)]
 /// Normalized source rectangle for one immutable texture; every edge lies in the unit square.
 struct TextureRegion {
     /// Left source edge.

@@ -1,8 +1,6 @@
-#[version(1)]
 /// Opaque retained identity of one compatible native driver instance; grants no device authority.
 interface IRenderDriverIdentity {}
 
-#[version(1)]
 /// Read-only compatibility metadata. Providers still authenticate local resource provenance.
 interface IRenderDriverBound {
     /// Stable process-local identity; independent devices/contexts return different tokens.
@@ -10,7 +8,6 @@ interface IRenderDriverBound {
 }
 
 // Generic graphics resources and bounded CPU recording. Native objects never cross this ABI.
-#[version(1)]
 /// Immutable resource role; one public buffer owns either linear data or texture pixels.
 enum GpuBufferRole: u8 {
     /// Vertex or instance attribute storage.
@@ -23,7 +20,6 @@ enum GpuBufferRole: u8 {
     Texture,
 }
 
-#[version(1)]
 /// Fixed creation/update policy, independent of native API memory flags.
 enum GpuBufferUsage: u8 {
     /// Complete initial data is supplied once; uploads are forbidden.
@@ -34,7 +30,6 @@ enum GpuBufferUsage: u8 {
     Streamed,
 }
 
-#[version(1)]
 /// Programmable stages admitted by the portable graphics profile.
 enum GpuShaderStage: u8 {
     /// Vertex processing.
@@ -43,7 +38,6 @@ enum GpuShaderStage: u8 {
     Fragment,
 }
 
-#[version(1)]
 /// Little-endian unsigned elements in an index buffer.
 enum GpuIndexFormat: u8 {
     /// Two-byte unsigned indices.
@@ -52,7 +46,6 @@ enum GpuIndexFormat: u8 {
     U32,
 }
 
-#[version(1)]
 /// Explicit packed vertex formats, independent of Rust record layout.
 enum GpuVertexFormat: u8 {
     /// One 32-bit float.
@@ -75,7 +68,6 @@ enum GpuVertexFormat: u8 {
     Unorm8x4,
 }
 
-#[version(1)]
 /// Which draw index advances an attribute stream.
 enum GpuStepMode: u8 {
     /// Advance for each vertex.
@@ -84,7 +76,6 @@ enum GpuStepMode: u8 {
     Instance,
 }
 
-#[version(1)]
 /// Sampled texture formats in the portable profile.
 enum GpuTextureFormat: u8 {
     /// Four linear normalized bytes.
@@ -93,7 +84,6 @@ enum GpuTextureFormat: u8 {
     Rgba8Srgb,
 }
 
-#[version(1)]
 /// Sampling filter for one texture axis/magnification decision.
 enum GpuFilter: u8 {
     /// Nearest texel.
@@ -102,7 +92,6 @@ enum GpuFilter: u8 {
     Linear,
 }
 
-#[version(1)]
 /// Behavior of sampled coordinates outside the unit square.
 enum GpuAddressMode: u8 {
     /// Clamp to edge.
@@ -113,7 +102,6 @@ enum GpuAddressMode: u8 {
     Mirror,
 }
 
-#[version(1)]
 /// Depth comparison against the current bounded attachment.
 enum GpuCompare: u8 {
     /// Never comparison.
@@ -134,7 +122,6 @@ enum GpuCompare: u8 {
     Always,
 }
 
-#[version(1)]
 /// Primitive faces removed before rasterization.
 enum GpuCullMode: u8 {
     /// Keep both orientations.
@@ -145,7 +132,6 @@ enum GpuCullMode: u8 {
     Back,
 }
 
-#[version(1)]
 /// Front-facing winding after portable coordinate normalization.
 enum GpuFrontFace: u8 {
     /// Counter-clockwise.
@@ -154,7 +140,6 @@ enum GpuFrontFace: u8 {
     Cw,
 }
 
-#[version(1)]
 /// Scalar or channel factor used by color/alpha blending.
 enum GpuBlendFactor: u8 {
     /// Zero blend factor.
@@ -179,7 +164,6 @@ enum GpuBlendFactor: u8 {
     OneMinusDstAlpha,
 }
 
-#[version(1)]
 /// One color or alpha equation; only scaled arithmetic carries factors.
 enum GpuBlendEquation: u8 {
     /// Source times src plus destination times dst.
@@ -209,7 +193,6 @@ enum GpuBlendEquation: u8 {
     Max,
 }
 
-#[version(1)]
 /// Read-only shader inputs allowed by the graphics profile.
 enum GpuBindingKind: u8 {
     /// A uniform block carrying its exact positive reflected byte length.
@@ -218,7 +201,6 @@ enum GpuBindingKind: u8 {
     SampledTexture,
 }
 
-#[version(1)]
 /// Exhaustive recording state; terminal states cannot add commands.
 enum RenderViewState: u8 {
     /// Accepting bounded commands; remains unfinished if the client facade is dropped.
@@ -233,7 +215,6 @@ enum RenderViewState: u8 {
     Expired,
 }
 
-#[version(1)]
 /// Exact fixed shape; the variant determines the immutable binding role.
 enum GpuBufferDesc {
     /// Vertex/instance attributes with an explicit pipeline-defined stride.
@@ -262,7 +243,6 @@ enum GpuBufferDesc {
     },
 }
 
-#[version(1)]
 /// Immutable allocation information, shared by untyped and upper-layer typed buffers.
 struct GpuBufferInfo {
     /// Fixed resource shape; changing capacity requires a new buffer.
@@ -271,7 +251,6 @@ struct GpuBufferInfo {
     usage: GpuBufferUsage,
 }
 
-#[version(1)]
 /// Sampled shape retained by internal texture captures and read-only metadata.
 struct GpuTextureInfo {
     /// Positive physical texel extent.
@@ -282,7 +261,6 @@ struct GpuTextureInfo {
     mip_count: u32,
 }
 
-#[version(1)]
 /// Immutable filtering and addressing state.
 struct GpuSamplerDesc {
     /// Minification filter.
@@ -295,7 +273,6 @@ struct GpuSamplerDesc {
     address_v: GpuAddressMode,
 }
 
-#[version(1)]
 /// Source replacement or independent color and alpha blending.
 enum GpuBlendState: u8 {
     /// Replace destination components directly with source components.
@@ -309,7 +286,6 @@ enum GpuBlendState: u8 {
     },
 }
 
-#[version(1)]
 /// Triangle-list graphics state plus exact source-array counts.
 struct GpuPipelineInfo {
     /// Color/alpha blending.
@@ -332,7 +308,6 @@ struct GpuPipelineInfo {
     binding_count: u32,
 }
 
-#[version(1)]
 /// One declared stream and its byte stepping rule.
 struct GpuVertexBufferLayout {
     /// Stream slot below eight.
@@ -343,7 +318,6 @@ struct GpuVertexBufferLayout {
     step: GpuStepMode,
 }
 
-#[version(1)]
 /// One explicit attribute footprint within a stream.
 struct GpuVertexAttribute {
     /// Shader input location below sixteen.
@@ -356,7 +330,6 @@ struct GpuVertexAttribute {
     offset: u32,
 }
 
-#[version(1)]
 /// Expected stage/slot resource class and reflected byte count.
 struct GpuShaderBinding {
     /// Stage consuming this input.
@@ -367,7 +340,6 @@ struct GpuShaderBinding {
     kind: GpuBindingKind,
 }
 
-#[version(1)]
 /// Host-authoritative root expressed in two coordinate spaces.
 struct RenderViewRoot {
     /// Final visible client rectangle in that client's own drawing coordinates.
@@ -376,7 +348,6 @@ struct RenderViewRoot {
     target: Rect,
 }
 
-#[version(1)]
 /// Projection mapping and visibility are independent.
 struct RenderViewInfo {
     /// Immutable visible root in client drawing coordinates.
@@ -389,7 +360,6 @@ struct RenderViewInfo {
     bounds: Rect,
 }
 
-#[version(1)]
 /// Host-created quotas shared by all factory observations.
 struct RenderClientLimits {
     /// Live public GPU resource owners.
@@ -408,7 +378,6 @@ struct RenderClientLimits {
     stack_depth: u32,
 }
 
-#[version(1)]
 /// Immutable permissions selected by application setup for one resource group.
 /// These describe operations, not a widget/compositor/application role.
 /// UI composition normally enables color writes, resource updates and imports, leaving all depth fields false.
@@ -432,7 +401,6 @@ struct RenderClientPermissions {
     initialize_depth: bool,
 }
 
-#[version(1)]
 /// Exclusive persistent resource with synchronous copied transfers and fixed capacity.
 interface IGpuBuffer: IRenderDriverBound {
     /// Returns immutable shape and usage established at creation.
@@ -450,7 +418,6 @@ interface IGpuBuffer: IRenderDriverBound {
     fn read(&self, output: &mut [u8]) -> Result<()>;
 }
 
-#[version(1)]
 /// Optional upper-layer specialization; drivers never instantiate application types.
 /// The wrapper owns the original driver buffer and validates T's GPU packing.
 interface ITypedGpuBuffer<T>: IGpuBuffer {
@@ -467,19 +434,15 @@ interface ITypedGpuBuffer<T>: IGpuBuffer {
     fn read_elements(&self, output: &mut [T]) -> Result<()>;
 }
 
-#[version(1)]
 /// Exclusive immutable sampler state.
 interface IGpuSampler: IRenderDriverBound {}
 
-#[version(1)]
 /// Exclusive validated portable shader; pipelines retain private artifact snapshots.
 interface IGpuShader: IRenderDriverBound {}
 
-#[version(1)]
 /// Exclusive logical graphics pipeline with private target-compatible native variants.
 interface IGpuPipeline: IRenderDriverBound {}
 
-#[version(1)]
 /// Immutable bounded CPU bytes copied synchronously before logical publication.
 interface IGpuDataSource {
     /// Exact total byte length.
@@ -488,7 +451,6 @@ interface IGpuDataSource {
     fn read(&self, output: &mut [u8]) -> Result<()>;
 }
 
-#[version(1)]
 /// Copied pipeline header and bounded typed layout declarations.
 interface IGpuPipelineSource {
     /// Returns fixed state and exact array lengths.
@@ -501,7 +463,6 @@ interface IGpuPipelineSource {
     fn bindings(&self, output: &mut [GpuShaderBinding]) -> Result<()>;
 }
 
-#[version(1)]
 /// Exclusive operation result retaining either a shader owner or a bounded immutable failure.
 interface IShaderCreationResult: IRenderOutcome {
     /// Transfers the complete shader exactly once after successful status; subsequent takes reject.
@@ -509,14 +470,12 @@ interface IShaderCreationResult: IRenderOutcome {
     fn take_shader(&mut self) -> Result<ComBox<IGpuShader>>;
 }
 
-#[version(1)]
 /// Exclusive operation result retaining either an imported texture owner or an owned failure.
 interface ITextureImportResult: IRenderOutcome {
     /// Transfers the imported logical resource once; failure retains no partial public resource.
     fn take_texture(&mut self) -> Result<ComBox<IGpuBuffer>>;
 }
 
-#[version(1)]
 /// Restricted shareable factory; all created GPU resource owners are exclusive.
 interface IRenderResources: IRenderDriverBound {
     /// Creates immutable initialized storage. Supplied bytes must exactly match the shape.
@@ -533,7 +492,6 @@ interface IRenderResources: IRenderDriverBound {
     fn create_pipeline(&self, desc: &IGpuPipelineSource, vertex: &IGpuShader, fragment: &IGpuShader) -> Result<ComBox<IGpuPipeline>>;
 }
 
-#[version(1)]
 /// Invocation-bound exclusive graphics recorder; every operation checks its private lease.
 interface IRenderView {
     /// Report root, projection mapping and visible clip separately.
@@ -571,12 +529,10 @@ interface IRenderView {
     fn cancel(&mut self) -> Result<()>;
 }
 
-#[version(1)]
 /// Host-owned sealed CPU commands; canonical identity recovers private immutable snapshots.
 interface IRenderViewBlock {
 }
 
-#[version(1)]
 /// Host-only owner of one revocable pending payload; never exposed by client QI.
 interface IRenderViewSession {
     /// Transfer one exclusive client view at most once.
@@ -589,7 +545,6 @@ interface IRenderViewSession {
     fn expire(&mut self) -> Result<()>;
 }
 
-#[version(1)]
 /// Trusted CPU traversal lifetime; cumulative domain charges survive sequential views.
 interface IRenderRecordingFrame {
     /// Authenticate the factory and create a host session for committed root geometry.
@@ -601,7 +556,6 @@ interface IRenderRecordingFrame {
     fn abort(&mut self) -> Result<()>;
 }
 
-#[version(1)]
 /// Trusted CPU recording bridge; it grants no native frame acquisition or presentation.
 /// Applications may install it in a UI runtime while delegating only bounded views to widgets.
 interface IRenderViewBroker {
@@ -609,7 +563,6 @@ interface IRenderViewBroker {
     fn begin_frame(&self) -> Result<ComBox<IRenderRecordingFrame>>;
 }
 
-#[version(1)]
 /// Exclusive host-only admission controller, on a different identity from its factory.
 interface IRenderClientDomain {
     /// Delegate only this restricted shareable factory to clients.
@@ -618,7 +571,6 @@ interface IRenderClientDomain {
     fn close(&mut self) -> Result<()>;
 }
 
-#[version(1)]
 /// Application-owned factory for independently limited resource groups bound to an authenticated drawing target.
 interface IRenderClientFactory: IRenderDriverBound {
     /// Bind a new group to this device's surface with explicit drawing, update and import permissions.
@@ -633,7 +585,6 @@ interface IRenderClientFactory: IRenderDriverBound {
     ) -> Result<ComBox<IRenderClientDomain>>;
 }
 
-#[version(1)]
 /// Trusted host-only assembly capability; never delegated to widgets.
 interface IRenderHost: IRenderDriverBound {
     /// Observe completed work and reclaim retired storage before quota-sensitive creation.

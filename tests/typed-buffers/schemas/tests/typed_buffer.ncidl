@@ -1,7 +1,6 @@
 extern neocogi.renderer;
 use neocogi.renderer::{ITypedGpuBuffer};
 
-#[version(1)]
 /// An application's numeric element; no backend knows this declaration.
 struct Point {
     /// Horizontal application coordinate.
@@ -10,6 +9,5 @@ struct Point {
     y: f32,
 }
 
-#[version(1)]
 /// Concrete upper-layer export of the generic buffer contract.
 interface IPoints: ITypedGpuBuffer<Point> {}

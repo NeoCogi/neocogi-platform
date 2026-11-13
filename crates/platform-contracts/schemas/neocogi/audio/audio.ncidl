@@ -1,4 +1,3 @@
-#[version(1)]
 /// PCM direction chosen once while opening a default system device.
 enum AudioDirection: u8 {
     /// Application-produced samples sent to the system output.
@@ -7,7 +6,6 @@ enum AudioDirection: u8 {
     Capture,
 }
 
-#[version(1)]
 /// Audio implementation, independent of the graphics backend.
 enum AudioBackend: u8 {
     /// Native SDL audio services.
@@ -16,7 +14,6 @@ enum AudioBackend: u8 {
     WebAudio,
 }
 
-#[version(1)]
 /// Each numerical family carries exactly its applicable encoding parameters.
 enum PcmType {
     /// Offset-binary PCM; payload is 8, 16, 24 or 32 storage bits.
@@ -29,7 +26,6 @@ enum PcmType {
     FloatingPoint(u8),
 }
 
-#[version(1)]
 /// Explicit byte order; 8-bit representations have identical bytes in either order.
 enum PcmByteOrder: u8 {
     /// Least significant byte first.
@@ -38,7 +34,6 @@ enum PcmByteOrder: u8 {
     BigEndian,
 }
 
-#[version(1)]
 /// Application PCM representation, converted to backend float32 processing precision.
 struct PcmFormat {
     /// Numerical encoding with its own width/scale payload.
@@ -47,7 +42,6 @@ struct PcmFormat {
     byte_order: PcmByteOrder,
 }
 
-#[version(1)]
 /// Portable channel layout, without an unrelated arbitrary channel-count field.
 enum AudioChannels: u8 {
     /// One mono sample per frame.
@@ -56,7 +50,6 @@ enum AudioChannels: u8 {
     Stereo,
 }
 
-#[version(1)]
 /// Inclusive application-side admission range, independent of physical-device negotiation.
 struct AudioRange {
     /// Smallest supported value.
@@ -65,7 +58,6 @@ struct AudioRange {
     max: u32,
 }
 
-#[version(1)]
 /// Shared application-side queue, sample-rate and transfer limits.
 struct AudioLimits {
     /// Exact admitted application sample rates; device opening still validates backend support.
@@ -76,7 +68,6 @@ struct AudioLimits {
     transfer_frames: u32,
 }
 
-#[version(1)]
 /// Host enumeration outcome, without sentinel counts and parallel status fields.
 enum AudioDeviceCount {
     /// Not synchronously enumerated, including browser devices before permission.
@@ -87,7 +78,6 @@ enum AudioDeviceCount {
     Failed(i32),
 }
 
-#[version(1)]
 /// Access policy attached to a supported direction.
 enum AudioAccess: u8 {
     /// Operating-system-managed native device access.
@@ -98,7 +88,6 @@ enum AudioAccess: u8 {
     BrowserMicrophone,
 }
 
-#[version(1)]
 /// API support carries only metadata applicable to that supported direction.
 enum AudioSupport {
     /// The required platform/browser API is unavailable.
@@ -112,7 +101,6 @@ enum AudioSupport {
     },
 }
 
-#[version(1)]
 /// Capability header; exact numerical formats and layouts are enumerated by its snapshot object.
 struct AudioCapabilities {
     /// Actual audio implementation selected for the platform target.
@@ -125,7 +113,6 @@ struct AudioCapabilities {
     limits: AudioLimits,
 }
 
-#[version(1)]
 /// Immutable system snapshot; querying never opens a microphone, window or running audio context.
 interface IAudioCapabilities {
     /// Backend, directional support and admission limits.
@@ -144,7 +131,6 @@ interface IAudioCapabilities {
     fn channels(&self, output: &mut [AudioChannels]) -> Result<()>;
 }
 
-#[version(1)]
 /// Interleaved normalized PCM; each frame contains one encoded sample per channel.
 struct AudioConfig {
     /// Application encoding; this does not promise hardware precision.
@@ -157,7 +143,6 @@ struct AudioConfig {
     capacity_frames: u32,
 }
 
-#[version(1)]
 /// Observable stream lifecycle; pending browser controls are explicit phases.
 enum AudioState {
     /// Open and paused; queued PCM is retained.
@@ -176,7 +161,6 @@ enum AudioState {
     Failed(i32),
 }
 
-#[version(1)]
 /// A queue snapshot contains only counters for its actual direction.
 enum AudioQueueInfo {
     /// Output backlog and starvation accounting.
@@ -195,7 +179,6 @@ enum AudioQueueInfo {
     },
 }
 
-#[version(1)]
 /// Stream metadata combines immutable configuration with typed lifecycle and directional queue data.
 struct AudioInfo {
     /// Immutable application-side PCM configuration.
@@ -206,7 +189,6 @@ struct AudioInfo {
     queue: AudioQueueInfo,
 }
 
-#[version(1)]
 /// Exclusive stream controls, independent of windows, graphics, codecs and mixing policy.
 interface IAudioStream {
     /// Incorporates pending control completion and returns the latest bounded snapshot.
@@ -223,7 +205,6 @@ interface IAudioStream {
     fn failure_message(&self) -> Result<ComPtr<INcString>>;
 }
 
-#[version(1)]
 /// Exclusive PCM producer; QI cannot obtain microphone capture authority.
 interface IAudioPlayback: IAudioStream {
     /// Copies all frames or rejects without enqueueing any. Offset is zero and length is whole encoded
@@ -232,7 +213,6 @@ interface IAudioPlayback: IAudioStream {
     fn write(&mut self, samples: &[u8]) -> Result<()>;
 }
 
-#[version(1)]
 /// Exclusive microphone consumer; QI cannot obtain output authority.
 interface IAudioCapture: IAudioStream {
     /// Copies up to the requested whole frames and returns their count; an empty queue returns zero.
@@ -241,7 +221,6 @@ interface IAudioCapture: IAudioStream {
     fn read(&mut self, output: &mut [u8]) -> Result<u32>;
 }
 
-#[version(1)]
 /// Opening is asynchronous where permission or worklet initialization requires it.
 enum AudioOpenState {
     /// Permission/backend preparation is pending.
@@ -256,7 +235,6 @@ enum AudioOpenState {
     Cancelled,
 }
 
-#[version(1)]
 /// Exclusive opening transaction; dropping an untaken request closes/cancels its stream.
 interface IAudioOpenRequest {
     /// Incorporates asynchronous completion into the request's owned state.
