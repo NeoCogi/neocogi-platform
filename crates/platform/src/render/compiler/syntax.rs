@@ -1,6 +1,7 @@
-//! Bounded S-expression reader. Nodes borrow atom text and retain byte offsets.
+//! Shared bounded syntax tree and source-preserving frontend selection.
 
 use super::Diagnostic;
+use std::borrow::Cow;
 
 /// An atom or parenthesized sequence with its original source position.
 #[derive(Clone, Debug)]
@@ -9,24 +10,51 @@ pub(crate) struct Node<'a> {
     pub offset: usize,
     /// Borrowed spelling or owned child sequence.
     pub value: Value<'a>,
+    /// Intrinsic tree height; every frontend bounds generated as well as written nesting.
+    height: u8,
 }
 
 /// Syntax has no strings, escapes, quoting, or implicit evaluation.
 #[derive(Clone, Debug)]
 pub(crate) enum Value<'a> {
     /// A whitespace-delimited name, operator, or literal.
-    Atom(&'a str),
+    Atom(Cow<'a, str>),
     /// A parenthesized sequence.
     List(Vec<Node<'a>>),
 }
 
 impl<'a> Node<'a> {
     /// Reject a list where an atom is required.
-    pub fn atom(&self) -> Result<&'a str, Diagnostic> {
-        match self.value {
+    pub fn atom(&self) -> Result<&str, Diagnostic> {
+        match &self.value {
             Value::Atom(value) => Ok(value),
             _ => Err(self.error("expected an atom")),
         }
+    }
+
+    /// Ordinary spellings borrow the source; a frontend may own a normalized literal or fresh name.
+    pub fn word(offset: usize, value: impl Into<Cow<'a, str>>) -> Self {
+        Self {
+            offset,
+            value: Value::Atom(value.into()),
+            height: 0,
+        }
+    }
+
+    /// Enforce the same finite tree height for both source and frontend-generated forms.
+    pub fn form(offset: usize, children: Vec<Self>) -> Result<Self, Diagnostic> {
+        let height = children.iter().map(|node| node.height).max().unwrap_or(0) + 1;
+        if height > 96 {
+            return Err(Diagnostic {
+                offset,
+                message: "syntax complexity limit exceeded".into(),
+            });
+        }
+        Ok(Self {
+            offset,
+            value: Value::List(children),
+            height,
+        })
     }
 
     /// Reject an atom where a list is required.
@@ -51,8 +79,19 @@ impl<'a> Node<'a> {
     }
 }
 
-/// Parses exactly one `(module ...)` form with bounded nesting and node count.
+/// A leading parenthesis selects S-expressions, after their whitespace/comments.
+/// Other input selects Python-like syntax. No generated source string loses locations.
 pub(crate) fn parse(source: &str) -> Result<Node<'_>, Diagnostic> {
+    let mut prefix = Reader { source, cursor: 0, nodes: 0 };
+    prefix.space();
+    if prefix.cursor < source.len() && source.as_bytes().get(prefix.cursor) != Some(&b'(') {
+        return super::python::parse(source);
+    }
+    sexp(source)
+}
+
+/// Parses exactly one `(module ...)` form with bounded nesting and node count.
+fn sexp(source: &str) -> Result<Node<'_>, Diagnostic> {
     let mut reader = Reader { source, cursor: 0, nodes: 0 };
     let root = reader.node(0)?;
     reader.space();
@@ -106,7 +145,7 @@ impl<'a> Reader<'a> {
             return Err(error("syntax complexity limit exceeded"));
         }
         let bytes = self.source.as_bytes();
-        let value = match bytes.get(self.cursor) {
+        match bytes.get(self.cursor) {
             Some(b'(') => {
                 self.cursor += 1;
                 let mut children = Vec::new();
@@ -121,10 +160,10 @@ impl<'a> Reader<'a> {
                         _ => children.push(self.node(depth + 1)?),
                     }
                 }
-                Value::List(children)
+                Node::form(offset, children)
             }
-            Some(b')') => return Err(error("unexpected closing parenthesis")),
-            None => return Err(error("expected a form")),
+            Some(b')') => Err(error("unexpected closing parenthesis")),
+            None => Err(error("expected a form")),
             _ => {
                 while let Some(&byte) = bytes.get(self.cursor) {
                     if byte.is_ascii_whitespace() || matches!(byte, b'(' | b')' | b';') {
@@ -135,9 +174,8 @@ impl<'a> Reader<'a> {
                     }
                     self.cursor += 1;
                 }
-                Value::Atom(&self.source[offset..self.cursor])
+                Ok(Node::word(offset, &self.source[offset..self.cursor]))
             }
-        };
-        Ok(Node { offset, value })
+        }
     }
 }

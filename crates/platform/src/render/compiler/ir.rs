@@ -371,8 +371,12 @@ pub(crate) struct Module {
 /// Reject nonportable or colliding source names before backend-specific escaping.
 fn name(node: &Node<'_>) -> Result<String, Diagnostic> {
     let value = node.atom()?;
-    if value.len() > 128 || value.is_empty() || !value.as_bytes()[0].is_ascii_alphabetic() || !value.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_') {
-        return Err(node.error("identifier must start with a letter and contain at most 128 ASCII letters, digits, or underscores"));
+    if value.len() > 128
+        || value.is_empty()
+        || !(value.as_bytes()[0].is_ascii_alphabetic() || value.starts_with('_'))
+        || !value.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+    {
+        return Err(node.error("identifier must start with a letter or underscore and contain at most 128 ASCII letters, digits, or underscores"));
     }
     Ok(value.into())
 }
@@ -419,7 +423,8 @@ pub(crate) fn type_name(value: &str) -> Option<Ty> {
 impl Module {
     /// Resolves a type, with bounded fixed-size arrays and no recursive structures.
     pub fn ty(&self, node: &Node<'_>) -> Result<Ty, Diagnostic> {
-        if let Value::Atom(value) = node.value {
+        if let Value::Atom(value) = &node.value {
+            let value = value.as_ref();
             if let Some(ty) = type_name(value) {
                 return Ok(ty);
             }
@@ -1048,23 +1053,23 @@ impl<'a> Checker<'a> {
                 return Err(node.error("empty statement"));
             }
             let statement = match v[0].atom()? {
-                "let" | "var" => {
-                    let mutable = v[0].atom()? == "var";
-                    if (mutable && !(3..=4).contains(&v.len())) || (!mutable && v.len() != 3) {
+                "$pass" => {
+                    arity(node, v, 1)?;
+                    continue;
+                }
+                "let" | "var" | "$var" => {
+                    let mutable = v[0].atom()? != "let";
+                    if !(3..=4).contains(&v.len()) {
                         return Err(node.error("expected (let NAME VALUE) or (var NAME TYPE [VALUE])"));
                     }
                     let id = name(&v[1])?;
-                    let inferred = mutable && v.len() == 3 && self.module.ty(&v[2]).is_err();
-                    let value = if mutable && !inferred {
+                    let typed = v.len() == 4 || (v[0].atom()? == "var" && self.module.ty(&v[2]).is_ok());
+                    let value = if typed {
                         v.get(3).map(|n| self.expr(n)).transpose()?
                     } else {
                         Some(self.expr(&v[2])?)
                     };
-                    let ty = if mutable && !inferred {
-                        self.module.ty(&v[2])?
-                    } else {
-                        value.as_ref().unwrap().ty.clone()
-                    };
+                    let ty = if typed { self.module.ty(&v[2])? } else { value.as_ref().unwrap().ty.clone() };
                     if matches!(ty, Ty::Void | Ty::Texture) || value.as_ref().is_some_and(|e| e.ty != ty) {
                         return Err(node.error("local initializer type differs from declared type"));
                     }
@@ -1170,7 +1175,8 @@ impl<'a> Checker<'a> {
     /// Resolves and type-checks expressions; unsupported operators fail here for all targets.
     fn expr(&mut self, node: &Node<'_>) -> Result<Expr, Diagnostic> {
         use Scalar::*;
-        if let Value::Atom(value) = node.value {
+        if let Value::Atom(value) = &node.value {
+            let value = value.as_ref();
             let literal = if value == "true" || value == "false" {
                 Some(Literal::Bool(value == "true"))
             } else if value.as_bytes().first().is_some_and(|b| b.is_ascii_digit() || matches!(*b, b'-' | b'.' | b'+')) {
@@ -1218,8 +1224,16 @@ impl<'a> Checker<'a> {
         if v.is_empty() {
             return Err(node.error("empty expression"));
         }
-        let op = v[0].atom().ok();
-        if op == Some(".") {
+        // Python calls are explicit, so a helper named `index` cannot be
+        // mistaken for the tree's subscript operator. S-expression forms retain
+        // their established operator/call spelling.
+        let explicit_call = v[0].atom().ok() == Some("$call");
+        let v = if explicit_call { &v[1..] } else { v };
+        let Some(head) = v.first() else {
+            return Err(node.error("call requires a callee"));
+        };
+        let op = head.atom().ok();
+        if !explicit_call && op == Some(".") {
             arity(node, v, 3)?;
             let base = self.expr(&v[1])?;
             let field = v[2].atom()?;
@@ -1255,7 +1269,7 @@ impl<'a> Checker<'a> {
             };
             return Ok(Expr { ty, kind });
         }
-        if op == Some("index") {
+        if !explicit_call && op == Some("index") {
             arity(node, v, 3)?;
             let base = self.expr(&v[1])?;
             let index = self.expr(&v[2])?;
@@ -1274,7 +1288,18 @@ impl<'a> Checker<'a> {
             });
         }
         let args = v[1..].iter().map(|n| self.expr(n)).collect::<Result<Vec<_>, _>>()?;
-        if matches!(op, Some("-" | "!" | "~")) && args.len() == 1 {
+        if !explicit_call && op == Some("$plus") {
+            if args.len() != 1
+                || !matches!(
+                    args[0].ty,
+                    Ty::Scalar(Float | Sint | Uint) | Ty::Vector(Float | Sint | Uint, _) | Ty::Matrix(..)
+                )
+            {
+                return Err(node.error("unary + requires a numeric scalar, vector or matrix"));
+            }
+            return Ok(args.into_iter().next().unwrap());
+        }
+        if !explicit_call && matches!(op, Some("-" | "!" | "~")) && args.len() == 1 {
             let arg = args.into_iter().next().unwrap();
             let operator = match op.unwrap() {
                 "-" if matches!(arg.ty, Ty::Scalar(Float | Sint) | Ty::Vector(Float | Sint, _)) => Unary::Negate,
@@ -1287,13 +1312,27 @@ impl<'a> Checker<'a> {
                 kind: ExprKind::Unary(operator, Box::new(arg)),
             });
         }
-        if let Some(operator) = op.and_then(binary) {
+        if op == Some("$array") {
+            let Some(first) = args.first() else {
+                return Err(node.error("array literal must contain at least one element"));
+            };
+            let ty = Ty::Array(Box::new(first.ty.clone()), args.len() as u32);
+            if args.len() > 4096 || matches!(first.ty, Ty::Array(..) | Ty::Void | Ty::Texture) || self.module.layout(&ty).1 > 65536 {
+                return Err(node.error("array literal exceeds the portable element or value-size limits"));
+            }
+            validate_constructor(self.module, &ty, &args).map_err(|m| node.error(m))?;
+            return Ok(Expr { ty, kind: ExprKind::Construct(args) });
+        }
+        if let Some(operator) = op.filter(|_| !explicit_call).and_then(binary) {
             if args.len() != 2 {
                 return Err(node.error("binary operator requires two operands"));
             }
             let mut it = args.into_iter();
             let a = it.next().unwrap();
             let b = it.next().unwrap();
+            if op == Some("@") && !matches!(a.ty, Ty::Matrix(..)) && !matches!(b.ty, Ty::Matrix(..)) {
+                return Err(node.error("@ requires a matrix operand"));
+            }
             let ty = binary_type(operator, &a.ty, &b.ty).ok_or_else(|| node.error("binary operand types do not match the operator"))?;
             return Ok(Expr {
                 ty,
@@ -1352,7 +1391,7 @@ fn binary(value: &str) -> Option<Binary> {
     Some(match value {
         "+" => Add,
         "-" => Subtract,
-        "*" => Multiply,
+        "*" | "@" => Multiply,
         "/" => Divide,
         "%" => Remainder,
         "==" => Equal,
@@ -1462,7 +1501,7 @@ fn builtin(value: &str) -> Option<Builtin> {
         "round" => Round,
         "trunc" => Trunc,
         "sqrt" => Sqrt,
-        "inverseSqrt" => InverseSqrt,
+        "inverseSqrt" | "inverse_sqrt" => InverseSqrt,
         "sin" => Sin,
         "cos" => Cos,
         "tan" => Tan,
@@ -1487,7 +1526,7 @@ fn builtin(value: &str) -> Option<Builtin> {
         "dpdy" | "dpdyFine" | "dpdyCoarse" => Dpdy,
         "fwidth" | "fwidthFine" | "fwidthCoarse" => Fwidth,
         "sample" => Sample,
-        "sample-level" => SampleLevel,
+        "sample-level" | "sample_level" => SampleLevel,
         "load" => Load,
         "dimensions" => Dimensions,
         "all" => All,

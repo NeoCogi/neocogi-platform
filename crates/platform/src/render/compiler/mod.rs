@@ -1,4 +1,4 @@
-//! Small, bounded S-expression graphics compiler with independent backend writers.
+//! Bounded S-expression/Python-like frontends sharing typed graphics IR and backend writers.
 //! The platform COM plugin exposes this built-in service in static and shared-library builds.
 #![deny(missing_docs)]
 
@@ -6,6 +6,7 @@ mod access;
 mod ir;
 mod objects;
 mod optimize;
+mod python;
 #[cfg(feature = "shader-spirv")]
 mod spv;
 mod syntax;
@@ -110,11 +111,15 @@ impl Compiler {
         let root = syntax::parse(source).map_err(|d| CompileError::Invalid(d.render(source)))?;
         let mut module = ir::Module::validate(&root).map_err(|d| CompileError::Invalid(d.render(source)))?;
         optimize::run(&mut module);
-        let index = module
-            .functions
-            .iter()
-            .position(|f| f.name == entry && f.stage == Some(stage))
-            .ok_or_else(|| CompileError::Invalid("requested graphics entry point does not exist for this stage".into()))?;
+        let index = module.functions.iter().position(|f| f.name == entry && f.stage == Some(stage)).ok_or_else(|| {
+            CompileError::Invalid(
+                Diagnostic {
+                    offset: root.offset,
+                    message: format!("requested graphics entry '{entry}' does not exist for this stage"),
+                }
+                .render(source),
+            )
+        })?;
         let function = &module.functions[index];
         let inputs = module.io(&function.params, stage, true).map_err(|d| CompileError::Invalid(d.render(source)))?.0;
         let outputs = module

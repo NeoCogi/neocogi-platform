@@ -95,28 +95,30 @@ fn dynamic_platform_plugin_exposes_its_builtin_compiler() {
     {
         let compiler = factory.create(target).unwrap();
         drop(factory);
-        let result = compiler
-            .compile(
-                ShaderCompileRequest {
-                    stage: GpuShaderStage::Vertex,
-                    max_output_bytes: 4194304,
-                },
-                NcCopyFromBufferOffset::new(
-                    0,
-                    b"(module (vertex vs () (returns vec4 (builtin position)) (return (vec4 0.25 0.5 0.75 1.0))))",
-                ),
-                NcCopyFromBufferOffset::new(0, b"vs"),
-            )
-            .unwrap();
-        let shader = PreparedShader::new(result, GpuShaderStage::Vertex, target, b"vs", 4194304)
-            .unwrap()
-            .copy()
-            .unwrap();
-        match shader.code {
-            neocogi_platform_contracts::render::shader::ShaderCode::Wgsl(s) | neocogi_platform_contracts::render::shader::ShaderCode::GlslEs300(s) => {
-                assert!(s.contains("0.25"))
+        for source in [
+            "(module (vertex vs () (returns vec4 (builtin position)) (return (vec4 0.25 0.5 0.75 1.0))))",
+            "@vertex\ndef vs() -> builtin[vec4, position]:\n    return vec4(0.25, 0.5, 0.75, 1.0)\n",
+        ] {
+            let result = compiler
+                .compile(
+                    ShaderCompileRequest {
+                        stage: GpuShaderStage::Vertex,
+                        max_output_bytes: 4194304,
+                    },
+                    NcCopyFromBufferOffset::new(0, source.as_bytes()),
+                    NcCopyFromBufferOffset::new(0, b"vs"),
+                )
+                .unwrap();
+            let shader = PreparedShader::new(result, GpuShaderStage::Vertex, target, b"vs", 4194304)
+                .unwrap()
+                .copy()
+                .unwrap();
+            match shader.code {
+                neocogi_platform_contracts::render::shader::ShaderCode::Wgsl(s) | neocogi_platform_contracts::render::shader::ShaderCode::GlslEs300(s) => {
+                    assert!(s.contains("0.25"))
+                }
+                neocogi_platform_contracts::render::shader::ShaderCode::SpirV(words) => assert!(words.contains(&0.25f32.to_bits())),
             }
-            neocogi_platform_contracts::render::shader::ShaderCode::SpirV(words) => assert!(words.contains(&0.25f32.to_bits())),
         }
         let error = compiler
             .compile(
@@ -130,5 +132,60 @@ fn dynamic_platform_plugin_exposes_its_builtin_compiler() {
             .unwrap_err();
         assert_eq!(error.status, NC_E_INVALID_ARG);
         assert!(error.message.contains("unknown value 'unknown'"));
+    }
+}
+
+/// Both frontend parsers and shared type validation preserve exact original locations across COM.
+#[test]
+fn both_frontends_export_owned_source_diagnostics_through_com() {
+    // SAFETY: This executable owns the immutable process-lived host service tables.
+    let _runtime = unsafe { neocogi_com::Runtime::__from_host_api(neocogi_com_host::initialize_process()) }.unwrap();
+    let factory: ComPtr<ShaderCompilerFactoryAbi> = neocogi_platform::render::compiler::Factory::from_value(neocogi_platform::render::compiler::Factory)
+        .query()
+        .unwrap();
+    let mut diagnostics = Vec::new();
+    for (target, enabled) in [
+        (ShaderTarget::Wgsl, cfg!(feature = "shader-wgsl")),
+        (ShaderTarget::GlslEs300, cfg!(feature = "shader-glsl")),
+        (ShaderTarget::SpirV, cfg!(feature = "shader-spirv")),
+    ] {
+        if !enabled {
+            continue;
+        }
+        let compiler = factory.create(target).unwrap();
+        for (source, prefix, detail) in [
+            (
+                "(module\n  (fragment fs () (returns vec4 (location 0))\n    (return missing)))",
+                "3:13:",
+                "unknown value 'missing'",
+            ),
+            (
+                "@fragment\ndef fs() -> location[vec4, 0]:\n    return missing\n",
+                "3:12:",
+                "unknown value 'missing'",
+            ),
+            ("@fragment\ndef fs() -> location[vec4, 0]:\n\treturn vec4(1.0)\n", "3:1:", "tabs"),
+            ("(module", "1:1:", "unclosed parenthesis"),
+        ] {
+            let result = compiler
+                .compile_result(
+                    ShaderCompileRequest {
+                        stage: GpuShaderStage::Fragment,
+                        max_output_bytes: 4194304,
+                    },
+                    NcCopyFromBufferOffset::new(0, source.as_bytes()),
+                    NcCopyFromBufferOffset::new(0, b"fs"),
+                )
+                .unwrap();
+            assert_eq!(result.status().unwrap(), NC_E_INVALID_ARG.code());
+            assert_eq!(result.code().unwrap_err(), NC_E_INVALID_ARG);
+            diagnostics.push((result.diagnostic().unwrap(), prefix, detail));
+        }
+    }
+    drop(factory);
+    // Each diagnostic remains valid after its result, compiler and factory are released.
+    for (diagnostic, prefix, detail) in diagnostics {
+        let text = diagnostic.to_string().unwrap();
+        assert!(text.starts_with(prefix) && text.contains(detail) && text.contains('^'), "{text}");
     }
 }

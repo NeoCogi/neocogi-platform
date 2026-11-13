@@ -101,6 +101,10 @@ required-features = ["shader-compiler"]
 name = "shader_optimization"
 required-features = ["test-support"]
 
+[[test]]
+name = "python_compiler"
+required-features = ["shader-compiler"]
+
 [[example]]
 name = "shader_compile"
 required-features = ["shader-compiler"]

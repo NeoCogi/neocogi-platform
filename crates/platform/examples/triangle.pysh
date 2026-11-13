@@ -1,0 +1,13 @@
+# A complete statically typed shader; no Python runtime is involved.
+@vertex
+def vs(i: builtin[u32, vertex_index]) -> builtin[vec4, position]:
+    positions = [
+        vec2(-0.8, -0.8),
+        vec2(0.8, -0.8),
+        vec2(0.0, 0.8),
+    ]
+    return vec4(positions[i], 0.5, 1.0)
+
+@fragment
+def fs() -> location[vec4, 0]:
+    return vec4(0.2, 0.7, 1.0, 1.0)

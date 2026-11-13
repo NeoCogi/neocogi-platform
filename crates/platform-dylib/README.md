@@ -2,7 +2,7 @@
 
 One normal Cargo `cdylib` target named `nc_platform`. Select exactly one backend
 with `glow` (the default), `vulkan`, or `wgpu`. Each build includes its renderer,
-built-in S-expression COM shader compiler, and audio services, and exports only
+built-in S-expression/Python-like COM shader compiler, and audio services, and exports only
 `nc_get_plugin_descriptor_v1`. The application supplies the process-lived COM host.
 
 ```sh

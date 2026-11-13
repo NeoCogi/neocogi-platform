@@ -26,7 +26,9 @@ or use the pure Rust `Compiler` facade. There is no global runtime lookup, erase
 payload, downcast registry, or mutable last-error slot.
 
 `ShaderCompileRequest` carries a graphics stage and output quota. The source is
-UTF-8 S-expressions, and the separate entry argument selects an exact named entry.
+UTF-8 S-expressions or Python-like shader syntax, and the separate entry argument
+selects an exact named entry. Both frontends are built in, without extra features,
+registrations, dependencies or a Python runtime. They lower to one typed graphics IR.
 WGSL source input has been removed. Requests cannot change a compiler's target.
 `compile_result` returns either complete success or a rejection report containing
 its original status and diagnostic. The Rust `compile` facade reads that same
@@ -52,7 +54,7 @@ shader-execution-time guarantee.
 The parser accepts exactly one `(module ...)`, ASCII atoms, parentheses, whitespace,
 and semicolon comments. Unicode is allowed in comments. Strings, quoting, macros,
 implicit native-source escape hatches, storage/workgroup resources, and compute
-entries are unsupported and reject. Identifiers start with a letter and contain
+entries are unsupported and reject. Identifiers start with a letter or underscore and contain
 at most 128 ASCII letters, digits, or underscores. Source identifiers are resolved
 before emission and backend symbols are generated independently.
 
@@ -105,7 +107,7 @@ strides must agree with std140; incompatible layouts reject before emission.
 Uniform reflection retains exact WGSL bytes, with native trailing padding private
 to the backend.
 
-Statements are `(let NAME VALUE)`, `(var NAME VALUE)`,
+Statements are `(let NAME VALUE)`, `(let NAME TYPE VALUE)`, `(var NAME VALUE)`,
 `(var NAME TYPE [VALUE])`, `(set LVALUE VALUE)`,
 `(if CONDITION (then BODY...) [(else BODY...)])`, `(while CONDITION BODY...)`,
 `(break)`, `(continue)`, and `(return [VALUE])`. Typed variables without an
@@ -140,6 +142,100 @@ levels and 100,000 nodes; a module has at most 256 declarations, a structure 64
 fields, a function sixteen parameters and 1024 locals. These limits prevent
 unbounded syntax expansion. Only the requested entry and reachable helpers and
 resources are emitted or reflected.
+
+## Python-like frontend
+
+Frontend selection is deterministic: after ASCII whitespace and semicolon comments,
+a leading `(` selects S-expressions; other input selects Python-like syntax. A
+source contains one frontend. The Python-like parser produces the shared syntax
+nodes directly, retaining byte positions into the original UTF-8 source. It does
+not generate S-expression text or use Python, a VM, imports or a third-party parser.
+Both parsers and shared semantic checks report the original one-based line/column,
+excerpt and caret through the same Rust and COM result APIs.
+
+```python
+class Camera:
+    transform: mat4
+
+class Surface:
+    clip: builtin[vec4, position]
+    uv: location[vec2, 0]
+
+camera: uniform[Camera, vertex, 0]
+image: texture[fragment, 0]
+
+@vertex
+def vs(position: location[vec3, 0], uv: location[vec2, 1]) -> Surface:
+    return Surface(camera.transform @ vec4(position, 1.0), uv)
+
+@fragment
+def fs(surface: Surface) -> location[vec4, 0]:
+    return sample(image, surface.uv)
+```
+
+`class` declares a finite value record containing typed fields. `def` declares a
+helper; `@vertex` and `@fragment` select entry stages. Parameters require types;
+omitted return annotations or `None` mean void. `builtin[T, NAME]` and
+`location[T, SLOT, MODE?, SAMPLING?]` apply the same IO rules as the S-expression
+attributes. Uniforms use `NAME: uniform[TYPE, STAGE, SLOT]`, and paired textures
+use `NAME: texture[STAGE, SLOT]`. Graphics annotations are absent from helper
+signatures. Record layout, resource bounds and stage restrictions are unchanged.
+
+Value types use the same portable names and `array[T, COUNT]`. Fixed array
+constructors are `array[T, COUNT](...)`; `[a, b, c]` infers a fixed array from
+identically typed elements. Arrays are values, rather than dynamic Python lists.
+`True` and `False` are boolean literals. Decimal/exponent literals retain shader
+f32/i32 semantics; `u32(1)` and `u32(4294967295)` provide unsigned values. Lowercase
+`true`/`false`, structural Python keywords and `array` are reserved spellings.
+Strings, imports, arbitrary Python objects, methods, comprehensions, tuples,
+chained comparisons, keyword arguments, `for` and conditional expressions are
+unsupported. Combine comparisons with `and`; use an `if` statement for selection
+requiring conditional execution. `select(a, b, condition)` stays eager.
+
+Expressions use calls, `value.member`, `value[index]`, ordinary infix arithmetic,
+bit operations, shifts, comparisons and `and`/`or`/`not`. Precedence follows Python,
+including right-associative `**` above unary signs. `**` uses the floating-point
+`pow` intrinsic. `@` requires a matrix operand and performs the shared matrix
+product; existing shader `*` overloads remain available. Intrinsics retain their
+names, with `sample_level` and `inverse_sqrt` accepted as snake-case spellings.
+Shader arithmetic does not acquire Python numeric promotion, truthiness or
+negative-index wrapping: invalid indexed reads return zero and writes are skipped.
+
+Statements include assignment, typed locals, augmented assignment,
+`if`/`elif`/`else`, `while`, `break`, `continue`, `pass` and `return`. Suites require
+newlines and consistent space indentation; tabs and semicolon statements reject.
+Parentheses/brackets permit multiline expressions. `#` comments may contain
+Unicode; CRLF and an omitted final newline are supported.
+
+A first local assignment declares a value. A later assignment or member/index
+write makes its declaration mutable; otherwise it retains immutable SSA/view
+optimizations. `name: TYPE = value` provides an explicit type, and `name: TYPE`
+starts at typed zero. Blocks have lexical scope: names first declared in a branch
+or loop do not escape it. Explicit typed declarations may shadow outer locals.
+Writing a parameter creates a private mutable value copy at function entry,
+including when an aggregate member is modified; it cannot mutate caller storage.
+Augmented assignment captures every target index and its previous value once,
+before evaluating its right operand. Generated local names avoid every identifier
+written in the module, including later declarations.
+
+Both frontends enforce 96 syntax-tree levels and 100,000 syntax nodes, including
+generated forms. The Python-like lexer additionally caps its token stream at
+200,000 entries. Existing source, local, declaration and artifact limits apply.
+Parsing and validation finish before backend selection or helper optimization.
+Equivalent Triangle programs are tested for byte-identical WGSL, GLSL and SPIR-V
+artifacts, as well as identical reflection. Native and WebGL tests render both
+frontends' snapshot, indexing, parameter-copy and control-flow workloads.
+
+On 2026-11-12, rustc 1.102.0-nightly (`3ef0c22cd`) produced a 459,424-byte
+complete Vulkan library with both frontends, rebuilt std and immediate-abort
+panics. Its only defined dynamic export was `nc_get_plugin_descriptor_v1`.
+The loaded COM compiler accepted both source forms after root/factory release,
+and the dynamic min-size Python-like Triangle rendered 60 frames. Exact-location
+and retained-diagnostic tests, five output feature graphs, native GLSL/SPIR-V/WGSL
+validation, all three native backend suites, seven Python-like pixel workloads,
+Chromium WebGL/DOM/audio, Clippy and rustfmt passed. Extracted archives and their
+independent nightly/stable COM consumers passed. Logs and the qualified library
+are retained locally in `/tmp/neocogi-python-frontend/`, outside Cargo targets.
 
 ## Backend artifacts and build features
 
