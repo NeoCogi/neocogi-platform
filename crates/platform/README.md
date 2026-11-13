@@ -19,8 +19,9 @@ Its built-in `ShaderCompilerFactory` is queried from that same COM root.
 Compiler output is fixed at device construction. Requests contain stage and output
 budget only; results identify their target and export one `code()` byte buffer:
 UTF-8 for WGSL/GLSL or little-endian words for SPIR-V. Import validates target,
-encoding and bounds before retaining one typed `ShaderCode`. Alpha schema versions
-remain 1. CPU-only tools may enable `shader-compiler` and output features directly.
+encoding and bounds before retaining one typed `ShaderCode`. COM compatibility uses
+derived contract signatures. CPU-only tools may enable `shader-compiler` and
+output features directly.
 
 The compiler accepts S-expressions by default and Python-like shader syntax with
 the optional `shader-python` feature, validates the

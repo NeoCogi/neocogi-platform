@@ -262,6 +262,17 @@ ten output/frontend configurations, default and opt-in native examples, browser
 execution, dependency graphs and package checks are covered. Evidence is kept
 locally in `/tmp/neocogi-optional-python/`.
 
+With COM/IDL `0.2.0-alpha.4`, the same min-size builds produce 418,120 bytes by
+default and 459,440 bytes with `shader-python`, still below 524,288 bytes. Their
+sole defined dynamic export is now `nc_get_plugin_descriptor_v2`, matching the
+SDK loader. Both libraries pass the actual loaded COM probe and run Triangle,
+Helmet and BrainStem. Native tests, static examples and relocated deployments
+pass on Vulkan, GLES3 and WGPU; Chromium DOM/WebGL/audio, generated WGSL
+validation and independent nightly/stable consumers of extracted packages pass
+as well. Reports and copied deployments are retained locally in
+`/tmp/neocogi-com-alpha4/`. These short example runs qualify execution and size;
+they are not new performance comparisons.
+
 ## Backend artifacts and build features
 
 | Renderer | Fixed output | Features |
@@ -323,7 +334,7 @@ GLSL has standard `main`. Canonical vertex position `(x,y,z,w)` becomes
 presentation restoration, fragment-height normalization, winding, viewport/scissor,
 and target policy. Derivatives retain the existing canonical signed axis.
 
-The complete Vulkan platform bundle exports exactly `nc_get_plugin_descriptor_v1`
+The complete Vulkan platform bundle exports exactly `nc_get_plugin_descriptor_v2`
 and does not embed the COM host. The executable supplies its one process-lived
 host. Build and qualify this single library with the repository's
 `channel = "nightly"`, rebuilt std, `min-size`, and immediate-abort panics:
@@ -392,7 +403,8 @@ renderer reads the compilation report before publishing its creation result.
 Failure text remains valid after later calls and compiler/resource-group release.
 No shader operation reads, clears, or replaces a device-wide diagnostic.
 
-Alpha NCIDL versions remain 1. Rebuild generated consumers and providers together.
+NCIDL identities and exact signatures are derived from the contract by the pinned
+COM/IDL toolchain. Rebuild generated consumers and providers together after upgrading it.
 The factory interface and source-language replacement intentionally supersede the
 previous WGSL/Naga contract without a compatibility parser.
 

@@ -1,5 +1,19 @@
 # Unreleased
 
+## COM/IDL 0.2.0-alpha.4
+
+The SDK, host and IDL compiler are pinned together to `0.2.0-alpha.4`, including
+the independent package consumer. Authored schemas remove deprecated
+`#[version(...)]` attributes. Compatibility uses contract-derived identities and
+exact signatures; rebuild generated consumers and providers together.
+The one platform shim exports the SDK loader's `nc_get_plugin_descriptor_v2`
+discovery symbol; a regression checks that spelling against the SDK constant.
+
+Generated data values use the new COM serializer/deserializer protocol. Focused
+tests exercise renderer, input and audio values through NCB and JSON factories,
+including malformed documents and retained source/field diagnostics. The explicit
+codec dependency is test-only; platform libraries continue using the SDK facade.
+
 ## Optional Python-like shader frontend
 
 `shader-python` now explicitly enables the Python-like parser. It is disabled by

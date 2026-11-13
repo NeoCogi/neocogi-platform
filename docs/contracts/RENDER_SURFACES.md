@@ -3,8 +3,8 @@
 `IRenderSurface` selects where a resource group's commands draw: a view of the
 window's existing framebuffer or an independently rendered image. Creating either
 kind acquires no frame, clears no pixels and presents nothing. Both the window
-and its separate graphics host expose the surface and group factories. All
-authored declarations retain `#[version(1)]`; this pre-release change replaces
+and its separate graphics host expose the surface and group factories. COM
+compatibility uses derived contract signatures. This pre-release change replaces
 the old constructors without compatibility aliases.
 
 ## Select the target before creating a group

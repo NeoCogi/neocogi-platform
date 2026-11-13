@@ -15,9 +15,12 @@ pin the same exact release version.
 
 The `0.2.0-alpha.1` minor-version advance marks incompatible Rust API and schema
 namespace changes since `0.1.0-alpha.2`; see the [release history](HISTORY.md).
-Upgrade contracts, SDK and shims together and regenerate consumers. All NCIDL
-declarations retain version 1 for `0.2.0`, so a matching interface version alone
-does not establish compatibility with older providers.
+Upgrade contracts, SDK and shims together and regenerate consumers. COM/IDL
+`0.2.0-alpha.4` derives nominal identities and exact compatibility signatures from
+the contract; deprecated manual declaration versions are removed. Rebuild all
+providers and consumers together for this toolchain migration. Old generated
+identities and signatures are incompatible even where field layouts are unchanged.
+The platform shim exports `nc_get_plugin_descriptor_v2`, matching this SDK loader.
 
 ## Package inputs and verification
 
@@ -81,7 +84,7 @@ has no external compiler plugin dependency. See [native staging](../contracts/NA
 Run relevant native/browser acceptance and review the actual archives before
 publication. Publication remains a separate explicit action. Publish the contracts crate first, then the SDK, then the shim, waiting for each
 dependency version to appear in the crates.io index before publishing its consumer.
-COM/host/IDL dependencies remain the published exact `0.1.0` versions. A successful
+COM/host/IDL dependencies use the published exact `0.2.0-alpha.4` versions. A successful
 `--list` or `--no-verify` alone is insufficient release evidence.
 
 Shader qualification must include isolated `shader-wgsl`, `shader-spirv` and
@@ -89,7 +92,7 @@ Shader qualification must include isolated `shader-wgsl`, `shader-spirv` and
 release compiler should enable all outputs implicitly. Stage the normal
 platform library including its compiler. Requests never select an output; results
 identify it for backend validation. Rebuild generated consumers and platforms for
-the contract replacement introduced in the alphas; all NCIDL versions remain 1.
+the contract replacement introduced in the alphas and the COM/IDL toolchain migration.
 
 Minimal output ABI regressions run `cargo test -p neocogi-platform
 --no-default-features --features shader-compiler,shader-wgsl --test shader_targets`

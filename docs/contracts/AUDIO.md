@@ -1,6 +1,6 @@
 # PCM audio
 
-Version 1 declarations live in `schemas/neocogi/audio`, alongside the renderer
+Canonical declarations live in `schemas/neocogi/audio`, alongside the renderer
 and platform schema folders. The independent namespace is `neocogi.audio`;
 generated Rust bindings, PCM conversion/validation, limits and diagnostics belong
 to `neocogi_platform_contracts::audio`. Platform discovery imports those contracts
@@ -12,10 +12,10 @@ crate or plugin is deployed.
 Linked Rust applications can import the canonical values and clients directly
 from `neocogi_platform::audio`; dynamic clients use the contracts crate.
 
-Build scripts select `Module::Audio` for independent audio projections. Alpha
-NCIDL versions remain 1; rebuild providers and generated consumers together for
-the namespace move. The former platform-owned audio declarations and Rust module
-are removed rather than retained as compatibility aliases.
+Build scripts select `Module::Audio` for independent audio projections. COM/IDL
+compatibility uses derived contract signatures; rebuild providers and generated
+consumers together after toolchain or namespace changes. The former platform-owned
+audio declarations and Rust module are removed rather than retained as compatibility aliases.
 
 Qualification generates an audio-only caller and verifies its source graph reaches
 only `neocogi.audio`, then compiles independent audio/platform/renderer projections

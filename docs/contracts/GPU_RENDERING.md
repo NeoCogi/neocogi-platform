@@ -72,9 +72,8 @@ maintenance.
 Index, Uniform or Texture data. `create_static_buffer(desc, data)` requires exact
 initial contents and forbids uploads. `create_dynamic_buffer(desc)` and
 `create_streamed_buffer(desc)` take only a shape/capacity and initialize storage
-to zero. All declarations remain version 1 during alpha; the replaced optional
-buffer data, update methods, separate GPU texture interface and copied per-draw
-uniform methods are removed.
+to zero. The replaced optional buffer data, update methods, separate GPU texture
+interface and copied per-draw uniform methods are removed.
 
 Dynamic buffers reserve one preserving slot. Streamed buffers reserve three
 replacement slots, covering two queued frames plus a CPU writer. Slot count is
@@ -481,9 +480,9 @@ authoring data before admission. Native pixel uploads also check the actual slic
 against its extent before allocating or passing pointers to GL.
 
 The common resource, command and recording types are parameterized by one concrete
-`NativeResources` family. That Rust type selects native storage and a physical core;
-All authored COM declarations remain version 1 and contain no native handles. Each
-immutable version owns its native slot, and each pipeline version owns its target
+`NativeResources` family. That Rust type selects native storage and a physical core.
+Authored COM declarations use derived contract signatures and contain no native
+handles. Each immutable version owns its native slot, and each pipeline version owns its target
 variants. Prepared objects retain native allocations and opaque accounting receipts,
 never the parent version or a client domain. Uniform payloads use the same mechanism.
 There are no renderer-global resource maps, numeric version IDs, source-count scans,
@@ -565,7 +564,7 @@ its own status normalization and lifecycle.
 Creation reports exclusively own their success capability until a single mutable
 `take_*` call transfers it. A consumed report rejects reuse; dropping an untaken
 result releases the resource normally. Failed reports retain readable owned error
-data and expose no partial resource. All declarations remain version 1.
+data and expose no partial resource.
 
 Window construction, ordinary image uploads, shader creation, window/image frame
 submission, host image import/preparation and maintenance use this contract.
