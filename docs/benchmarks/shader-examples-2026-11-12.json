@@ -1,0 +1,422 @@
+{
+  "reference_commit": "1a27094",
+  "optimized_commit": "488291b",
+  "rustc": "rustc 1.102.0-nightly (3ef0c22cd 2026-11-11)",
+  "hardware": "Intel Arc Meteor Lake, Mesa 26.0.8, Linux 7.0.0-42",
+  "profile": "min-size, rebuilt std, panic immediate-abort",
+  "frames": 300,
+  "runs": 3,
+  "warmup_frames": 60,
+  "fixed_animation_time": 1,
+  "timing": "whole-process elapsed, includes startup, presentation and teardown",
+  "applications": [
+    {
+      "backend": "vulkan",
+      "name": "triangle",
+      "samples": [
+        {
+          "variant": "naga",
+          "seconds": 0.33156374900136143,
+          "fps": 904.8033776417705
+        },
+        {
+          "variant": "sexp",
+          "seconds": 0.33410426997579634,
+          "fps": 897.9232741375411
+        },
+        {
+          "variant": "sexp",
+          "seconds": 0.31833767995703965,
+          "fps": 942.3955091979235
+        },
+        {
+          "variant": "naga",
+          "seconds": 0.31597368500661105,
+          "fps": 949.4461540166649
+        },
+        {
+          "variant": "naga",
+          "seconds": 0.2851341579807922,
+          "fps": 1052.136307079032
+        },
+        {
+          "variant": "sexp",
+          "seconds": 0.30073722708038986,
+          "fps": 997.548600525625
+        }
+      ],
+      "naga_median_seconds": 0.31597368500661105,
+      "sexp_median_seconds": 0.31833767995703965,
+      "naga_fps": 949.4461540166649,
+      "sexp_fps": 942.3955091979235,
+      "sexp_fps_change_percent": -0.7426060750168273
+    },
+    {
+      "backend": "vulkan",
+      "name": "gltf_damaged_helmet",
+      "samples": [
+        {
+          "variant": "naga",
+          "seconds": 3.84604691399727,
+          "fps": 78.00216864442879
+        },
+        {
+          "variant": "sexp",
+          "seconds": 3.843031228054315,
+          "fps": 78.0633781505561
+        },
+        {
+          "variant": "sexp",
+          "seconds": 3.8531187769258395,
+          "fps": 77.85900652648738
+        },
+        {
+          "variant": "naga",
+          "seconds": 3.8548735209042206,
+          "fps": 77.82356499458648
+        },
+        {
+          "variant": "naga",
+          "seconds": 3.9202914639608935,
+          "fps": 76.52492238342221
+        },
+        {
+          "variant": "sexp",
+          "seconds": 3.8802502600010484,
+          "fps": 77.31460083709109
+        }
+      ],
+      "naga_median_seconds": 3.8548735209042206,
+      "sexp_median_seconds": 3.8531187769258395,
+      "naga_fps": 77.82356499458648,
+      "sexp_fps": 77.85900652648738,
+      "sexp_fps_change_percent": 0.0455408742883634
+    },
+    {
+      "backend": "vulkan",
+      "name": "gltf_brainstem",
+      "samples": [
+        {
+          "variant": "naga",
+          "seconds": 3.6427786289714277,
+          "fps": 82.3547161537806
+        },
+        {
+          "variant": "sexp",
+          "seconds": 3.613747354946099,
+          "fps": 83.0163181134932
+        },
+        {
+          "variant": "sexp",
+          "seconds": 3.5878329549450427,
+          "fps": 83.61593300672364
+        },
+        {
+          "variant": "naga",
+          "seconds": 3.6266153919277713,
+          "fps": 82.721757776617
+        },
+        {
+          "variant": "naga",
+          "seconds": 3.639593368046917,
+          "fps": 82.42679048538501
+        },
+        {
+          "variant": "sexp",
+          "seconds": 3.6340233490336686,
+          "fps": 82.55312946180538
+        }
+      ],
+      "naga_median_seconds": 3.639593368046917,
+      "sexp_median_seconds": 3.613747354946099,
+      "naga_fps": 82.42679048538501,
+      "sexp_fps": 83.0163181134932,
+      "sexp_fps_change_percent": 0.7152136151810096
+    },
+    {
+      "backend": "glow",
+      "name": "triangle",
+      "samples": [
+        {
+          "variant": "naga",
+          "seconds": 0.11451954999938607,
+          "fps": 2619.640052738666
+        },
+        {
+          "variant": "sexp",
+          "seconds": 0.10519240004941821,
+          "fps": 2851.9170573070237
+        },
+        {
+          "variant": "sexp",
+          "seconds": 0.10649016592651606,
+          "fps": 2817.1615415362967
+        },
+        {
+          "variant": "naga",
+          "seconds": 0.10599464806728065,
+          "fps": 2830.3315824924807
+        },
+        {
+          "variant": "naga",
+          "seconds": 0.10220868000760674,
+          "fps": 2935.171454886932
+        },
+        {
+          "variant": "sexp",
+          "seconds": 0.11124525999184698,
+          "fps": 2696.7441131602964
+        }
+      ],
+      "naga_median_seconds": 0.10599464806728065,
+      "sexp_median_seconds": 0.10649016592651606,
+      "naga_fps": 2830.3315824924807,
+      "sexp_fps": 2817.1615415362967,
+      "sexp_fps_change_percent": -0.4653179520607953
+    },
+    {
+      "backend": "glow",
+      "name": "gltf_damaged_helmet",
+      "samples": [
+        {
+          "variant": "naga",
+          "seconds": 4.086408260045573,
+          "fps": 73.41410375786934
+        },
+        {
+          "variant": "sexp",
+          "seconds": 3.8114777189912274,
+          "fps": 78.70962973368768
+        },
+        {
+          "variant": "sexp",
+          "seconds": 3.9258858769899234,
+          "fps": 76.41587386896168
+        },
+        {
+          "variant": "naga",
+          "seconds": 3.9420586230698973,
+          "fps": 76.10236901205025
+        },
+        {
+          "variant": "naga",
+          "seconds": 3.911032262025401,
+          "fps": 76.7060918706509
+        },
+        {
+          "variant": "sexp",
+          "seconds": 3.8594873249530792,
+          "fps": 77.73053121858541
+        }
+      ],
+      "naga_median_seconds": 3.9420586230698973,
+      "sexp_median_seconds": 3.8594873249530792,
+      "naga_fps": 76.10236901205025,
+      "sexp_fps": 77.73053121858541,
+      "sexp_fps_change_percent": 2.1394369553428216
+    },
+    {
+      "backend": "glow",
+      "name": "gltf_brainstem",
+      "samples": [
+        {
+          "variant": "naga",
+          "seconds": 4.030259090941399,
+          "fps": 74.43690175509911
+        },
+        {
+          "variant": "sexp",
+          "seconds": 4.017009370960295,
+          "fps": 74.68242473337394
+        },
+        {
+          "variant": "sexp",
+          "seconds": 3.929138635052368,
+          "fps": 76.35261258629566
+        },
+        {
+          "variant": "naga",
+          "seconds": 4.0235497009707615,
+          "fps": 74.56102752443172
+        },
+        {
+          "variant": "naga",
+          "seconds": 4.023811638937332,
+          "fps": 74.55617382707021
+        },
+        {
+          "variant": "sexp",
+          "seconds": 3.996624695020728,
+          "fps": 75.0633404166673
+        }
+      ],
+      "naga_median_seconds": 4.023811638937332,
+      "sexp_median_seconds": 3.996624695020728,
+      "naga_fps": 74.55617382707021,
+      "sexp_fps": 75.0633404166673,
+      "sexp_fps_change_percent": 0.6802476087002907
+    },
+    {
+      "backend": "wgpu",
+      "name": "triangle",
+      "samples": [
+        {
+          "variant": "naga",
+          "seconds": 0.41650968696922064,
+          "fps": 720.2713631536005
+        },
+        {
+          "variant": "sexp",
+          "seconds": 0.3985238689929247,
+          "fps": 752.7779973583619
+        },
+        {
+          "variant": "sexp",
+          "seconds": 0.3995963849592954,
+          "fps": 750.7575425902796
+        },
+        {
+          "variant": "naga",
+          "seconds": 0.37982513196766376,
+          "fps": 789.8371507063423
+        },
+        {
+          "variant": "naga",
+          "seconds": 0.3711114670149982,
+          "fps": 808.3824582760083
+        },
+        {
+          "variant": "sexp",
+          "seconds": 0.40583978896029294,
+          "fps": 739.2079538789426
+        }
+      ],
+      "naga_median_seconds": 0.37982513196766376,
+      "sexp_median_seconds": 0.3995963849592954,
+      "naga_fps": 789.8371507063423,
+      "sexp_fps": 750.7575425902796,
+      "sexp_fps_change_percent": -4.947805769976021
+    },
+    {
+      "backend": "wgpu",
+      "name": "gltf_damaged_helmet",
+      "samples": [
+        {
+          "variant": "naga",
+          "seconds": 3.914776303921826,
+          "fps": 76.63273114723305
+        },
+        {
+          "variant": "sexp",
+          "seconds": 4.077886417042464,
+          "fps": 73.56752231897096
+        },
+        {
+          "variant": "sexp",
+          "seconds": 3.9939223820110783,
+          "fps": 75.11412874502074
+        },
+        {
+          "variant": "naga",
+          "seconds": 3.96432383696083,
+          "fps": 75.67494794521859
+        },
+        {
+          "variant": "naga",
+          "seconds": 3.939939353032969,
+          "fps": 76.14330402549464
+        },
+        {
+          "variant": "sexp",
+          "seconds": 3.962175116990693,
+          "fps": 75.71598708838812
+        }
+      ],
+      "naga_median_seconds": 3.939939353032969,
+      "sexp_median_seconds": 3.9939223820110783,
+      "naga_fps": 76.14330402549464,
+      "sexp_fps": 75.11412874502074,
+      "sexp_fps_change_percent": -1.351629396235965
+    },
+    {
+      "backend": "wgpu",
+      "name": "gltf_brainstem",
+      "samples": [
+        {
+          "variant": "naga",
+          "seconds": 4.436446289066225,
+          "fps": 67.6216909780606
+        },
+        {
+          "variant": "sexp",
+          "seconds": 4.431816422031261,
+          "fps": 67.69233457158842
+        },
+        {
+          "variant": "sexp",
+          "seconds": 4.431768421083689,
+          "fps": 67.69306775434845
+        },
+        {
+          "variant": "naga",
+          "seconds": 4.418703222996555,
+          "fps": 67.89322225550016
+        },
+        {
+          "variant": "naga",
+          "seconds": 4.410321524948813,
+          "fps": 68.02225150772468
+        },
+        {
+          "variant": "sexp",
+          "seconds": 4.437249784939922,
+          "fps": 67.60944606233427
+        }
+      ],
+      "naga_median_seconds": 4.418703222996555,
+      "sexp_median_seconds": 4.431816422031261,
+      "naga_fps": 67.89322225550016,
+      "sexp_fps": 67.69233457158842,
+      "sexp_fps_change_percent": -0.2958876854537107
+    }
+  ],
+  "artifacts": {
+    "vulkan": {
+      "naga": {
+        "library_bytes": 1213848,
+        "library_sha256": "6ddebd0a2c92339b62af864b3278bd1a51afd51168108938ed9b599a75f4d379"
+      },
+      "sexp": {
+        "library_bytes": 415432,
+        "library_sha256": "3e71bb953ae7b8bf3de13ead4a6b76ca8d023f2085761917cc3a5277b340e90e"
+      }
+    },
+    "glow": {
+      "naga": {
+        "library_bytes": 1542448,
+        "library_sha256": "6448894da403198dd4e596162ed93ca7e30e1c91164e279224648f0a1f9cb884"
+      },
+      "sexp": {
+        "library_bytes": 471872,
+        "library_sha256": "def3c36785b770874832e2eae35affc16b6368efa2255712cdcb81a469aa161a"
+      }
+    },
+    "wgpu": {
+      "naga": {
+        "library_bytes": 2265776,
+        "library_sha256": "078b4ddf1a5e4965bdef9ca6109915e2ecd6363ddf0f3b7bb866d0767c4ee85d"
+      },
+      "sexp": {
+        "library_bytes": 2351376,
+        "library_sha256": "845d280b7ac4edef974a0cf7b901f4161b6914ad13a16fd62559053bd2baddf9"
+      }
+    }
+  },
+  "display_modes": {
+    "vulkan": "x11 windowed",
+    "glow": "SDL offscreen; compositor-independent",
+    "wgpu": "x11 windowed"
+  },
+  "offscreen_gl_hardware_verified": true,
+  "discarded_windowed_gles3_attempt": "Original measurements/ retained separately: stalls in both variants, followed by a 120-second timeout; none used in final GLES3 results."
+}

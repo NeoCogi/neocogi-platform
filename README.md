@@ -123,3 +123,42 @@ for the published package set, self-contained build inputs and verification.
 Asset downloads, package qualification, browser tests and local debugging helpers
 are Rust commands. See [repository tools](scripts/README.md); no Python interpreter
 is required.
+
+## Shader execution comparison: limited sample
+
+This fixed snapshot covers only the handful of shaders used by this repository's
+Triangle, Damaged Helmet and BrainStem examples. It is a small, non-exhaustive
+sample; results apply to these workloads and this hardware, without establishing
+general shader-compiler performance.
+
+Measured on 2026-11-12: Intel Arc Meteor Lake, Mesa 26.0.8, Linux 7.0.0-42,
+rustc 1.102.0-nightly (`3ef0c22cd`). Both revisions used `min-size`, rebuilt std
+and immediate-abort panics. The Naga 30.0.1 implementation is revision `1a27094`;
+our optimized S-expression compiler is revision `488291b`. These are historical
+measurements of those revisions.
+
+| Backend / output | Example | Naga FPS | Our compiler FPS | FPS change |
+| --- | --- | ---: | ---: | ---: |
+| Vulkan / SPIR-V | Triangle | 949.4 | 942.4 | -0.7% |
+| Vulkan / SPIR-V | Damaged Helmet | 77.8 | 77.9 | ≈0.0% |
+| Vulkan / SPIR-V | BrainStem | 82.4 | 83.0 | +0.7% |
+| GLES3 / GLSL ES3 | Triangle | 2,830.3 | 2,817.2 | -0.5% |
+| GLES3 / GLSL ES3 | Damaged Helmet | 76.1 | 77.7 | +2.1% |
+| GLES3 / GLSL ES3 | BrainStem | 74.6 | 75.1 | +0.7% |
+| WGPU / WGSL | Triangle | 789.8 | 750.8 | -4.9% |
+| WGPU / WGSL | Damaged Helmet | 76.1 | 75.1 | -1.4% |
+| WGPU / WGSL | BrainStem | 67.9 | 67.7 | -0.3% |
+
+FPS is 300 divided by the median elapsed time of three alternating runs per
+implementation, following 60-frame warmups. Changes are relative to Naga and use
+unrounded values. Timing covers the entire application process, including
+startup, presentation and teardown, rather than compilation
+throughput or isolated GPU time. glTF animation time was fixed at 1, HDR data was
+cached, and builds ran separately from measurements. Both implementations used
+SDL offscreen rendering for GLES3 and X11 windows for Vulkan/WGPU; compare within
+each backend. Short Triangle runs and presentation pacing limit sensitivity to
+small differences. WGPU still uses Naga internally for native translation.
+
+[Saved measurements, individual samples and artifact hashes](docs/benchmarks/shader-examples-2026-11-12.json).
+See [shader qualification](docs/contracts/SHADER_COMPILATION.md#performance-qualification)
+and [the profiling tool](scripts/README.md) for the current measurement workflow.
