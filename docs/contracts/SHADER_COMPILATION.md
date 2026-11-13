@@ -281,18 +281,27 @@ they are not new performance comparisons.
 | GLES3/WebGL2 | Generated UTF-8 GLSL ES 3.00 | `glow` / `webgl` |
 | Vulkan | SPIR-V 1.0 words, little-endian byte export | `vulkan` |
 
-The compiler is built into the SDK, including empty-default builds. Its only
+The compiler, audio and window hosting are built into the SDK, which defaults
+to Glow. Its only
 shader Cargo feature is the default-off `shader-python` frontend. Renderer
 features imply their writers; there are no separate compiler or output flags.
-Without a renderer, compiler construction rejects unavailable outputs. GPU-only
-consumers may enable multiple renderer backends; each compiler instance still
-returns only its configured target. The internal virtual renderer used by unit
-tests and `test-support` supplies WGSL without enabling a native backend.
+Disabling defaults requires one explicit renderer. Zero or multiple renderers
+reject at build time; each compiler instance returns only its configured target. The internal virtual renderer used by unit
+tests and `test-support` supplies WGSL fixtures alongside the selected renderer.
 
 Compilation is CPU work and needs no open window. The SPIR-V writer uses the small
 `spirv` opcode/enumeration crate, selected by Vulkan. No Naga frontend, Naga writer,
 external compiler process or temporary cross-language round trip is used by the
 plugin. WGPU's independent native translation may still depend on Naga.
+
+With audio/window hosting unconditional and Glow selected by default, fresh
+min-size qualification produced 473,872 bytes for Glow and 515,432 with Python;
+Vulkan remains 418,120 and 459,440 bytes. All four complete libraries remain
+below 524,288 bytes, export only `nc_get_plugin_descriptor_v2`, pass loaded COM
+probes and run all three examples. Default and explicit renderer builds, 28
+invalid native/browser selections, full native suites, Chromium and independent
+nightly/stable archive consumers pass. Evidence is retained locally under
+`/tmp/neocogi-builtin-platform/`; these smoke runs make no new performance comparison.
 
 All writers consume the same validated typed IR. Generated shaders return
 zero for out-of-range array/vector/matrix/image reads; local writes outside the
@@ -350,10 +359,10 @@ cargo build --locked -p neocogi-platform-dylib --no-default-features \
   --features vulkan --profile min-size
 NEOCOGI_PLATFORM_DYLIB="$PWD/target/min-size/libnc_platform.so" \
 NEOCOGI_TEST_BACKEND=vulkan NEOCOGI_PLATFORM_SIZE_LIMIT=524288 \
-  cargo test --locked -p neocogi-platform --features test-support,glow,vulkan,wgpu \
+  cargo test --locked -p neocogi-platform --features test-support,glow \
   --test compiler_plugin -- --ignored --exact dynamic_platform_plugin_exposes_its_builtin_compiler
 NEOCOGI_SHADER_VALIDATORS=1 cargo test --locked -p neocogi-platform \
-  --features test-support,glow,vulkan,wgpu --test sexp_compiler
+  --features test-support,glow --test sexp_compiler
 ```
 
 The dynamic probe loads the actual platform library, checks its requested size

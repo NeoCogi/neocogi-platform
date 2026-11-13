@@ -17,9 +17,9 @@ together after toolchain or namespace changes.
 
 `neocogi-platform` is the implementation SDK. Its `render` module exposes the
 contracts crate's exact types and adds the built-in S-expression COM compiler. `gpu` owns
-resource versions, recording, validation, quotas and concrete backends; optional
-`platform` owns SDL/DOM hosting and native lifetimes. `audio` owns bounded PCM
-playback/capture on SDL/Web Audio without requiring any renderer or Naga.
+resource versions, recording, validation, quotas and concrete backends; builtin
+`platform` owns SDL/DOM hosting and native lifetimes. Builtin `audio` owns bounded PCM
+playback/capture on SDL/Web Audio without opening a window or initializing graphics.
 Platform hosting includes audio through the same discovery root. `neocogi-platform-dylib`
 provides thin final platform discovery roots. Examples and browser/typed-buffer
 fixtures remain unpublished workspace consumers.
@@ -30,17 +30,18 @@ calls retain the existing short-borrow rules, preparation-before-acquisition
 ordering and typed resource authentication. Surface and resource contracts are
 unchanged; see [drawing targets](../contracts/RENDER_SURFACES.md).
 
-Default SDK features are empty. GPU backends `glow`, `vulkan` and `wgpu` are
-additive; `webgl` reuses GL execution on Wasm. `platform` enables hosting and
-requires exactly one legal target/backend selection. The bounded S-expression
-compiler and typed IR are built in. `shader-python` is the only shader feature;
-WGSL, SPIR-V and GLSL writers are implied by `wgpu`, `vulkan` and `glow`/`webgl`.
-Each compiler instance has one immutable target; requests contain no target.
-Reports identify their format, which backends validate before copying code; Rust
-`ShaderCode` snapshots retain only that format. `test-support` includes a virtual
-WGSL renderer and weakly enables WGPU counters only when WGPU is selected.
-Applications that load providers dynamically use schema contracts and retain no
-SDK implementation edge.
+The SDK always contains audio, window hosting and shader compilation. Glow is
+the default renderer; exactly one of `glow`, `vulkan`, `wgpu` or `webgl` must be
+selected. Alternate renderers disable default features first. Browser WebGL uses
+`webgl` with `wasm32-unknown-unknown`. `audio` and `platform` are modules, not Cargo
+features. Contracts-only clients use the independent contracts crate.
+
+`shader-python` is the only shader feature. WGSL, SPIR-V and GLSL writers are
+implied by `wgpu`, `vulkan` and `glow`/`webgl`. Each compiler instance has one
+immutable target; requests contain no target. Reports identify their format,
+which backends validate before copying code. `test-support` supplies an internal
+virtual WGSL renderer and weakly enables WGPU counters only when WGPU is selected.
+Dynamic applications retain no SDK implementation edge.
 
 The contracts crate contains the sole authored `schemas/neocogi` declarations and
 compiles generated bindings once. Its own build.rs uses its embedded source helper.

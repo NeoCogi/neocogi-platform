@@ -56,7 +56,7 @@ Run:
 cargo fetch --locked
 cargo check --locked --workspace --all-targets
 cargo test --locked -p neocogi-platform-contracts --features build-support,test-support
-cargo test --locked -p neocogi-platform --features platform,glow,test-support
+cargo test --locked -p neocogi-platform --features test-support
 cargo test --locked -p neocogi-platform-tools
 cargo tools check-packages --offline --stable-toolchain stable --allow-dirty
 ```
@@ -103,14 +103,13 @@ backend validation. Rebuild generated consumers and platforms after contract or
 COM/IDL toolchain changes.
 
 Run `cargo test -p neocogi-platform --no-default-features --features wgpu
---test shader_targets` and repeat with `vulkan` and `glow`. Also run without
-features to prove the builtin compiler rejects unavailable targets. These runs
+--test shader_targets` and repeat with `vulkan` and `glow`. Also run with ordinary defaults to verify Glow selection. These runs
 omit `test-support` so the virtual WGSL renderer cannot mask disabled outputs.
 The single backend code getter preserves encoding and ownership. Missing code
 propagates without fallback, wrong targets reject before code acquisition, and
 invalid UTF-8 rejects for either text target.
 
-Also run the matrix with `glow,vulkan,wgpu` together, without platform hosting. Identical target-free
+Invalid zero/multiple renderer selections are compile-time errors. Identical target-free
 requests on different fixed-format compiler instances must keep their configured
 outputs after validation and quota failures. Resource regressions reject an
 otherwise consistent result for another backend without publishing a shader or

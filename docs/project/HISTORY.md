@@ -1,5 +1,14 @@
 # Unreleased
 
+## Builtin audio/window hosting and default Glow
+
+Audio and window hosting are unconditional SDK services; their feature flags are
+removed. Glow is the default renderer, matching the shim and examples. Exactly
+one renderer is required; Vulkan, WGPU and WebGL builds disable default features
+first. The earlier empty-default and additive GPU-only SDK modes are superseded.
+Contracts-only clients retain the separate implementation-free contracts crate.
+Shader Python remains the only optional shader feature and stays default-off.
+
 ## Built-in compiler and renderer-selected writers
 
 The compiler is always part of the SDK. Separate compiler and output Cargo flags

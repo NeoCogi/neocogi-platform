@@ -23,11 +23,12 @@ Images, credits and license notices are included in this crate archive.
 
 ## Static Rust integration
 
-The SDK has **empty default features**. For a native Vulkan platform:
+Audio, window hosting and shader compilation are built in. **Glow is the default
+renderer**, so an ordinary dependency is sufficient:
 
 ```toml
 [dependencies]
-neocogi-platform = { version = "=0.2.0", default-features = false, features = ["platform", "vulkan"] }
+neocogi-platform = "=0.2.0"
 neocogi-com = { version = "=0.2.0-alpha.4", default-features = false, features = ["std", "runtime"] }
 neocogi-com-host = { version = "=0.2.0-alpha.4", default-features = false }
 ```
@@ -51,7 +52,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     unsafe { runtime.register_plugin_descriptor(descriptor) }?;
     let platform: ComPtr<PlatformAbi> = runtime.acquire_plugin_root(descriptor.plugin_id)?;
     let factory = platform.query::<ShaderCompilerFactoryAbi>()?;
-    let compiler = factory.create(ShaderTarget::SpirV)?;
+    let compiler = factory.create(ShaderTarget::GlslEs300)?;
     let source = b"(module (vertex vs () (returns vec4 (builtin position)) (return (vec4 0.0 0.0 0.5 1.0))))";
     let result = compiler.compile(
         ShaderCompileRequest {
@@ -61,12 +62,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         NcCopyFromBufferOffset::new(0, source),
         NcCopyFromBufferOffset::new(0, b"vs"),
     )?;
-    println!("Compiled {} SPIR-V bytes", result.code()?.to_vec()?.len());
+    println!("Compiled {} GLSL ES3 bytes", result.code()?.to_vec()?.len());
     Ok(())
 }
 ```
 
-Use `ShaderTarget::GlslEs300` for Glow and `ShaderTarget::Wgsl` for WGPU.
+For Vulkan or WGPU, replace the SDK dependency with an explicit renderer selection:
+
+```toml
+neocogi-platform = { version = "=0.2.0", default-features = false, features = ["vulkan"] }
+```
+
+Use `ShaderTarget::SpirV` for Vulkan and `ShaderTarget::Wgsl` for WGPU.
 For drawing, use `Platform` to create a window, then acquire its typed surface,
 resource-group and recording capabilities. The repository examples below provide
 complete input/render loops. Native handles remain inside the provider.
@@ -75,18 +82,16 @@ complete input/render loops. Native handles remain inside the provider.
 
 | Feature | Provides |
 | --- | --- |
-| `audio` | SDL/Web Audio PCM services without graphics or windows |
-| `platform` | SDL/browser hosting and audio; requires exactly one hosting backend |
-| `glow` | Native GLES3 and its GLSL ES 3.00 compiler output |
+| `glow` (default) | Native GLES3 and its GLSL ES 3.00 compiler output |
 | `vulkan` | Native Vulkan and SPIR-V output |
 | `wgpu` | Native WGPU and WGSL output |
 | `webgl` | Browser WebGL2 and GLSL ES 3.00 output on `wasm32-unknown-unknown` |
 | `shader-python` | Optional Python-like source frontend, disabled by default |
 
-GPU-only Rust consumers may combine native backend features; `platform` hosting
-requires one backend. Native builds need SDL2 development libraries and a working
-graphics driver; Vulkan also needs its loader. Browser builds use `platform,webgl`
-and the WebAssembly target.
+Select exactly one renderer. Audio and windowing have no separate feature flags;
+audio can be opened without creating a window. Native builds need SDL2 development
+libraries and a working graphics driver; Vulkan also needs its loader. Browser
+builds use `--no-default-features --features webgl` and the WebAssembly target.
 
 ## Built-in shader compiler
 
@@ -105,8 +110,9 @@ QueryInterface; the renderer retains its own compiler for its backend.
 Outputs are UTF-8 WGSL/GLSL or little-endian SPIR-V words through one `code()` byte
 buffer. Imports check target, encoding and bounds before retaining typed shader
 data. The compiler is always built in, and `shader-python` is its only Cargo
-feature. Available writers follow the renderer features above. Compilation can run
-without opening a window; a build with no renderer rejects unavailable targets.
+feature. Available writers follow the selected renderer. Compilation can run
+without opening a window. Disabling defaults requires selecting a renderer;
+zero or multiple renderers are rejected at build time.
 
 ## Running the repository examples
 
@@ -134,9 +140,15 @@ COM/host/IDL are pinned together to `0.2.0-alpha.4`. Compatibility uses derived
 contract identities and signatures: rebuild generated consumers and providers
 together after a toolchain or contract change.
 
-The complete min-size Vulkan shared library is 418,120 bytes by default and
-459,440 bytes with Python in the recorded alpha.4 qualification, below 512 KiB.
-These are complete platform-library sizes, not the Rust rlib or crate archive.
+Measured complete platform libraries with nightly, rebuilt std and immediate-abort panics:
+
+| Renderer | `min-size` bytes | With `shader-python` |
+| --- | ---: | ---: |
+| Glow (default) | 473,872 | 515,432 |
+| Vulkan | 418,120 | 459,440 |
+
+All four bundles are below 512 KiB. These are complete shared-library sizes,
+not the Rust rlib or source archive; documentation images do not enter the binary.
 The [shim guide](https://github.com/NeoCogi/neocogi-platform/blob/master/crates/platform-dylib/README.md)
 covers dynamic deployment. See [API documentation](https://docs.rs/neocogi-platform),
 [the shader contract](https://github.com/NeoCogi/neocogi-platform/blob/master/docs/contracts/SHADER_COMPILATION.md)

@@ -3,7 +3,9 @@
 One normal Cargo `cdylib` named `nc_platform`, containing the selected renderer,
 its built-in COM shader compiler and audio services. The sole discovery export is
 `nc_get_plugin_descriptor_v2`. The executable owns the COM host; this library uses
-its supplied services. Static Rust applications use `neocogi-platform` instead.
+its supplied services. Static Rust applications use `neocogi-platform` instead. The SDK also includes
+audio/window hosting unconditionally and defaults to Glow; neither service has a
+separate feature flag.
 
 ## Rendered examples
 
@@ -23,11 +25,11 @@ Images, credits and license notices are included in this crate archive.
 
 ## Build the library
 
-From the repository checkout, select exactly one backend and use the same
-profile and target for the library and its application:
+From the repository checkout, the default Glow library needs no backend flags.
+Use the same profile and target for the library and its application:
 
 ```sh
-cargo build --locked --profile min-size -p neocogi-platform-dylib --no-default-features --features vulkan
+cargo build --locked --profile min-size -p neocogi-platform-dylib
 ```
 
 | Feature | Renderer / shader output |
@@ -43,6 +45,7 @@ cargo build --locked --profile min-size -p neocogi-platform-dylib --no-default-f
 | macOS | `libnc_platform.dylib` |
 | Windows | `nc_platform.dll` |
 
+For Vulkan or WGPU, add `--no-default-features --features vulkan` or `wgpu`.
 Backend selection changes the implementation and descriptor, never the filename.
 S-expressions are built in; no separate compiler plugin or shader library is
 needed. Python-like source is disabled by default: add `shader-python` alongside
@@ -50,9 +53,14 @@ the backend, for example `--features vulkan,shader-python`.
 
 Native builds need SDL2 development libraries and the selected backend's
 driver/loader; Vulkan needs its loader. The repository's `min-size` profile uses
-rolling nightly, rebuilt std and immediate-abort panics. The recorded alpha.4
-Vulkan library is **418,120 bytes** by default or **459,440 bytes** with Python,
-both below 512 KiB. Source-archive screenshots do not enter the native library.
+rolling nightly, rebuilt std and immediate-abort panics. Complete measured bundles:
+
+| Renderer | `min-size` bytes | With `shader-python` |
+| --- | ---: | ---: |
+| Glow (default) | 473,872 | 515,432 |
+| Vulkan | 418,120 | 459,440 |
+
+All four are below 512 KiB. Source-archive screenshots do not enter the native library.
 
 ## Build from crates.io
 
@@ -61,7 +69,7 @@ build package when the application's graph should contain only contracts:
 
 ```toml
 [dependencies]
-neocogi-platform-dylib = { version = "=0.2.0", default-features = false, features = ["vulkan"] }
+neocogi-platform-dylib = "=0.2.0"
 ```
 
 Then build the dependency's normal library and deploy it:
@@ -79,7 +87,7 @@ need no checkout-relative build paths or Cargo artifact dependencies.
 ## Load it from an application
 
 The dynamic host needs the shared contracts and COM host, with no renderer SDK
-dependency. For the Vulkan library built above:
+dependency. For the default Glow library built above:
 
 ```toml
 [dependencies]
@@ -104,7 +112,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let id = unsafe { runtime.load_plugin_library(std::path::PathBuf::from(library)) };
     let platform: ComPtr<PlatformAbi> = runtime.acquire_plugin_root(id)?;
     let factory = platform.query::<ShaderCompilerFactoryAbi>()?;
-    let compiler = factory.create(ShaderTarget::SpirV)?;
+    let compiler = factory.create(ShaderTarget::GlslEs300)?;
     let source = b"(module (vertex vs () (returns vec4 (builtin position)) (return (vec4 0.0 0.0 0.5 1.0))))";
     let result = compiler.compile(
         ShaderCompileRequest {
@@ -114,14 +122,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         NcCopyFromBufferOffset::new(0, source),
         NcCopyFromBufferOffset::new(0, b"vs"),
     )?;
-    println!("Compiled {} SPIR-V bytes", result.code()?.to_vec()?.len());
+    println!("Compiled {} GLSL ES3 bytes", result.code()?.to_vec()?.len());
     Ok(())
 }
 ```
 
 Run the host with the path to its deployed library. The root also provides
 windows and audio; QueryInterface obtains the same built-in shader compiler used
-by the renderer. Use `GlslEs300` for a Glow library or `Wgsl` for a WGPU library.
+by the renderer. Use `SpirV` for a Vulkan library or `Wgsl` for a WGPU library.
 Compile failures return owned source-located diagnostics. The target is fixed per
 compiler; requests contain only stage and output budget. S-expression and
 optional Python-like input share validation and the optimized backend writers.

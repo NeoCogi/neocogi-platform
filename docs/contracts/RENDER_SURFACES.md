@@ -153,13 +153,13 @@ release. Glow also reads native pixels in the platform test. Backend suites read
 native image pixels for Glow, WGPU and Vulkan.
 
 ```sh
-SDL_VIDEODRIVER=offscreen cargo test --locked -p neocogi-platform --lib --features platform,glow,test-support -- --include-ignored --test-threads=1
-cargo test --locked -p neocogi-platform --features glow,vulkan,wgpu,test-support --lib gpu::backends:: -- --include-ignored --test-threads=1
+SDL_VIDEODRIVER=offscreen cargo test --locked -p neocogi-platform --lib --features glow,test-support -- --include-ignored --test-threads=1
+cargo test --locked -p neocogi-platform --no-default-features --features vulkan,test-support --lib gpu::backends::vulkan:: -- --include-ignored --test-threads=1
 ```
 
 The combined backend command needs a working display and adapters; software
 Vulkan is sufficient. Run platform acceptance separately with
-`--no-default-features --features platform,vulkan,test-support` or `platform,wgpu,test-support` for
+`--no-default-features --features vulkan,test-support` or `wgpu,test-support` for
 those providers. SDL dummy/offscreen drivers cannot create WGPU windows. The
 optional Khronos validation layer can be enabled with
 `VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation`. Browser execution is checked

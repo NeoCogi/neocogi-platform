@@ -5,10 +5,10 @@ and platform schema folders. The independent namespace is `neocogi.audio`;
 generated Rust bindings, PCM conversion/validation, limits and diagnostics belong
 to `neocogi_platform_contracts::audio`. Platform discovery imports those contracts
 for its audio service methods. Audio itself imports no renderer/window namespace.
-`neocogi-platform::audio` implements native SDL and browser Web Audio. Enable
-`audio` for audio-only Rust applications without Naga, graphics or windows.
-`platform` includes audio through the existing platform root/library; no additional
-crate or plugin is deployed.
+`neocogi-platform::audio` implements native SDL and browser Web Audio. Audio and window hosting are built into the SDK and the existing platform
+root/library; neither has a feature flag. Audio can be opened without creating a
+window. Glow is the default renderer; selecting another requires disabling
+default features. No additional audio crate or plugin is deployed.
 Linked Rust applications can import the canonical values and clients directly
 from `neocogi_platform::audio`; dynamic clients use the contracts crate.
 
@@ -117,7 +117,7 @@ installed worklet asset is required.
 
 ```sh
 cargo test --locked -p neocogi-platform-contracts --features build-support,test-support
-cargo test --locked -p neocogi-platform --no-default-features --features audio --test audio
+cargo test --locked -p neocogi-platform --test audio
 cargo test --locked -p neocogi-platform --test gpu_backend_features
 cargo tools test-browser --browser /path/to/chrome
 ```

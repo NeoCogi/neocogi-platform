@@ -11,7 +11,7 @@ with [NeoCogi UI](https://github.com/NeoCogi/neocogi-ui).
 | Package | Responsibility |
 | --- | --- |
 | `crates/platform-contracts` (`neocogi-platform-contracts`) | Schemas, generated bindings, shared types, limits, validation and build support |
-| `crates/platform` (`neocogi-platform`) | GPU recording/backends, renderer-owned compiler and optional hosting |
+| `crates/platform` (`neocogi-platform`) | GPU recording/backends, renderer-owned compiler, builtin audio and window hosting |
 | `crates/platform-dylib` (`neocogi-platform-dylib`) | Thin platform shared-library entrypoints including the renderer compiler |
 | `examples/native`, `tests/*` | Unpublished application and acceptance consumers |
 | `scripts` (`neocogi-platform-tools`) | Unpublished Rust development and qualification tools, run with `cargo tools` |
@@ -36,7 +36,7 @@ without network access, even when those dependencies are not used by the current
 cargo fetch --locked
 cargo check --locked --workspace --all-targets
 cargo test --locked -p neocogi-platform-contracts --features build-support
-cargo test --locked -p neocogi-platform --features platform,glow,test-support
+cargo test --locked -p neocogi-platform --features test-support
 cargo run --locked -p neocogi-platform-examples --bin triangle -- 3
 ```
 
@@ -44,16 +44,16 @@ For headless native GL qualification:
 
 ```sh
 SDL_VIDEODRIVER=offscreen cargo run --locked -p neocogi-platform-examples --bin triangle -- 3
-SDL_VIDEODRIVER=offscreen cargo test --locked -p neocogi-platform --features platform,glow,test-support --lib -- --include-ignored --test-threads=1
+SDL_VIDEODRIVER=offscreen cargo test --locked -p neocogi-platform --features test-support --lib -- --include-ignored --test-threads=1
 ```
 
-The SDK has empty default features. Native GPU features `glow`, `vulkan` and
-`wgpu` are additive under `neocogi_platform::gpu::backends`. Enable `platform`
-with exactly one backend for SDL hosting. Build scripts depend on
-`neocogi-platform-contracts` with `build-support` for generation/resource staging.
-Dynamic clients use its shared types without depending on the SDK.
-Browser hosting uses `platform,webgl` and `wasm32-unknown-unknown`.
-SDK defaults include the compiler without SDL or graphics-loader dependencies.
+The SDK includes audio, window hosting and shader compilation, with **Glow as the
+default renderer**. Select Vulkan or WGPU with `--no-default-features --features
+vulkan` or `wgpu`; exactly one renderer is required. Browser hosting uses
+`--no-default-features --features webgl` and `wasm32-unknown-unknown`.
+Build scripts and contracts-only clients use `neocogi-platform-contracts`, which
+has no SDK/native implementation dependency. Enable its `build-support` feature
+for generation and resource staging.
 The built-in COM compiler accepts S-expressions and, with the optional
 `shader-python` feature, Python-like shader programs,
 validates both through one typed IR, and directly emits backend shaders.
