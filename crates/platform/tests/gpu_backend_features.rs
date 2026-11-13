@@ -18,6 +18,16 @@ struct Graph {
 impl Graph {
     /// Resolves a real external path consumer offline, using this repository's exact lockfile.
     fn resolve(features: &[&str], target: &str) -> Self {
+        Self::resolve_features(features, target, false)
+    }
+
+    /// Resolves the ordinary default SDK, without suppressing its Glow renderer.
+    fn defaults(target: &str) -> Self {
+        Self::resolve_features(&[], target, true)
+    }
+
+    /// The fixture controls defaults independently of explicit backend/frontend selection.
+    fn resolve_features(features: &[&str], target: &str, defaults: bool) -> Self {
         let directory = tempfile::tempdir().unwrap();
         let package = Path::new(env!("CARGO_MANIFEST_DIR"));
         std::fs::create_dir(directory.path().join("src")).unwrap();
@@ -25,7 +35,7 @@ impl Graph {
         let dependency_path = serde_json::to_string(package.to_str().unwrap()).unwrap();
         let features = serde_json::to_string(features).unwrap();
         let manifest = format!(
-            "[workspace]\n[package]\nname='gpu-feature-probe'\nversion='0.0.0'\nedition='2024'\n[dependencies]\nneocogi-platform={{path={dependency_path},default-features=false,features={features}}}\n"
+            "[workspace]\n[package]\nname='gpu-feature-probe'\nversion='0.0.0'\nedition='2024'\n[dependencies]\nneocogi-platform={{path={dependency_path},default-features={defaults},features={features}}}\n"
         );
         std::fs::write(directory.path().join("Cargo.toml"), manifest).unwrap();
         // A published package carries its own lockfile; a checkout uses its
@@ -88,29 +98,14 @@ fn host() -> String {
         .unwrap()
 }
 
-/// Recording/admission and virtual fixtures must not require a graphics loader, SDL or browser API.
+/// The ordinary SDK contains window/audio services and chooses Glow without explicit features.
 #[test]
-fn cpu_only_and_virtual_fixtures_do_not_enable_native_backends() {
-    for features in [vec![], vec!["test-support"]] {
-        let graph = Graph::resolve(&features, &host());
-        for package in ["sdl2", "ash", "wgpu", "glow", "web-sys"] {
-            assert!(!graph.contains(package), "{features:?} pulled in {package}");
-        }
-    }
-}
-
-/// Audio services select only target audio dependencies, including host-side schema generation.
-#[test]
-fn audio_only_adds_no_graphics_backends() {
-    let native = Graph::resolve(&["audio"], &host());
-    assert!(native.contains("sdl2"));
-    let browser = Graph::resolve(&["audio"], "wasm32-unknown-unknown");
-    assert!(browser.contains("web-sys"));
-    assert!(!browser.contains("sdl2"));
-    for graph in [native, browser] {
-        for forbidden in ["naga", "glow", "ash", "wgpu"] {
-            assert!(!graph.contains(forbidden), "audio enabled {forbidden}");
-        }
+fn default_platform_selects_glow_and_native_audio() {
+    let graph = Graph::defaults(&host());
+    assert!(graph.packages["neocogi-platform"].contains("glow"));
+    assert!(graph.contains("glow") && graph.contains("sdl2"));
+    for unwanted in ["ash", "wgpu", "web-sys"] {
+        assert!(!graph.contains(unwanted), "default platform enabled {unwanted}");
     }
 }
 
@@ -129,14 +124,13 @@ fn selected_backends_resolve_only_their_required_target_dependencies() {
     assert!(!browser.contains("sdl2") && !browser.contains("ash") && !browser.contains("wgpu"));
 }
 
-/// Backends may coexist in the GPU library; WGPU counters remain an explicit test-only choice.
+/// An explicit renderer switch drops default Glow; WGPU counters remain a test-only choice.
 #[test]
-fn native_features_are_additive_and_wgpu_observation_is_opt_in() {
+fn renderer_switches_and_wgpu_observation_are_explicit() {
     let native = host();
-    let combined = Graph::resolve(&["glow", "vulkan", "wgpu"], &native);
-    for package in ["glow", "ash", "wgpu", "sdl2"] {
-        assert!(combined.contains(package), "combined graph lacks {package}");
-    }
+    let vulkan = Graph::resolve(&["vulkan"], &native);
+    assert!(!vulkan.packages["neocogi-platform"].contains("glow"));
+    assert!(vulkan.contains("sdl2") && vulkan.contains("ash"));
     let wgpu = Graph::resolve(&["wgpu"], &native);
     assert!(!wgpu.packages["neocogi-platform"].contains("glow"));
     assert!(!wgpu.packages["wgpu"].contains("counters"));
@@ -166,10 +160,6 @@ fn enabled_modules_implement_the_typed_resource_contract() {
 #[test]
 fn compiler_outputs_follow_renderer_features() {
     let native = host();
-    let minimal = Graph::resolve(&[], &native);
-    for dependency in ["spirv", "naga", "sdl2", "ash", "wgpu", "glow", "web-sys"] {
-        assert!(!minimal.contains(dependency), "builtin compiler selected {dependency}");
-    }
     for backend in ["glow", "webgl", "vulkan", "wgpu"] {
         let target = if backend == "webgl" { "wasm32-unknown-unknown" } else { &native };
         let graph = Graph::resolve(&[backend], target);
@@ -184,7 +174,7 @@ fn compiler_outputs_follow_renderer_features() {
 
 /// The sole shader Cargo feature is the optional Python frontend, with no separate compiler/writer flags.
 #[test]
-fn only_python_is_a_shader_feature() {
+fn services_are_builtin_and_only_python_is_a_shader_feature() {
     let output = Command::new(env!("CARGO"))
         .current_dir(env!("CARGO_MANIFEST_DIR"))
         .args(["metadata", "--offline", "--no-deps", "--format-version=1"])
@@ -198,6 +188,10 @@ fn only_python_is_a_shader_feature() {
         .iter()
         .find(|p| p["name"] == "neocogi-platform")
         .unwrap();
+    assert_eq!(package["features"]["default"], serde_json::json!(["glow"]));
+    for retired in ["audio", "platform"] {
+        assert!(package["features"].get(retired).is_none(), "{retired} must be builtin");
+    }
     let names: Vec<_> = package["features"]
         .as_object()
         .unwrap()
@@ -211,13 +205,12 @@ fn only_python_is_a_shader_feature() {
 /// No renderer or virtual test fixture silently opts into the Python source parser.
 #[test]
 fn python_frontend_is_only_enabled_by_explicit_opt_in() {
-    for features in [vec![], vec!["test-support"], vec!["glow"], vec!["vulkan"], vec!["wgpu"]] {
+    for features in [vec!["glow"], vec!["glow", "test-support"], vec!["vulkan"], vec!["wgpu"]] {
         let graph = Graph::resolve(&features, &host());
         assert!(!graph.packages["neocogi-platform"].contains("shader-python"), "{features:?} enabled Python");
     }
-    let graph = Graph::resolve(&["shader-python"], &host());
+    let plain = Graph::defaults(&host());
+    let graph = Graph::resolve_features(&["shader-python"], &host(), true);
     assert!(graph.packages["neocogi-platform"].contains("shader-python"));
-    for package in ["sdl2", "ash", "wgpu", "glow", "web-sys"] {
-        assert!(!graph.contains(package), "Python frontend selected native dependency {package}");
-    }
+    assert_eq!(graph.packages.keys().collect::<HashSet<_>>(), plain.packages.keys().collect::<HashSet<_>>());
 }

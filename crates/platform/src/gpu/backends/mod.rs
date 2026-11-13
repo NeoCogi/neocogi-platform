@@ -1,9 +1,8 @@
-//! Concrete graphics families behind additive Cargo features.
+//! Concrete graphics families behind mutually exclusive renderer features.
 //!
 //! Each module owns its API-specific handles, preparation, submission and retirement. Native
-//! families may coexist in one library while retaining distinct concrete resource types and driver
-//! identities. The platform assembly chooses one family per build. Empty default features keep
-//! CPU admission/recording and virtual fixtures independent of SDL and graphics libraries.
+//! families retain distinct concrete resource types and driver identities. The builtin platform
+//! selects one family per build; Glow is the default. Audio and window hosting share that build.
 
 /// Shared OpenGL ES/WebGL executor, including resource-owned physical context lifetime.
 #[cfg(any(feature = "glow", feature = "webgl"))]

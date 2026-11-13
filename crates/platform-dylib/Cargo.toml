@@ -23,5 +23,5 @@ wgpu = ["neocogi-platform/wgpu"]
 shader-python = ["neocogi-platform/shader-python"]
 
 [dependencies]
-neocogi-platform = { workspace = true, features = ["platform"] }
+neocogi-platform.workspace = true
 neocogi-com = { workspace = true, features = ["std"] }

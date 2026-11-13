@@ -13,8 +13,7 @@ compile_error!("select exactly one renderer feature: glow, vulkan, wgpu, or webg
     all(feature = "vulkan", feature = "wgpu"),
 ))]
 compile_error!(
-    "renderer features are mutually exclusive when platform hosting is enabled.\n\
-     GPU-only consumers may enable native backends together without the platform feature.\n\
+    "renderer features are mutually exclusive; audio and window hosting are builtin.\n\
      If application defaults select Glow, disable them when selecting another backend, e.g. --no-default-features --features vulkan.\n\
      For the Vulkan platform example: cargo run --locked -p neocogi-platform-examples --bin gltf_damaged_helmet --no-default-features --features static,vulkan"
 );

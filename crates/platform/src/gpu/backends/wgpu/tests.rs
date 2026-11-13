@@ -22,7 +22,7 @@ fn presentation_format_chooses_an_advertised_non_srgb_format() {
 
 /// Runs the actual WGPU validation layer; requires any native adapter, including a software one.
 #[test]
-#[ignore = "requires a native WGPU adapter; run cargo test -p neocogi-platform --features wgpu,test-support -- --ignored"]
+#[ignore = "requires a native WGPU adapter; run cargo test -p neocogi-platform --no-default-features --features wgpu,test-support -- --ignored"]
 fn texture_upload_failures_are_returned_without_poisoning_later_uploads() {
     let instance = wgpu::Instance::default();
     let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default())).unwrap();

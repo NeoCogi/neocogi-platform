@@ -5,7 +5,7 @@ authors.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "NeoCogi platform contracts, graphics, shader compiler and optional native/browser providers"
+description = "NeoCogi platform with builtin audio, windowing, shader compilation and selectable renderers"
 publish = ["crates-io"]
 readme = "README.md"
 include = ["Cargo.toml", "README.md", "LICENSE", "src/**", "tests/**", "examples/**", "docs/**"]
@@ -14,15 +14,12 @@ include = ["Cargo.toml", "README.md", "LICENSE", "src/**", "tests/**", "examples
 crate-type = ["rlib"]
 
 [features]
-default = []
-# Backend implementations are additive; the optional platform assembly selects one.
-glow = ["dep:glow", "dep:sdl2", "dep:web-sys"]
-vulkan = ["dep:spirv", "dep:ash", "dep:ash-window-handle", "dep:raw-window-handle", "dep:sdl2"]
-wgpu = ["dep:wgpu", "dep:pollster", "dep:raw-window-handle", "dep:sdl2"]
-webgl = ["dep:glow", "dep:web-sys", "dep:wasm-bindgen", "dep:wasm-bindgen-futures", "dep:js-sys"]
-platform = ["audio"]
-# PCM services can be linked independently of any renderer or native window.
-audio = ["dep:sdl2", "dep:wasm-bindgen", "dep:wasm-bindgen-futures", "dep:js-sys", "dep:web-sys"]
+default = ["glow"]
+# Audio/window hosting is builtin; select exactly one renderer for this platform.
+glow = ["dep:glow"]
+vulkan = ["dep:spirv", "dep:ash", "dep:ash-window-handle", "dep:raw-window-handle"]
+wgpu = ["dep:wgpu", "dep:pollster", "dep:raw-window-handle"]
+webgl = ["dep:glow"]
 # Optional source frontend; backends and test-support do not enable it implicitly.
 shader-python = []
 test-support = ["neocogi-platform-contracts/test-support", "wgpu?/counters"]
@@ -35,7 +32,7 @@ spirv = { version = "=0.4.0", optional = true }
 glow = { workspace = true, optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-sdl2 = { workspace = true, optional = true }
+sdl2.workspace = true
 ash = { workspace = true, optional = true }
 ash-window-handle = { workspace = true, optional = true }
 raw-window-handle = { workspace = true, optional = true }
@@ -43,10 +40,10 @@ wgpu = { workspace = true, optional = true }
 pollster = { workspace = true, optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-wasm-bindgen = { workspace = true, optional = true }
-wasm-bindgen-futures = { version = "=0.4.77", optional = true }
-js-sys = { version = "=0.3.104", optional = true }
-web-sys = { workspace = true, optional = true, features = [
+wasm-bindgen.workspace = true
+wasm-bindgen-futures = "=0.4.77"
+js-sys = "=0.3.104"
+web-sys = { workspace = true, features = [
     "AudioContext", "AudioContextOptions", "AudioContextState", "AudioDestinationNode", "AudioNode",
     "AudioWorklet", "Worklet", "AudioWorkletNode", "AudioWorkletNodeOptions", "ChannelCountMode",
     "Blob", "BlobPropertyBag", "Url", "MessagePort", "MessageEvent", "ErrorEvent",
@@ -64,7 +61,6 @@ serde_json = "1"
 
 [[test]]
 name = "audio"
-required-features = ["audio"]
 
 [[test]]
 name = "gpu_shader_budget"
@@ -72,11 +68,9 @@ required-features = ["test-support", "glow"]
 
 [[test]]
 name = "platform_compiler_activation"
-required-features = ["platform"]
 
 [[test]]
 name = "platform_owned_window_error"
-required-features = ["platform"]
 
 [[test]]
 name = "compiler"

@@ -22,6 +22,7 @@ repository = "https://github.com/NeoCogi/neocogi-platform"
 
 [workspace.dependencies]
 neocogi-platform-contracts = { path = "crates/platform-contracts", version = "=0.2.0", default-features = false }
+# Internal consumers choose one renderer explicitly instead of unifying default Glow into every build.
 neocogi-platform = { path = "crates/platform", version = "=0.2.0", default-features = false }
 neocogi-com = { version = "=0.2.0-alpha.4", default-features = false }
 neocogi-com-host = { version = "=0.2.0-alpha.4", default-features = false }

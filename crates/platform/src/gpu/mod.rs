@@ -1,4 +1,4 @@
-//! Generic graphics admission and optional concrete renderer backends.
+//! Generic graphics admission and the platform's selected renderer backend.
 //!
 //! Semantic geometry, cameras and material shaders belong to clients. Public
 //! resources have exclusive COM owners; commands retain immutable private data.

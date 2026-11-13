@@ -314,7 +314,7 @@ pub(crate) fn qualify(allow_dirty: bool, offline: bool, stable: Option<&str>) ->
             "-p",
             "neocogi-platform",
             "--features",
-            "test-support,platform,glow",
+            "test-support,glow",
         ],
     )?;
     // Default consumers must also qualify without the optional parser. Opt in
