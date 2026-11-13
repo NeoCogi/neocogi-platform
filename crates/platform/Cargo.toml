@@ -8,7 +8,7 @@ repository.workspace = true
 description = "NeoCogi platform contracts, graphics, shader compiler and optional native/browser providers"
 publish = ["crates-io"]
 readme = "README.md"
-include = ["Cargo.toml", "README.md", "LICENSE", "src/**", "tests/**", "examples/**"]
+include = ["Cargo.toml", "README.md", "LICENSE", "src/**", "tests/**", "examples/**", "docs/**"]
 
 [lib]
 crate-type = ["rlib"]

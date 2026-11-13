@@ -155,7 +155,7 @@ fn command_line_is_checked_before_window_creation() {
 }
 
 /// Uses real uploaded meshes, palette uniforms, textures and native depth-tested indexed draws.
-/// Optional PPMs go outside the checkout for human inspection and never affect assertions.
+/// Optional documentation PNGs go outside the checkout and never change the acceptance camera.
 #[cfg(all(feature = "test-support", feature = "glow"))]
 #[test]
 #[ignore = "requires downloaded GLBs and a native SDL GL driver (offscreen is sufficient)"]
@@ -217,13 +217,29 @@ fn models_render_animate_and_respond_to_arcball_pan_zoom() {
             "skybox visibility must preserve the model's material illumination"
         );
         if let Ok(directory) = std::env::var("NEOCOGI_GLTF_CAPTURE") {
-            let mut ppm = format!("P6\n{} {}\n255\n", SIZE.width, SIZE.height).into_bytes();
+            let pixels = if model == "DamagedHelmet" {
+                let mut preview = Camera::new(center, radius, window.size().unwrap());
+                // A sideward/downward arcball drag puts the eye slightly above and
+                // beside the helmet. Keep the interactive reset view unchanged.
+                preview.input(UiInput::Down {
+                    position: Point { x: 480, y: 360 },
+                    buttons: 1,
+                });
+                preview.input(UiInput::Pointer(Point { x: 680, y: 460 }));
+                preview.input(UiInput::Up {
+                    position: Point { x: 680, y: 460 },
+                    buttons: 1,
+                });
+                preview.input(UiInput::Scroll(Point { x: 0, y: -130 }));
+                draw(&preview, &lighting, 0.)
+            } else {
+                with_sky
+            };
+            let mut image = image::RgbaImage::from_raw(SIZE.width as u32, SIZE.height as u32, pixels).unwrap();
             // GL acceptance pixels follow glReadPixels bottom-up row order.
-            for row in with_sky.as_chunks::<{ SIZE.width as usize * 4 }>().0.iter().rev() {
-                ppm.extend(row.as_chunks::<4>().0.iter().flat_map(|p| p[..3].iter().copied()));
-            }
+            image::imageops::flip_vertical_in_place(&mut image);
             std::fs::create_dir_all(&directory).unwrap();
-            std::fs::write(PathBuf::from(directory).join(format!("{model}.ppm")), ppm).unwrap();
+            image.save(PathBuf::from(directory).join(format!("{model}.png"))).unwrap();
         }
         lighting.background = Background::Hidden;
         camera.input(UiInput::Down {

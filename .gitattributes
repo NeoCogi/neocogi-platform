@@ -1,0 +1,3 @@
+# Preserve imported license notices verbatim, including their original whitespace.
+crates/platform/docs/licenses/* -whitespace
+crates/platform-dylib/docs/licenses/* -whitespace

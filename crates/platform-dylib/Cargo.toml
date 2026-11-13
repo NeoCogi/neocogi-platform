@@ -8,7 +8,7 @@ repository.workspace = true
 description = "Thin final COM shared-library entrypoints for NeoCogi Platform"
 publish = ["crates-io"]
 readme = "README.md"
-include = ["Cargo.toml", "README.md", "LICENSE", "src/**", "tests/**"]
+include = ["Cargo.toml", "README.md", "LICENSE", "src/**", "tests/**", "docs/**"]
 
 [lib]
 name = "nc_platform"

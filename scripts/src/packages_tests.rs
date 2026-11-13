@@ -48,6 +48,11 @@ fn archive(directory: &Path, owner: &str, omitted: &[&str], dependency: &str, ex
             files.insert(format!("schemas/{index}.ncidl"), "declaration".into());
         }
     }
+    if matches!(owner, "neocogi-platform" | "neocogi-platform-dylib") {
+        for name in DOCUMENTATION_FILES {
+            files.insert((*name).to_owned(), "Packaged documentation fixture".into());
+        }
+    }
     let path = directory.join("fixture.crate");
     let mut archive = tar::Builder::new(GzEncoder::new(fs::File::create(&path).unwrap(), Compression::fast()));
     for (name, content) in files {
@@ -90,6 +95,21 @@ fn missing_required_inputs() {
     for missing in ["Cargo.toml", "README.md", "LICENSE"] {
         let archive = archive(directory.path(), "library", &[missing], "", None);
         assert!(inspect_archive(&archive, &package("library")).unwrap_err().to_string().contains("missing"));
+    }
+}
+
+/// SDK and shim archives cannot pass release qualification with missing images, evidence or credits.
+#[test]
+fn implementation_packages_include_complete_readme_assets() {
+    let directory = tempfile::tempdir().unwrap();
+    for owner in ["neocogi-platform", "neocogi-platform-dylib"] {
+        let complete = archive(directory.path(), owner, &[], "", None);
+        inspect_archive(&complete, &package(owner)).unwrap();
+        for missing in DOCUMENTATION_FILES {
+            let incomplete = archive(directory.path(), owner, &[missing], "", None);
+            let error = inspect_archive(&incomplete, &package(owner)).unwrap_err().to_string();
+            assert!(error.contains("missing packaged documentation") && error.contains(missing), "{error}");
+        }
     }
 }
 

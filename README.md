@@ -78,7 +78,7 @@ Both use Cannon Exterior HDR lighting, filtered reflections and a skybox.
 
 | Damaged Helmet | BrainStem |
 | :---: | :---: |
-| <img src="docs/images/damaged-helmet.png" alt="Damaged Helmet rendered with textured metallic materials and the Cannon Exterior skybox" width="440"> | <img src="docs/images/brainstem.png" alt="BrainStem rendered with GPU skinning and the Cannon Exterior skybox" width="440"> |
+| <img src="crates/platform/docs/images/damaged-helmet.png" alt="Damaged Helmet viewed diagonally from slightly above, with textured metallic materials and the Cannon Exterior skybox" width="440"> | <img src="crates/platform/docs/images/brainstem.png" alt="BrainStem rendered with GPU skinning and the Cannon Exterior skybox" width="440"> |
 
 Captured from the examples using the Glow backend. Damaged Helmet is by
 theblueturtle_ and ctxwing ([license](examples/native/gltf/DamagedHelmet-LICENSE.md));
@@ -159,6 +159,6 @@ SDL offscreen rendering for GLES3 and X11 windows for Vulkan/WGPU; compare withi
 each backend. Short Triangle runs and presentation pacing limit sensitivity to
 small differences. WGPU still uses Naga internally for native translation.
 
-[Saved measurements, individual samples and artifact hashes](docs/benchmarks/shader-examples-2026-11-12.json).
+[Saved measurements, individual samples and artifact hashes](crates/platform/docs/benchmarks/shader-examples-2026-11-12.json).
 See [shader qualification](docs/contracts/SHADER_COMPILATION.md#performance-qualification)
 and [the profiling tool](scripts/README.md) for the current measurement workflow.

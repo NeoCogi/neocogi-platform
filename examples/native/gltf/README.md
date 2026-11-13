@@ -137,7 +137,18 @@ cover HDR encoding, convolution energy, BRDF bounds, material packing/AO and
 source-keyed cache corruption/bounds handling.
 An actual fragment probe checks that the midpoint of RGBE-encoded radiance 1 and
 8 is 4.5, catching incorrect interpolation of the encoded exponent bytes.
-Set `NEOCOGI_GLTF_CAPTURE=/tmp/gltf-captures` to retain initial-view PPM images.
+Set `NEOCOGI_GLTF_CAPTURE=/tmp/gltf-captures` to save documentation PNGs from
+the real GL renderer. Damaged Helmet uses a slightly elevated diagonal view;
+BrainStem keeps the initial view. This capture camera does not change the
+interactive reset view or the acceptance assertions:
+
+```sh
+NEOCOGI_GLTF_CAPTURE=/tmp/gltf-captures SDL_VIDEODRIVER=offscreen \
+  cargo test --locked -p neocogi-platform-examples --no-default-features \
+  --features static,glow,test-support --test gltf_viewer \
+  models_render_animate_and_respond_to_arcball_pan_zoom -- --ignored --test-threads=1
+```
+
 CI also runs both standalone executables on GL, Vulkan and WGPU.
 
 Numerical kernels belong to rs-math3d 0.21: scene TRS/animation uses typed vectors

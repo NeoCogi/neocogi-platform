@@ -15,6 +15,18 @@ const CONTRACTS: &str = "neocogi-platform-contracts";
 const SCHEMA_COUNT: usize = 10;
 /// The complete release set; adding a workspace tool must not add a published crate.
 const RELEASE_ORDER: &[&str] = &[CONTRACTS, "neocogi-platform", "neocogi-platform-dylib"];
+/// Files needed by each implementation package's self-contained README.
+/// The SDK owns the canonical screenshots/report; the final shim packages matching copies.
+const DOCUMENTATION_FILES: &[&str] = &[
+    "docs/images/damaged-helmet.png",
+    "docs/images/brainstem.png",
+    "docs/benchmarks/shader-examples-2026-11-12.json",
+    "docs/licenses/DamagedHelmet-LICENSE.md",
+    "docs/licenses/BrainStem-LICENSE.md",
+    "docs/licenses/LicenseRef-Poser-EULA.txt",
+    "docs/licenses/Cannon_Exterior-LICENSE.md",
+    "docs/licenses/Cannon_Exterior-CC0.txt",
+];
 /// Known workspace applications, fixtures and development tools are always unpublished.
 const PRIVATE: &[&str] = &[
     "neocogi-typed-buffer-tests",
@@ -142,6 +154,14 @@ fn inspect_archive(archive: &Path, package: &Package) -> Result<String> {
     }
     for required in ["Cargo.toml", "README.md", "LICENSE"] {
         ensure!(files.contains(&format!("{prefix}/{required}")), "missing regular {required} in {prefix}");
+    }
+    if matches!(package.name.as_str(), "neocogi-platform" | "neocogi-platform-dylib") {
+        for required in DOCUMENTATION_FILES {
+            ensure!(
+                files.contains(&format!("{prefix}/{required}")),
+                "missing packaged documentation {required} in {prefix}"
+            );
+        }
     }
     let manifest = manifest.context("missing Cargo.toml")?;
     let identity = manifest.get("package").context("archive manifest is missing its package identity")?;
