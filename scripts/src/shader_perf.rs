@@ -32,6 +32,8 @@ impl Backend {
 pub(crate) struct Options {
     /// Backend whose one normal cdylib is built.
     pub backend: Backend,
+    /// Explicit frontend opt-in, forwarded to both the shim and example source selection.
+    pub shader_python: bool,
     /// Fresh directory retaining artifacts, raw diagnostics and machine-readable measurements.
     pub output: PathBuf,
     /// Trusted earlier deployment, left untouched apart from ordinary application cache reuse.
@@ -97,6 +99,8 @@ struct Report {
     version: u32,
     /// Build-selected backend under test.
     backend: String,
+    /// Whether the optional Python parser and its example/corpus sources were included.
+    shader_python: bool,
     /// Actual Rust compiler used with the repository's rebuilt-std min-size profile.
     rustc: String,
     /// Rendered frames for each measured process, after an unmeasured warmup.
@@ -143,11 +147,13 @@ fn copy_tree(source: &Path, target: &Path) -> Result<()> {
 fn prepare(options: &Options, output: &Path) -> Result<(PathBuf, u64)> {
     use crate::process::{cargo, capture, run};
     let corpus = output.join("corpus");
+    let backend_features = format!("{}{}", options.backend.name(), if options.shader_python { ",shader-python" } else { "" });
+    let application_features = if options.shader_python { "dynamic,shader-python" } else { "dynamic" };
     run(cargo(None)
         .args(["test", "--locked", "-p", "neocogi-platform-examples", "--no-default-features", "--features"])
         .arg(format!(
             "static,{},test-support,provider/shader-wgsl,provider/shader-glsl,provider/shader-spirv",
-            options.backend.name()
+            backend_features
         ))
         .args(["--test", "shader_corpus"])
         .env("NEOCOGI_SHADER_ARTIFACT_DIR", &corpus)
@@ -164,7 +170,7 @@ fn prepare(options: &Options, output: &Path) -> Result<(PathBuf, u64)> {
                 "--no-default-features",
                 "--features",
             ])
-            .arg(options.backend.name())
+            .arg(&backend_features)
             .args(["--lib", "--message-format=json"])
             .env_remove("NEOCOGI_NATIVE_OUTPUT_DIR"),
     )?)?;
@@ -183,10 +189,9 @@ fn prepare(options: &Options, output: &Path) -> Result<(PathBuf, u64)> {
                 "neocogi-platform-examples",
                 "--no-default-features",
                 "--features",
-                "dynamic",
-                "--bins",
-                "--message-format=json",
             ])
+            .arg(application_features)
+            .args(["--bins", "--message-format=json"])
             .env_remove("NEOCOGI_NATIVE_OUTPUT_DIR"),
     )?)?;
     let candidate = output.join("candidate");
@@ -329,6 +334,7 @@ pub(crate) fn run(options: Options) -> Result<()> {
     let mut report = Report {
         version: 1,
         backend: options.backend.name().into(),
+        shader_python: options.shader_python,
         rustc,
         frames: options.frames,
         runs: options.runs,

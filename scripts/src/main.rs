@@ -32,6 +32,9 @@ enum Operation {
         /// Backend compiled into the one platform library.
         #[arg(long, value_enum, default_value = "vulkan")]
         backend: shader_perf::Backend,
+        /// Explicitly include the optional Python frontend and select Python-like Triangle source.
+        #[arg(long)]
+        shader_python: bool,
         /// Fresh report/deployment directory outside Cargo targets.
         #[arg(long)]
         output: PathBuf,
@@ -118,6 +121,7 @@ fn main() -> Result<()> {
     match Arguments::parse().command {
         Operation::ProfileShaders {
             backend,
+            shader_python,
             output,
             reference,
             frames,
@@ -127,6 +131,7 @@ fn main() -> Result<()> {
             intel_stats,
         } => shader_perf::run(shader_perf::Options {
             backend,
+            shader_python,
             output,
             reference,
             frames,

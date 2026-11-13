@@ -20,6 +20,7 @@ default = ["glow"]
 glow = ["neocogi-platform/glow"]
 vulkan = ["neocogi-platform/vulkan"]
 wgpu = ["neocogi-platform/wgpu"]
+shader-python = ["neocogi-platform/shader-python"]
 
 [dependencies]
 neocogi-platform = { workspace = true, features = ["platform"] }

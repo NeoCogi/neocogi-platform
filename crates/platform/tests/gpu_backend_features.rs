@@ -187,3 +187,17 @@ fn compiler_output_features_are_minimal_and_independent_of_graphics() {
         assert!(graph.packages["neocogi-platform"].contains("shader-compiler"));
     }
 }
+
+/// No renderer or virtual test fixture silently opts into the Python source parser.
+#[test]
+fn python_frontend_is_only_enabled_by_explicit_opt_in() {
+    for features in [vec![], vec!["test-support"], vec!["glow"], vec!["vulkan"], vec!["wgpu"]] {
+        let graph = Graph::resolve(&features, &host());
+        assert!(!graph.packages["neocogi-platform"].contains("shader-python"), "{features:?} enabled Python");
+    }
+    let graph = Graph::resolve(&["shader-python", "shader-spirv"], &host());
+    assert!(graph.packages["neocogi-platform"].contains("shader-python"));
+    for package in ["sdl2", "ash", "wgpu", "glow", "web-sys"] {
+        assert!(!graph.contains(package), "Python frontend selected native dependency {package}");
+    }
+}

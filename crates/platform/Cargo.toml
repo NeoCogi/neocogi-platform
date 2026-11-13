@@ -24,6 +24,8 @@ platform = ["audio"]
 # PCM services can be linked independently of any renderer or native window.
 audio = ["dep:sdl2", "dep:wasm-bindgen", "dep:wasm-bindgen-futures", "dep:js-sys", "dep:web-sys"]
 shader-compiler = []
+# Optional source frontend; backends and test-support do not enable it implicitly.
+shader-python = ["shader-compiler"]
 # Output selection never enables the optional compiler or graphics dependencies.
 shader-wgsl = []
 shader-spirv = ["dep:spirv"]
@@ -103,7 +105,7 @@ required-features = ["test-support"]
 
 [[test]]
 name = "python_compiler"
-required-features = ["shader-compiler"]
+required-features = ["shader-python"]
 
 [[example]]
 name = "shader_compile"

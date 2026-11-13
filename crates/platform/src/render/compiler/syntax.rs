@@ -85,7 +85,13 @@ pub(crate) fn parse(source: &str) -> Result<Node<'_>, Diagnostic> {
     let mut prefix = Reader { source, cursor: 0, nodes: 0 };
     prefix.space();
     if prefix.cursor < source.len() && source.as_bytes().get(prefix.cursor) != Some(&b'(') {
+        #[cfg(feature = "shader-python")]
         return super::python::parse(source);
+        #[cfg(not(feature = "shader-python"))]
+        return Err(Diagnostic {
+            offset: prefix.cursor,
+            message: "Python-like shader frontend is disabled; enable the 'shader-python' Cargo feature".into(),
+        });
     }
     sexp(source)
 }

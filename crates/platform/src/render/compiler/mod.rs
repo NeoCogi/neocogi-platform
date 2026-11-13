@@ -6,6 +6,7 @@ mod access;
 mod ir;
 mod objects;
 mod optimize;
+#[cfg(feature = "shader-python")]
 mod python;
 #[cfg(feature = "shader-spirv")]
 mod spv;

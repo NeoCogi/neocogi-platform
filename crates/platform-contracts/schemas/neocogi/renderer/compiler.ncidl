@@ -127,7 +127,7 @@ struct ShaderSampledTextureInfo {
 }
 
 #[version(1)]
-/// S-expression/Python-like COM compiler with immutable output configuration; native realization stays fallible.
+/// S-expression COM compiler with an optional Python-like frontend and immutable output configuration.
 interface ShaderCompiler {
     /// Returns a complete success or a rejected report; no partial artifacts.
     fn compile_result(&self, request: ShaderCompileRequest, source: &[u8], entry: &[u8]) -> Result<ComPtr<IShaderCompilation>>;

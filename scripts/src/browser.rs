@@ -57,6 +57,8 @@ fn build_artifact() -> Result<PathBuf> {
         "--locked",
         "-p",
         "neocogi-browser-tests",
+        "--features",
+        "shader-python",
         "--target",
         "wasm32-unknown-unknown",
         "--message-format=json-render-diagnostics",

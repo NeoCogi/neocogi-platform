@@ -95,20 +95,27 @@ fn dynamic_platform_plugin_exposes_its_builtin_compiler() {
     {
         let compiler = factory.create(target).unwrap();
         drop(factory);
+        // The loaded library's features are independent of this test executable's.
+        let python_enabled = std::env::var("NEOCOGI_TEST_SHADER_PYTHON").is_ok_and(|value| value == "1");
         for source in [
             "(module (vertex vs () (returns vec4 (builtin position)) (return (vec4 0.25 0.5 0.75 1.0))))",
             "@vertex\ndef vs() -> builtin[vec4, position]:\n    return vec4(0.25, 0.5, 0.75, 1.0)\n",
         ] {
-            let result = compiler
-                .compile(
-                    ShaderCompileRequest {
-                        stage: GpuShaderStage::Vertex,
-                        max_output_bytes: 4194304,
-                    },
-                    NcCopyFromBufferOffset::new(0, source.as_bytes()),
-                    NcCopyFromBufferOffset::new(0, b"vs"),
-                )
-                .unwrap();
+            let result = compiler.compile(
+                ShaderCompileRequest {
+                    stage: GpuShaderStage::Vertex,
+                    max_output_bytes: 4194304,
+                },
+                NcCopyFromBufferOffset::new(0, source.as_bytes()),
+                NcCopyFromBufferOffset::new(0, b"vs"),
+            );
+            if source.starts_with('@') && !python_enabled {
+                let error = result.unwrap_err();
+                assert_eq!(error.status, NC_E_INVALID_ARG);
+                assert!(error.message.contains("disabled") && error.message.contains("shader-python"), "{error}");
+                continue;
+            }
+            let result = result.unwrap();
             let shader = PreparedShader::new(result, GpuShaderStage::Vertex, target, b"vs", 4194304)
                 .unwrap()
                 .copy()
@@ -137,6 +144,7 @@ fn dynamic_platform_plugin_exposes_its_builtin_compiler() {
 
 /// Both frontend parsers and shared type validation preserve exact original locations across COM.
 #[test]
+#[cfg(feature = "shader-python")]
 fn both_frontends_export_owned_source_diagnostics_through_com() {
     // SAFETY: This executable owns the immutable process-lived host service tables.
     let _runtime = unsafe { neocogi_com::Runtime::__from_host_api(neocogi_com_host::initialize_process()) }.unwrap();

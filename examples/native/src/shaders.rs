@@ -12,7 +12,15 @@ pub const REGION_COUNT: usize = BRDF_REGION + 1;
 pub const UNIFORM_BYTES: u32 = (REGION_COUNT as u32 + 1) * 16;
 
 /// Actual standalone Triangle program, including its dynamically selected vertex position.
+#[cfg(feature = "shader-python")]
 pub const TRIANGLE: &str = include_str!("../../../crates/platform/examples/triangle.pysh");
+/// Default S-expression source works with an ordinary platform deployment.
+#[cfg(not(feature = "shader-python"))]
+pub const TRIANGLE: &str = r#"(module
+  (vertex vs ((i u32 (builtin vertex_index))) (returns vec4 (builtin position))
+    (let positions ((array vec2 3) (vec2 -0.8 -0.8) (vec2 0.8 -0.8) (vec2 0.0 0.8)))
+    (return (vec4 (index positions i) 0.5 1.0)))
+  (fragment fs () (returns vec4 (location 0)) (return (vec4 0.2 0.7 1.0 1.0))))"#;
 
 /// Join shared lighting and one graphics program with the authoritative atlas layout.
 pub fn lighting(body: &str) -> String {

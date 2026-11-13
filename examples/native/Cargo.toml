@@ -14,6 +14,8 @@ dynamic = ["dep:neocogi-example-plugins"]
 glow = ["provider?/glow"]
 vulkan = ["provider?/vulkan"]
 wgpu = ["provider?/wgpu"]
+# Select Python-like example source; dynamic deployments opt in on the shim separately.
+shader-python = ["provider?/shader-python"]
 # Native probe acceptance belongs to the linked static fixture, not deployed shared libraries.
 test-support = ["static", "provider/test-support"]
 

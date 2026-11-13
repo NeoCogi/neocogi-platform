@@ -290,13 +290,29 @@ pub(crate) fn qualify(allow_dirty: bool, offline: bool, stable: Option<&str>) ->
             "--test",
             "sexp_compiler",
             "--test",
-            "python_compiler",
-            "--test",
             "shader_optimization",
             "-p",
             "neocogi-platform",
             "--features",
             "test-support,platform,glow,shader-spirv",
+        ],
+    )?;
+    // Default consumers must also qualify without the optional parser. Opt in
+    // separately so frontend tests do not hide accidental default activation.
+    execute(
+        toolchain,
+        &[
+            "test",
+            "-p",
+            "neocogi-platform",
+            "--features",
+            "test-support,shader-python,shader-glsl,shader-spirv",
+            "--test",
+            "python_compiler",
+            "--test",
+            "shader_targets",
+            "--test",
+            "compiler_plugin",
         ],
     )?;
     // Build the shim as an ordinary library from extracted registry-style inputs.

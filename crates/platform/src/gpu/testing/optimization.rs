@@ -1,4 +1,5 @@
 //! Deterministic aggregate workloads for code-generation budgets and real native pixels.
+#[cfg(feature = "shader-python")]
 mod python;
 use crate::gpu::{
     GpuDevice,
@@ -209,7 +210,7 @@ pub fn cases() -> Vec<Case> {
             false,
         ),
     ];
-    let mut cases: Vec<_> = definitions
+    let cases: Vec<_> = definitions
         .into_iter()
         .map(|(name, helpers, body, row, uniform)| Case {
             name,
@@ -218,7 +219,8 @@ pub fn cases() -> Vec<Case> {
             uniform,
         })
         .collect();
-    cases.extend(python::cases());
+    #[cfg(feature = "shader-python")]
+    let cases = cases.into_iter().chain(python::cases()).collect();
     cases
 }
 

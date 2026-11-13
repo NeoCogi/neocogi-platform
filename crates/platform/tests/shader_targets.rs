@@ -6,6 +6,7 @@ use neocogi_platform::{
     render::abi::GpuShaderStage,
     render::shader::{self, PreparedShader, ShaderCode, ShaderTarget},
 };
+use neocogi_com::INcStringComPtrExt;
 
 /// Portable layout with one selected uniform and one unused declaration.
 const SOURCE: &str = r#"(module
@@ -237,5 +238,33 @@ fn text_shader_bytes_require_utf8_without_losing_non_ascii_source() {
         // Summary, length and reflection remain legitimate; only the wire encoding is invalid.
         let prepared = PreparedShader::new(report, GpuShaderStage::Vertex, target, b"vs", 4194304).unwrap();
         assert!(matches!(prepared.copy(), Err(NC_E_INVALID_ARG)));
+    }
+}
+
+/// Python is independently optional: a real COM compiler admits it only after explicit opt-in.
+#[test]
+fn python_frontend_matches_its_explicit_cargo_feature() {
+    let source = "@vertex\ndef vs() -> builtin[vec4, position]:\n    return vec4(0.0, 0.0, 0.5, 1.0)\n";
+    for target in [ShaderTarget::Wgsl, ShaderTarget::SpirV, ShaderTarget::GlslEs300]
+        .into_iter()
+        .filter(|target| supported(*target))
+    {
+        let report = compile_source(target, source);
+        if cfg!(feature = "shader-python") {
+            assert_eq!(report.status().unwrap(), NC_OK.code());
+            PreparedShader::new(report, GpuShaderStage::Vertex, target, b"vs", 4194304)
+                .unwrap()
+                .copy()
+                .unwrap();
+        } else {
+            assert_eq!(report.status().unwrap(), NC_E_INVALID_ARG.code());
+            assert_eq!(report.code().unwrap_err(), NC_E_INVALID_ARG);
+            let text = report.diagnostic().unwrap().to_string().unwrap();
+            assert!(
+                text.starts_with("1:1:") && text.contains("disabled") && text.contains("shader-python") && text.contains('^'),
+                "{text}"
+            );
+        }
+        assert_eq!(compile(target).status().unwrap(), NC_OK.code(), "S-expressions remain available");
     }
 }

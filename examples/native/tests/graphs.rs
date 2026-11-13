@@ -26,17 +26,13 @@ fn cargo_declares_one_normal_platform_library() {
 }
 
 /// Resolve one isolated consumer, explicitly selecting normal and/or build dependency edges.
-fn graph(mode: &str, backend: Option<&str>, edges: &str) -> HashSet<String> {
+fn graph(features: &[&str], edges: &str) -> HashSet<String> {
     let directory = tempfile::tempdir().unwrap();
     fs::create_dir(directory.path().join("src")).unwrap();
     fs::write(directory.path().join("src/lib.rs"), "").unwrap();
     let package = Path::new(env!("CARGO_MANIFEST_DIR"));
     let path = serde_json::to_string(package.to_str().unwrap()).unwrap();
-    let features = if let Some(backend) = backend {
-        format!("['{mode}','{backend}']")
-    } else {
-        format!("['{mode}']")
-    };
+    let features = serde_json::to_string(features).unwrap();
     let manifest = format!(
         "[workspace]\n[package]\nname='example-graph'\nversion='0.0.0'\nedition='2024'\n[dependencies]\nneocogi-platform-examples={{path={path},default-features=false,features={features}}}\n"
     );
@@ -58,14 +54,14 @@ fn graph(mode: &str, backend: Option<&str>, edges: &str) -> HashSet<String> {
 /// Dynamic executables contain no ordinary provider/backend dependency or linked fallback.
 #[test]
 fn static_and_dynamic_graphs_keep_provider_implementation_ownership_distinct() {
-    let dynamic = graph("dynamic", None, "normal");
+    let dynamic = graph(&["dynamic"], "normal");
     for forbidden in ["neocogi-platform", "naga", "sdl2", "wgpu", "ash"] {
         assert!(!dynamic.contains(forbidden), "{dynamic:?}");
     }
     assert!(dynamic.contains("neocogi-platform-contracts"));
     assert!(dynamic.contains("neocogi-example-plugins"));
     for backend in ["glow", "vulkan", "wgpu"] {
-        let linked = graph("static", Some(backend), "normal");
+        let linked = graph(&["static", backend], "normal");
         assert!(linked.contains("neocogi-platform"));
         assert!(linked.contains("neocogi-platform-contracts"));
         assert_eq!(linked.contains("naga"), backend == "wgpu");
@@ -77,11 +73,21 @@ fn static_and_dynamic_graphs_keep_provider_implementation_ownership_distinct() {
 /// Dynamic compilation must keep renderer features out of host-side build helpers too.
 #[test]
 fn dynamic_build_helpers_do_not_compile_shader_or_native_backend_implementations() {
-    let selected = graph("dynamic", None, "normal,build");
+    let selected = graph(&["dynamic"], "normal,build");
     for forbidden in ["neocogi-platform", "naga", "sdl2", "glow", "wgpu", "ash"] {
         assert!(!selected.contains(forbidden), "dynamic enabled {forbidden}: {selected:?}");
     }
     assert!(selected.contains("neocogi-idl"), "schema generation remains available");
+}
+
+/// Selecting Python source in a dynamic application does not link a provider implementation.
+#[test]
+fn dynamic_python_source_keeps_the_host_schema_only() {
+    let graph = graph(&["dynamic", "shader-python"], "normal,build");
+    for forbidden in ["neocogi-platform", "naga", "sdl2", "glow", "wgpu", "ash"] {
+        assert!(!graph.contains(forbidden), "dynamic Python source linked {forbidden}: {graph:?}");
+    }
+    assert!(graph.contains("neocogi-platform-contracts"));
 }
 
 /// Selection errors must precede implementation expansion, including every invalid subset.
