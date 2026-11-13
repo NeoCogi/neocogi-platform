@@ -1,5 +1,14 @@
 # Unreleased
 
+## Optional Python-like shader frontend
+
+`shader-python` now explicitly enables the Python-like parser. It is disabled by
+default, including backend and test-support builds, and forwarded by the existing
+platform shim. Disabled builds return a source-located diagnostic for Python input.
+Examples default to S-expressions; the matching example flag selects Python-like
+Triangle without linking an SDK into dynamic hosts. CI and package/browser tools
+opt in explicitly for frontend coverage. Shader profiling accepts `--shader-python`.
+
 ## Python-like shader frontend
 
 The built-in COM compiler accepts both S-expressions and an indentation-based,

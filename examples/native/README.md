@@ -5,10 +5,23 @@ They share an example-owned typed platform bootstrap and the same graphics COM
 render loop in both assembly modes. Native platform-root/session behavior is
 unchanged; each application acquires and retains one root.
 
-Triangle uses the SDK's [Python-like shader](../../crates/platform/examples/triangle.pysh).
-The glTF mesh and skybox retain their S-expression sources. Both frontends use the
-same built-in COM compiler and optimized backend writers; neither needs a runtime
-language interpreter. See the [shader language contract](../../docs/contracts/SHADER_COMPILATION.md).
+All examples use S-expressions by default. Opt into `shader-python` to select the
+SDK's [Python-like Triangle shader](../../crates/platform/examples/triangle.pysh);
+static builds also enable that frontend in their linked provider. The glTF mesh
+and skybox retain their S-expression sources. Both frontends use the same COM
+compiler and backend writers. See the [shader language contract](../../docs/contracts/SHADER_COMPILATION.md).
+
+```sh
+cargo run -p neocogi-platform-examples --bin triangle --features shader-python -- 3
+```
+
+For dynamic Python-like Triangle, enable the feature on both the library and the
+application's source selection. The dynamic application remains schema-only:
+
+```sh
+cargo build --profile min-size -p neocogi-platform-dylib --no-default-features --features vulkan,shader-python
+cargo run --profile min-size -p neocogi-platform-examples --bin triangle --no-default-features --features dynamic,shader-python -- --backend vulkan 3
+```
 
 Default features select static registration and Glow:
 

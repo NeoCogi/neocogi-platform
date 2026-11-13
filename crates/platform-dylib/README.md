@@ -2,7 +2,7 @@
 
 One normal Cargo `cdylib` target named `nc_platform`. Select exactly one backend
 with `glow` (the default), `vulkan`, or `wgpu`. Each build includes its renderer,
-built-in S-expression/Python-like COM shader compiler, and audio services, and exports only
+built-in S-expression COM shader compiler, and audio services, and exports only
 `nc_get_plugin_descriptor_v1`. The application supplies the process-lived COM host.
 
 ```sh
@@ -14,6 +14,10 @@ This produces `target/min-size/libnc_platform.so` on Linux,
 `libnc_platform.dylib` on macOS, or `nc_platform.dll` on Windows. Backend selection
 changes the library's implementation and descriptor, never its filename. No
 example target, separate shader feature, or compiler library is needed.
+
+Python-like input is optional and disabled by default. Include `shader-python`
+alongside the backend, for example `--features vulkan,shader-python`, to add that
+frontend to this same library. The S-expression compiler remains built in.
 
 ## Using the published crate
 

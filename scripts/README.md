@@ -28,6 +28,12 @@ The default is three 300-frame samples per application, with a three-frame warmu
 and fixed glTF animation time 1. Measurements include process startup/teardown;
 they are not GPU-only frame times. No builds run during timed workloads.
 
+Shader qualification defaults to S-expression input. Add `--shader-python` to
+enable that optional frontend in the library, select Python-like Triangle source,
+and include its pixel/compilation corpus. The report records this choice. The
+browser test command explicitly enables the fixture's optional frontend so its
+regressions stay covered; ordinary SDK and example defaults leave it disabled.
+
 ```sh
 cargo tools fetch-gltf-examples
 cargo tools profile-shaders --backend vulkan --output /tmp/shaders-current \

@@ -5,7 +5,7 @@ existing platform COM plugin. Each backend is delivered in its one existing
 platform library, `libnc_platform.so` on Linux. The platform crate owns the
 parser, typed IR, validation, direct backend writers, and immutable report objects.
 The existing platform-dylib shim exports only the platform descriptor. There is
-no shader feature to select, no separate shader descriptor or registration, and
+no separate shader descriptor or registration, and
 no additional shared library to deploy. WGPU retains its internal translation dependency.
 
 The contracts crate owns `neocogi.renderer` compiler declarations in
@@ -27,8 +27,11 @@ payload, downcast registry, or mutable last-error slot.
 
 `ShaderCompileRequest` carries a graphics stage and output quota. The source is
 UTF-8 S-expressions or Python-like shader syntax, and the separate entry argument
-selects an exact named entry. Both frontends are built in, without extra features,
-registrations, dependencies or a Python runtime. They lower to one typed graphics IR.
+selects an exact named entry. S-expressions are always available with the compiler.
+Python-like input requires the optional `shader-python` Cargo feature, disabled
+by default and never enabled by a backend or `test-support`. The shim forwards
+that same feature to its compiler. It adds no registration, dependency or Python
+runtime; both enabled frontends lower to one typed graphics IR.
 WGSL source input has been removed. Requests cannot change a compiler's target.
 `compile_result` returns either complete success or a rejection report containing
 its original status and diagnostic. The Rust `compile` facade reads that same
@@ -145,6 +148,17 @@ resources are emitted or reflected.
 
 ## Python-like frontend
 
+Enable `shader-python` explicitly on `neocogi-platform` for linked applications or
+CPU tools, or on `neocogi-platform-dylib` for a loaded platform. Without it the
+parser module is excluded and Python-like input rejects with its original
+line/column and an instruction to enable the feature. Backend selection still
+enables the S-expression compiler automatically.
+
+```sh
+cargo build --profile min-size -p neocogi-platform-dylib --no-default-features \
+  --features vulkan,shader-python
+```
+
 Frontend selection is deterministic: after ASCII whitespace and semicolon comments,
 a leading `(` selects S-expressions; other input selects Python-like syntax. A
 source contains one frontend. The Python-like parser produces the shared syntax
@@ -236,6 +250,17 @@ validation, all three native backend suites, seven Python-like pixel workloads,
 Chromium WebGL/DOM/audio, Clippy and rustfmt passed. Extracted archives and their
 independent nightly/stable COM consumers passed. Logs and the qualified library
 are retained locally in `/tmp/neocogi-python-frontend/`, outside Cargo targets.
+
+The subsequent optional-frontend qualification on the same nightly produced
+418,104 bytes with `--features vulkan` and 459,424 bytes with
+`--features vulkan,shader-python`. Both are complete normal platform libraries
+below 524,288 bytes. The loaded COM probe checks Python rejection in the default
+library and acceptance in the opt-in library, independently of the test host's
+features. Set `NEOCOGI_TEST_SHADER_PYTHON=1` when qualifying an opt-in library;
+the default expectation is disabled. Source-located disabled-feature errors,
+ten output/frontend configurations, default and opt-in native examples, browser
+execution, dependency graphs and package checks are covered. Evidence is kept
+locally in `/tmp/neocogi-optional-python/`.
 
 ## Backend artifacts and build features
 

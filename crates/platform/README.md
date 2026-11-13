@@ -1,6 +1,6 @@
 # NeoCogi Platform renderer SDK
 
-Typed GPU recording/resources, optional concrete backends, a built-in dual-frontend COM
+Typed GPU recording/resources, optional concrete backends, a built-in COM shader
 compiler, PCM playback/capture and SDL/browser hosting. Canonical schemas and generated contracts
 live in `neocogi-platform-contracts`; `render` reexports those exact contract types
 and adds the optional `render::compiler` implementation. Build scripts depend on
@@ -22,7 +22,8 @@ UTF-8 for WGSL/GLSL or little-endian words for SPIR-V. Import validates target,
 encoding and bounds before retaining one typed `ShaderCode`. Alpha schema versions
 remain 1. CPU-only tools may enable `shader-compiler` and output features directly.
 
-The compiler accepts S-expressions and a Python-like shader syntax, validates the
+The compiler accepts S-expressions by default and Python-like shader syntax with
+the optional `shader-python` feature, validates the
 entire module through one typed IR, then directly
 emits WGSL, GLSL ES 3.00, or SPIR-V with shared typed reflection and explicit bounds
 checks. Shared lowering reads aggregate leaves directly and expands small aggregate
@@ -33,8 +34,9 @@ instances. See [the shader contract](../../docs/contracts/SHADER_COMPILATION.md)
 for grammar, limits, error/lifetime semantics, validation, and the <512 KiB
 min-size Vulkan platform bundle qualification.
 
-The Python-like frontend uses typed `def` functions, `@vertex`/`@fragment`, `class`
+Enable `shader-python` explicitly to use typed `def` functions, `@vertex`/`@fragment`, `class`
 records, indentation, ordinary expressions and fixed array literals. Both parsers
 retain original line/column diagnostics. No Python runtime or extra parser
 dependency is needed. See [triangle.pysh](examples/triangle.pysh) for a complete
-program; existing S-expression input remains supported by the same COM service.
+program. Backend features and `test-support` leave this frontend disabled.
+S-expression input remains available through the same COM service.
