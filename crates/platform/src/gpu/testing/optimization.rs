@@ -1,4 +1,5 @@
 //! Deterministic aggregate workloads for code-generation budgets and real native pixels.
+mod python;
 use crate::gpu::{
     GpuDevice,
     abi::*,
@@ -208,7 +209,7 @@ pub fn cases() -> Vec<Case> {
             false,
         ),
     ];
-    definitions
+    let mut cases: Vec<_> = definitions
         .into_iter()
         .map(|(name, helpers, body, row, uniform)| Case {
             name,
@@ -216,7 +217,9 @@ pub fn cases() -> Vec<Case> {
             row,
             uniform,
         })
-        .collect()
+        .collect();
+    cases.extend(python::cases());
+    cases
 }
 
 /// Explicit bytes honor the same column-major and std140 layout as the frontend reflection.

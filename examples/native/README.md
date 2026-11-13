@@ -5,6 +5,11 @@ They share an example-owned typed platform bootstrap and the same graphics COM
 render loop in both assembly modes. Native platform-root/session behavior is
 unchanged; each application acquires and retains one root.
 
+Triangle uses the SDK's [Python-like shader](../../crates/platform/examples/triangle.pysh).
+The glTF mesh and skybox retain their S-expression sources. Both frontends use the
+same built-in COM compiler and optimized backend writers; neither needs a runtime
+language interpreter. See the [shader language contract](../../docs/contracts/SHADER_COMPILATION.md).
+
 Default features select static registration and Glow:
 
 ~~~sh

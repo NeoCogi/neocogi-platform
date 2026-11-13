@@ -1,5 +1,16 @@
 # Unreleased
 
+## Python-like shader frontend
+
+The built-in COM compiler accepts both S-expressions and an indentation-based,
+Python-like shader syntax. Both retain original line/column errors and share the
+typed validation, optimizations and WGSL/GLSL ES3/SPIR-V writers. No dependency or
+Python runtime is added. Typed records, bindings, functions, fixed arrays, infix
+operators, lexical assignments and loops lower to the existing IR. Parameter
+writes copy values privately; augmented assignment evaluates target indices once.
+Triangle now uses the Python-like source, and the native/WebGL corpus covers both
+frontends' snapshot, bounds and control-flow behavior.
+
 ## Portable shader projection performance
 
 WGSL, GLSL ES3 and SPIR-V now share bounded aggregate-helper expansion and direct

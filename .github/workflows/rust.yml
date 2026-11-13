@@ -36,7 +36,7 @@ jobs:
       - name: Formatting and direct backend validation
         run: |
           cargo fmt --all -- --check
-          NEOCOGI_SHADER_VALIDATORS=1 cargo test --locked -p neocogi-platform --features test-support,shader-glsl,shader-spirv --test compiler --test sexp_compiler --test compiler_plugin --test gpu_shader_budget --test shader_optimization
+          NEOCOGI_SHADER_VALIDATORS=1 cargo test --locked -p neocogi-platform --features test-support,shader-glsl,shader-spirv --test compiler --test sexp_compiler --test python_compiler --test compiler_plugin --test gpu_shader_budget --test shader_optimization
           NEOCOGI_SHADER_VALIDATORS=1 cargo test --locked -p neocogi-platform-examples --no-default-features --features static,vulkan,test-support,provider/shader-wgsl,provider/shader-glsl,provider/shader-spirv --test shader_corpus
       - name: Built-in Vulkan COM compiler and complete platform byte cap
         run: |
@@ -74,7 +74,7 @@ jobs:
           xvfb-run -a cargo test --locked -p neocogi-platform --features ${{ matrix.backend }},test-support --lib gpu::backends::${{ matrix.backend }}:: -- --include-ignored --test-threads=1
       - name: Generated WGSL native validation
         if: matrix.backend == 'wgpu'
-        run: cargo test --locked -p neocogi-platform --features wgpu,test-support --test sexp_compiler -- --include-ignored
+        run: cargo test --locked -p neocogi-platform --features wgpu,test-support --test sexp_compiler --test python_compiler -- --include-ignored
       - name: Backend acceptance
         run: |
           xvfb-run -a cargo test --locked -p neocogi-platform --lib --test platform_compiler_activation --no-default-features --features platform,${{ matrix.backend }} -- --include-ignored --test-threads=1

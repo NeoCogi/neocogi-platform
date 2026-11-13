@@ -290,6 +290,8 @@ pub(crate) fn qualify(allow_dirty: bool, offline: bool, stable: Option<&str>) ->
             "--test",
             "sexp_compiler",
             "--test",
+            "python_compiler",
+            "--test",
             "shader_optimization",
             "-p",
             "neocogi-platform",
