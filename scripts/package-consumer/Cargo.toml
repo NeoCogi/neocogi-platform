@@ -7,7 +7,7 @@ publish = false
 neocogi-platform-contracts = { version = "=0.2.0", default-features = false }
 neocogi-com = { version = "=0.2.0-alpha.4", features = ["std", "macros", "runtime"] }
 neocogi-com-host = "=0.2.0-alpha.4"
-neocogi-platform = { version = "=0.2.0", default-features = false, features = ["shader-compiler", "shader-wgsl", "audio"] }
+neocogi-platform = { version = "=0.2.0", default-features = false, features = ["glow", "audio"] }
 # A deployment artifact selected with cargo build -p, never imported as a Rust API.
 neocogi-platform-dylib = { version = "=0.2.0", default-features = false, features = ["glow"] }
 [build-dependencies]

@@ -16,21 +16,16 @@ crate-type = ["rlib"]
 [features]
 default = []
 # Backend implementations are additive; the optional platform assembly selects one.
-glow = ["shader-compiler", "shader-glsl", "dep:glow", "dep:sdl2", "dep:web-sys"]
-vulkan = ["shader-compiler", "shader-spirv", "dep:ash", "dep:ash-window-handle", "dep:raw-window-handle", "dep:sdl2"]
-wgpu = ["shader-compiler", "shader-wgsl", "dep:wgpu", "dep:pollster", "dep:raw-window-handle", "dep:sdl2"]
-webgl = ["shader-compiler", "shader-glsl", "dep:glow", "dep:web-sys", "dep:wasm-bindgen", "dep:wasm-bindgen-futures", "dep:js-sys"]
+glow = ["dep:glow", "dep:sdl2", "dep:web-sys"]
+vulkan = ["dep:spirv", "dep:ash", "dep:ash-window-handle", "dep:raw-window-handle", "dep:sdl2"]
+wgpu = ["dep:wgpu", "dep:pollster", "dep:raw-window-handle", "dep:sdl2"]
+webgl = ["dep:glow", "dep:web-sys", "dep:wasm-bindgen", "dep:wasm-bindgen-futures", "dep:js-sys"]
 platform = ["audio"]
 # PCM services can be linked independently of any renderer or native window.
 audio = ["dep:sdl2", "dep:wasm-bindgen", "dep:wasm-bindgen-futures", "dep:js-sys", "dep:web-sys"]
-shader-compiler = []
 # Optional source frontend; backends and test-support do not enable it implicitly.
-shader-python = ["shader-compiler"]
-# Output selection never enables the optional compiler or graphics dependencies.
-shader-wgsl = []
-shader-spirv = ["dep:spirv"]
-shader-glsl = []
-test-support = ["neocogi-platform-contracts/test-support", "shader-compiler", "shader-wgsl", "wgpu?/counters"]
+shader-python = []
+test-support = ["neocogi-platform-contracts/test-support", "wgpu?/counters"]
 
 [dependencies]
 neocogi-platform-contracts.workspace = true
@@ -73,15 +68,15 @@ required-features = ["audio"]
 
 [[test]]
 name = "gpu_shader_budget"
-required-features = ["test-support", "shader-glsl"]
+required-features = ["test-support", "glow"]
 
 [[test]]
 name = "platform_compiler_activation"
-required-features = ["platform", "shader-compiler"]
+required-features = ["platform"]
 
 [[test]]
 name = "platform_owned_window_error"
-required-features = ["platform", "shader-compiler"]
+required-features = ["platform"]
 
 [[test]]
 name = "compiler"
@@ -89,15 +84,12 @@ required-features = ["test-support"]
 
 [[test]]
 name = "shader_targets"
-required-features = ["shader-compiler"]
 
 [[test]]
 name = "sexp_compiler"
-required-features = ["shader-compiler"]
 
 [[test]]
 name = "compiler_plugin"
-required-features = ["shader-compiler"]
 
 [[test]]
 name = "shader_optimization"
@@ -109,4 +101,3 @@ required-features = ["shader-python"]
 
 [[example]]
 name = "shader_compile"
-required-features = ["shader-compiler"]

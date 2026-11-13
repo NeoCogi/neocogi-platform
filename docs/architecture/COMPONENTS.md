@@ -11,8 +11,9 @@ renderer dependencies.
 The schema folders `neocogi/renderer`, `neocogi/audio` and `neocogi/platform`
 define sibling namespaces. Canonical audio bindings and helpers live at
 `neocogi_platform_contracts::audio`; audio imports no graphics/window namespace.
-Platform discovery imports audio types for its service methods. Alpha versions
-remain 1, and consumers/providers must be rebuilt together after namespace moves.
+Platform discovery imports audio types for its service methods. Compatibility
+uses derived contract identities and exact signatures; rebuild consumers/providers
+together after toolchain or namespace changes.
 
 `neocogi-platform` is the implementation SDK. Its `render` module exposes the
 contracts crate's exact types and adds the built-in S-expression COM compiler. `gpu` owns
@@ -31,14 +32,15 @@ unchanged; see [drawing targets](../contracts/RENDER_SURFACES.md).
 
 Default SDK features are empty. GPU backends `glow`, `vulkan` and `wgpu` are
 additive; `webgl` reuses GL execution on Wasm. `platform` enables hosting and
-requires exactly one legal target/backend selection. `shader-compiler` enables
-the bounded S-expression parser and typed IR; output features `shader-wgsl`, `shader-spirv` and `shader-glsl`
-select emitters independently of graphics dependencies. Backends enable their
-compiler and selected output. Each compiler instance has one immutable target;
-requests contain no target. Reports identify their format, which backends validate
-before copying code; Rust `ShaderCode` snapshots retain only that format. `test-support` includes S-expression fixtures and WGSL output and the compiler, weakly
-enabling WGPU counters only when WGPU is selected. Applications that load
-providers dynamically use schema contracts and retain no SDK implementation edge.
+requires exactly one legal target/backend selection. The bounded S-expression
+compiler and typed IR are built in. `shader-python` is the only shader feature;
+WGSL, SPIR-V and GLSL writers are implied by `wgpu`, `vulkan` and `glow`/`webgl`.
+Each compiler instance has one immutable target; requests contain no target.
+Reports identify their format, which backends validate before copying code; Rust
+`ShaderCode` snapshots retain only that format. `test-support` includes a virtual
+WGSL renderer and weakly enables WGPU counters only when WGPU is selected.
+Applications that load providers dynamically use schema contracts and retain no
+SDK implementation edge.
 
 The contracts crate contains the sole authored `schemas/neocogi` declarations and
 compiles generated bindings once. Its own build.rs uses its embedded source helper.

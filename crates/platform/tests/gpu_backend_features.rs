@@ -101,7 +101,7 @@ fn cpu_only_and_virtual_fixtures_do_not_enable_native_backends() {
 
 /// Audio services select only target audio dependencies, including host-side schema generation.
 #[test]
-fn audio_only_has_no_renderer_or_shader_compiler_dependency() {
+fn audio_only_adds_no_graphics_backends() {
     let native = Graph::resolve(&["audio"], &host());
     assert!(native.contains("sdl2"));
     let browser = Graph::resolve(&["audio"], "wasm32-unknown-unknown");
@@ -162,30 +162,50 @@ fn enabled_modules_implement_the_typed_resource_contract() {
     backend::<neocogi_platform::gpu::testing::Backend>();
 }
 
-/// Standalone compiler outputs use the in-house writers and never a graphics implementation.
+/// The compiler is builtin; renderer selection alone owns the writer and SPIR-V dependency.
 #[test]
-fn compiler_output_features_are_minimal_and_independent_of_graphics() {
+fn compiler_outputs_follow_renderer_features() {
     let native = host();
-    for output in ["shader-wgsl", "shader-spirv", "shader-glsl"] {
-        let graph = Graph::resolve(&["shader-compiler", output], &native);
-        for dependency in ["naga", "naga-types", "sdl2", "ash", "wgpu", "glow", "web-sys"] {
-            assert!(!graph.contains(dependency), "{output} enabled {dependency}");
-        }
-        assert_eq!(graph.contains("spirv"), output == "shader-spirv");
-        let disabled = Graph::resolve(&[output], &native);
-        assert!(!disabled.packages["neocogi-platform"].contains("shader-compiler"));
+    let minimal = Graph::resolve(&[], &native);
+    for dependency in ["spirv", "naga", "sdl2", "ash", "wgpu", "glow", "web-sys"] {
+        assert!(!minimal.contains(dependency), "builtin compiler selected {dependency}");
     }
-    for (backend, output) in [
-        ("glow", "shader-glsl"),
-        ("webgl", "shader-glsl"),
-        ("vulkan", "shader-spirv"),
-        ("wgpu", "shader-wgsl"),
-    ] {
+    for backend in ["glow", "webgl", "vulkan", "wgpu"] {
         let target = if backend == "webgl" { "wasm32-unknown-unknown" } else { &native };
         let graph = Graph::resolve(&[backend], target);
-        assert!(graph.packages["neocogi-platform"].contains(output));
-        assert!(graph.packages["neocogi-platform"].contains("shader-compiler"));
+        // WGPU may retain spirv through Naga's native translation stack.
+        // Exact writer availability is exercised by shader_targets in isolated builds.
+        if backend != "wgpu" {
+            assert_eq!(graph.contains("spirv"), backend == "vulkan");
+        }
+        assert!(!graph.packages["neocogi-platform"].contains("shader-python"));
     }
+}
+
+/// The sole shader Cargo feature is the optional Python frontend, with no separate compiler/writer flags.
+#[test]
+fn only_python_is_a_shader_feature() {
+    let output = Command::new(env!("CARGO"))
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .args(["metadata", "--offline", "--no-deps", "--format-version=1"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let metadata: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let package = metadata["packages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["name"] == "neocogi-platform")
+        .unwrap();
+    let names: Vec<_> = package["features"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .filter(|name| name.starts_with("shader-"))
+        .map(String::as_str)
+        .collect();
+    assert_eq!(names, ["shader-python"]);
 }
 
 /// No renderer or virtual test fixture silently opts into the Python source parser.
@@ -195,7 +215,7 @@ fn python_frontend_is_only_enabled_by_explicit_opt_in() {
         let graph = Graph::resolve(&features, &host());
         assert!(!graph.packages["neocogi-platform"].contains("shader-python"), "{features:?} enabled Python");
     }
-    let graph = Graph::resolve(&["shader-python", "shader-spirv"], &host());
+    let graph = Graph::resolve(&["shader-python"], &host());
     assert!(graph.packages["neocogi-platform"].contains("shader-python"));
     for package in ["sdl2", "ash", "wgpu", "glow", "web-sys"] {
         assert!(!graph.contains(package), "Python frontend selected native dependency {package}");

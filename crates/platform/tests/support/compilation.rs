@@ -8,13 +8,13 @@ use std::process::Command;
 /// Enabled output configurations, independent of any native backend.
 pub fn targets() -> Vec<ShaderTarget> {
     let mut t = Vec::new();
-    if cfg!(feature = "shader-wgsl") {
+    if cfg!(any(feature = "wgpu", feature = "test-support")) {
         t.push(ShaderTarget::Wgsl);
     }
-    if cfg!(feature = "shader-glsl") {
+    if cfg!(any(feature = "glow", feature = "webgl")) {
         t.push(ShaderTarget::GlslEs300);
     }
-    if cfg!(feature = "shader-spirv") {
+    if cfg!(feature = "vulkan") {
         t.push(ShaderTarget::SpirV);
     }
     t

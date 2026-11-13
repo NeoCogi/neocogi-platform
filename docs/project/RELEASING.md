@@ -32,9 +32,17 @@ no SDK, Naga, SDL or graphics dependency in any feature configuration. The shim
 archive exposes one normal `nc_platform` cdylib target. Its selected backend
 feature controls the implementation while its filename remains backend-independent.
 
-All packages include their README and combined license notices.
-Their explicit manifest include lists keep repository documentation outside the
-crate archives; each package's README is its packaged Markdown entry point.
+All packages include their README and combined license notices. The SDK and shim
+also include `docs/images`, screenshot credits/license notices and the saved
+limited shader benchmark in `docs/benchmarks`. Their READMEs contain standalone
+static/dynamic setup, feature selection and repository example commands. Release
+inspection rejects either archive if any required documentation asset is missing.
+The SDK's copies are canonical; the shim ships byte-identical documentation assets.
+The root README links directly to the SDK's images and measurement report.
+
+Other repository guides remain outside crate archives; each package's README is
+its packaged Markdown entry point. Keep links to those guides absolute in crate
+READMEs and use package-local paths for included assets.
 The [documentation index](../README.md) points to current contracts and
 architecture, examples, tools and maintainer release/history records in the
 repository. Git source archives include these tracked documents. Keep worked
@@ -48,7 +56,7 @@ Run:
 cargo fetch --locked
 cargo check --locked --workspace --all-targets
 cargo test --locked -p neocogi-platform-contracts --features build-support,test-support
-cargo test --locked -p neocogi-platform --features platform,glow,test-support,shader-spirv
+cargo test --locked -p neocogi-platform --features platform,glow,test-support
 cargo test --locked -p neocogi-platform-tools
 cargo tools check-packages --offline --stable-toolchain stable --allow-dirty
 ```
@@ -87,22 +95,22 @@ dependency version to appear in the crates.io index before publishing its consum
 COM/host/IDL dependencies use the published exact `0.2.0-alpha.4` versions. A successful
 `--list` or `--no-verify` alone is insufficient release evidence.
 
-Shader qualification must include isolated `shader-wgsl`, `shader-spirv` and
-`shader-glsl` compiler graphs. GPU features forward the selected target, and no
-release compiler should enable all outputs implicitly. Stage the normal
-platform library including its compiler. Requests never select an output; results
-identify it for backend validation. Rebuild generated consumers and platforms for
-the contract replacement introduced in the alphas and the COM/IDL toolchain migration.
+Shader qualification includes isolated `wgpu`, `vulkan` and `glow` renderer
+builds. The compiler is builtin; renderer features select their output writers.
+`shader-python` is the only shader feature. Stage the normal platform library
+including its compiler. Requests never select an output; results identify it for
+backend validation. Rebuild generated consumers and platforms after contract or
+COM/IDL toolchain changes.
 
-Minimal output ABI regressions run `cargo test -p neocogi-platform
---no-default-features --features shader-compiler,shader-wgsl --test shader_targets`
-(and shader-spirv/shader-glsl), plus a shader-compiler-only build that rejects all
-output configurations. They deliberately omit test-support so its WGSL fixture cannot mask
-unavailable outputs. The single backend code getter must preserve its encoding
-and ownership. Missing code propagates without fallback; wrong targets reject
-before acquiring code, and invalid UTF-8 rejects for either text target.
+Run `cargo test -p neocogi-platform --no-default-features --features wgpu
+--test shader_targets` and repeat with `vulkan` and `glow`. Also run without
+features to prove the builtin compiler rejects unavailable targets. These runs
+omit `test-support` so the virtual WGSL renderer cannot mask disabled outputs.
+The single backend code getter preserves encoding and ownership. Missing code
+propagates without fallback, wrong targets reject before code acquisition, and
+invalid UTF-8 rejects for either text target.
 
-Also run the matrix with all three output features together. Identical target-free
+Also run the matrix with `glow,vulkan,wgpu` together, without platform hosting. Identical target-free
 requests on different fixed-format compiler instances must keep their configured
 outputs after validation and quota failures. Resource regressions reject an
 otherwise consistent result for another backend without publishing a shader or

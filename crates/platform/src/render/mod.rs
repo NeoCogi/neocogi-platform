@@ -3,6 +3,5 @@
 
 /// Shared contract types and helpers, identical to those used by dynamic applications.
 pub use neocogi_platform_contracts::render::*;
-/// Optional linked S-expression/Python-like COM compiler; dynamic platforms receive the same factory from the host.
-#[cfg(any(test, feature = "shader-compiler"))]
+/// Built-in S-expression COM compiler with an optional Python-like frontend and renderer-selected writers.
 pub mod compiler;

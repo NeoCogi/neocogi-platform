@@ -275,18 +275,24 @@ they are not new performance comparisons.
 
 ## Backend artifacts and build features
 
-| Renderer | Fixed output | Features |
+| Renderer | Fixed output | Renderer feature |
 | --- | --- | --- |
-| WGPU | Generated UTF-8 WGSL | `shader-compiler,shader-wgsl` |
-| GLES3/WebGL2 | Generated UTF-8 GLSL ES 3.00 | `shader-compiler,shader-glsl` |
-| Vulkan | SPIR-V 1.0 words, little-endian byte export | `shader-compiler,shader-spirv` |
+| WGPU | Generated UTF-8 WGSL | `wgpu` |
+| GLES3/WebGL2 | Generated UTF-8 GLSL ES 3.00 | `glow` / `webgl` |
+| Vulkan | SPIR-V 1.0 words, little-endian byte export | `vulkan` |
 
-Backends enable their output automatically. CPU-only tools select these features
-without SDL, GL, Vulkan, or WGPU. Outputs are additive, but each compiler instance
-returns only its configured target. The SPIR-V writer uses the small `spirv`
-opcode/enumeration crate. No Naga frontend, Naga writer, external compiler process,
-or temporary cross-language round trip is used by the plugin. WGPU's independent
-native translation may still depend on Naga.
+The compiler is built into the SDK, including empty-default builds. Its only
+shader Cargo feature is the default-off `shader-python` frontend. Renderer
+features imply their writers; there are no separate compiler or output flags.
+Without a renderer, compiler construction rejects unavailable outputs. GPU-only
+consumers may enable multiple renderer backends; each compiler instance still
+returns only its configured target. The internal virtual renderer used by unit
+tests and `test-support` supplies WGSL without enabling a native backend.
+
+Compilation is CPU work and needs no open window. The SPIR-V writer uses the small
+`spirv` opcode/enumeration crate, selected by Vulkan. No Naga frontend, Naga writer,
+external compiler process or temporary cross-language round trip is used by the
+plugin. WGPU's independent native translation may still depend on Naga.
 
 All writers consume the same validated typed IR. Generated shaders return
 zero for out-of-range array/vector/matrix/image reads; local writes outside the
@@ -344,10 +350,10 @@ cargo build --locked -p neocogi-platform-dylib --no-default-features \
   --features vulkan --profile min-size
 NEOCOGI_PLATFORM_DYLIB="$PWD/target/min-size/libnc_platform.so" \
 NEOCOGI_TEST_BACKEND=vulkan NEOCOGI_PLATFORM_SIZE_LIMIT=524288 \
-  cargo test --locked -p neocogi-platform --features test-support,shader-glsl,shader-spirv \
+  cargo test --locked -p neocogi-platform --features test-support,glow,vulkan,wgpu \
   --test compiler_plugin -- --ignored --exact dynamic_platform_plugin_exposes_its_builtin_compiler
 NEOCOGI_SHADER_VALIDATORS=1 cargo test --locked -p neocogi-platform \
-  --features test-support,shader-glsl,shader-spirv --test sexp_compiler
+  --features test-support,glow,vulkan,wgpu --test sexp_compiler
 ```
 
 The dynamic probe loads the actual platform library, checks its requested size
@@ -463,9 +469,11 @@ cargo tools profile-shaders --backend vulkan --output /tmp/shaders-current \
   --reference /tmp/shaders-previous/candidate --perf --intel-stats
 ```
 
-Use `glow` and `wgpu` for the other backends. The command builds the normal single
-min-size library, exports all three shader encodings, and runs Triangle, Damaged
-Helmet and BrainStem. It alternates reference/candidate samples after warmup,
+Use `glow` and `wgpu` for the other backends to cover all three encodings. Each
+command exports its enabled writers' artifacts, builds the normal single
+min-size library, and runs Triangle, Damaged Helmet and BrainStem. The corpus also
+enables the internal virtual WGSL renderer; the deployed library has only its
+selected renderer's writer. Runs alternate reference/candidate samples after warmup,
 uses a fixed pose, requires all requested frames to render, and retains every raw
 sample. Timings include process startup, presentation and teardown. Frame pacing
 can limit throughput, so separate driver diagnostics check every reported SIMD

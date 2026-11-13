@@ -1,6 +1,12 @@
 //! Bounded S-expression/Python-like frontends sharing typed graphics IR and backend writers.
 //! The platform COM plugin exposes this built-in service in static and shared-library builds.
 #![deny(missing_docs)]
+// Parser/type validation retain writer-facing IR data even when no renderer is
+// selected. The builtin factory then rejects all targets before emission.
+#![cfg_attr(
+    not(any(test, feature = "test-support", feature = "wgpu", feature = "vulkan", feature = "glow", feature = "webgl")),
+    allow(dead_code)
+)]
 
 mod access;
 mod ir;
@@ -8,7 +14,7 @@ mod objects;
 mod optimize;
 #[cfg(feature = "shader-python")]
 mod python;
-#[cfg(feature = "shader-spirv")]
+#[cfg(feature = "vulkan")]
 mod spv;
 mod syntax;
 mod text;
@@ -20,7 +26,7 @@ use neocogi_platform_contracts::render::{
     shader::{Shader, ShaderTarget, Uniform, SampledTexture, MAX_SHADER_BYTES, MAX_SHADER_ARTIFACT_BYTES},
 };
 
-#[cfg(any(test, feature = "shader-wgsl", feature = "shader-glsl", feature = "shader-spirv"))]
+#[cfg(any(test, feature = "wgpu", feature = "test-support", feature = "glow", feature = "webgl", feature = "vulkan"))]
 use neocogi_platform_contracts::render::shader::ShaderCode;
 
 /// Source error with a byte offset retained through parsing and semantic validation.
@@ -81,9 +87,9 @@ impl Compiler {
     /// Selects an enabled writer; requests cannot change the instance's target.
     pub fn new(target: ShaderTarget) -> Result<Self, CompileError> {
         let enabled = match target {
-            ShaderTarget::Wgsl => cfg!(any(test, feature = "shader-wgsl")),
-            ShaderTarget::GlslEs300 => cfg!(feature = "shader-glsl"),
-            ShaderTarget::SpirV => cfg!(feature = "shader-spirv"),
+            ShaderTarget::Wgsl => cfg!(any(test, feature = "wgpu", feature = "test-support")),
+            ShaderTarget::GlslEs300 => cfg!(any(feature = "glow", feature = "webgl")),
+            ShaderTarget::SpirV => cfg!(feature = "vulkan"),
             _ => return Err(CompileError::Invalid("unknown shader target".into())),
         };
         if !enabled {
@@ -96,7 +102,7 @@ impl Compiler {
     // With no output enabled, construction always rejects. Keep the public method
     // available while permitting the statically divergent emission match below.
     #[cfg_attr(
-        not(any(test, feature = "shader-wgsl", feature = "shader-glsl", feature = "shader-spirv")),
+        not(any(test, feature = "wgpu", feature = "test-support", feature = "glow", feature = "webgl", feature = "vulkan")),
         allow(unreachable_code, unused_variables)
     )]
     pub fn compile(&self, stage: GpuShaderStage, source: &str, entry: &str, budget: usize) -> Result<Shader, CompileError> {
@@ -147,11 +153,11 @@ impl Compiler {
         uniforms.sort_by_key(|r| r.slot);
         textures.sort_by_key(|r| r.slot);
         let code = match self.target {
-            #[cfg(any(test, feature = "shader-wgsl"))]
+            #[cfg(any(test, feature = "wgpu", feature = "test-support"))]
             ShaderTarget::Wgsl => ShaderCode::Wgsl(text::emit(&module, index, false, available)?),
-            #[cfg(feature = "shader-glsl")]
+            #[cfg(any(feature = "glow", feature = "webgl"))]
             ShaderTarget::GlslEs300 => ShaderCode::GlslEs300(text::emit(&module, index, true, available)?),
-            #[cfg(feature = "shader-spirv")]
+            #[cfg(feature = "vulkan")]
             ShaderTarget::SpirV => ShaderCode::SpirV(spv::emit(&module, index, available)?),
             _ => return Err(CompileError::Unavailable),
         };

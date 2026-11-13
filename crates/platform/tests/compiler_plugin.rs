@@ -14,9 +14,9 @@ fn static_com_factory_and_owned_reports() {
         .unwrap();
     let source = b"(module (vertex vs () (returns vec4 (builtin position)) (return (vec4 0.0 0.0 0.5 1.0))))";
     for (target, enabled) in [
-        (ShaderTarget::Wgsl, cfg!(feature = "shader-wgsl")),
-        (ShaderTarget::GlslEs300, cfg!(feature = "shader-glsl")),
-        (ShaderTarget::SpirV, cfg!(feature = "shader-spirv")),
+        (ShaderTarget::Wgsl, cfg!(any(feature = "wgpu", feature = "test-support"))),
+        (ShaderTarget::GlslEs300, cfg!(any(feature = "glow", feature = "webgl"))),
+        (ShaderTarget::SpirV, cfg!(feature = "vulkan")),
     ] {
         if !enabled {
             assert!(matches!(
@@ -153,9 +153,9 @@ fn both_frontends_export_owned_source_diagnostics_through_com() {
         .unwrap();
     let mut diagnostics = Vec::new();
     for (target, enabled) in [
-        (ShaderTarget::Wgsl, cfg!(feature = "shader-wgsl")),
-        (ShaderTarget::GlslEs300, cfg!(feature = "shader-glsl")),
-        (ShaderTarget::SpirV, cfg!(feature = "shader-spirv")),
+        (ShaderTarget::Wgsl, cfg!(any(feature = "wgpu", feature = "test-support"))),
+        (ShaderTarget::GlslEs300, cfg!(any(feature = "glow", feature = "webgl"))),
+        (ShaderTarget::SpirV, cfg!(feature = "vulkan")),
     ] {
         if !enabled {
             continue;

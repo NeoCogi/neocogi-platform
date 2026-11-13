@@ -36,15 +36,15 @@ jobs:
       - name: Formatting and direct backend validation
         run: |
           cargo fmt --all -- --check
-          NEOCOGI_SHADER_VALIDATORS=1 cargo test --locked -p neocogi-platform --features test-support,shader-glsl,shader-spirv --test compiler --test sexp_compiler --test compiler_plugin --test gpu_shader_budget --test shader_optimization
-          NEOCOGI_SHADER_VALIDATORS=1 cargo test --locked -p neocogi-platform --features test-support,shader-glsl,shader-spirv,shader-python --test python_compiler --test shader_targets --test compiler_plugin
-          NEOCOGI_SHADER_VALIDATORS=1 cargo test --locked -p neocogi-platform-examples --no-default-features --features static,vulkan,test-support,shader-python,provider/shader-wgsl,provider/shader-glsl,provider/shader-spirv --test shader_corpus
+          NEOCOGI_SHADER_VALIDATORS=1 cargo test --locked -p neocogi-platform --features test-support,glow,vulkan,wgpu --test compiler --test sexp_compiler --test compiler_plugin --test gpu_shader_budget --test shader_optimization
+          NEOCOGI_SHADER_VALIDATORS=1 cargo test --locked -p neocogi-platform --features test-support,glow,vulkan,wgpu,shader-python --test python_compiler --test shader_targets --test compiler_plugin
+          NEOCOGI_SHADER_VALIDATORS=1 cargo test --locked -p neocogi-platform-examples --no-default-features --features static,vulkan,test-support,shader-python --test shader_corpus
       - name: Built-in Vulkan COM compiler and complete platform byte cap
         run: |
           cargo build --locked -p neocogi-platform-dylib --no-default-features --features vulkan --profile min-size
-          NEOCOGI_PLATFORM_DYLIB="$PWD/target/min-size/libnc_platform.so" NEOCOGI_TEST_BACKEND=vulkan NEOCOGI_PLATFORM_SIZE_LIMIT=524288 cargo test --locked -p neocogi-platform --features test-support,shader-glsl,shader-spirv --test compiler_plugin -- --ignored --exact dynamic_platform_plugin_exposes_its_builtin_compiler
+          NEOCOGI_PLATFORM_DYLIB="$PWD/target/min-size/libnc_platform.so" NEOCOGI_TEST_BACKEND=vulkan NEOCOGI_PLATFORM_SIZE_LIMIT=524288 cargo test --locked -p neocogi-platform --features test-support,glow,vulkan,wgpu --test compiler_plugin -- --ignored --exact dynamic_platform_plugin_exposes_its_builtin_compiler
           cargo build --locked -p neocogi-platform-dylib --no-default-features --features vulkan,shader-python --profile min-size
-          NEOCOGI_PLATFORM_DYLIB="$PWD/target/min-size/libnc_platform.so" NEOCOGI_TEST_BACKEND=vulkan NEOCOGI_TEST_SHADER_PYTHON=1 NEOCOGI_PLATFORM_SIZE_LIMIT=524288 cargo test --locked -p neocogi-platform --features test-support,shader-glsl,shader-spirv --test compiler_plugin -- --ignored --exact dynamic_platform_plugin_exposes_its_builtin_compiler
+          NEOCOGI_PLATFORM_DYLIB="$PWD/target/min-size/libnc_platform.so" NEOCOGI_TEST_BACKEND=vulkan NEOCOGI_TEST_SHADER_PYTHON=1 NEOCOGI_PLATFORM_SIZE_LIMIT=524288 cargo test --locked -p neocogi-platform --features test-support,glow,vulkan,wgpu --test compiler_plugin -- --ignored --exact dynamic_platform_plugin_exposes_its_builtin_compiler
   native:
     runs-on: ubuntu-latest
     strategy:
@@ -64,14 +64,14 @@ jobs:
         run: |
           cargo test --locked -p neocogi-platform-contracts --features build-support,test-support
           cargo test --locked -p neocogi-platform --no-default-features --features audio --test audio
-          cargo test --locked -p neocogi-platform --features test-support,shader-spirv,shader-glsl
+          cargo test --locked -p neocogi-platform --features test-support,glow,vulkan,wgpu
       - name: Minimal compiler output ABI and disabled-format rejection
         run: |
-          cargo test --locked -p neocogi-platform --no-default-features --features shader-compiler --test shader_targets
-          cargo test --locked -p neocogi-platform --no-default-features --features shader-compiler,shader-wgsl --test shader_targets
-          cargo test --locked -p neocogi-platform --no-default-features --features shader-compiler,shader-spirv --test shader_targets
-          cargo test --locked -p neocogi-platform --no-default-features --features shader-compiler,shader-glsl --test shader_targets
-          cargo test --locked -p neocogi-platform --no-default-features --features shader-compiler,shader-wgsl,shader-spirv,shader-glsl --test shader_targets
+          cargo test --locked -p neocogi-platform --no-default-features --test shader_targets
+          cargo test --locked -p neocogi-platform --no-default-features --features wgpu --test shader_targets
+          cargo test --locked -p neocogi-platform --no-default-features --features vulkan --test shader_targets
+          cargo test --locked -p neocogi-platform --no-default-features --features glow --test shader_targets
+          cargo test --locked -p neocogi-platform --no-default-features --features glow,vulkan,wgpu --test shader_targets
       - name: Backend-owned native regressions
         run: |
           xvfb-run -a cargo test --locked -p neocogi-platform --features ${{ matrix.backend }},test-support --lib gpu::backends::${{ matrix.backend }}:: -- --include-ignored --test-threads=1

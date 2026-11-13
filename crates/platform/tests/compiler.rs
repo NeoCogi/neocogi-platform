@@ -18,10 +18,10 @@ const SOURCE: &str = r#"(module
 /// Build flags determine availability, while each compiler instance retains its renderer-selected representation.
 fn targets() -> Vec<ShaderTarget> {
     let mut values = vec![ShaderTarget::Wgsl];
-    if cfg!(feature = "shader-spirv") {
+    if cfg!(feature = "vulkan") {
         values.push(ShaderTarget::SpirV);
     }
-    if cfg!(feature = "shader-glsl") {
+    if cfg!(any(feature = "glow", feature = "webgl")) {
         values.push(ShaderTarget::GlslEs300);
     }
     values

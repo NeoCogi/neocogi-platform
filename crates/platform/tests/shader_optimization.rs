@@ -39,9 +39,9 @@ fn constant_indices_do_not_generate_bounds_branches() {
             validate(&shader);
             match shader.code {
                 ShaderCode::Wgsl(text) | ShaderCode::GlslEs300(text) => assert!(!text.contains("if ("), "{text}"),
-                #[cfg(feature = "shader-spirv")]
+                #[cfg(feature = "vulkan")]
                 ShaderCode::SpirV(words) => assert_eq!(spv::instructions(&words).iter().filter(|i| i.op == spirv::Op::ULessThan as u32).count(), 0),
-                #[cfg(not(feature = "shader-spirv"))]
+                #[cfg(not(feature = "vulkan"))]
                 ShaderCode::SpirV(_) => {}
             }
         }
@@ -124,7 +124,7 @@ fn helper_boundaries_pass_native_wgsl_validation() {
     }
 }
 
-#[cfg(feature = "shader-spirv")]
+#[cfg(feature = "vulkan")]
 mod spv {
     use super::*;
     use spirv::{Op, StorageClass};

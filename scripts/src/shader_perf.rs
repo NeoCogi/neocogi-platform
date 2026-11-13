@@ -151,10 +151,7 @@ fn prepare(options: &Options, output: &Path) -> Result<(PathBuf, u64)> {
     let application_features = if options.shader_python { "dynamic,shader-python" } else { "dynamic" };
     run(cargo(None)
         .args(["test", "--locked", "-p", "neocogi-platform-examples", "--no-default-features", "--features"])
-        .arg(format!(
-            "static,{},test-support,provider/shader-wgsl,provider/shader-glsl,provider/shader-spirv",
-            backend_features
-        ))
+        .arg(format!("static,{},test-support", backend_features))
         .args(["--test", "shader_corpus"])
         .env("NEOCOGI_SHADER_ARTIFACT_DIR", &corpus)
         .env("NEOCOGI_SHADER_VALIDATORS", "1"))?;

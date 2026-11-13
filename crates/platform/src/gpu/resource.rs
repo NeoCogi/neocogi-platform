@@ -131,7 +131,6 @@ impl<B: crate::gpu::native::NativeResources> Drop for Operation<B> {
 
 impl<B: crate::gpu::native::NativeResources> GpuDevice<B> {
     /// Owns a compiler fixed to this backend; callers cannot choose output per request.
-    #[cfg(any(test, feature = "shader-compiler"))]
     pub fn new(core: Rc<B::Core>) -> Result<Self, NcStatus> {
         use crate::render::compiler::CompilerObject;
         let compiler = CompilerObject::from_value(CompilerObject::new(B::shader_target(&core))?).query()?;
@@ -146,7 +145,6 @@ impl<B: crate::gpu::native::NativeResources> GpuDevice<B> {
     }
 
     /// Retains one compiler for the device lifetime; no registry lookup occurs per shader.
-    #[cfg(any(test, feature = "shader-compiler"))]
     fn from_compiler(core: Rc<B::Core>, compiler: ComPtr<neocogi_platform::render::abi::ShaderCompilerAbi>) -> Self {
         Self {
             inner: Rc::new(Device {
@@ -870,7 +868,7 @@ pub(crate) fn publish_pipeline<B: crate::gpu::native::NativeResources>(
 #[cfg(test)]
 mod tests;
 
-#[cfg(all(test, feature = "shader-spirv"))]
+#[cfg(all(test, feature = "vulkan"))]
 mod compiler_tests;
 
 #[cfg(test)]

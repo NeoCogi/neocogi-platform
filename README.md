@@ -53,14 +53,14 @@ with exactly one backend for SDL hosting. Build scripts depend on
 `neocogi-platform-contracts` with `build-support` for generation/resource staging.
 Dynamic clients use its shared types without depending on the SDK.
 Browser hosting uses `platform,webgl` and `wasm32-unknown-unknown`.
-CPU-only consumers need no SDL, graphics loader or compiler implementation.
+SDK defaults include the compiler without SDL or graphics-loader dependencies.
 The built-in COM compiler accepts S-expressions and, with the optional
 `shader-python` feature, Python-like shader programs,
 validates both through one typed IR, and directly emits backend shaders.
 The platform root exposes `ShaderCompilerFactory` through QueryInterface.
 Shader output is fixed by each renderer: WGPU uses WGSL, Vulkan uses SPIR-V and
-GLES3/WebGL uses ES300. Backends enable their compiler and `shader-wgsl`, `shader-spirv` or
-`shader-glsl`; standalone compilers select these without graphics dependencies.
+GLES3/WebGL uses ES300. The compiler is built in; renderer features select the
+available writers. `shader-python` is the only shader Cargo feature.
 
 Native examples select `static,glow` by default. Use `--no-default-features
 --features static,vulkan` or `static,wgpu` for alternatives. For dynamic assembly,

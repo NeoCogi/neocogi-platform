@@ -1,17 +1,17 @@
 //! WGSL and GLSL ES 3.00 writers sharing structural traversal, not native source parsing.
 use super::ir::*;
-#[cfg(any(test, feature = "shader-wgsl", feature = "shader-glsl"))]
+#[cfg(any(test, feature = "wgpu", feature = "test-support", feature = "glow", feature = "webgl"))]
 use super::access;
-#[cfg(any(test, feature = "shader-wgsl", feature = "shader-glsl"))]
+#[cfg(any(test, feature = "wgpu", feature = "test-support", feature = "glow", feature = "webgl"))]
 use super::CompileError;
-#[cfg(any(test, feature = "shader-wgsl", feature = "shader-glsl"))]
+#[cfg(any(test, feature = "wgpu", feature = "test-support", feature = "glow", feature = "webgl"))]
 use neocogi_platform_contracts::render::{
     abi::GpuShaderStage,
     shader::{ShaderInterpolation, ShaderSampling},
 };
-#[cfg(any(test, feature = "shader-wgsl", feature = "shader-glsl", feature = "shader-spirv"))]
+#[cfg(any(test, feature = "wgpu", feature = "test-support", feature = "glow", feature = "webgl", feature = "vulkan"))]
 use std::collections::BTreeSet;
-#[cfg(any(test, feature = "shader-wgsl", feature = "shader-glsl"))]
+#[cfg(any(test, feature = "wgpu", feature = "test-support", feature = "glow", feature = "webgl"))]
 use std::fmt::Write;
 
 /// Stage-distinct block names are part of the compiler's native reflection contract.
@@ -23,7 +23,7 @@ pub(crate) fn texture_name(r: &Resource) -> String {
     format!("nc_texture_{}_{}", r.stage.raw(), r.slot)
 }
 /// Function closure in callee-before-caller order, independent of authored declaration order.
-#[cfg(any(test, feature = "shader-wgsl", feature = "shader-glsl", feature = "shader-spirv"))]
+#[cfg(any(test, feature = "wgpu", feature = "test-support", feature = "glow", feature = "webgl", feature = "vulkan"))]
 pub(crate) fn reachable(m: &Module, index: usize) -> Vec<usize> {
     fn visit(m: &Module, i: usize, seen: &mut BTreeSet<usize>, out: &mut Vec<usize>) {
         if seen.insert(i) {
@@ -38,7 +38,7 @@ pub(crate) fn reachable(m: &Module, index: usize) -> Vec<usize> {
     out
 }
 /// Bounded output owns the first failure; formatting never silently truncates successful code.
-#[cfg(any(test, feature = "shader-wgsl", feature = "shader-glsl"))]
+#[cfg(any(test, feature = "wgpu", feature = "test-support", feature = "glow", feature = "webgl"))]
 struct Output {
     /// Complete initialized output prefix; never exported after failure.
     text: String,
@@ -47,7 +47,7 @@ struct Output {
     /// First quota/allocation error is retained across formatting calls.
     error: Option<CompileError>,
 }
-#[cfg(any(test, feature = "shader-wgsl", feature = "shader-glsl"))]
+#[cfg(any(test, feature = "wgpu", feature = "test-support", feature = "glow", feature = "webgl"))]
 impl Write for Output {
     fn write_str(&mut self, s: &str) -> std::fmt::Result {
         if self.error.is_some() {
@@ -69,7 +69,7 @@ impl Write for Output {
     }
 }
 /// One selected writer with per-function temporary numbering.
-#[cfg(any(test, feature = "shader-wgsl", feature = "shader-glsl"))]
+#[cfg(any(test, feature = "wgpu", feature = "test-support", feature = "glow", feature = "webgl"))]
 struct Writer<'a> {
     /// One validated module; no text-language reparsing occurs.
     m: &'a Module,
@@ -85,7 +85,7 @@ struct Writer<'a> {
     aliases: Vec<Option<ReadPath>>,
 }
 /// Proven bounds are shared by text reads and writes; constant cases emit no branch.
-#[cfg(any(test, feature = "shader-wgsl", feature = "shader-glsl"))]
+#[cfg(any(test, feature = "wgpu", feature = "test-support", feature = "glow", feature = "webgl"))]
 #[derive(Clone)]
 enum Bounds {
     /// Every projection is statically in range.
@@ -96,7 +96,7 @@ enum Bounds {
     Dynamic(String),
 }
 /// A declaration-rooted text expression can select its leaf without intermediate aggregate temporaries.
-#[cfg(any(test, feature = "shader-wgsl", feature = "shader-glsl"))]
+#[cfg(any(test, feature = "wgpu", feature = "test-support", feature = "glow", feature = "webgl"))]
 #[derive(Clone)]
 struct ReadPath {
     /// Native access expression, evaluated only when bounds permit.
@@ -107,7 +107,7 @@ struct ReadPath {
     stable: bool,
 }
 /// Emits one complete bounded text artifact.
-#[cfg(any(test, feature = "shader-wgsl", feature = "shader-glsl"))]
+#[cfg(any(test, feature = "wgpu", feature = "test-support", feature = "glow", feature = "webgl"))]
 pub(crate) fn emit(m: &Module, index: usize, gl: bool, limit: usize) -> Result<String, CompileError> {
     let mut w = Writer {
         m,
@@ -120,7 +120,7 @@ pub(crate) fn emit(m: &Module, index: usize, gl: bool, limit: usize) -> Result<S
     w.module(index);
     if let Some(error) = w.out.error { Err(error) } else { Ok(w.out.text) }
 }
-#[cfg(any(test, feature = "shader-wgsl", feature = "shader-glsl"))]
+#[cfg(any(test, feature = "wgpu", feature = "test-support", feature = "glow", feature = "webgl"))]
 impl Writer<'_> {
     /// Scalar names use Display-based numeric formatting exclusively, including min-size builds.
     fn scalar(&self, s: Scalar) -> &'static str {

@@ -2,7 +2,7 @@
 //!
 //! Ordinary Rust applications link this library. Dynamic applications use the same
 //! contracts and load final COM providers built by `neocogi-platform-dylib`.
-//! Empty defaults keep native libraries and the shader compiler out of SDK consumers.
+//! Empty defaults keep native libraries out; the shader compiler is built in.
 #![deny(missing_docs)]
 
 extern crate self as neocogi_platform;

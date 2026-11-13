@@ -23,7 +23,8 @@ application builds and build scripts never invoke these tools.
 
 Shader qualification requires fetched glTF assets, `glslangValidator`, `spirv-val`
 and a working native display/GPU. Choose `vulkan`, `glow` or `wgpu`; each invocation
-validates all three shader encodings before building only the selected library.
+validates that renderer's encoding and the virtual WGSL fixtures before building
+only the selected library. Run all three backends to cover every output writer.
 The default is three 300-frame samples per application, with a three-frame warmup
 and fixed glTF animation time 1. Measurements include process startup/teardown;
 they are not GPU-only frame times. No builds run during timed workloads.

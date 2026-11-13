@@ -16,12 +16,12 @@ const SOURCE: &str = r#"(module
   (vertex vs ((p vec2 (location 0))) (returns vec4 (builtin position))
     (return (+ (vec4 p 0.0 1.0) (. u value)))))"#;
 
-/// This test is built separately for each output feature, including no outputs.
+/// Renderer features alone determine availability, including the builtin compiler without a renderer.
 fn supported(target: ShaderTarget) -> bool {
     [
-        (ShaderTarget::Wgsl, cfg!(feature = "shader-wgsl")),
-        (ShaderTarget::SpirV, cfg!(feature = "shader-spirv")),
-        (ShaderTarget::GlslEs300, cfg!(feature = "shader-glsl")),
+        (ShaderTarget::Wgsl, cfg!(any(feature = "wgpu", feature = "test-support"))),
+        (ShaderTarget::SpirV, cfg!(feature = "vulkan")),
+        (ShaderTarget::GlslEs300, cfg!(any(feature = "glow", feature = "webgl"))),
     ]
     .into_iter()
     .any(|(format, enabled)| target == format && enabled)
@@ -48,7 +48,7 @@ fn compile_source(target: ShaderTarget, source: &str) -> ComPtr<IShaderCompilati
 
 /// No disabled output can succeed, including WGSL in SPIR-V-only and GLSL-only builds.
 #[test]
-fn compiled_formats_match_explicit_output_features() {
+fn compiled_formats_match_renderer_backends() {
     for target in [ShaderTarget::Wgsl, ShaderTarget::SpirV, ShaderTarget::GlslEs300] {
         if !supported(target) {
             assert!(matches!(CompilerObject::new(target), Err(shader::SHADER_E_TARGET_UNAVAILABLE)));

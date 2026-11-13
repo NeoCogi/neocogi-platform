@@ -47,7 +47,7 @@ fn foreign_fixed_format_is_rejected_without_publishing_or_leaking_quota() {
 #[test]
 fn device_owned_compilers_follow_their_immutable_backend_format() {
     let mut targets = vec![ShaderTarget::Wgsl, ShaderTarget::SpirV];
-    if cfg!(feature = "shader-glsl") {
+    if cfg!(any(feature = "glow", feature = "webgl")) {
         targets.push(ShaderTarget::GlslEs300);
     }
     for target in targets {

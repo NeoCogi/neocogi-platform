@@ -140,7 +140,7 @@ fn main() {
         neocogi_platform::render::compiler::Factory::from_value(neocogi_platform::render::compiler::Factory)
             .query()
             .unwrap();
-    let root = factory.create(client::ShaderTarget::Wgsl).unwrap();
+    let root = factory.create(client::ShaderTarget::GlslEs300).unwrap();
     let source = b"(module (vertex vs () (returns vec4 (builtin position)) (return (vec4 0.0 0.0 0.0 1.0))))";
     let report = root
         .compile_result(
@@ -153,8 +153,8 @@ fn main() {
         )
         .unwrap();
     assert_eq!(report.status().unwrap(), NC_OK.code());
-    assert_eq!(report.target().unwrap(), client::ShaderTarget::Wgsl);
-    assert_eq!(report.info().unwrap().target, client::ShaderTarget::Wgsl);
+    assert_eq!(report.target().unwrap(), client::ShaderTarget::GlslEs300);
+    assert_eq!(report.info().unwrap().target, client::ShaderTarget::GlslEs300);
     // A consumer generated from the merged renderer schema interoperates with
     // ordinary SDK readers by typed QI, including backend format validation.
     use neocogi_platform::render::{
@@ -166,12 +166,12 @@ fn main() {
         PreparedShader::new(canonical.clone(), abi::GpuShaderStage::Vertex, ShaderTarget::SpirV, b"vs", 4 * 1024 * 1024),
         Err(neocogi_com::NC_E_INVALID_ARG)
     ));
-    let prepared = PreparedShader::new(canonical, abi::GpuShaderStage::Vertex, ShaderTarget::Wgsl, b"vs", 4 * 1024 * 1024).unwrap();
-    assert_eq!(prepared.copy().unwrap().code.target(), ShaderTarget::Wgsl);
+    let prepared = PreparedShader::new(canonical, abi::GpuShaderStage::Vertex, ShaderTarget::GlslEs300, b"vs", 4 * 1024 * 1024).unwrap();
+    assert_eq!(prepared.copy().unwrap().code.target(), ShaderTarget::GlslEs300);
     drop(prepared);
     let code = report.code().unwrap();
     let emitted = code.to_vec().unwrap();
-    assert!(std::str::from_utf8(&emitted).unwrap().contains("@vertex"));
+    assert!(std::str::from_utf8(&emitted).unwrap().contains("#version 300 es"));
     drop(report);
     drop(root);
     drop(factory);

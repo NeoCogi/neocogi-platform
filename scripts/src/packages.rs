@@ -314,7 +314,7 @@ pub(crate) fn qualify(allow_dirty: bool, offline: bool, stable: Option<&str>) ->
             "-p",
             "neocogi-platform",
             "--features",
-            "test-support,platform,glow,shader-spirv",
+            "test-support,platform,glow",
         ],
     )?;
     // Default consumers must also qualify without the optional parser. Opt in
@@ -326,7 +326,7 @@ pub(crate) fn qualify(allow_dirty: bool, offline: bool, stable: Option<&str>) ->
             "-p",
             "neocogi-platform",
             "--features",
-            "test-support,shader-python,shader-glsl,shader-spirv",
+            "test-support,shader-python,glow",
             "--test",
             "python_compiler",
             "--test",

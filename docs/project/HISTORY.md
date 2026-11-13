@@ -1,5 +1,27 @@
 # Unreleased
 
+## Built-in compiler and renderer-selected writers
+
+The compiler is always part of the SDK. Separate compiler and output Cargo flags
+are removed; `shader-python` is the only shader feature and stays default-off.
+Vulkan implies SPIR-V, WGPU implies WGSL and Glow/WebGL imply GLSL ES 3.00.
+The virtual test renderer supplies WGSL; empty production defaults provide no
+writer or native graphics dependencies. Tools, examples, CI and package consumers
+select renderers and rebuild their compiler checks around those feature graphs.
+
+## Packaged platform guides and screenshots
+
+SDK and shim READMEs now contain static/dynamic COM setup, backend/frontend
+selection, repository example commands, screenshots and the explicitly limited
+Naga comparison. Both source archives include their local images, credits,
+license notices and measurement report; archive checks require those assets.
+The SDK owns canonical copies, also used by the root README.
+
+The native glTF capture fixture writes PNGs directly from the real renderer.
+Damaged Helmet uses a slightly elevated diagonal documentation camera while
+interactive reset and regression cameras retain their behavior. The capture
+command is documented in the native glTF guide.
+
 ## COM/IDL 0.2.0-alpha.4
 
 The SDK, host and IDL compiler are pinned together to `0.2.0-alpha.4`, including
