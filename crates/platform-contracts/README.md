@@ -15,7 +15,7 @@ Build scripts enable `build-support` and use `build::{Module, sources, build}`
 for consumer-owned projections or `build::layout` for native resource staging.
 All ten authored schemas live in this archive, are embedded by the helper and
 are reconstructed in each consumer's own OUT_DIR. The pinned COM/IDL toolchain is
-`0.2.0-alpha.6`; declaration identities and exact signatures are derived from the
+`0.2.0`; declaration identities and exact signatures are derived from the
 contract without manual `#[version(...)]` attributes. Rebuild providers and
 generated consumers together after upgrading this toolchain.
 The sibling `neocogi.renderer`, `neocogi.audio` and `neocogi.platform` namespaces

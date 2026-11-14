@@ -93,8 +93,8 @@ dependency. For the default Glow library built above:
 ```toml
 [dependencies]
 neocogi-platform-contracts = { version = "=0.2.0", default-features = false }
-neocogi-com = { version = "=0.2.0-alpha.6", default-features = false, features = ["std", "runtime"] }
-neocogi-com-host = { version = "=0.2.0-alpha.6", default-features = false }
+neocogi-com = { version = "=0.2.0", default-features = false, features = ["std", "runtime"] }
+neocogi-com-host = { version = "=0.2.0", default-features = false }
 ```
 
 ```rust
@@ -135,7 +135,7 @@ Compile failures return owned source-located diagnostics. The target is fixed pe
 compiler; requests contain only stage and output budget. S-expression and
 optional Python-like input share validation and the optimized backend writers.
 
-COM/host/IDL use exact `0.2.0-alpha.6` dependencies. Rebuild providers and generated
+COM/host/IDL use exact `0.2.0` dependencies. Rebuild providers and generated
 consumers together after contract/toolchain changes; compatibility uses derived
 identities and exact signatures. Runtime backend selection belongs to the loaded
 library. An application's `--backend` option can verify that choice, not replace it.

@@ -1,5 +1,13 @@
 # Unreleased
 
+## COM/IDL 0.2.0
+
+The workspace and independent package consumer pin COM, host, serialization and
+IDL to the published `0.2.0` release. Core and macros use the same locked release;
+unrelated dependencies retain their locked versions. This supersedes the
+alpha.6 dependency pins below. Rebuild generated consumers and providers together
+for the coordinated COM toolchain upgrade.
+
 ## COM/IDL 0.2.0-alpha.6
 
 The workspace and independent package consumer now pin COM, host, serialization

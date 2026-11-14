@@ -108,7 +108,7 @@ Space to pause animation, B to toggle the skybox, or Escape to close. See the [e
 for backend selection, bounded headless runs, supported glTF features and asset licenses.
 
 The Platform workspace pins the published COM, host and IDL packages to exact
-`0.2.0-alpha.6`. Rebuild generated consumers and providers together after this
+`0.2.0`. Rebuild generated consumers and providers together after this
 toolchain upgrade. Shared dependencies participate in one application Cargo graph.
 Independent builds can reuse compatible artifacts through `CARGO_TARGET_DIR`.
 
