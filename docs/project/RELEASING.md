@@ -1,7 +1,7 @@
 # Preparing and publishing Platform packages
 
-The current published release is **0.2.0**. The release set
-contains three publishable packages:
+The current release target is **0.3.0-alpha.1**; the last published release is
+**0.2.0**. The release set contains three publishable packages:
 
 1. `neocogi-platform-contracts`: schemas, generated bindings, shared types, limits, validation and build support.
 2. `neocogi-platform`: renderer SDK with optional backends, owned compiler and hosting.
@@ -13,8 +13,8 @@ modules belong to the SDK archive. There are no private path
 or Git dependencies hidden behind a facade. All internal registry requirements
 pin the same exact release version.
 
-The `0.2.0-alpha.1` minor-version advance marks incompatible Rust API and schema
-namespace changes since `0.1.0-alpha.2`; see the [release history](HISTORY.md).
+The `0.3.0-alpha.1` minor-version advance marks incompatible Rust API, generated
+contract and renderer feature changes since `0.2.0`; see the [release history](HISTORY.md).
 Upgrade contracts, SDK and shims together and regenerate consumers. COM/IDL
 `0.2.0` derives nominal identities and exact compatibility signatures from
 the contract; deprecated manual declaration versions are removed. Rebuild all

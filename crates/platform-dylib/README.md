@@ -70,7 +70,7 @@ build package when the application's graph should contain only contracts:
 
 ```toml
 [dependencies]
-neocogi-platform-dylib = "=0.2.0"
+neocogi-platform-dylib = "=0.3.0-alpha.1"
 ```
 
 Then build the dependency's normal library and deploy it:
@@ -92,7 +92,7 @@ dependency. For the default Glow library built above:
 
 ```toml
 [dependencies]
-neocogi-platform-contracts = { version = "=0.2.0", default-features = false }
+neocogi-platform-contracts = { version = "=0.3.0-alpha.1", default-features = false }
 neocogi-com = { version = "=0.2.0", default-features = false, features = ["std", "runtime"] }
 neocogi-com-host = { version = "=0.2.0", default-features = false }
 ```

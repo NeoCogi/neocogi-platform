@@ -1,5 +1,18 @@
 # Unreleased
 
+# 0.3.0-alpha.1
+
+This alpha advances the coordinated contracts, SDK and shared-library packages
+to `0.3.0-alpha.1`, using the released COM/IDL `0.2.0` toolchain. Upgrade all three
+Platform packages together and regenerate providers and consumers. The minor
+version marks incompatible contract identities, renderer feature selection and
+compiler APIs since Platform `0.2.0`.
+
+The release includes the builtin renderer-owned shader compiler, optional
+Python-like frontend, unconditional audio/window hosting and default Glow
+renderer described below. Tag `v0.3.0-alpha.1` identifies this source release;
+crate publication is a separate step.
+
 ## COM/IDL 0.2.0
 
 The workspace and independent package consumer pin COM, host, serialization and
@@ -10,7 +23,7 @@ for the coordinated COM toolchain upgrade.
 
 ## COM/IDL 0.2.0-alpha.6
 
-The workspace and independent package consumer now pin COM, host, serialization
+The workspace and independent package consumer moved COM, host, serialization
 and IDL to `0.2.0-alpha.6`, superseding the alpha.4 dependency pins below. The
 lockfile also updates COM core and macros to the same release; unrelated
 dependencies retain their locked versions. Rebuild generated consumers and
