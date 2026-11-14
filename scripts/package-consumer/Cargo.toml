@@ -5,8 +5,8 @@ edition = "2024"
 publish = false
 [dependencies]
 neocogi-platform-contracts = { version = "=0.2.0", default-features = false }
-neocogi-com = { version = "=0.2.0-alpha.4", features = ["std", "macros", "runtime"] }
-neocogi-com-host = "=0.2.0-alpha.4"
+neocogi-com = { version = "=0.2.0-alpha.6", features = ["std", "macros", "runtime"] }
+neocogi-com-host = "=0.2.0-alpha.6"
 neocogi-platform = { version = "=0.2.0", default-features = false, features = ["glow"] }
 # A deployment artifact selected with cargo build -p, never imported as a Rust API.
 neocogi-platform-dylib = { version = "=0.2.0", default-features = false, features = ["glow"] }

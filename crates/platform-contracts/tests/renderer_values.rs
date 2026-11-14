@@ -63,15 +63,15 @@ fn malformed_blend_and_binding_wire_values_reject() {
     .unwrap();
     wire.tag = 255;
     // SAFETY: the encoder initialized this self-contained wire; only its raw integer tag changed.
-    assert_eq!(unsafe { decode_inline::<GpuBlendState>(wire) }, Err(NC_E_INVALID_TAG));
+    assert_eq!(unsafe { decode_inline::<GpuBlendState>(&wire) }, Err(NC_E_INVALID_TAG));
     let mut wire = encode_inline(&GpuBlendEquation::Min).unwrap();
     wire.tag = 255;
     // SAFETY: valid generated storage, with only the unrestricted tag changed.
-    assert_eq!(unsafe { decode_inline::<GpuBlendEquation>(wire) }, Err(NC_E_INVALID_TAG));
+    assert_eq!(unsafe { decode_inline::<GpuBlendEquation>(&wire) }, Err(NC_E_INVALID_TAG));
     let mut wire = encode_inline(&GpuBindingKind::Uniform(16)).unwrap();
     wire.tag = 255;
     // SAFETY: valid generated storage, with only the unrestricted tag changed.
-    assert_eq!(unsafe { decode_inline::<GpuBindingKind>(wire) }, Err(NC_E_INVALID_TAG));
+    assert_eq!(unsafe { decode_inline::<GpuBindingKind>(&wire) }, Err(NC_E_INVALID_TAG));
     for equation in [
         GpuBlendEquation::Add {
             src: GpuBlendFactor::from_raw(255),

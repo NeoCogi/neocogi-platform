@@ -1,5 +1,17 @@
 # Unreleased
 
+## COM/IDL 0.2.0-alpha.6
+
+The workspace and independent package consumer now pin COM, host, serialization
+and IDL to `0.2.0-alpha.6`, superseding the alpha.4 dependency pins below. The
+lockfile also updates COM core and macros to the same release; unrelated
+dependencies retain their locked versions. Rebuild generated consumers and
+providers together after this toolchain upgrade.
+
+Wire-validation tests now borrow their initialized wire values for
+`decode_inline`, matching the updated COM API while retaining malformed-tag
+coverage for renderer and input contracts.
+
 ## Builtin audio/window hosting and default Glow
 
 Audio and window hosting are unconditional SDK services; their feature flags are
@@ -33,7 +45,7 @@ command is documented in the native glTF guide.
 
 ## COM/IDL 0.2.0-alpha.4
 
-The SDK, host and IDL compiler are pinned together to `0.2.0-alpha.4`, including
+The SDK, host and IDL compiler moved together to `0.2.0-alpha.4`, including
 the independent package consumer. Authored schemas remove deprecated
 `#[version(...)]` attributes. Compatibility uses contract-derived identities and
 exact signatures; rebuild generated consumers and providers together.

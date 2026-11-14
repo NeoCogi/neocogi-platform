@@ -87,17 +87,17 @@ fn malformed_key_action_and_surface_wire_tags_reject() {
     let mut wire = encode_inline(&key).unwrap();
     wire.key.tag = 255;
     // SAFETY: generated initialized inline wire, with only an unrestricted integer tag changed.
-    assert_eq!(unsafe { decode_inline::<KeyStroke>(wire) }, Err(NC_E_INVALID_TAG));
+    assert_eq!(unsafe { decode_inline::<KeyStroke>(&wire) }, Err(NC_E_INVALID_TAG));
     let mut wire = encode_inline(&key).unwrap();
     wire.action.tag = 255;
     // SAFETY: generated initialized inline wire, with only an unrestricted integer tag changed.
-    assert_eq!(unsafe { decode_inline::<KeyStroke>(wire) }, Err(NC_E_INVALID_TAG));
+    assert_eq!(unsafe { decode_inline::<KeyStroke>(&wire) }, Err(NC_E_INVALID_TAG));
     for desc in [RenderSurfaceDesc::Framebuffer, RenderSurfaceDesc::Image(Size { width: 32, height: 16 })] {
         let mut wire = encode_inline(&desc).unwrap();
         // SAFETY: the encoder supplies fully initialized self-contained wire storage.
-        assert_eq!(unsafe { decode_inline::<RenderSurfaceDesc>(wire) }.unwrap(), desc);
+        assert_eq!(unsafe { decode_inline::<RenderSurfaceDesc>(&wire) }.unwrap(), desc);
         wire.tag = 255;
         // SAFETY: only the unrestricted raw integer tag was changed.
-        assert_eq!(unsafe { decode_inline::<RenderSurfaceDesc>(wire) }, Err(NC_E_INVALID_TAG));
+        assert_eq!(unsafe { decode_inline::<RenderSurfaceDesc>(&wire) }, Err(NC_E_INVALID_TAG));
     }
 }

@@ -29,8 +29,8 @@ renderer**, so an ordinary dependency is sufficient:
 ```toml
 [dependencies]
 neocogi-platform = "=0.2.0"
-neocogi-com = { version = "=0.2.0-alpha.4", default-features = false, features = ["std", "runtime"] }
-neocogi-com-host = { version = "=0.2.0-alpha.4", default-features = false }
+neocogi-com = { version = "=0.2.0-alpha.6", default-features = false, features = ["std", "runtime"] }
+neocogi-com-host = { version = "=0.2.0-alpha.6", default-features = false }
 ```
 
 The application owns one COM host, registers the linked platform descriptor, and
@@ -136,11 +136,12 @@ glTF run at a fixed animation pose. Add `shader-python` to use Python-like Trian
 `neocogi-platform-contracts` owns the canonical schemas, generated ABI and shared
 validation; `render` reexports those exact types. Build scripts depend on that
 crate with `build-support` for schema generation and native resource staging.
-COM/host/IDL are pinned together to `0.2.0-alpha.4`. Compatibility uses derived
+COM/host/IDL are pinned together to `0.2.0-alpha.6`. Compatibility uses derived
 contract identities and signatures: rebuild generated consumers and providers
 together after a toolchain or contract change.
 
-Measured complete platform libraries with nightly, rebuilt std and immediate-abort panics:
+Measured complete platform libraries with COM/IDL `0.2.0-alpha.4`, nightly,
+rebuilt std and immediate-abort panics:
 
 | Renderer | `min-size` bytes | With `shader-python` |
 | --- | ---: | ---: |
