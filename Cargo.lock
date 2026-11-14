@@ -1141,7 +1141,7 @@ dependencies = [
 
 [[package]]
 name = "neocogi-browser-tests"
-version = "0.3.0-alpha.1"
+version = "0.3.0-alpha.2"
 dependencies = [
  "neocogi-com",
  "neocogi-com-host",
@@ -1152,9 +1152,9 @@ dependencies = [
 
 [[package]]
 name = "neocogi-com"
-version = "0.2.0"
+version = "0.3.0-alpha.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "efb67c917542a64aafdd68c101e04f3c3aab57ebdc2abc9a53580b08b2c893c3"
+checksum = "17e7fb30f381640047e9b25a72ecb329961f7a468b209b5f76210c14af29052c"
 dependencies = [
  "neocogi-com-core",
  "neocogi-com-macros",
@@ -1162,26 +1162,25 @@ dependencies = [
 
 [[package]]
 name = "neocogi-com-core"
-version = "0.2.0"
+version = "0.3.0-alpha.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "08aa660b9d94018e5a2ff14f5ce9184b48b74b7181af8ad1f0eb5a6cbb090161"
+checksum = "73d0b32336745a9fc1d6d7b2df93638bde022cce3634e3e0f9108dda04a9aca7"
 
 [[package]]
 name = "neocogi-com-host"
-version = "0.2.0"
+version = "0.3.0-alpha.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e31444b29c3953a9253300a4989f930790e8a48608ec71d55cea0e018453e3f0"
+checksum = "a19843c5ba61529a25c2a292cfa759550a02257bf2d7bc943f3c77457aafc910"
 dependencies = [
  "neocogi-com",
  "neocogi-com-core",
- "neocogi-com-serialization",
 ]
 
 [[package]]
 name = "neocogi-com-macros"
-version = "0.2.0"
+version = "0.3.0-alpha.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0ccfb32543a9455117f697226a25115682122a95331ecaf9f291ddb724718849"
+checksum = "2c5e0e450a37a4d73224e5fc77962041f7e66280bf3d78a9c4ae3be125625f70"
 dependencies = [
  "neocogi-idl",
  "syn 2.0.119",
@@ -1189,16 +1188,16 @@ dependencies = [
 
 [[package]]
 name = "neocogi-com-serialization"
-version = "0.2.0"
+version = "0.3.0-alpha.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "db561691179249b1852cc5f31741ecb6ff328e68ee444ff0310c9b5956624ea5"
+checksum = "2254b68afd6d0a4093c3f5b6344c8e9bd37d796cabe35ef29a69f742ece2b090"
 dependencies = [
  "neocogi-com",
 ]
 
 [[package]]
 name = "neocogi-example-plugins"
-version = "0.3.0-alpha.1"
+version = "0.3.0-alpha.2"
 dependencies = [
  "neocogi-com",
  "neocogi-platform-contracts",
@@ -1207,9 +1206,9 @@ dependencies = [
 
 [[package]]
 name = "neocogi-idl"
-version = "0.2.0"
+version = "0.3.0-alpha.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "11e51f5c963bcaee7eda54517b138321c1b21ec40bfc458ebe0ae13ea8c0cd93"
+checksum = "ad62a2460af5c1e6641d30a8a9ae648dcd49803bf875350d43bb22f2f1e7f272"
 dependencies = [
  "neocogi-com-core",
  "prettyplease",
@@ -1222,7 +1221,7 @@ dependencies = [
 
 [[package]]
 name = "neocogi-platform"
-version = "0.3.0-alpha.1"
+version = "0.3.0-alpha.2"
 dependencies = [
  "ash",
  "ash-window",
@@ -1246,7 +1245,7 @@ dependencies = [
 
 [[package]]
 name = "neocogi-platform-contracts"
-version = "0.3.0-alpha.1"
+version = "0.3.0-alpha.2"
 dependencies = [
  "neocogi-com",
  "neocogi-com-host",
@@ -1263,7 +1262,7 @@ dependencies = [
 
 [[package]]
 name = "neocogi-platform-dylib"
-version = "0.3.0-alpha.1"
+version = "0.3.0-alpha.2"
 dependencies = [
  "neocogi-com",
  "neocogi-platform",
@@ -1271,7 +1270,7 @@ dependencies = [
 
 [[package]]
 name = "neocogi-platform-examples"
-version = "0.3.0-alpha.1"
+version = "0.3.0-alpha.2"
 dependencies = [
  "gltf",
  "image",
@@ -1288,7 +1287,7 @@ dependencies = [
 
 [[package]]
 name = "neocogi-platform-tools"
-version = "0.3.0-alpha.1"
+version = "0.3.0-alpha.2"
 dependencies = [
  "anyhow",
  "clap",
@@ -1309,7 +1308,7 @@ dependencies = [
 
 [[package]]
 name = "neocogi-typed-buffer-tests"
-version = "0.3.0-alpha.1"
+version = "0.3.0-alpha.2"
 dependencies = [
  "neocogi-com",
  "neocogi-platform",

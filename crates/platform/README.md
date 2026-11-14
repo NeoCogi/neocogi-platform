@@ -28,9 +28,9 @@ renderer**, so an ordinary dependency is sufficient:
 
 ```toml
 [dependencies]
-neocogi-platform = "=0.3.0-alpha.1"
-neocogi-com = { version = "=0.2.0", default-features = false, features = ["std", "runtime"] }
-neocogi-com-host = { version = "=0.2.0", default-features = false }
+neocogi-platform = "=0.3.0-alpha.2"
+neocogi-com = { version = "=0.3.0-alpha.1", default-features = false, features = ["std", "runtime"] }
+neocogi-com-host = { version = "=0.3.0-alpha.1", default-features = false }
 ```
 
 The application owns one COM host, registers the linked platform descriptor, and
@@ -70,7 +70,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 For Vulkan or WGPU, replace the SDK dependency with an explicit renderer selection:
 
 ```toml
-neocogi-platform = { version = "=0.3.0-alpha.1", default-features = false, features = ["vulkan"] }
+neocogi-platform = { version = "=0.3.0-alpha.2", default-features = false, features = ["vulkan"] }
 ```
 
 Use `ShaderTarget::SpirV` for Vulkan and `ShaderTarget::Wgsl` for WGPU.

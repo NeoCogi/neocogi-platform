@@ -1,5 +1,20 @@
 # Unreleased
 
+# 0.3.0-alpha.2
+
+The coordinated contracts, SDK and shared-library packages now target
+`0.3.0-alpha.2` and pin COM, host, serialization and IDL to the published
+`0.3.0-alpha.1` cohort. Core and macros resolve to that same COM release. The
+independent package consumer and packaged setup examples use the same versions.
+Upgrade all three Platform packages together and rebuild generated providers
+and consumers; Rust type compatibility with the COM `0.2.0` cohort is not promised.
+
+The COM host now acquires persistence codecs from its own `nc.serialization`
+catalog provider. Applications that use host snapshot/restore must explicitly
+register or load a serialization provider before persistence; the host no longer
+supplies an implicit codec. ABI family 2, core generation 19, IDL encoding v14
+and NCB wire v1 retain their existing authorities.
+
 # 0.3.0-alpha.1
 
 This alpha advances the coordinated contracts, SDK and shared-library packages
