@@ -322,7 +322,7 @@ enum Upload {
     /// Imports retain their own use charge independently from a shared image's lifetime.
     Image { _image: Rc<Image>, _receipt: Option<BackingCharge> },
 }
-/// Complete immutable native draw, with no source versions or client authority.
+/// Complete immutable native draw, with no source versions or drawing authority.
 struct PreparedDraw {
     /// Linked target variant and copied fixed/layout state.
     pipeline: Rc<Pipeline>,
@@ -341,7 +341,7 @@ struct PreparedDraw {
     /// Flattened host-bounded raster-write region.
     clip: Rect,
 }
-/// One closed native operation set shared by UI and clients.
+/// One closed native operation set shared by UI and callers.
 enum PreparedCommand {
     /// Exact immutable binding state.
     Draw(PreparedDraw),
@@ -356,7 +356,7 @@ pub(in crate::gpu::backends::glow) struct Executor {
     gl: Rc<glow::Context>,
     /// Hardware-only shared lifetime, with neither channel endpoint nor submitted work.
     core: Rc<Core>,
-    /// Private vertex layout is driver state, not a client resource.
+    /// Private vertex layout is driver state, not a group resource.
     array: glow::VertexArray,
     /// Supplies clones only when concrete native backings are realized.
     retired_tx: Sender<Retirement>,
@@ -459,7 +459,7 @@ impl Executor {
         });
         Ok(())
     }
-    /// Installs target lifetime before the host clear, independently of client block count.
+    /// Installs target lifetime before the host clear, independently of recorded block count.
     pub(in crate::gpu::backends::glow) fn retain_target(&mut self, output: Rc<OutputState>) -> Result<(), String> {
         self.pending_targets.try_reserve(1).map_err(|error| error.to_string())?;
         self.pending_targets.push(output);

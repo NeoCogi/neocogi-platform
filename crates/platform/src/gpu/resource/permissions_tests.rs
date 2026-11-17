@@ -18,16 +18,16 @@ fn device() -> Device {
 /// Bounded full view, expressed in the same coordinates for the test's input and output.
 fn root() -> RenderViewRoot {
     let bounds = Rect { x: 0, y: 0, width: 4, height: 4 };
-    RenderViewRoot { client: bounds, target: bounds }
+    RenderViewRoot { local: bounds, target: bounds }
 }
 
 /// Hold the exclusive group controller while callers share only its resource factory.
 fn group(
     device: &Device,
     target: Rc<SurfaceTarget<testing::Backend>>,
-    permissions: RenderClientPermissions,
-) -> (ComBox<IRenderClientDomainAbi>, ComPtr<IRenderResourcesAbi>) {
-    let owner = device.create_client(RenderClientLimits::default(), target, permissions).unwrap();
+    permissions: RenderGroupPermissions,
+) -> (ComBox<IRenderResourceGroupAbi>, ComPtr<IRenderResourcesAbi>) {
+    let owner = device.create_group(RenderGroupLimits::default(), target, permissions).unwrap();
     let resources = owner.resources().unwrap();
     (owner, resources)
 }
@@ -42,10 +42,10 @@ fn clear_permissions_are_independent_and_enforced_through_recording_calls() {
             let (_owner, resources) = group(
                 &device,
                 target,
-                RenderClientPermissions {
+                RenderGroupPermissions {
                     clear_color: color,
                     clear_depth: depth,
-                    ..RenderClientPermissions::none()
+                    ..RenderGroupPermissions::none()
                 },
             );
             for test_depth in [false, true] {
@@ -77,16 +77,16 @@ fn depth_initialization_requires_clear_permission_and_a_depth_attachment() {
     let device = device();
     let framebuffer = device.surface_target(RenderSurfaceKind::Framebuffer).unwrap();
     let image = device.surface_target(RenderSurfaceKind::Image).unwrap();
-    let initialize = RenderClientPermissions {
+    let initialize = RenderGroupPermissions {
         initialize_depth: true,
-        ..RenderClientPermissions::none()
+        ..RenderGroupPermissions::none()
     };
     assert!(matches!(
-        device.create_client(Default::default(), framebuffer.clone(), initialize),
+        device.create_group(Default::default(), framebuffer.clone(), initialize),
         Err(NC_E_INVALID_ARG)
     ));
-    let initialize = RenderClientPermissions { clear_depth: true, ..initialize };
-    assert!(matches!(device.create_client(Default::default(), image, initialize), Err(NC_E_INVALID_ARG)));
+    let initialize = RenderGroupPermissions { clear_depth: true, ..initialize };
+    assert!(matches!(device.create_group(Default::default(), image, initialize), Err(NC_E_INVALID_ARG)));
     let (_owner, resources) = group(&device, framebuffer, initialize);
     let mut frame = device.broker().begin_frame().unwrap();
     let mut session = frame.begin_view(root(), resources.as_com_ref()).unwrap();
@@ -106,9 +106,9 @@ fn uploads_obey_permission_independently_of_creation_and_drawing() {
         let (_owner, resources) = group(
             &device,
             target,
-            RenderClientPermissions {
+            RenderGroupPermissions {
                 write_resources: writable,
-                ..RenderClientPermissions::none()
+                ..RenderGroupPermissions::none()
             },
         );
         let mut immutable = resources
@@ -150,11 +150,11 @@ fn pipeline_color_write_depth_write_and_depth_read_permissions_are_separate() {
             .to_vec(),
     );
     for permission in 0..8 {
-        let permissions = RenderClientPermissions {
+        let permissions = RenderGroupPermissions {
             write_color: permission & 1 != 0,
             write_depth: permission & 2 != 0,
             read_depth: permission & 4 != 0,
-            ..RenderClientPermissions::none()
+            ..RenderGroupPermissions::none()
         };
         let target = device.surface_target(RenderSurfaceKind::Framebuffer).unwrap();
         let (_owner, resources) = group(&device, target, permissions);
@@ -196,8 +196,8 @@ fn target_identity_group_ownership_and_closure_are_independent() {
     let device = device();
     let image = device.surface_target(RenderSurfaceKind::Image).unwrap();
     let other_image = device.surface_target(RenderSurfaceKind::Image).unwrap();
-    let (mut owner, resources) = group(&device, image.clone(), RenderClientPermissions::none());
-    let (_second, _resources) = group(&device, image.clone(), RenderClientPermissions::none());
+    let (mut owner, resources) = group(&device, image.clone(), RenderGroupPermissions::none());
+    let (_second, _resources) = group(&device, image.clone(), RenderGroupPermissions::none());
     let mut frame = device.broker().begin_frame().unwrap();
     let mut session = frame.begin_view(root(), resources.as_com_ref()).unwrap();
     session.view().unwrap().finish().unwrap();
@@ -215,7 +215,7 @@ fn target_identity_group_ownership_and_closure_are_independent() {
         .unwrap(),
     );
     assert!(matches!(
-        foreign.create_client(Default::default(), image.clone(), RenderClientPermissions::none()),
+        foreign.create_group(Default::default(), image.clone(), RenderGroupPermissions::none()),
         Err(RENDER_E_OWNER)
     ));
     owner.close().unwrap();
@@ -233,9 +233,9 @@ fn image_import_permission_is_independent_of_target_and_resource_update_permissi
             let (_owner, resources) = group(
                 &device,
                 target,
-                RenderClientPermissions {
+                RenderGroupPermissions {
                     import_images: allow,
-                    ..RenderClientPermissions::none()
+                    ..RenderGroupPermissions::none()
                 },
             );
             let result = device.import_texture(resources.as_com_ref(), image.clone());
@@ -254,7 +254,7 @@ fn image_import_permission_is_independent_of_target_and_resource_update_permissi
 fn denied_upload_preserves_initialized_storage_and_logical_capacity() {
     let device = device();
     let target = device.surface_target(RenderSurfaceKind::Framebuffer).unwrap();
-    let (_owner, resources) = group(&device, target, RenderClientPermissions::none());
+    let (_owner, resources) = group(&device, target, RenderGroupPermissions::none());
     let mut linear = resources.create_dynamic_buffer(GpuBufferDesc::Vertex { byte_len: 4 }).unwrap();
     let mut texture = resources
         .create_dynamic_buffer(GpuBufferDesc::Texture {

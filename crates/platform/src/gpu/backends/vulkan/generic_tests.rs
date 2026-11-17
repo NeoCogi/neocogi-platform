@@ -42,10 +42,10 @@ fn uncertain_upload_status_retains_owners_until_idle_and_rejects_reuse() {
         let baseline = core.memory_count.get();
         let gpu = GpuDevice::new(executor.core.clone()).unwrap();
         let controller = gpu
-            .create_client(
-                RenderClientLimits::default(),
+            .create_group(
+                RenderGroupLimits::default(),
                 gpu.surface_target(neocogi_platform::render::abi::RenderSurfaceKind::Framebuffer).unwrap(),
-                neocogi_platform::render::abi::RenderClientPermissions::default(),
+                neocogi_platform::render::abi::RenderGroupPermissions::default(),
             )
             .unwrap();
         let resources = controller.resources().unwrap();
@@ -167,7 +167,7 @@ impl Drop for Image {
 
 /// Serial native target supports color and depth readback without any backend-native callback seam.
 struct Target {
-    /// Device lifetime is independent of the renderer facade and client domain.
+    /// Device lifetime is independent of the renderer facade and resource group.
     core: Rc<Core>,
     /// Physical framebuffer dimensions.
     extent: vk::Extent2D,
@@ -175,7 +175,7 @@ struct Target {
     signature: Signature,
     /// Color becomes transfer-readable at pass completion.
     color: Image,
-    /// Depth also becomes transfer-readable to test sentinels outside client roots.
+    /// Depth also becomes transfer-readable to test sentinels outside view roots.
     depth: Image,
     /// Initialized host-visible RGBA destination.
     pixels: Allocation,
@@ -281,7 +281,7 @@ impl Target {
         self.render_color(executor, blocks, logical, [0.2, 0.2, 0.2, 1.]);
     }
 
-    /// Host clear selection remains independent from every client pipeline and root.
+    /// Host clear selection remains independent from every drawing pipeline and root.
     fn render_color(&mut self, executor: &mut Executor, blocks: Vec<PreparedBlock>, logical: Size, clear: [f32; 4]) {
         for block in &blocks {
             executor.admit(block, self.signature).unwrap();
@@ -449,10 +449,10 @@ fn regional_depth_and_copied_uniforms_preserve_surrounding_targets() {
     let mut executor = Executor::new(core.clone()).unwrap();
     let gpu = GpuDevice::new(executor.core.clone()).unwrap();
     let controller = gpu
-        .create_client(
-            RenderClientLimits::default(),
+        .create_group(
+            RenderGroupLimits::default(),
             gpu.surface_target(neocogi_platform::render::abi::RenderSurfaceKind::Framebuffer).unwrap(),
-            neocogi_platform::render::abi::RenderClientPermissions::default(),
+            neocogi_platform::render::abi::RenderGroupPermissions::default(),
         )
         .unwrap();
     let resources = controller.resources().unwrap();
@@ -461,7 +461,7 @@ fn regional_depth_and_copied_uniforms_preserve_surrounding_targets() {
     let mut frame = gpu.broker().begin_frame().unwrap();
     let first = Rect { x: 2, y: 2, width: 28, height: 28 };
     let mut session = frame
-        .begin_view(RenderViewRoot { client: first, target: first }, resources.as_com_ref())
+        .begin_view(RenderViewRoot { local: first, target: first }, resources.as_com_ref())
         .unwrap();
     let mut view = session.view().unwrap();
     view.bind_pipeline(pipeline.as_com_ref()).unwrap();
@@ -482,7 +482,7 @@ fn regional_depth_and_copied_uniforms_preserve_surrounding_targets() {
     let first = session.take_block().unwrap();
     let second = Rect { x: 10, y: 10, width: 12, height: 12 };
     let mut second_session = frame
-        .begin_view(RenderViewRoot { client: second, target: second }, resources.as_com_ref())
+        .begin_view(RenderViewRoot { local: second, target: second }, resources.as_com_ref())
         .unwrap();
     let mut second_view = second_session.view().unwrap();
     second_view.bind_pipeline(pipeline.as_com_ref()).unwrap();
@@ -493,7 +493,7 @@ fn regional_depth_and_copied_uniforms_preserve_surrounding_targets() {
     let second = second_session.take_block().unwrap();
     let third = Rect { x: 1, y: 1, width: 1, height: 1 };
     let mut third_session = frame
-        .begin_view(RenderViewRoot { client: third, target: third }, resources.as_com_ref())
+        .begin_view(RenderViewRoot { local: third, target: third }, resources.as_com_ref())
         .unwrap();
     let mut third_view = third_session.view().unwrap();
     third_view.bind_pipeline(hidden.as_com_ref()).unwrap();
@@ -558,10 +558,10 @@ fn generated_bounds_guards_execute_on_the_native_driver() {
     let mut executor = Executor::new(core).unwrap();
     let gpu = GpuDevice::new(executor.core.clone()).unwrap();
     let controller = gpu
-        .create_client(
-            RenderClientLimits::default(),
+        .create_group(
+            RenderGroupLimits::default(),
             gpu.surface_target(neocogi_platform::render::abi::RenderSurfaceKind::Framebuffer).unwrap(),
-            neocogi_platform::render::abi::RenderClientPermissions::default(),
+            neocogi_platform::render::abi::RenderGroupPermissions::default(),
         )
         .unwrap();
     let resources = controller.resources().unwrap();
@@ -597,7 +597,7 @@ fn generated_bounds_guards_execute_on_the_native_driver() {
     let pipeline = resources.create_pipeline(desc.as_com_ref(), vs.as_com_ref(), fs.as_com_ref()).unwrap();
     let mut frame = gpu.broker().begin_frame().unwrap();
     let root = Rect { x: 0, y: 0, width: 8, height: 8 };
-    let mut session = frame.begin_view(RenderViewRoot { client: root, target: root }, resources.as_com_ref()).unwrap();
+    let mut session = frame.begin_view(RenderViewRoot { local: root, target: root }, resources.as_com_ref()).unwrap();
     let mut view = session.view().unwrap();
     view.bind_pipeline(pipeline.as_com_ref()).unwrap();
     let mut bytes = vec![0; 32];
@@ -638,22 +638,22 @@ fn indexed_texture_case(operation: GpuBlendEquation, imported: bool) {
     let mut executor = Executor::new(core).unwrap();
     let gpu = GpuDevice::new(executor.core.clone()).unwrap();
     let controller = if imported {
-        gpu.create_client(
-            RenderClientLimits::default(),
+        gpu.create_group(
+            RenderGroupLimits::default(),
             gpu.surface_target(neocogi_platform::render::abi::RenderSurfaceKind::Framebuffer).unwrap(),
-            neocogi_platform::render::abi::RenderClientPermissions {
+            neocogi_platform::render::abi::RenderGroupPermissions {
                 clear_color: true,
                 write_color: true,
                 write_resources: true,
                 import_images: true,
-                ..neocogi_platform::render::abi::RenderClientPermissions::none()
+                ..neocogi_platform::render::abi::RenderGroupPermissions::none()
             },
         )
     } else {
-        gpu.create_client(
-            RenderClientLimits::default(),
+        gpu.create_group(
+            RenderGroupLimits::default(),
             gpu.surface_target(neocogi_platform::render::abi::RenderSurfaceKind::Framebuffer).unwrap(),
-            neocogi_platform::render::abi::RenderClientPermissions::default(),
+            neocogi_platform::render::abi::RenderGroupPermissions::default(),
         )
     }
     .unwrap();
@@ -756,7 +756,7 @@ fn indexed_texture_case(operation: GpuBlendEquation, imported: bool) {
     let mut recording = gpu.broker().begin_frame().unwrap();
     let root = Rect { x: 0, y: 0, width: 8, height: 8 };
     let mut session = recording
-        .begin_view(RenderViewRoot { client: root, target: root }, resources.as_com_ref())
+        .begin_view(RenderViewRoot { local: root, target: root }, resources.as_com_ref())
         .unwrap();
     let mut view = session.view().unwrap();
     view.bind_pipeline(pipeline.as_com_ref()).unwrap();
@@ -827,10 +827,10 @@ fn front_face_and_culling_match_canonical_winding() {
     let mut executor = Executor::new(core).unwrap();
     let gpu = GpuDevice::new(executor.core.clone()).unwrap();
     let controller = gpu
-        .create_client(
-            RenderClientLimits::default(),
+        .create_group(
+            RenderGroupLimits::default(),
             gpu.surface_target(neocogi_platform::render::abi::RenderSurfaceKind::Framebuffer).unwrap(),
-            neocogi_platform::render::abi::RenderClientPermissions::default(),
+            neocogi_platform::render::abi::RenderGroupPermissions::default(),
         )
         .unwrap();
     let resources = controller.resources().unwrap();
@@ -843,7 +843,7 @@ fn front_face_and_culling_match_canonical_winding() {
         let pipeline = pipeline_state(&resources, GpuPipelineInfo { front_face, cull, ..Default::default() });
         let mut frame = gpu.broker().begin_frame().unwrap();
         let root = Rect { x: 0, y: 0, width: 8, height: 8 };
-        let mut session = frame.begin_view(RenderViewRoot { client: root, target: root }, resources.as_com_ref()).unwrap();
+        let mut session = frame.begin_view(RenderViewRoot { local: root, target: root }, resources.as_com_ref()).unwrap();
         let mut view = session.view().unwrap();
         view.bind_pipeline(pipeline.as_com_ref()).unwrap();
         let _uniforms = values(&resources, &mut view, [1., 0., 0., 1.], 0.5);
@@ -873,17 +873,17 @@ fn escaped_prepared_block_keeps_only_its_cache_free_native_core_alive() {
     let mut executor = Executor::new(core.clone()).unwrap();
     let gpu = GpuDevice::new(executor.core.clone()).unwrap();
     let controller = gpu
-        .create_client(
-            RenderClientLimits::default(),
+        .create_group(
+            RenderGroupLimits::default(),
             gpu.surface_target(neocogi_platform::render::abi::RenderSurfaceKind::Framebuffer).unwrap(),
-            neocogi_platform::render::abi::RenderClientPermissions::default(),
+            neocogi_platform::render::abi::RenderGroupPermissions::default(),
         )
         .unwrap();
     let resources = controller.resources().unwrap();
     let pipeline = pipeline(&resources, 15);
     let mut frame = gpu.broker().begin_frame().unwrap();
     let root = Rect { x: 0, y: 0, width: 8, height: 8 };
-    let mut session = frame.begin_view(RenderViewRoot { client: root, target: root }, resources.as_com_ref()).unwrap();
+    let mut session = frame.begin_view(RenderViewRoot { local: root, target: root }, resources.as_com_ref()).unwrap();
     let mut view = session.view().unwrap();
     view.bind_pipeline(pipeline.as_com_ref()).unwrap();
     let _uniforms = values(&resources, &mut view, [1., 0., 0., 1.], 0.5);
@@ -951,10 +951,10 @@ fn logical_images_exceeding_native_dimensions_reject_before_native_allocation() 
     }
     let gpu = GpuDevice::new(executor.core.clone()).unwrap();
     let controller = gpu
-        .create_client(
-            RenderClientLimits::default(),
+        .create_group(
+            RenderGroupLimits::default(),
             gpu.surface_target(neocogi_platform::render::abi::RenderSurfaceKind::Framebuffer).unwrap(),
-            neocogi_platform::render::abi::RenderClientPermissions::default(),
+            neocogi_platform::render::abi::RenderGroupPermissions::default(),
         )
         .unwrap();
     let resources = controller.resources().unwrap();
@@ -1059,15 +1059,15 @@ fn private_output_uses_production_pass_upload_and_completion_paths() {
     });
     let gpu = GpuDevice::new(executor.core.clone()).unwrap();
     let domain = gpu
-        .create_client(
+        .create_group(
             Default::default(),
             gpu.surface_target(neocogi_platform::render::abi::RenderSurfaceKind::Framebuffer).unwrap(),
-            neocogi_platform::render::abi::RenderClientPermissions {
+            neocogi_platform::render::abi::RenderGroupPermissions {
                 clear_color: true,
                 write_color: true,
                 write_resources: true,
                 import_images: true,
-                ..neocogi_platform::render::abi::RenderClientPermissions::none()
+                ..neocogi_platform::render::abi::RenderGroupPermissions::none()
             },
         )
         .unwrap();
@@ -1191,15 +1191,15 @@ fn unsubmitted_variants_reuse_native_objects_and_reject_other_cores() {
     };
     let gpu = GpuDevice::new(core.clone()).unwrap();
     let domain = gpu
-        .create_client(
+        .create_group(
             Default::default(),
             gpu.surface_target(neocogi_platform::render::abi::RenderSurfaceKind::Framebuffer).unwrap(),
-            neocogi_platform::render::abi::RenderClientPermissions {
+            neocogi_platform::render::abi::RenderGroupPermissions {
                 clear_color: true,
                 write_color: true,
                 write_resources: true,
                 import_images: true,
-                ..neocogi_platform::render::abi::RenderClientPermissions::none()
+                ..neocogi_platform::render::abi::RenderGroupPermissions::none()
             },
         )
         .unwrap();
@@ -1247,10 +1247,10 @@ fn observed_device_loss_rejects_previously_realized_native_storage() {
     let mut executor = Executor::new(core.clone()).unwrap();
     let gpu = GpuDevice::new(core.clone()).unwrap();
     let domain = gpu
-        .create_client(
+        .create_group(
             Default::default(),
             gpu.surface_target(neocogi_platform::render::abi::RenderSurfaceKind::Framebuffer).unwrap(),
-            neocogi_platform::render::abi::RenderClientPermissions::default(),
+            neocogi_platform::render::abi::RenderGroupPermissions::default(),
         )
         .unwrap();
     let resources = domain.resources().unwrap();
@@ -1292,7 +1292,7 @@ fn descriptor_capacity_reuses_only_after_final_prepared_and_completion_ownership
     let mut target = Target::new(core.clone(), 8, 8);
     let gpu = GpuDevice::new(core.clone()).unwrap();
     let domain = gpu
-        .create_client(
+        .create_group(
             Default::default(),
             gpu.surface_target(neocogi_platform::render::abi::RenderSurfaceKind::Framebuffer).unwrap(),
             Default::default(),
@@ -1406,7 +1406,7 @@ fn uploaded_buffers_and_textures_reuse_their_own_native_allocations() {
     let mut executor = Executor::new(core.clone()).unwrap();
     let gpu = GpuDevice::new(core.clone()).unwrap();
     let domain = gpu
-        .create_client(
+        .create_group(
             Default::default(),
             gpu.surface_target(RenderSurfaceKind::Framebuffer).unwrap(),
             Default::default(),
@@ -1473,7 +1473,7 @@ fn uncertain_texture_rewrites_exclude_uploads_and_other_compatible_executors() {
         let mut executor = Executor::new(core.clone()).unwrap();
         let gpu = GpuDevice::new(core.clone()).unwrap();
         let domain = gpu
-            .create_client(
+            .create_group(
                 Default::default(),
                 gpu.surface_target(RenderSurfaceKind::Framebuffer).unwrap(),
                 Default::default(),

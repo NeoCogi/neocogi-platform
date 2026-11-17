@@ -6,10 +6,10 @@ fn tuple(rect: Rect) -> (i32, i32, i32, i32) {
     (rect.x, rect.y, rect.width, rect.height)
 }
 
-/// Typical translated panel root, with an unrelated widget-local client origin.
+/// Typical translated panel root, with an unrelated widget-local origin.
 fn root() -> RenderViewRoot {
     RenderViewRoot {
-        client: Rect { x: 5, y: 7, width: 200, height: 120 },
+        local: Rect { x: 5, y: 7, width: 200, height: 120 },
         target: Rect { x: 100, y: 80, width: 200, height: 120 },
     }
 }
@@ -18,13 +18,13 @@ fn root() -> RenderViewRoot {
 #[test]
 fn cropped_child_preserves_viewport_mapping_and_reports_clip_separately() {
     let rect = Rect { x: 0, y: 0, width: 100, height: 100 };
-    let mut stack = ViewStack::new(RenderViewRoot { client: rect, target: rect }, 8).unwrap();
+    let mut stack = ViewStack::new(RenderViewRoot { local: rect, target: rect }, 8).unwrap();
     stack.push_clip(Rect { x: 50, y: 0, width: 50, height: 100 }).unwrap();
     let info = stack.push_view(Rect { x: 20, y: 0, width: 80, height: 100 }).unwrap();
     assert_eq!(tuple(info.viewport), (20, 0, 80, 100));
     assert_eq!(tuple(info.clip), (50, 0, 50, 100));
     assert_eq!(tuple(info.bounds), (0, 0, 80, 100));
-    assert_eq!(50 - info.client.x - info.viewport.x, 30);
+    assert_eq!(50 - info.root.x - info.viewport.x, 30);
     assert_eq!(info.bounds.width as f32 / info.bounds.height as f32, 0.8);
     stack.pop().unwrap();
     assert_eq!(tuple(stack.info().viewport), (0, 0, 100, 100));
@@ -94,7 +94,7 @@ fn every_extreme_clip_is_contained_and_reset_restores_root() {
 #[test]
 fn empty_views_and_invisible_children_stay_empty() {
     let empty = Rect { x: 0, y: 0, width: 0, height: 120 };
-    let mut stack = ViewStack::new(RenderViewRoot { client: empty, target: empty }, 4).unwrap();
+    let mut stack = ViewStack::new(RenderViewRoot { local: empty, target: empty }, 4).unwrap();
     stack
         .push_clip(Rect {
             x: i32::MIN,
@@ -124,7 +124,7 @@ fn invalid_roots_and_negative_extents_reject() {
         assert!(ViewStack::new(root(), limit).is_err());
     }
     let mut invalid = root();
-    invalid.client.width -= 1;
+    invalid.local.width -= 1;
     assert!(ViewStack::new(invalid, 4).is_err());
     invalid = root();
     invalid.target.x = -1;

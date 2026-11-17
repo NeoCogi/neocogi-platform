@@ -9,8 +9,8 @@ for its audio service methods. Audio itself imports no renderer/window namespace
 root/library; neither has a feature flag. Audio can be opened without creating a
 window. Glow is the default renderer; selecting another requires disabling
 default features. No additional audio crate or plugin is deployed.
-Linked Rust applications can import the canonical values and clients directly
-from `neocogi_platform::audio`; dynamic clients use the contracts crate.
+Linked Rust applications can import the canonical values and interface wrappers directly
+from `neocogi_platform::audio`; dynamic callers use the contracts crate.
 
 Build scripts select `Module::Audio` for independent audio projections. COM/IDL
 compatibility uses derived contract signatures; rebuild providers and generated

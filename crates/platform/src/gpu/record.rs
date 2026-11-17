@@ -1,4 +1,4 @@
-//! Host-owned revocable recording with weak client facades and immutable generic blocks.
+//! Host-owned revocable recording with weak view handles and immutable generic blocks.
 //!
 //! The shared state cell exists because host expiry and an externally retained
 //! exclusive view must retire the same payload. Mutations take the payload out,
@@ -180,7 +180,7 @@ impl<B: crate::gpu::native::NativeResources> Frame<B> {
 }
 
 #[com_object(interfaces(IRenderViewBroker))]
-/// Shareable trusted entry; clients receive neither this object nor the frame owner.
+/// Shareable trusted entry; drawing code receives neither this object nor the frame owner.
 struct Broker<B: crate::gpu::native::NativeResources> {
     /// Shared logical renderer, without retaining a window or application traversal owner.
     device: GpuDevice<B>,
@@ -281,7 +281,7 @@ impl<B: crate::gpu::native::NativeResources> Drop for FrameOwner<B> {
 enum State<B: crate::gpu::native::NativeResources> {
     /// Ordinary owned recording data is installed between calls.
     Recording(Recorder<B>),
-    /// Payload is temporarily owned by a client method; host expiry may supersede it.
+    /// Payload is temporarily owned by a view method; host expiry may supersede it.
     Mutating,
     /// First error only; payload/capacity have already retired.
     Rejected(NcStatus),
@@ -297,17 +297,17 @@ enum State<B: crate::gpu::native::NativeResources> {
 pub(crate) struct SessionCore<B: crate::gpu::native::NativeResources> {
     /// Strong admission/lifetime authority exists while the trusted host session exists.
     domain: Rc<Domain<B>>,
-    /// An escaped client view cannot keep a CPU frame active.
+    /// An escaped view handle cannot keep a CPU frame active.
     frame: Weak<Frame<B>>,
     /// Immutable committed-layout root.
     root: RenderViewRoot,
-    /// Shared solely because both host teardown and exclusive client calls retire one payload.
+    /// Shared solely because both host teardown and exclusive view calls retire one payload.
     state: RefCell<State<B>>,
     /// Client owner can be issued at most once, including after it drops.
     issued: Cell<bool>,
 }
 impl<B: crate::gpu::native::NativeResources> SessionCore<B> {
-    /// Source of every client method's authority, independent of public invocation numbers.
+    /// Source of every view method's authority, independent of public invocation numbers.
     fn check(&self) -> Result<Rc<Frame<B>>, NcStatus> {
         let frame = self.frame.upgrade().filter(|frame| frame.alive.get()).ok_or(RENDER_E_EXPIRED)?;
         self.domain.open()?;
@@ -316,7 +316,7 @@ impl<B: crate::gpu::native::NativeResources> SessionCore<B> {
         }
         Ok(frame)
     }
-    /// Moves payload ownership out before any releases; retained client shells keep no data.
+    /// Moves payload ownership out before any releases; retained view handles keep no data.
     pub(crate) fn expire(&self) {
         let previous = std::mem::replace(&mut *self.state.borrow_mut(), State::Expired);
         drop(previous);
@@ -336,7 +336,7 @@ impl<B: crate::gpu::native::NativeResources> SessionCore<B> {
 }
 
 #[com_object(interfaces(IRenderViewSession), ownership = exclusive)]
-/// Host control is a different allocation from its issued client view.
+/// Host control is a different allocation from its issued view handle.
 struct SessionOwner<B: crate::gpu::native::NativeResources> {
     /// Single pending payload slot.
     core: Rc<SessionCore<B>>,
@@ -387,7 +387,7 @@ impl<B: crate::gpu::native::NativeResources> IRenderViewSession for SessionOwner
     }
 }
 impl<B: crate::gpu::native::NativeResources> Drop for SessionOwner<B> {
-    /// Host teardown wins even if the client retained its exclusive facade.
+    /// Host teardown wins even if the caller retained its exclusive view handle.
     fn drop(&mut self) {
         self.core.expire();
     }
@@ -748,24 +748,24 @@ impl<B: crate::gpu::native::NativeResources> IRenderView for View<B> {
         match &*core.state.try_borrow().map_err(|_| RENDER_E_BUSY)? {
             State::Recording(recorder) => Ok(recorder.stack.info()),
             State::Committed(_) => Ok(RenderViewInfo {
-                client: core.root.client,
+                root: core.root.local,
                 viewport: Rect {
                     x: 0,
                     y: 0,
-                    width: core.root.client.width,
-                    height: core.root.client.height,
+                    width: core.root.local.width,
+                    height: core.root.local.height,
                 },
                 clip: Rect {
                     x: 0,
                     y: 0,
-                    width: core.root.client.width,
-                    height: core.root.client.height,
+                    width: core.root.local.width,
+                    height: core.root.local.height,
                 },
                 bounds: Rect {
                     x: 0,
                     y: 0,
-                    width: core.root.client.width,
-                    height: core.root.client.height,
+                    width: core.root.local.width,
+                    height: core.root.local.height,
                 },
             }),
             State::Rejected(status) => Err(*status),

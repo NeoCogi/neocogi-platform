@@ -20,7 +20,7 @@ struct Stream {
     /// Independent invocation trace detects callbacks before count validation.
     calls: Rc<Cell<u32>>,
     /// Optional controller is closed while retrieving the second block.
-    close: RefCell<Option<ComBox<IRenderClientDomainAbi>>>,
+    close: RefCell<Option<ComBox<IRenderResourceGroupAbi>>>,
 }
 impl IRenderStream for Stream {
     fn view(&self, invocation: u64, index: u32) -> Result<WeakComBox<IRenderViewBlockAbi>, NcStatus> {
@@ -40,20 +40,20 @@ impl IRenderViewBlock for Forged {}
 /// Capture a real bounded contribution through generated recording calls.
 fn block(device: &GpuDevice, resources: &ComPtr<IRenderResourcesAbi>, target: Rect) -> ComBox<IRenderViewBlockAbi> {
     let mut frame = device.broker().begin_frame().unwrap();
-    let client = Rect {
+    let local = Rect {
         x: 0,
         y: 0,
         width: target.width,
         height: target.height,
     };
-    let mut session = frame.begin_view(RenderViewRoot { client, target }, resources.as_com_ref()).unwrap();
+    let mut session = frame.begin_view(RenderViewRoot { local, target }, resources.as_com_ref()).unwrap();
     session.view().unwrap().finish().unwrap();
     let block = session.take_block().unwrap();
     frame.finish().unwrap();
     block
 }
 /// Publish owned blocks with independently observed foreign callback counts.
-fn source(blocks: Vec<ComBox<IRenderViewBlockAbi>>, close: Option<ComBox<IRenderClientDomainAbi>>) -> (ComPtr<IRenderStreamAbi>, Rc<Cell<u32>>) {
+fn source(blocks: Vec<ComBox<IRenderViewBlockAbi>>, close: Option<ComBox<IRenderResourceGroupAbi>>) -> (ComPtr<IRenderStreamAbi>, Rc<Cell<u32>>) {
     let calls = Rc::new(Cell::new(0));
     let stream = Stream::from_value(Stream {
         blocks,
@@ -84,10 +84,10 @@ fn prepared_blocks_preserve_order_and_release_resources_on_clear() {
             .unwrap(),
     );
     let domain = device
-        .create_client(
+        .create_group(
             Default::default(),
             device.surface_target(neocogi_platform::render::abi::RenderSurfaceKind::Framebuffer).unwrap(),
-            neocogi_platform::render::abi::RenderClientPermissions::default(),
+            neocogi_platform::render::abi::RenderGroupPermissions::default(),
         )
         .unwrap();
     let resources = domain.resources().unwrap();
@@ -146,17 +146,17 @@ fn short_foreign_and_outside_blocks_clear_the_entire_preparation() {
             .unwrap(),
     );
     let domain = device
-        .create_client(
+        .create_group(
             Default::default(),
             device.surface_target(neocogi_platform::render::abi::RenderSurfaceKind::Framebuffer).unwrap(),
-            neocogi_platform::render::abi::RenderClientPermissions::default(),
+            neocogi_platform::render::abi::RenderGroupPermissions::default(),
         )
         .unwrap();
     let alien = other
-        .create_client(
+        .create_group(
             Default::default(),
             other.surface_target(neocogi_platform::render::abi::RenderSurfaceKind::Framebuffer).unwrap(),
-            neocogi_platform::render::abi::RenderClientPermissions::default(),
+            neocogi_platform::render::abi::RenderGroupPermissions::default(),
         )
         .unwrap();
     let resources = domain.resources().unwrap();
@@ -184,17 +184,17 @@ fn all_domains_are_rechecked_after_the_last_foreign_call() {
             .unwrap(),
     );
     let first = device
-        .create_client(
+        .create_group(
             Default::default(),
             device.surface_target(neocogi_platform::render::abi::RenderSurfaceKind::Framebuffer).unwrap(),
-            neocogi_platform::render::abi::RenderClientPermissions::default(),
+            neocogi_platform::render::abi::RenderGroupPermissions::default(),
         )
         .unwrap();
     let second = device
-        .create_client(
+        .create_group(
             Default::default(),
             device.surface_target(neocogi_platform::render::abi::RenderSurfaceKind::Framebuffer).unwrap(),
-            neocogi_platform::render::abi::RenderClientPermissions::default(),
+            neocogi_platform::render::abi::RenderGroupPermissions::default(),
         )
         .unwrap();
     let a = block(&device, &first.resources().unwrap(), ROOT);

@@ -31,7 +31,7 @@ pub mod abi;
 pub mod buffer;
 /// Shared IDL bindings and their Rust conveniences.
 pub mod platform;
-/// Owned upload producers shared by clients and GFX without linking renderer implementation.
+/// Owned upload producers shared by callers and GFX without linking renderer implementation.
 pub mod source;
 
 /// Portable shader snapshots, reflection and bounded compiler artifact readers.

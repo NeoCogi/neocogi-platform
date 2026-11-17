@@ -105,15 +105,15 @@ fn canonical_signed_derivatives_match_window_and_texture_pixels() {
     .unwrap();
     let gpu = crate::gpu::GpuDevice::new(renderer.core()).unwrap();
     let domain = gpu
-        .create_client(
+        .create_group(
             Default::default(),
             gpu.surface_target(neocogi_platform::render::abi::RenderSurfaceKind::Framebuffer).unwrap(),
-            neocogi_platform::render::abi::RenderClientPermissions {
+            neocogi_platform::render::abi::RenderGroupPermissions {
                 clear_color: true,
                 write_color: true,
                 write_resources: true,
                 import_images: true,
-                ..neocogi_platform::render::abi::RenderClientPermissions::none()
+                ..neocogi_platform::render::abi::RenderGroupPermissions::none()
             },
         )
         .unwrap();
@@ -212,15 +212,15 @@ fn ui_draws_clears_and_uploads_survive_application_gl_state() {
     .unwrap();
     let gpu = crate::gpu::GpuDevice::new(renderer.core()).unwrap();
     let domain = gpu
-        .create_client(
+        .create_group(
             Default::default(),
             gpu.surface_target(neocogi_platform::render::abi::RenderSurfaceKind::Framebuffer).unwrap(),
-            neocogi_platform::render::abi::RenderClientPermissions {
+            neocogi_platform::render::abi::RenderGroupPermissions {
                 clear_color: true,
                 write_color: true,
                 write_resources: true,
                 import_images: true,
-                ..neocogi_platform::render::abi::RenderClientPermissions::none()
+                ..neocogi_platform::render::abi::RenderGroupPermissions::none()
             },
         )
         .unwrap();
@@ -297,10 +297,10 @@ fn native_completion_owns_resource_and_command_charges() {
     for path in [CompletionPath::Finish, CompletionPath::Abandon, CompletionPath::UploadOnly] {
         let device = GpuDevice::new(renderer.core()).unwrap();
         let controller = device
-            .create_client(
-                RenderClientLimits::default(),
+            .create_group(
+                RenderGroupLimits::default(),
                 device.surface_target(neocogi_platform::render::abi::RenderSurfaceKind::Framebuffer).unwrap(),
-                neocogi_platform::render::abi::RenderClientPermissions::default(),
+                neocogi_platform::render::abi::RenderGroupPermissions::default(),
             )
             .unwrap();
         let resources = controller.resources().unwrap();
@@ -334,7 +334,7 @@ fn native_completion_owns_resource_and_command_charges() {
         let mut recording = device.broker().begin_frame().unwrap();
         let rect = Rect { x: 1, y: 1, width: 6, height: 6 };
         let mut session = recording
-            .begin_view(RenderViewRoot { client: rect, target: rect }, resources.as_com_ref())
+            .begin_view(RenderViewRoot { local: rect, target: rect }, resources.as_com_ref())
             .unwrap();
         let mut view = session.view().unwrap();
         view.bind_pipeline(pipeline.as_com_ref()).unwrap();
@@ -422,10 +422,10 @@ fn dynamic_shader_indices_cannot_escape_uniform_or_private_storage() {
     .unwrap();
     let gpu = GpuDevice::new(renderer.core()).unwrap();
     let controller = gpu
-        .create_client(
-            RenderClientLimits::default(),
+        .create_group(
+            RenderGroupLimits::default(),
             gpu.surface_target(neocogi_platform::render::abi::RenderSurfaceKind::Framebuffer).unwrap(),
-            neocogi_platform::render::abi::RenderClientPermissions::default(),
+            neocogi_platform::render::abi::RenderGroupPermissions::default(),
         )
         .unwrap();
     let resources = controller.resources().unwrap();
@@ -462,7 +462,7 @@ fn dynamic_shader_indices_cannot_escape_uniform_or_private_storage() {
     let mut recording = gpu.broker().begin_frame().unwrap();
     let root = Rect { x: 0, y: 0, width: 8, height: 8 };
     let mut session = recording
-        .begin_view(RenderViewRoot { client: root, target: root }, resources.as_com_ref())
+        .begin_view(RenderViewRoot { local: root, target: root }, resources.as_com_ref())
         .unwrap();
     let mut view = session.view().unwrap();
     view.bind_pipeline(pipeline.as_com_ref()).unwrap();
@@ -485,7 +485,7 @@ fn dynamic_shader_indices_cannot_escape_uniform_or_private_storage() {
     assert_eq!(&pixel(&gl, 4, 4)[..3], &[64; 3]);
 }
 
-/// Legal client identifiers containing a builtin's spelling must survive native source normalization.
+/// Legal application identifiers containing a builtin's spelling must survive native source normalization.
 #[test]
 #[ignore = "requires SDL GL; run with SDL_VIDEODRIVER=offscreen"]
 fn fragment_identifiers_containing_builtin_names_compile_and_render() {
@@ -513,10 +513,10 @@ fn fragment_identifiers_containing_builtin_names_compile_and_render() {
     .unwrap();
     let gpu = GpuDevice::new(renderer.core()).unwrap();
     let controller = gpu
-        .create_client(
-            RenderClientLimits::default(),
+        .create_group(
+            RenderGroupLimits::default(),
             gpu.surface_target(neocogi_platform::render::abi::RenderSurfaceKind::Framebuffer).unwrap(),
-            neocogi_platform::render::abi::RenderClientPermissions::default(),
+            neocogi_platform::render::abi::RenderGroupPermissions::default(),
         )
         .unwrap();
     let resources = controller.resources().unwrap();
@@ -540,7 +540,7 @@ fn fragment_identifiers_containing_builtin_names_compile_and_render() {
     let mut recording = gpu.broker().begin_frame().unwrap();
     let root = Rect { x: 0, y: 0, width: 8, height: 8 };
     let mut session = recording
-        .begin_view(RenderViewRoot { client: root, target: root }, resources.as_com_ref())
+        .begin_view(RenderViewRoot { local: root, target: root }, resources.as_com_ref())
         .unwrap();
     let mut view = session.view().unwrap();
     view.bind_pipeline(pipeline.as_com_ref()).unwrap();
@@ -577,7 +577,7 @@ fn shader_handoff_adapts_varied_glsl_and_culling() {
         let (fragment, height) = shader_adapter::fragment(fragment, offscreen).unwrap();
         let program = create_program(&gl, &vertex, &fragment).unwrap();
         // SAFETY: linked program and VAO are created in this current context;
-        // no client data pointer is used by the procedural draw.
+        // no caller data pointer is used by the procedural draw.
         unsafe {
             let vao = gl.create_vertex_array().unwrap();
             gl.bind_vertex_array(Some(vao));
@@ -630,10 +630,10 @@ fn independent_logical_devices_keep_distinct_native_resources() {
     for rgba in [[255, 0, 0, 255], [0, 0, 255, 255]] {
         let gpu = crate::gpu::GpuDevice::new(renderer.core()).unwrap();
         let domain = gpu
-            .create_client(
+            .create_group(
                 Default::default(),
                 gpu.surface_target(neocogi_platform::render::abi::RenderSurfaceKind::Framebuffer).unwrap(),
-                neocogi_platform::render::abi::RenderClientPermissions::default(),
+                neocogi_platform::render::abi::RenderGroupPermissions::default(),
             )
             .unwrap();
         let resources = domain.resources().unwrap();
@@ -737,10 +737,10 @@ fn absent_initial_images_are_native_zero_without_a_cpu_zero_payload() {
     .unwrap();
     let device = GpuDevice::new(renderer.core()).unwrap();
     let owner = device
-        .create_client(
-            RenderClientLimits::default(),
+        .create_group(
+            RenderGroupLimits::default(),
             device.surface_target(neocogi_platform::render::abi::RenderSurfaceKind::Framebuffer).unwrap(),
-            neocogi_platform::render::abi::RenderClientPermissions::default(),
+            neocogi_platform::render::abi::RenderGroupPermissions::default(),
         )
         .unwrap();
     let resources = owner.resources().unwrap();
@@ -797,10 +797,10 @@ fn late_native_owners_preserve_their_context_and_next_driver_reselects_its_own()
     let mut renderer_a = GLRenderer::new(core_a, 4, 4).unwrap();
     let gpu_a = crate::gpu::GpuDevice::new(renderer_a.core()).unwrap();
     let domain_a = gpu_a
-        .create_client(
+        .create_group(
             Default::default(),
             gpu_a.surface_target(neocogi_platform::render::abi::RenderSurfaceKind::Framebuffer).unwrap(),
-            neocogi_platform::render::abi::RenderClientPermissions::default(),
+            neocogi_platform::render::abi::RenderGroupPermissions::default(),
         )
         .unwrap();
     let resources_a = domain_a.resources().unwrap();
@@ -822,10 +822,10 @@ fn late_native_owners_preserve_their_context_and_next_driver_reselects_its_own()
     let mut renderer_b = GLRenderer::new(core_b, 4, 4).unwrap();
     let gpu_b = crate::gpu::GpuDevice::new(renderer_b.core()).unwrap();
     let domain_b = gpu_b
-        .create_client(
+        .create_group(
             Default::default(),
             gpu_b.surface_target(neocogi_platform::render::abi::RenderSurfaceKind::Framebuffer).unwrap(),
-            neocogi_platform::render::abi::RenderClientPermissions::default(),
+            neocogi_platform::render::abi::RenderGroupPermissions::default(),
         )
         .unwrap();
     let resources_b = domain_b.resources().unwrap();
@@ -868,15 +868,15 @@ fn unsubmitted_target_variants_release_the_source_and_all_charges() {
     let mut renderer = GLRenderer::new(core, 8, 8).unwrap();
     let gpu = crate::gpu::GpuDevice::new(renderer.core()).unwrap();
     let domain = gpu
-        .create_client(
+        .create_group(
             Default::default(),
             gpu.surface_target(neocogi_platform::render::abi::RenderSurfaceKind::Framebuffer).unwrap(),
-            neocogi_platform::render::abi::RenderClientPermissions {
+            neocogi_platform::render::abi::RenderGroupPermissions {
                 clear_color: true,
                 write_color: true,
                 write_resources: true,
                 import_images: true,
-                ..neocogi_platform::render::abi::RenderClientPermissions::none()
+                ..neocogi_platform::render::abi::RenderGroupPermissions::none()
             },
         )
         .unwrap();
@@ -939,15 +939,15 @@ fn exact_texel_reads_keep_coordinate_bounds_on_both_targets() {
     .unwrap();
     let gpu = crate::gpu::GpuDevice::new(renderer.core()).unwrap();
     let domain = gpu
-        .create_client(
+        .create_group(
             Default::default(),
             gpu.surface_target(neocogi_platform::render::abi::RenderSurfaceKind::Framebuffer).unwrap(),
-            neocogi_platform::render::abi::RenderClientPermissions {
+            neocogi_platform::render::abi::RenderGroupPermissions {
                 clear_color: true,
                 write_color: true,
                 write_resources: true,
                 import_images: true,
-                ..neocogi_platform::render::abi::RenderClientPermissions::none()
+                ..neocogi_platform::render::abi::RenderGroupPermissions::none()
             },
         )
         .unwrap();

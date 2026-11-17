@@ -15,13 +15,13 @@ impl IRenderStream for Blocks {
 }
 
 /// No depth permission is needed for composing color into either kind of surface.
-fn color_permissions() -> RenderClientPermissions {
-    RenderClientPermissions {
+fn color_permissions() -> RenderGroupPermissions {
+    RenderGroupPermissions {
         clear_color: true,
         write_color: true,
         write_resources: true,
         import_images: true,
-        ..RenderClientPermissions::none()
+        ..RenderGroupPermissions::none()
     }
 }
 
@@ -42,7 +42,7 @@ fn pixel(probe: &crate::platform::testing::NativeProbe, x: usize, y: usize) -> [
 fn clear_block(host: &ComPtr<IRenderHostAbi>, resources: &ComPtr<IRenderResourcesAbi>, bounds: Rect, rgba: u32) -> ComBox<IRenderViewBlockAbi> {
     let mut frame = host.recording_broker().unwrap().begin_frame().unwrap();
     let mut session = frame
-        .begin_view(RenderViewRoot { client: bounds, target: bounds }, resources.as_com_ref())
+        .begin_view(RenderViewRoot { local: bounds, target: bounds }, resources.as_com_ref())
         .unwrap();
     let mut view = session.view().unwrap();
     view.clear_color(rgba).unwrap();
@@ -94,7 +94,7 @@ fn image_block(host: &ComPtr<IRenderHostAbi>, resources: &ComPtr<IRenderResource
     let mut frame = host.recording_broker().unwrap().begin_frame().unwrap();
     let bounds = Rect { x: 0, y: 0, width: 64, height: 64 };
     let mut session = frame
-        .begin_view(RenderViewRoot { client: bounds, target: bounds }, resources.as_com_ref())
+        .begin_view(RenderViewRoot { local: bounds, target: bounds }, resources.as_com_ref())
         .unwrap();
     let mut view = session.view().unwrap();
     view.bind_pipeline(pipeline.as_com_ref()).unwrap();
@@ -119,7 +119,7 @@ fn framebuffer_views_and_image_targets_select_actual_surfaces_without_ui_roles()
     let probe = native.probe;
     let host = window.graphics_host().unwrap();
     let surfaces: ComPtr<IRenderSurfaceFactoryAbi> = window.query().unwrap();
-    let groups: ComPtr<IRenderClientFactoryAbi> = window.query().unwrap();
+    let groups: ComPtr<IRenderResourceGroupFactoryAbi> = window.query().unwrap();
     let renderer: ComPtr<IRendererAbi> = window.query().unwrap();
     let framebuffer = surfaces.create_surface(RenderSurfaceDesc::Framebuffer).unwrap();
     assert_eq!(framebuffer.kind().unwrap(), RenderSurfaceKind::Framebuffer);
@@ -130,8 +130,8 @@ fn framebuffer_views_and_image_targets_select_actual_surfaces_without_ui_roles()
     );
     assert!(matches!(framebuffer.completed_image(), Err(neocogi_com::NC_E_NOT_FOUND)));
     assert_eq!(framebuffer.resize(SIZE), Err(NC_E_INVALID_ARG));
-    let first = groups.create_client(Default::default(), framebuffer.as_com_ref(), color_permissions()).unwrap();
-    let second = groups.create_client(Default::default(), framebuffer.as_com_ref(), color_permissions()).unwrap();
+    let first = groups.create_group(Default::default(), framebuffer.as_com_ref(), color_permissions()).unwrap();
+    let second = groups.create_group(Default::default(), framebuffer.as_com_ref(), color_permissions()).unwrap();
     let blocks = stream(vec![
         clear_block(&host, &first.resources().unwrap(), Rect { x: 0, y: 0, width: 32, height: 64 }, 0xff0000ff),
         clear_block(&host, &second.resources().unwrap(), Rect { x: 8, y: 8, width: 16, height: 16 }, 0xffff0000),
@@ -170,8 +170,8 @@ fn framebuffer_views_and_image_targets_select_actual_surfaces_without_ui_roles()
     assert_eq!(image.kind().unwrap(), RenderSurfaceKind::Image);
     assert!(matches!(image.completed_image(), Err(neocogi_com::NC_E_NOT_FOUND)));
     let image_renderer: ComPtr<IRendererAbi> = image.query().unwrap();
-    let first_image_group = groups.create_client(Default::default(), image.as_com_ref(), color_permissions()).unwrap();
-    let second_image_group = groups.create_client(Default::default(), image.as_com_ref(), color_permissions()).unwrap();
+    let first_image_group = groups.create_group(Default::default(), image.as_com_ref(), color_permissions()).unwrap();
+    let second_image_group = groups.create_group(Default::default(), image.as_com_ref(), color_permissions()).unwrap();
     let image_blocks = stream(vec![
         clear_block(
             &host,
@@ -330,7 +330,7 @@ fn group_creation_authenticates_surface_ownership_and_attachment_permissions() {
     let local: ComPtr<IPlatformWindowAbi> = WindowObject::from_value(platform.window("local surface", SIZE).unwrap()).query().unwrap();
     let foreign: ComPtr<IPlatformWindowAbi> = WindowObject::from_value(platform.window("other device", SIZE).unwrap()).query().unwrap();
     let surfaces: ComPtr<IRenderSurfaceFactoryAbi> = local.graphics_host().unwrap().query().unwrap();
-    let groups: ComPtr<IRenderClientFactoryAbi> = local.graphics_host().unwrap().query().unwrap();
+    let groups: ComPtr<IRenderResourceGroupFactoryAbi> = local.graphics_host().unwrap().query().unwrap();
     let metadata_calls = Rc::new(Cell::new(0));
     let forged: ComPtr<IRenderSurfaceAbi> = ForgedSurface::from_value(ForgedSurface {
         driver: groups.driver_identity().unwrap(),
@@ -345,7 +345,7 @@ fn group_creation_authenticates_surface_ownership_and_attachment_permissions() {
         .unwrap();
     for invalid in [&forged, &other_surface] {
         assert!(matches!(
-            groups.create_client(Default::default(), invalid.as_com_ref(), color_permissions()),
+            groups.create_group(Default::default(), invalid.as_com_ref(), color_permissions()),
             Err(RENDER_E_OWNER)
         ));
     }
@@ -359,22 +359,22 @@ fn group_creation_authenticates_surface_ownership_and_attachment_permissions() {
     }
     let image = surfaces.create_surface(RenderSurfaceDesc::Image(SIZE)).unwrap();
     for depth in [
-        RenderClientPermissions { read_depth: true, ..color_permissions() },
-        RenderClientPermissions { write_depth: true, ..color_permissions() },
-        RenderClientPermissions { clear_depth: true, ..color_permissions() },
-        RenderClientPermissions {
+        RenderGroupPermissions { read_depth: true, ..color_permissions() },
+        RenderGroupPermissions { write_depth: true, ..color_permissions() },
+        RenderGroupPermissions { clear_depth: true, ..color_permissions() },
+        RenderGroupPermissions {
             initialize_depth: true,
             clear_depth: true,
             ..color_permissions()
         },
     ] {
         assert!(matches!(
-            groups.create_client(Default::default(), image.as_com_ref(), depth),
+            groups.create_group(Default::default(), image.as_com_ref(), depth),
             Err(NC_E_INVALID_ARG)
         ));
     }
     // Rejections must not poison factory state; a correct color-only group remains constructible.
-    assert!(groups.create_client(Default::default(), image.as_com_ref(), color_permissions()).is_ok());
+    assert!(groups.create_group(Default::default(), image.as_com_ref(), color_permissions()).is_ok());
 }
 
 #[com_object(interfaces(IRenderStream))]
@@ -384,7 +384,7 @@ struct ClosingStream {
     blocks: Vec<ComBox<IRenderViewBlockAbi>>,
     /// Shared COM callbacks take this controller once; its final release runs outside the short borrow
     /// and closes the first block's group without affecting the second group's ownership.
-    close: RefCell<Option<ComBox<IRenderClientDomainAbi>>>,
+    close: RefCell<Option<ComBox<IRenderResourceGroupAbi>>>,
 }
 impl IRenderStream for ClosingStream {
     /// The final callback invalidates earlier admission; the renderer must recheck every block.
@@ -405,11 +405,11 @@ fn image_submission_rechecks_group_closure_after_the_final_stream_callback() {
     let native = window();
     let host = native.window.graphics_host().unwrap();
     let surfaces: ComPtr<IRenderSurfaceFactoryAbi> = host.query().unwrap();
-    let groups: ComPtr<IRenderClientFactoryAbi> = host.query().unwrap();
+    let groups: ComPtr<IRenderResourceGroupFactoryAbi> = host.query().unwrap();
     let image = surfaces.create_surface(RenderSurfaceDesc::Image(SIZE)).unwrap();
     let renderer: ComPtr<IRendererAbi> = image.query().unwrap();
-    let first = groups.create_client(Default::default(), image.as_com_ref(), color_permissions()).unwrap();
-    let second = groups.create_client(Default::default(), image.as_com_ref(), color_permissions()).unwrap();
+    let first = groups.create_group(Default::default(), image.as_com_ref(), color_permissions()).unwrap();
+    let second = groups.create_group(Default::default(), image.as_com_ref(), color_permissions()).unwrap();
     let bounds = Rect {
         x: 0,
         y: 0,

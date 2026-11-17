@@ -20,7 +20,7 @@ fn foreign_fixed_format_is_rejected_without_publishing_or_leaking_quota() {
     let compiler = CompilerObject::from_value(CompilerObject::new(ShaderTarget::Wgsl).unwrap()).query().unwrap();
     let gpu = new_device(compiler);
     let controller = gpu
-        .create_client(
+        .create_group(
             Default::default(),
             gpu.surface_target(RenderSurfaceKind::Framebuffer).unwrap(),
             Default::default(),
@@ -53,7 +53,7 @@ fn device_owned_compilers_follow_their_immutable_backend_format() {
     for target in targets {
         let gpu = GpuDevice::new(crate::gpu::testing::Core::with_target(target)).unwrap();
         let controller = gpu
-            .create_client(
+            .create_group(
                 Default::default(),
                 gpu.surface_target(RenderSurfaceKind::Framebuffer).unwrap(),
                 Default::default(),
@@ -82,10 +82,10 @@ fn inactive_profile_violations_reject_through_the_resource_factory() {
     .unwrap();
     let gpu = new_device(compiler);
     let controller = gpu
-        .create_client(
-            RenderClientLimits::default(),
+        .create_group(
+            RenderGroupLimits::default(),
             gpu.surface_target(neocogi_platform::render::abi::RenderSurfaceKind::Framebuffer).unwrap(),
-            neocogi_platform::render::abi::RenderClientPermissions::default(),
+            neocogi_platform::render::abi::RenderGroupPermissions::default(),
         )
         .unwrap();
     let factory = controller.resources().unwrap();
@@ -305,7 +305,7 @@ impl IShaderCompilation for ReportProxy {
     }
 }
 /// Publishes the fixture's weak domain only after construction has finished.
-fn fixture(fault: Fault, limit: u64) -> (GpuDevice, ComBox<IRenderClientDomainAbi>, ComPtr<IRenderResourcesAbi>, Rc<Probe>) {
+fn fixture(fault: Fault, limit: u64) -> (GpuDevice, ComBox<IRenderResourceGroupAbi>, ComPtr<IRenderResourcesAbi>, Rc<Probe>) {
     let probe = Rc::new(Probe {
         domain: RefCell::new(Weak::new()),
         fault,
@@ -321,10 +321,10 @@ fn fixture(fault: Fault, limit: u64) -> (GpuDevice, ComBox<IRenderClientDomainAb
     let root = CompilerProxy::from_value(CompilerProxy { inner, probe: probe.clone() }).query().unwrap();
     let device = new_device(root);
     let domain = device
-        .create_client(
-            RenderClientLimits { live_bytes: limit, ..Default::default() },
+        .create_group(
+            RenderGroupLimits { live_bytes: limit, ..Default::default() },
             device.surface_target(neocogi_platform::render::abi::RenderSurfaceKind::Framebuffer).unwrap(),
-            neocogi_platform::render::abi::RenderClientPermissions::default(),
+            neocogi_platform::render::abi::RenderGroupPermissions::default(),
         )
         .unwrap();
     let factory = domain.resources().unwrap();

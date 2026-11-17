@@ -150,15 +150,15 @@ fn independent_texture_frames_preserve_pixels_and_native_surface_configuration()
     let source = [255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 0, 255];
     let gpu = crate::gpu::GpuDevice::new(renderer.core()).unwrap();
     let domain = gpu
-        .create_client(
+        .create_group(
             Default::default(),
             gpu.surface_target(neocogi_platform::render::abi::RenderSurfaceKind::Framebuffer).unwrap(),
-            neocogi_platform::render::abi::RenderClientPermissions {
+            neocogi_platform::render::abi::RenderGroupPermissions {
                 clear_color: true,
                 write_color: true,
                 write_resources: true,
                 import_images: true,
-                ..neocogi_platform::render::abi::RenderClientPermissions::none()
+                ..neocogi_platform::render::abi::RenderGroupPermissions::none()
             },
         )
         .unwrap();

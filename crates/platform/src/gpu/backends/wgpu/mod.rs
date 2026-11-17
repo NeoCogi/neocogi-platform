@@ -47,7 +47,7 @@ use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use sdl2::video::Window;
 mod generic;
 pub use generic::{Backend, PreparedBlock};
-/// One fixed native depth format is an executor detail, never client authority.
+/// One fixed native depth format is an executor detail, never drawing authority.
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth24Plus;
 
 /// Physical device lifetime and authoritative terminal availability signal; no driver, queue endpoints,
@@ -200,7 +200,7 @@ impl Presentation {
     }
 }
 
-/// One native device executes UI and client blocks through the same executor.
+/// One native device executes UI and recorded blocks through the same executor.
 pub struct WgpuRenderer {
     /// Native dispatch and surface assembly outlive the executor and pending submissions.
     _instance: wgpu::Instance,
@@ -224,7 +224,7 @@ pub struct WgpuRenderer {
     width: u32,
     /// Physical dimensions of the currently selected output.
     height: u32,
-    /// Host attachment-clear color, independent of regional client commands.
+    /// Host attachment-clear color, independent of regional recorded commands.
     clear_color: Color,
     /// Sole native graphics execution/cache/completion owner.
     generic: generic::Executor,

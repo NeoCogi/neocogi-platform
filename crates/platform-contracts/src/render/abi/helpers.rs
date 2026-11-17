@@ -78,7 +78,7 @@ impl GpuBufferDesc {
     }
 }
 
-impl Default for RenderClientLimits {
+impl Default for RenderGroupLimits {
     /// Finite domain defaults; related widgets sharing a factory share these quotas.
     fn default() -> Self {
         Self {
@@ -93,7 +93,7 @@ impl Default for RenderClientLimits {
     }
 }
 
-impl RenderClientPermissions {
+impl RenderGroupPermissions {
     /// Deny every optional operation; callers explicitly enable the operations they delegate.
     pub const fn none() -> Self {
         Self {
@@ -109,7 +109,7 @@ impl RenderClientPermissions {
     }
 }
 
-impl Default for RenderClientPermissions {
+impl Default for RenderGroupPermissions {
     /// Ordinary programmable framebuffer drawing, including regional depth initialization.
     /// Image import is an independent permission and is denied unless explicitly requested.
     fn default() -> Self {

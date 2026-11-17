@@ -10,8 +10,8 @@ the old constructors without compatibility aliases.
 ## Select the target before creating a group
 
 Call `IRenderSurfaceFactory::create_surface(RenderSurfaceDesc)`, then
-`IRenderClientFactory::create_client(limits, surface, permissions)`. The returned
-`IRenderClientDomain` exclusively controls one group; delegate its restricted
+`IRenderResourceGroupFactory::create_group(limits, surface, permissions)`. The returned
+`IRenderResourceGroup` exclusively controls one group; delegate its restricted
 `resources()` factory to drawing code. Several groups may select the same surface.
 They retain separate ownership, quotas, permissions and closure state; sharing a
 target does not share resources.
@@ -49,7 +49,7 @@ an external implementation cannot substitute matching public metadata.
 
 ## Grant operations independently
 
-`RenderClientPermissions` describes operations without assigning a UI or
+`RenderGroupPermissions` describes operations without assigning a UI or
 application role. Disabled operations return `RENDER_E_PERMISSION`.
 
 | Field | Operation permitted |
@@ -72,11 +72,11 @@ A UI compositor normally enables color writes, resource updates and image import
 leaving depth tests, depth writes, depth clears and initialization off:
 
 ```rust
-let permissions = RenderClientPermissions {
+let permissions = RenderGroupPermissions {
     write_color: true,
     write_resources: true,
     import_images: true,
-    ..RenderClientPermissions::none()
+    ..RenderGroupPermissions::none()
 };
 ```
 
@@ -87,7 +87,7 @@ widget's depth values intact. Permissions allow operations; pipeline settings
 still determine which operations a particular draw uses.
 
 The Rust `Default` permission set supports framebuffer drawing, resource updates
-and initial regional depth clearing, with imports disabled. Image clients must
+and initial regional depth clearing, with imports disabled. Image resource groups must
 choose color-only permissions explicitly. `none()` disables all optional operations.
 
 ## Independent image lifetime
@@ -140,7 +140,7 @@ separately in [UI workspace integration](UI_INTEGRATION.md).
 
 The Rust `render` call returns `Result<(), RenderError>` for both window and image
 renderers. The error owns the original status and explanation; later work,
-renderer destruction and device destruction cannot change it. Raw COM clients
+renderer destruction and device destruction cannot change it. Raw COM callers
 call `render_result` and read that operation's `IRenderOutcome`. There is no
 separate renderer diagnostic lookup. For image rendering, publication also waits
 for native retirement to succeed, preserving the previous image on failure.

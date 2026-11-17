@@ -2,9 +2,9 @@
 
 The renderer ABI describes buffers, sampled textures, samplers, shaders,
 graphics pipelines and bounded draw commands. Semantic meshes, cameras and
-materials belong to clients. GPU payloads use explicit bytes, vertex formats and
+materials belong to callers. GPU payloads use explicit bytes, vertex formats and
 uniform layouts; Rust or generated ncidl record layout never defines GPU layout.
-Rust clients can publish initialized bytes with `source::Bytes` and typed pipeline
+Rust callers can publish initialized bytes with `source::Bytes` and typed pipeline
 arrays with `source::PipelineDesc`; these helpers define no semantic geometry.
 The [Suzanne widget](https://github.com/NeoCogi/neocogi-ui/blob/master/examples/full/src/mesh.rs) defines its own 32-byte
 position/normal/UV layout, programmable lighting and two explicitly encoded
@@ -189,7 +189,7 @@ Portable offsets are multiples of 256 bytes; the reflected block size must
 match the selected range, which is at most 16 KiB. Draws retain the selected slot,
 including its charge and native allocation, without copying fresh uniform bytes.
 GFX retains streamed geometry chunks and one frame-size uniform across frames;
-clients retain one uniform buffer for each independently rewritten draw value.
+callers retain one uniform buffer for each independently rewritten draw value.
 
 Creation and update publish complete CPU logical resources/versions. Native
 allocation, driver compilation and upload remain fallible preparation work.
@@ -315,8 +315,8 @@ and [WebGPU vertex layout validation](https://gpuweb.github.io/gpuweb/#validatin
 
 ## Scoped graphics authority
 
-The host selects attachments and the final visible client root. Nested viewport
-mapping and effective clipping are independent. Every client draw and regional
+The host selects attachments and the final visible local root. Nested viewport
+mapping and effective clipping are independent. Every recorded draw and regional
 clear remains within the immutable physical root after checked DPI conversion.
 A pipeline cannot bind another target, sample UI attachments, change submission
 order or acquire native frame state. The graphics profile exposes no storage
@@ -329,7 +329,7 @@ preserves transferred immutable blocks. Invocation-bound painter and view object
 cannot regain authority through a later widget's valid public token.
 
 Application setup creates every resource group through the same
-`IRenderClientFactory::create_client(limits, surface, permissions)` call. The
+`IRenderResourceGroupFactory::create_group(limits, surface, permissions)` call. The
 surface selects an existing framebuffer view or an independently rendered image.
 Permissions separately control regional color/depth clears, color/depth writes,
 depth comparisons, resource updates, image imports and initial depth clearing.
@@ -360,7 +360,7 @@ of a healthy recording leaves an empty position. Unfinished or rejected work fai
 the paint invocation; retrying begin cannot erase that failure. Every return
 revokes escaped facades.
 
-The host session owns pending CPU commands; the exclusive client view holds only
+The host session owns pending CPU commands; the exclusive view handle holds only
 a weak link and its bounded shell charge. Dropping that view releases the shell
 without changing the session's outcome. A dropped unfinished view therefore stays
 `Recording`, with its payload charged, until the host harvests or expires it.
@@ -374,13 +374,13 @@ unfinished payload. The existing pending-byte limits remain in force throughout.
 Cancellation changes only `Recording` to `Cancelled` and immediately releases its
 payload. It is idempotent; a `Rejected` session retains its first command error,
 and a `Committed` session retains its sealed contribution. Rejection releases
-payload immediately. Neither cancel nor client Drop can turn rejection into
+payload immediately. Neither cancel nor view handle Drop can turn rejection into
 success. Host expiry is terminal, and a committed block transfers exactly once.
 Frame finish rejects live unfinished/rejected sessions. Attempted-work charges
 are never refunded by cancellation, destruction or failed recording. These CPU
 rules are separate from native frame maintenance and GPU completion below.
 
-The view's `info().client` is the actual visible client rectangle in widget-local
+The view's `info().root` is the actual visible local rectangle in widget-local
 coordinates. Its initial viewport is `(0,0,width,height)` relative to that root.
 The runtime derives both from committed content geometry and clipping; caller
 tokens or supplied painter rectangles cannot redefine them. Sealed blocks have
@@ -388,10 +388,10 @@ exclusive owners through synchronous GFX submission and weak stream observers.
 
 GFX owns the UI shader, packed vertex layout and geometry expansion. It records
 UI triangles and ordinary immutable images through the same generic command
-vocabulary as clients. Shared triangle-aligned vertex buffers span UI operations;
-client contributions seal the preceding UI block and retain their original painter
+vocabulary as callers. Shared triangle-aligned vertex buffers span UI operations;
+drawing contributions seal the preceding UI block and retain their original painter
 positions. Its chosen permissions disable depth tests, writes and clears, so the
-following UI overlay cannot disturb a client's depth state. Image surfaces accept
+following UI overlay cannot disturb a drawing group's depth state. Image surfaces accept
 blocks bound to that exact image target, regardless of the group's purpose.
 Renderers authenticate blocks before native frame acquisition and recheck group
 closure and selected targets after the final foreign stream/image callback,
@@ -484,7 +484,7 @@ The common resource, command and recording types are parameterized by one concre
 Authored COM declarations use derived contract signatures and contain no native
 handles. Each immutable version owns its native slot, and each pipeline version owns its target
 variants. Prepared objects retain native allocations and opaque accounting receipts,
-never the parent version or a client domain. Uniform payloads use the same mechanism.
+never the parent version or a resource group. Uniform payloads use the same mechanism.
 There are no renderer-global resource maps, numeric version IDs, source-count scans,
 or passive weak realization receipts. Small host-only regional-clear variants are
 driver state, with no application resource identities.

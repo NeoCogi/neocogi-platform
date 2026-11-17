@@ -27,7 +27,7 @@ fn stage_test_plugins() -> neocogi_example_plugins::Backend {
     backend
 }
 
-#[com_object(interfaces(IPlatformWindow, IRenderer, IRenderClientFactory, IRenderSurfaceFactory))]
+#[com_object(interfaces(IPlatformWindow, IRenderer, IRenderResourceGroupFactory, IRenderSurfaceFactory))]
 /// Counts application size queries and successful submissions while forwarding real native capabilities.
 /// It never fabricates resource/target identities or bypasses the provider's frame-size validation.
 struct ObservedWindow {
@@ -96,7 +96,7 @@ impl IRenderDriverBound for ObservedHost {
     }
 }
 impl IRenderHost for ObservedHost {
-    /// Keep real completion/retirement behavior before client geometry creation.
+    /// Keep real completion/retirement behavior before view geometry creation.
     fn maintain_result(&self) -> Result<ComPtr<IRenderOutcomeAbi>, NcStatus> {
         self.host.maintain_result()
     }
@@ -169,15 +169,17 @@ impl IRenderRecordingFrame for ObservedFrame {
         self.frame.abort()
     }
 }
-impl IRenderClientFactory for ObservedWindow {
+impl IRenderResourceGroupFactory for ObservedWindow {
     /// Delegate unchanged target/permission arguments to the real authenticated factory.
-    fn create_client(
+    fn create_group(
         &self,
-        limits: RenderClientLimits,
+        limits: RenderGroupLimits,
         surface: ComRef<'_, IRenderSurfaceAbi>,
-        permissions: RenderClientPermissions,
-    ) -> Result<ComBox<IRenderClientDomainAbi>, NcStatus> {
-        self.window.query::<IRenderClientFactoryAbi>()?.create_client(limits, surface, permissions)
+        permissions: RenderGroupPermissions,
+    ) -> Result<ComBox<IRenderResourceGroupAbi>, NcStatus> {
+        self.window
+            .query::<IRenderResourceGroupFactoryAbi>()?
+            .create_group(limits, surface, permissions)
     }
 }
 impl IRenderSurfaceFactory for ObservedWindow {
@@ -238,7 +240,7 @@ fn triangle_uses_current_drawable_pixels_and_suspended_iterations_do_not_consume
         };
         assert_eq!(roots.borrow().len(), 3);
         for root in roots.borrow().iter() {
-            assert_eq!(root.client, bounds, "client recording uses the actual pixel extent");
+            assert_eq!(root.local, bounds, "view recording uses the actual pixel extent");
             assert_eq!(root.target, bounds, "target recording uses the same extent as submission");
         }
         assert_eq!(

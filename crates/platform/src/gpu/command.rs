@@ -107,11 +107,11 @@ pub struct Draw<B: crate::gpu::native::NativeResources> {
 pub enum Command<B: crate::gpu::native::NativeResources> {
     /// Bind complete captured state and issue a direct triangle draw.
     Draw(Draw<B>),
-    /// Exact unblended regional color replacement, independent of client pipeline masks.
+    /// Exact unblended regional color replacement, independent of drawing pipeline masks.
     ClearColor {
         /// Packed RGBA with red in the least significant byte.
         rgba: u32,
-        /// Authorized target clip; never an attachment-wide client clear.
+        /// Authorized target clip; never an attachment-wide recorded clear.
         clip: Rect,
         /// Retained record-capacity charge.
         charge: CommandCharge,
@@ -135,7 +135,7 @@ pub struct CommandCharge {
 }
 
 impl<B: crate::gpu::native::NativeResources> Command<B> {
-    /// Keeps accounting alive through native lowering/completion without retaining a client domain.
+    /// Keeps accounting alive through native lowering/completion without retaining a resource group.
     pub fn retain_capacity(&self) -> CommandCharge {
         match self {
             Self::Draw(draw) => CommandCharge { _charge: draw._charge.clone() },

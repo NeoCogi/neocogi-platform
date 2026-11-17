@@ -4,7 +4,7 @@ use neocogi_com::{ComRef, NcStatus, WeakComBox, NC_E_INVALID_ARG, NC_E_OUT_OF_ME
 use neocogi_platform::gpu::{record::Block, native::NativeResources};
 use std::rc::Rc;
 
-/// Trusted device assembly authenticates canonical block identities without calling client code.
+/// Trusted device assembly authenticates canonical block identities without calling drawing code.
 pub trait Resources {
     /// Concrete binary-local resource family authenticated by this provider.
     type Backend: NativeResources;

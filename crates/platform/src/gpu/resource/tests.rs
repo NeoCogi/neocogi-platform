@@ -15,7 +15,7 @@ enum ReadMode {
     /// Change the total header between admission and final validation.
     Changing,
     /// Close the domain during a foreign read.
-    Close(WeakComBox<IRenderClientDomainAbi>),
+    Close(WeakComBox<IRenderResourceGroupAbi>),
     /// Destroy a resource owner while an update is copying outside its local gate.
     DropBuffer(Rc<RefCell<Option<ComBox<IGpuBufferAbi>>>>),
     /// Attempt factory reentry while the outer source transaction is detached.
@@ -83,13 +83,13 @@ fn source(bytes: Vec<u8>, mode: ReadMode) -> (ComPtr<IGpuDataSourceAbi>, Rc<Cell
     (value.query().unwrap(), reads, largest)
 }
 
-/// Keeps the exclusive host controller alive while handing a shareable factory to test clients.
-fn client(device: &GpuDevice, limits: RenderClientLimits) -> (ComBox<IRenderClientDomainAbi>, ComPtr<IRenderResourcesAbi>) {
+/// Keeps the exclusive host controller alive while handing a shareable factory to test callers.
+fn resource_group(device: &GpuDevice, limits: RenderGroupLimits) -> (ComBox<IRenderResourceGroupAbi>, ComPtr<IRenderResourcesAbi>) {
     let owner = device
-        .create_client(
+        .create_group(
             limits,
             device.surface_target(neocogi_platform::render::abi::RenderSurfaceKind::Framebuffer).unwrap(),
-            neocogi_platform::render::abi::RenderClientPermissions::default(),
+            neocogi_platform::render::abi::RenderGroupPermissions::default(),
         )
         .unwrap();
     let factory = owner.resources().unwrap();
@@ -107,17 +107,17 @@ fn permitted_image_import_shares_native_storage_without_public_com_or_group_cycl
         .query()
         .unwrap(),
     );
-    let (_client, ordinary) = client(&device, RenderClientLimits::default());
+    let (_client, ordinary) = resource_group(&device, RenderGroupLimits::default());
     let permitted = device
-        .create_client(
+        .create_group(
             Default::default(),
             device.surface_target(neocogi_platform::render::abi::RenderSurfaceKind::Framebuffer).unwrap(),
-            neocogi_platform::render::abi::RenderClientPermissions {
+            neocogi_platform::render::abi::RenderGroupPermissions {
                 clear_color: true,
                 write_color: true,
                 write_resources: true,
                 import_images: true,
-                ..neocogi_platform::render::abi::RenderClientPermissions::none()
+                ..neocogi_platform::render::abi::RenderGroupPermissions::none()
             },
         )
         .unwrap();
@@ -172,7 +172,7 @@ fn exclusive_buffer_creation_reads_bounded_chunks_and_exposes_no_renderer() {
         .query()
         .unwrap(),
     );
-    let (_owner, factory) = client(&device, RenderClientLimits::default());
+    let (_owner, factory) = resource_group(&device, RenderGroupLimits::default());
     let bytes: Vec<_> = (0..SOURCE_CHUNK * 2 + 17).map(|n| n as u8).collect();
     let (source, reads, largest) = source(bytes.clone(), ReadMode::Exact);
     let owner = factory
@@ -183,7 +183,7 @@ fn exclusive_buffer_creation_reads_bounded_chunks_and_exposes_no_renderer() {
     assert!(owner.as_com_ref().try_add_ref().is_err());
     assert!(owner.query_ref::<IRendererAbi>().is_err());
     assert!(owner.query_ref::<IRenderResourcesAbi>().is_err());
-    assert!(factory.query::<IRenderClientDomainAbi>().is_err());
+    assert!(factory.query::<IRenderResourceGroupAbi>().is_err());
     assert_eq!(
         device.buffer_snapshot(factory.as_com_ref(), owner.as_com_ref()).unwrap().bytes.as_slice(),
         bytes
@@ -200,7 +200,7 @@ fn weak_expiry_does_not_invalidate_snapshots_or_refund_retained_versions() {
         .query()
         .unwrap(),
     );
-    let (_controller, factory) = client(&device, Default::default());
+    let (_controller, factory) = resource_group(&device, Default::default());
     let owner = factory.create_streamed_buffer(GpuBufferDesc::Vertex { byte_len: 4 }).unwrap();
     crate::gpu::testing::write_buffer(owner.as_com_ref(), 0, &[1, 2, 3, 4]).unwrap();
     let weak = owner.downgrade();
@@ -230,9 +230,9 @@ fn quota_admission_precedes_bulk_copy_and_retained_versions_keep_their_charge() 
         .query()
         .unwrap(),
     );
-    let (_controller, factory) = client(
+    let (_controller, factory) = resource_group(
         &device,
-        RenderClientLimits {
+        RenderGroupLimits {
             resources: 1,
             live_bytes: 8,
             ..Default::default()
@@ -264,7 +264,7 @@ fn failed_sources_preserve_current_buffer_and_release_candidate_charges() {
         .query()
         .unwrap(),
     );
-    let (_controller, factory) = client(&device, Default::default());
+    let (_controller, factory) = resource_group(&device, Default::default());
     let owner = buffer(&factory, &[1, 2, 3, 4]);
     let before = device.buffer_snapshot(factory.as_com_ref(), owner.as_com_ref()).unwrap();
     for mode in [ReadMode::Short, ReadMode::Fail, ReadMode::Changing] {
@@ -312,9 +312,9 @@ fn different_domains_devices_and_forged_buffers_reject() {
         .query()
         .unwrap(),
     );
-    let (_a, factory) = client(&device, RenderClientLimits::default());
-    let (_b, foreign_factory) = client(&other, RenderClientLimits::default());
-    let (_c, domain_factory) = client(&device, RenderClientLimits::default());
+    let (_a, factory) = resource_group(&device, RenderGroupLimits::default());
+    let (_b, foreign_factory) = resource_group(&other, RenderGroupLimits::default());
+    let (_c, domain_factory) = resource_group(&device, RenderGroupLimits::default());
     let owner = buffer(&factory, &[0; 4]);
     let forged: ComBox<IGpuBufferAbi> = Forged::into_box(Forged).query().unwrap();
     assert!(matches!(
@@ -338,7 +338,7 @@ fn close_during_source_read_rejects_publication_and_drop_closes_shared_factories
         .query()
         .unwrap(),
     );
-    let (controller, factory) = client(&device, RenderClientLimits::default());
+    let (controller, factory) = resource_group(&device, RenderGroupLimits::default());
     let account = device.domain(factory.as_com_ref()).unwrap().account.clone();
     let (input, _, _) = source(vec![1; 4], ReadMode::Close(controller.downgrade()));
     assert!(matches!(
@@ -350,7 +350,7 @@ fn close_during_source_read_rejects_publication_and_drop_closes_shared_factories
     drop(controller);
     assert!(matches!(clone.create_sampler(GpuSamplerDesc::default()), Err(NC_E_DROPPED)));
     // Operation ownership was restored even though the original domain closed.
-    let (_next, next_factory) = client(&device, RenderClientLimits::default());
+    let (_next, next_factory) = resource_group(&device, RenderGroupLimits::default());
     next_factory.create_sampler(GpuSamplerDesc::default()).unwrap();
 }
 
@@ -364,7 +364,7 @@ fn owner_removal_during_static_creation_does_not_pin_another_public_value() {
         .query()
         .unwrap(),
     );
-    let (_controller, factory) = client(&device, Default::default());
+    let (_controller, factory) = resource_group(&device, Default::default());
     let owner = buffer(&factory, &[1; 4]);
     let weak = owner.downgrade();
     let captured = device.buffer_snapshot(factory.as_com_ref(), owner.as_com_ref()).unwrap();
@@ -389,7 +389,7 @@ fn factory_reentry_returns_busy_and_the_outer_copy_remains_valid() {
         .query()
         .unwrap(),
     );
-    let (_controller, factory) = client(&device, RenderClientLimits::default());
+    let (_controller, factory) = resource_group(&device, RenderGroupLimits::default());
     let status = Rc::new(Cell::new(None));
     let (input, _, _) = source(vec![7; 4], ReadMode::Reenter(factory.clone(), status.clone()));
     let owner = factory.create_static_buffer(GpuBufferDesc::Vertex { byte_len: 4 }, input.as_com_ref()).unwrap();
@@ -410,7 +410,7 @@ fn texture_upload_preserves_pixels_outside_the_admitted_dynamic_patch() {
         .query()
         .unwrap(),
     );
-    let (_controller, factory) = client(&device, Default::default());
+    let (_controller, factory) = resource_group(&device, Default::default());
     let owner = factory
         .create_dynamic_buffer(GpuBufferDesc::Texture {
             size: Size { width: 256, height: 256 },
@@ -440,7 +440,7 @@ fn malformed_shapes_and_overflowing_uploads_reject_before_state_changes() {
         .query()
         .unwrap(),
     );
-    let (_controller, factory) = client(&device, Default::default());
+    let (_controller, factory) = resource_group(&device, Default::default());
     let (input, reads, _) = source(vec![0; 4], ReadMode::Exact);
     for desc in [
         GpuBufferDesc::Vertex { byte_len: 0 },
@@ -480,7 +480,7 @@ fn native_backing_keeps_only_narrow_core_and_accounting_alive() {
     let core = device.inner.core.clone();
     let weak_core = Rc::downgrade(&core);
     let metadata = device.driver_identity();
-    let (controller, factory) = client(&device, Default::default());
+    let (controller, factory) = resource_group(&device, Default::default());
     let account = device.domain(factory.as_com_ref()).unwrap().account.clone();
     let owner = buffer(&factory, &[1, 2, 3, 4]);
     let captured = device.buffer_snapshot(factory.as_com_ref(), owner.as_com_ref()).unwrap();
@@ -553,7 +553,7 @@ fn pipeline_retains_shader_artifacts_after_exclusive_shader_owners_expire() {
         .query()
         .unwrap(),
     );
-    let (_controller, factory) = client(&device, RenderClientLimits::default());
+    let (_controller, factory) = resource_group(&device, RenderGroupLimits::default());
     let vertex = shader(&factory, GpuShaderStage::Vertex, b"vs");
     let fragment = shader(&factory, GpuShaderStage::Fragment, b"fs");
     let weak_vertex = vertex.downgrade();
@@ -626,7 +626,7 @@ fn incompatible_attribute_footprints_and_shader_shapes_reject() {
         .query()
         .unwrap(),
     );
-    let (_controller, factory) = client(&device, RenderClientLimits::default());
+    let (_controller, factory) = resource_group(&device, RenderGroupLimits::default());
     let vertex = shader(&factory, GpuShaderStage::Vertex, b"vs");
     let fragment = shader(&factory, GpuShaderStage::Fragment, b"fs");
     for (stride, format, offset) in [
@@ -669,7 +669,7 @@ fn packed_color_footprint_uses_webgpu_alignment() {
         .query()
         .unwrap(),
     );
-    let (_controller, factory) = client(&device, RenderClientLimits::default());
+    let (_controller, factory) = resource_group(&device, RenderGroupLimits::default());
     let code = r#"(module
   (vertex vs ((color vec4 (location 0))) (returns vec4 (builtin position))
     (return (vec4 (. color xy) 0.0 1.0)))
@@ -720,7 +720,7 @@ fn independent_shader_stages_require_matching_interpolation() {
         .query()
         .unwrap(),
     );
-    let (_controller, factory) = client(&device, RenderClientLimits::default());
+    let (_controller, factory) = resource_group(&device, RenderGroupLimits::default());
     for (vertex_interpolation, expected) in [("(interpolate flat)", false), ("", true)] {
         let code = format!(
             r#"(module
@@ -757,7 +757,7 @@ fn owned_versions_stay_distinct_across_drivers_updates_and_owner_release() {
             .query()
             .unwrap(),
         );
-        let (_owner, factory) = client(&device, Default::default());
+        let (_owner, factory) = resource_group(&device, Default::default());
         let core = device.inner.core.clone();
         metadata.push(device.driver_identity());
         let texture = factory
@@ -799,7 +799,7 @@ fn resource_owned_slots_retry_failures_and_check_health_on_reuse() {
         .query()
         .unwrap(),
     );
-    let (_owner, factory) = client(&device, Default::default());
+    let (_owner, factory) = resource_group(&device, Default::default());
     let owner = buffer(&factory, &[1, 2, 3, 4]);
     let source = device.buffer_snapshot(factory.as_com_ref(), owner.as_com_ref()).unwrap();
     let core = device.inner.core.clone();
@@ -827,7 +827,7 @@ fn size_only_storage_is_initialized_and_dynamic_uploads_wait_for_captures() {
         .query()
         .unwrap(),
     );
-    let (_controller, factory) = client(&device, Default::default());
+    let (_controller, factory) = resource_group(&device, Default::default());
     let mut owner = factory.create_dynamic_buffer(GpuBufferDesc::Index { byte_len: 4 }).unwrap();
     let before = device.buffer_snapshot(factory.as_com_ref(), owner.as_com_ref()).unwrap();
     assert_eq!(before.bytes().as_slice(), &[0; 4]);
@@ -850,7 +850,7 @@ fn shape_wire_tags_and_static_lengths_are_checked_before_publication() {
         .query()
         .unwrap(),
     );
-    let (_controller, factory) = client(&device, Default::default());
+    let (_controller, factory) = resource_group(&device, Default::default());
     let (input, reads, _) = source(vec![1; 4], ReadMode::Exact);
     let mut wire = neocogi_com::encode_inline(&GpuBufferDesc::Vertex { byte_len: 4 }).unwrap();
     wire.tag = 255;
@@ -892,7 +892,7 @@ fn driver_identity_is_stable_without_owning_the_driver() {
     let weak = Rc::downgrade(&first.inner);
     let first_id = first.driver_identity();
     let second_id = second.driver_identity();
-    let (_owner, factory) = client(&first, RenderClientLimits::default());
+    let (_owner, factory) = resource_group(&first, RenderGroupLimits::default());
     let resource = factory.create_dynamic_buffer(GpuBufferDesc::Vertex { byte_len: 4 }).unwrap();
     assert_eq!(first_id.as_raw().object, factory.driver_identity().unwrap().as_raw().object);
     assert_eq!(first_id.as_raw().object, resource.driver_identity().unwrap().as_raw().object);
@@ -925,7 +925,7 @@ fn nominal_identity_requires_an_exact_contract_signature() {
         .query()
         .unwrap(),
     );
-    let (_owner, factory) = client(&device, RenderClientLimits::default());
+    let (_owner, factory) = resource_group(&device, RenderGroupLimits::default());
     assert_eq!(factory.query::<StaleShape>().unwrap_err(), neocogi_com::NC_E_ABI_VERSION);
     assert!(factory.query::<IRenderResourcesAbi>().is_ok());
 }
@@ -935,7 +935,7 @@ fn nominal_identity_requires_an_exact_contract_signature() {
 fn typed_binding_payloads_match_reflection_and_fail_without_leaking_quota() {
     use crate::gpu::source::{Bytes as Upload, PipelineDesc};
     let device = GpuDevice::new(crate::gpu::testing::Core::with_target(ShaderTarget::Wgsl)).unwrap();
-    let (_controller, factory) = client(&device, Default::default());
+    let (_controller, factory) = resource_group(&device, Default::default());
     let code = Upload::source(
         br#"(module
   (struct Params (color vec4))

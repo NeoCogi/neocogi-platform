@@ -78,7 +78,7 @@ async fn ready(request: &mut IAudioOpenRequestClient) -> Result<(), JsValue> {
     }
     Err("audio open timed out".into())
 }
-/// Observe exact control completion through the generated inherited stream client.
+/// Observe exact control completion through the generated inherited stream wrapper.
 async fn phase(stream: &mut IAudioStreamClient, target: AudioState) -> Result<(), JsValue> {
     for _ in 0..2000 {
         let info = stream.info().map_err(status)?;

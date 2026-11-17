@@ -1,12 +1,12 @@
 //! Device-free accounting follows actual backing lifetime rather than public handles.
-use crate::gpu::abi::RenderClientLimits;
+use crate::gpu::abi::RenderGroupLimits;
 use neocogi_com::{NC_E_OUT_OF_RANGE, NcStatus};
 use std::{cell::Cell, rc::Rc};
 
 /// Mutable counters shared with destruction paths, without a renderer/device back-reference.
 pub(crate) struct Account {
     /// Host-selected limits, immutable for this domain.
-    pub(crate) limits: RenderClientLimits,
+    pub(crate) limits: RenderGroupLimits,
     /// Public resource owners currently alive.
     resources: Cell<u32>,
     /// Admitted immutable versions, including retained old versions.
@@ -19,7 +19,7 @@ pub(crate) struct Account {
 
 impl Account {
     /// Validates finite host limits before allocating any public capability.
-    pub(crate) fn new(limits: RenderClientLimits) -> Result<Rc<Self>, NcStatus> {
+    pub(crate) fn new(limits: RenderGroupLimits) -> Result<Rc<Self>, NcStatus> {
         if limits.resources == 0
             || limits.resources > 65_536
             || limits.live_bytes == 0

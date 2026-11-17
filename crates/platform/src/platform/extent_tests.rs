@@ -69,7 +69,7 @@ fn clear_block(host: &ComPtr<IRenderHostAbi>, resources: &ComPtr<IRenderResource
     let bounds = Rect { x: 0, y: 0, width: 4, height: 4 };
     let mut frame = host.recording_broker().unwrap().begin_frame().unwrap();
     let mut session = frame
-        .begin_view(RenderViewRoot { client: bounds, target: bounds }, resources.as_com_ref())
+        .begin_view(RenderViewRoot { local: bounds, target: bounds }, resources.as_com_ref())
         .unwrap();
     let mut view = session.view().unwrap();
     view.clear_color(0xff0000ff).unwrap();
@@ -141,14 +141,14 @@ pub(super) fn run() {
         let host = window.graphics_host().unwrap();
         let surfaces: ComPtr<IRenderSurfaceFactoryAbi> = host.query().unwrap();
         let surface = surfaces.create_surface(RenderSurfaceDesc::Framebuffer).unwrap();
-        let clients: ComPtr<IRenderClientFactoryAbi> = host.query().unwrap();
-        let group = clients
-            .create_client(
+        let groups: ComPtr<IRenderResourceGroupFactoryAbi> = host.query().unwrap();
+        let group = groups
+            .create_group(
                 Default::default(),
                 surface.as_com_ref(),
-                RenderClientPermissions {
+                RenderGroupPermissions {
                     clear_color: true,
-                    ..RenderClientPermissions::none()
+                    ..RenderGroupPermissions::none()
                 },
             )
             .unwrap();

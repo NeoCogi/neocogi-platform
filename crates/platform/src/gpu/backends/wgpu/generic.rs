@@ -1,5 +1,5 @@
 //! Native WGPU realization of the shared immutable command vocabulary.
-//! No client callbacks or COM owners enter a render pass or completion collection.
+//! No drawing callbacks or COM owners enter a render pass or completion collection.
 use crate::gpu::{
     abi::*,
     command::{DrawRange, CommandCharge},
@@ -263,9 +263,9 @@ pub(in crate::gpu::backends::wgpu) struct Executor {
     #[cfg(test)]
     pub(super) submit_failure: bool,
 }
-/// A host-created exact replacement pipeline; never exposed as a client resource.
+/// A host-created exact replacement pipeline; never exposed as a group resource.
 struct ClearPipeline {
-    /// Color writes or depth writes are selected at creation, independently of client masks.
+    /// Color writes or depth writes are selected at creation, independently of draw masks.
     raw: wgpu::RenderPipeline,
     /// One initialized vec4 color and one vec4 containing normalized depth.
     layout: wgpu::BindGroupLayout,
@@ -299,7 +299,7 @@ enum PreparedCommand {
     Draw(PreparedDraw),
     /// Private full-screen triangle is restricted by the authoritative regional scissor.
     Clear {
-        /// Host pipeline ignores previous client depth/blend/write state.
+        /// Host pipeline ignores previous draw depth/blend/write state.
         pipeline: Rc<ClearPipeline>,
         /// Exact initialized replacement value, retained by this group and native buffer.
         group: wgpu::BindGroup,
@@ -353,7 +353,7 @@ struct Submitted {
     _attachments: Vec<Rc<Image>>,
 }
 
-/// Exact typed backing references for asynchronous initialization; none owns a client domain.
+/// Exact typed backing references for asynchronous initialization; none owns a resource group.
 enum Upload {
     /// Vertex/index logical bytes remain charged while the native upload is in flight.
     Buffer { _resource: Rc<Buffer> },
@@ -938,7 +938,7 @@ impl Executor {
         Ok(value)
     }
 
-    /// Creates an initialized host-only regional clear independent of any client pipeline state.
+    /// Creates an initialized host-only regional clear independent of any drawing pipeline state.
     fn clear(
         &mut self,
         format: wgpu::TextureFormat,

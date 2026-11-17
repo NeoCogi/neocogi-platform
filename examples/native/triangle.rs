@@ -30,11 +30,11 @@ impl IRenderStream for Stream {
 pub fn render_frames(window: ComPtr<IPlatformWindowAbi>, frames: u32) -> Result<(), RenderError> {
     use neocogi_platform_examples::sdk::render::source::{Bytes, PipelineDesc};
     let renderer: ComPtr<IRendererAbi> = window.query()?;
-    let clients: ComPtr<IRenderClientFactoryAbi> = window.query()?;
+    let groups: ComPtr<IRenderResourceGroupFactoryAbi> = window.query()?;
     // Select the existing window framebuffer. This creates no second frame or attachment; the
     // window renderer below still owns acquisition, the whole-frame clear and presentation.
     let surface = window.query::<IRenderSurfaceFactoryAbi>()?.create_surface(RenderSurfaceDesc::Framebuffer)?;
-    let domain = clients.create_client(RenderClientLimits::default(), surface.as_com_ref(), RenderClientPermissions::default())?;
+    let domain = groups.create_group(RenderGroupLimits::default(), surface.as_com_ref(), RenderGroupPermissions::default())?;
     let resources = domain.resources()?;
     let host = window.graphics_host()?;
     let broker = host.recording_broker()?;
@@ -61,7 +61,7 @@ pub fn render_frames(window: ComPtr<IPlatformWindowAbi>, frames: u32) -> Result<
             width: size.width,
             height: size.height,
         };
-        let mut session = frame.begin_view(RenderViewRoot { client: bounds, target: bounds }, resources.as_com_ref())?;
+        let mut session = frame.begin_view(RenderViewRoot { local: bounds, target: bounds }, resources.as_com_ref())?;
         let mut view = session.view()?;
         view.bind_pipeline(pipeline.as_com_ref())?;
         view.draw(3, 1, 0)?;

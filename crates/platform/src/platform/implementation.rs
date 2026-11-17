@@ -188,7 +188,7 @@ impl Drop for RenderAccess<'_> {
         let _ = self.retire();
     }
 }
-#[com_object(interfaces(IPlatformWindow, IRenderer, IRenderClientFactory, ITextureFactory, IRenderSurfaceFactory))]
+#[com_object(interfaces(IPlatformWindow, IRenderer, IRenderResourceGroupFactory, ITextureFactory, IRenderSurfaceFactory))]
 /// One COM identity exposes OS polling, rendering and concrete resource factories.
 struct WindowObject {
     /// Resources retain this same native owner after the public window interface is released.
@@ -218,40 +218,40 @@ impl Device {
     /// Resolve the selected surface before constructing its independently controlled resource group.
     /// Device access spans foreign AddRef/QI/Release so callbacks cannot acquire a nested native frame.
     /// Only locally registered surfaces are accepted; the logical device then validates permissions/limits.
-    fn create_client(
+    fn create_group(
         &self,
-        limits: RenderClientLimits,
+        limits: RenderGroupLimits,
         surface: ComRef<'_, IRenderSurfaceAbi>,
-        permissions: RenderClientPermissions,
-    ) -> Result<neocogi_com::ComBox<IRenderClientDomainAbi>, NcStatus> {
+        permissions: RenderGroupPermissions,
+    ) -> Result<neocogi_com::ComBox<IRenderResourceGroupAbi>, NcStatus> {
         let _access = self.access()?;
         let record = self.surface(surface.try_add_ref()?)?;
-        self.logical.create_client(limits, record.target.clone(), permissions)
+        self.logical.create_group(limits, record.target.clone(), permissions)
     }
 }
-impl IRenderClientFactory for WindowObject {
+impl IRenderResourceGroupFactory for WindowObject {
     /// Application setup selects the actual target and delegates only the resulting restricted factory.
-    fn create_client(
+    fn create_group(
         &self,
-        limits: RenderClientLimits,
+        limits: RenderGroupLimits,
         surface: ComRef<'_, IRenderSurfaceAbi>,
-        permissions: RenderClientPermissions,
-    ) -> Result<neocogi_com::ComBox<IRenderClientDomainAbi>, NcStatus> {
-        self.device.create_client(limits, surface, permissions)
+        permissions: RenderGroupPermissions,
+    ) -> Result<neocogi_com::ComBox<IRenderResourceGroupAbi>, NcStatus> {
+        self.device.create_group(limits, surface, permissions)
     }
 }
-impl IRenderClientFactory for GraphicsHost {
+impl IRenderResourceGroupFactory for GraphicsHost {
     /// Grants the same group assembly as the window without exposing window presentation or OS interfaces.
-    fn create_client(
+    fn create_group(
         &self,
-        limits: RenderClientLimits,
+        limits: RenderGroupLimits,
         surface: ComRef<'_, IRenderSurfaceAbi>,
-        permissions: RenderClientPermissions,
-    ) -> Result<neocogi_com::ComBox<IRenderClientDomainAbi>, NcStatus> {
-        self.device.create_client(limits, surface, permissions)
+        permissions: RenderGroupPermissions,
+    ) -> Result<neocogi_com::ComBox<IRenderResourceGroupAbi>, NcStatus> {
+        self.device.create_group(limits, surface, permissions)
     }
 }
-#[com_object(interfaces(IRenderHost, IRenderClientFactory, IRenderSurfaceFactory))]
+#[com_object(interfaces(IRenderHost, IRenderResourceGroupFactory, IRenderSurfaceFactory))]
 /// Trusted graphics assembly retains no window COM object, input registration or UI runtime.
 /// Its surface/group factory projections select targets and permissions; they cannot recover the window
 /// renderer. An independently created image surface exposes only that image's renderer.

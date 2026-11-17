@@ -1,7 +1,7 @@
 //! Exclusive public resource owners, weak provenance and immutable data versions.
 //!
 //! Registry mutation needs interior mutability because shareable factory methods
-//! can be called through independently compiled COM clients. Only short local
+//! can be called through independently compiled COM callers. Only short local
 //! registry borrows are taken; no such borrow spans a foreign reader or destructor.
 mod buffer;
 pub(crate) use buffer::BufferObject;
@@ -53,7 +53,7 @@ pub(crate) struct Device<B: crate::gpu::native::NativeResources> {
     pub(crate) shaders: RefCell<Registry<ShaderObject<B>>>,
     /// Exclusive pipeline objects constructed by this device.
     pub(crate) pipelines: RefCell<Registry<PipelineObject<B>>>,
-    /// Restricted factories are authenticated without querying a client object.
+    /// Restricted factories are authenticated without querying a supplied object.
     pub(crate) factories: RefCell<HashMap<usize, FactoryEntry<B>>>,
     /// Sealed GPU blocks use construction-proven weak provenance too.
     pub(crate) blocks: RefCell<Registry<crate::gpu::record::BlockObject<B>>>,
@@ -77,7 +77,7 @@ pub(crate) struct Domain<B: crate::gpu::native::NativeResources> {
     /// Shared target ownership permits several groups without sharing their resources or quotas.
     pub(crate) target: Rc<crate::gpu::target::SurfaceTarget<B>>,
     /// Immutable operation permissions selected by application setup.
-    pub(crate) permissions: RenderClientPermissions,
+    pub(crate) permissions: RenderGroupPermissions,
     /// Logical device used for provenance and guarded creation.
     pub(crate) device: GpuDevice<B>,
     /// Closing gates new admission without freeing retained snapshots.
@@ -177,12 +177,12 @@ impl<B: crate::gpu::native::NativeResources> GpuDevice<B> {
     /// Group ownership, close/reentry rules and version retirement are independent of drawing role.
     /// Foreign-device targets return `RENDER_E_OWNER`; inconsistent attachment permissions return
     /// `NC_E_INVALID_ARG`. Limits and target permissions validate before controller/factory publication.
-    pub fn create_client(
+    pub fn create_group(
         &self,
-        limits: RenderClientLimits,
+        limits: RenderGroupLimits,
         target: Rc<crate::gpu::target::SurfaceTarget<B>>,
-        permissions: RenderClientPermissions,
-    ) -> Result<ComBox<IRenderClientDomainAbi>, NcStatus> {
+        permissions: RenderGroupPermissions,
+    ) -> Result<ComBox<IRenderResourceGroupAbi>, NcStatus> {
         let _operation = self.operation()?;
         if !Rc::ptr_eq(&target.core, &self.inner.core) {
             return Err(RENDER_E_OWNER);
@@ -628,21 +628,21 @@ pub(crate) fn observe<T: ComObject<Threading = ThreadLocal>>(registry: &RefCell<
         .ok_or(RENDER_E_OWNER)
 }
 
-/// Enforces exact device/domain admission without calling a client object.
+/// Enforces exact device/domain admission without calling a supplied object.
 pub(crate) fn same_domain<B: crate::gpu::native::NativeResources>(expected: &Rc<Domain<B>>, actual: &Rc<Domain<B>>) -> Result<(), NcStatus> {
     expected.open()?;
     if Rc::ptr_eq(expected, actual) { Ok(()) } else { Err(RENDER_E_OWNER) }
 }
 
-#[com_object(interfaces(IRenderClientDomain), ownership = exclusive)]
+#[com_object(interfaces(IRenderResourceGroup), ownership = exclusive)]
 /// Host controller and resource factory deliberately have different QI identities.
 struct DomainOwner<B: crate::gpu::native::NativeResources> {
     /// One authoritative close/account record.
     domain: Rc<Domain<B>>,
-    /// Shareable restricted creation service delegated explicitly to clients.
+    /// Shareable restricted creation service delegated explicitly to callers.
     factory: ComPtr<IRenderResourcesAbi>,
 }
-impl<B: crate::gpu::native::NativeResources> IRenderClientDomain for DomainOwner<B> {
+impl<B: crate::gpu::native::NativeResources> IRenderResourceGroup for DomainOwner<B> {
     /// Existing factory clones remain in the same domain and never reset accounting.
     fn resources(&self) -> Result<ComPtr<IRenderResourcesAbi>, NcStatus> {
         self.domain.open()?;
@@ -664,7 +664,7 @@ impl<B: crate::gpu::native::NativeResources> Drop for DomainOwner<B> {
 #[com_object(interfaces(IRenderResources))]
 /// Shareable factory; exclusive resources carry separate identities and ownership.
 struct Factory<B: crate::gpu::native::NativeResources> {
-    /// Holds device authority while clients deliberately retain this service.
+    /// Holds device authority while callers deliberately retain this service.
     domain: Rc<Domain<B>>,
 }
 

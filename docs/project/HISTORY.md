@@ -54,7 +54,7 @@ Audio and window hosting are unconditional SDK services; their feature flags are
 removed. Glow is the default renderer, matching the shim and examples. Exactly
 one renderer is required; Vulkan, WGPU and WebGL builds disable default features
 first. The earlier empty-default and additive GPU-only SDK modes are superseded.
-Contracts-only clients retain the separate implementation-free contracts crate.
+Contracts-only callers retain the separate implementation-free contracts crate.
 Shader Python remains the only optional shader feature and stays default-off.
 
 ## Built-in compiler and renderer-selected writers
@@ -183,11 +183,11 @@ This alpha replaces the former package set with three coordinated releases:
 `neocogi-platform-contracts`, `neocogi-platform` and `neocogi-platform-dylib`.
 The minor-version advance marks incompatible Rust API, generated contract and
 namespace changes since `0.1.0-alpha.2`. Upgrade the package set together and
-regenerate clients; NCIDL declarations remain version 1 during alpha.
+regenerate bindings; NCIDL declarations remain version 1 during alpha.
 
 - Canonical schemas, generated bindings, shared values, limits and build support
   have one contracts owner. The implementation SDK and final library shims use
-  those exact types. Dynamic clients no longer compile renderer/Naga code.
+  those exact types. Dynamic callers no longer compile renderer/Naga code.
 - Shader compilation belongs to the renderer and returns only its backend's
   selected shader artifact. Dynamic examples select prebuilt platform libraries
   at runtime; native builds use ordinary Cargo commands.
@@ -209,7 +209,7 @@ the [documentation index](../README.md) points to current contracts and usage.
 The current release set is `neocogi-platform-contracts`, `neocogi-platform` and
 `neocogi-platform-dylib`. The entries below record earlier layouts and APIs;
 current behavior belongs to the linked contracts. All NCIDL declarations retain
-version 1 during alpha, so rebuild generated clients and providers together.
+version 1 during alpha, so rebuild generated wrappers and providers together.
 
 - Replace former package names and aliases with the contracts crate for schemas,
   generated bindings, shared types, limits and validation; the SDK for renderer,
@@ -310,7 +310,7 @@ still reject before delivery/publication, while unknown raw tags reject at the
 generated boundary. Shader bindings carry byte lengths only for uniform blocks.
 Blend state carries equations only when enabled, and min/max equations carry no
 scaling factors. All three native adapters and WebGL consume the same typed
-descriptors. Alpha declarations retain version 1; clients and providers must
+descriptors. Alpha declarations retain version 1; callers and providers must
 rebuild together.
 
 # Typed platform audio
@@ -404,7 +404,7 @@ The shader request now selects WGSL, SPIR-V or GLSL ES300, and success owns only
 that representation. Device families choose their immutable format; importers
 check target agreement and charge entry plus selected code bytes. The prior
 three-output shader request/report ABI is superseded without compatibility
-aliases. Rebuild SDK clients and both providers together. Optional compiler output
+aliases. Rebuild SDK callers and both providers together. Optional compiler output
 features enable only required Naga writers; GL keeps its guarded SPIR-V roundtrip
 as temporary scratch. Compiler and platform deployment filenames both identify
 the selected backend. Current contracts are in SHADER_COMPILATION.md and

@@ -11,9 +11,9 @@ pub struct ViewState {
     pub clip: Rect,
 }
 
-/// Single authoritative stack for client viewport and clip operations.
+/// Single authoritative stack for viewport and clip operations.
 pub struct ViewStack {
-    /// Host-selected final visible client, never modified by client commands.
+    /// Host-selected final visible root, never modified by recorded commands.
     root: RenderViewRoot,
     /// Positive maximum depth including root; allocation is bounded at construction.
     limit: usize,
@@ -26,10 +26,10 @@ impl ViewStack {
     pub fn new(root: RenderViewRoot, limit: u32) -> Result<Self, NcStatus> {
         if limit == 0
             || limit > 64
-            || root.client.width < 0
-            || root.client.height < 0
-            || root.client.width != root.target.width
-            || root.client.height != root.target.height
+            || root.local.width < 0
+            || root.local.height < 0
+            || root.local.width != root.target.width
+            || root.local.height != root.target.height
             || root.target.x < 0
             || root.target.y < 0
             || i64::from(root.target.x) + i64::from(root.target.width) > i64::from(i32::MAX)
@@ -68,7 +68,7 @@ impl ViewStack {
     pub fn info(&self) -> RenderViewInfo {
         let state = self.current();
         RenderViewInfo {
-            client: self.root.client,
+            root: self.root.local,
             viewport: state.viewport,
             clip: state.clip,
             bounds: Rect {

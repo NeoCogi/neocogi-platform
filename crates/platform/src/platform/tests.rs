@@ -104,7 +104,7 @@ fn info() -> RenderInfo {
         block_count: 1,
     }
 }
-/// Captures a generic procedural triangle; all client shader semantics live in this fixture.
+/// Captures a generic procedural triangle; all application shader semantics live in this fixture.
 fn graphics(resources: &ComPtr<IRenderResourcesAbi>, broker: &ComPtr<IRenderViewBrokerAbi>, root: RenderViewRoot) -> ComBox<IRenderViewBlockAbi> {
     let code = Bytes::source(
         br#"(module
@@ -134,16 +134,16 @@ fn graphics(resources: &ComPtr<IRenderResourcesAbi>, broker: &ComPtr<IRenderView
 }
 /// Construct an explicit framebuffer-view target and independently controlled group through COM.
 fn framebuffer_group(
-    factory: &ComPtr<IRenderClientFactoryAbi>,
-    limits: RenderClientLimits,
-    permissions: RenderClientPermissions,
-) -> neocogi_com::ComBox<IRenderClientDomainAbi> {
+    factory: &ComPtr<IRenderResourceGroupFactoryAbi>,
+    limits: RenderGroupLimits,
+    permissions: RenderGroupPermissions,
+) -> neocogi_com::ComBox<IRenderResourceGroupAbi> {
     let surface = factory
         .query::<IRenderSurfaceFactoryAbi>()
         .unwrap()
         .create_surface(RenderSurfaceDesc::Framebuffer)
         .unwrap();
-    factory.create_client(limits, surface.as_com_ref(), permissions).unwrap()
+    factory.create_group(limits, surface.as_com_ref(), permissions).unwrap()
 }
 
 /// Real native resources survive reentry, owner rejection, retries and public-window release with exact cleanup.
@@ -162,18 +162,18 @@ fn native_order_ownership_reentry_and_final_release() {
         assert!(graphics.query::<IPlatformWindowAbi>().is_err());
         assert!(graphics.query::<IRendererAbi>().is_err());
         assert!(graphics.query::<ITextureFactoryAbi>().is_err());
-        assert!(graphics.query::<IRenderClientFactoryAbi>().is_ok());
+        assert!(graphics.query::<IRenderResourceGroupFactoryAbi>().is_ok());
         assert!(graphics.query::<IRenderSurfaceFactoryAbi>().is_ok());
         assert!(graphics.query::<ITextClipboardAbi>().is_err());
         let private_ui = framebuffer_group(
             &graphics.query().unwrap(),
-            RenderClientLimits::default(),
-            RenderClientPermissions {
+            RenderGroupLimits::default(),
+            RenderGroupPermissions {
                 clear_color: true,
                 write_color: true,
                 write_resources: true,
                 import_images: true,
-                ..RenderClientPermissions::none()
+                ..RenderGroupPermissions::none()
             },
         );
         assert!(private_ui.resources().unwrap().query::<IRenderHostAbi>().is_err());
@@ -183,18 +183,18 @@ fn native_order_ownership_reentry_and_final_release() {
         assert!(clipboard.query::<IPlatformWindowAbi>().is_err());
         assert!(clipboard.query::<ITextureFactoryAbi>().is_err());
         assert!(clipboard.query::<IRenderSurfaceFactoryAbi>().is_err());
-        assert!(clipboard.query::<IRenderClientFactoryAbi>().is_err());
+        assert!(clipboard.query::<IRenderResourceGroupFactoryAbi>().is_err());
         assert!(clipboard.query::<IRenderHostAbi>().is_err());
     }
     input_delivery(&unknown, &device);
     let renderer: ComPtr<IRendererAbi> = unknown.query().unwrap();
     let factory: ComPtr<ITextureFactoryAbi> = unknown.query().unwrap();
-    let clients: ComPtr<IRenderClientFactoryAbi> = unknown.query().unwrap();
-    let controller = framebuffer_group(&clients, RenderClientLimits::default(), RenderClientPermissions::default());
+    let groups: ComPtr<IRenderResourceGroupFactoryAbi> = unknown.query().unwrap();
+    let controller = framebuffer_group(&groups, RenderGroupLimits::default(), RenderGroupPermissions::default());
     let resources = controller.resources().unwrap();
     let driver = renderer.driver_identity().unwrap();
     assert_eq!(identity(&driver).unwrap(), identity(&factory.driver_identity().unwrap()).unwrap());
-    assert_eq!(identity(&driver).unwrap(), identity(&clients.driver_identity().unwrap()).unwrap());
+    assert_eq!(identity(&driver).unwrap(), identity(&groups.driver_identity().unwrap()).unwrap());
     assert_eq!(identity(&driver).unwrap(), identity(&resources.driver_identity().unwrap()).unwrap());
     let zero = neocogi_platform::render::source::initial(None);
     let initialized = factory
@@ -214,7 +214,7 @@ fn native_order_ownership_reentry_and_final_release() {
         .recording_broker()
         .unwrap();
     let root = Rect { x: 0, y: 0, width: 64, height: 64 };
-    let block = graphics(&resources, &broker, RenderViewRoot { client: root, target: root });
+    let block = graphics(&resources, &broker, RenderViewRoot { local: root, target: root });
     let background = factory
         .create_texture(
             Size { width: 1, height: 1 },
@@ -258,8 +258,8 @@ fn native_order_ownership_reentry_and_final_release() {
     let foreign = platform.window("COM foreign resource owner", SIZE).unwrap();
     let foreign_device = Rc::downgrade(&foreign.device);
     let foreign = WindowObject::from_value(foreign);
-    let foreign_clients: ComPtr<IRenderClientFactoryAbi> = foreign.query().unwrap();
-    let foreign_controller = framebuffer_group(&foreign_clients, RenderClientLimits::default(), RenderClientPermissions::default());
+    let foreign_groups: ComPtr<IRenderResourceGroupFactoryAbi> = foreign.query().unwrap();
+    let foreign_controller = framebuffer_group(&foreign_groups, RenderGroupLimits::default(), RenderGroupPermissions::default());
     let foreign_resources = foreign_controller.resources().unwrap();
     let foreign_broker = foreign
         .query::<IPlatformWindowAbi>()
@@ -268,7 +268,7 @@ fn native_order_ownership_reentry_and_final_release() {
         .unwrap()
         .recording_broker()
         .unwrap();
-    let foreign_block = graphics(&foreign_resources, &foreign_broker, RenderViewRoot { client: root, target: root });
+    let foreign_block = graphics(&foreign_resources, &foreign_broker, RenderViewRoot { local: root, target: root });
     let foreign_factory: ComPtr<ITextureFactoryAbi> = foreign.query().unwrap();
     let foreign_texture = foreign_factory
         .create_texture(
@@ -280,10 +280,10 @@ fn native_order_ownership_reentry_and_final_release() {
     let graphics_host = unknown.query::<IPlatformWindowAbi>().unwrap().graphics_host().unwrap();
     let ui_domain = framebuffer_group(
         &graphics_host.query().unwrap(),
-        RenderClientLimits::default(),
-        RenderClientPermissions {
+        RenderGroupLimits::default(),
+        RenderGroupPermissions {
             import_images: true,
-            ..RenderClientPermissions::none()
+            ..RenderGroupPermissions::none()
         },
     );
     assert!(matches!(
@@ -306,15 +306,15 @@ fn native_order_ownership_reentry_and_final_release() {
     for _ in 0..4 {
         renderer.render(info(), stream.as_com_ref()).map_err(|error| error.status).unwrap();
     }
-    let replacement = graphics(&resources, &broker, RenderViewRoot { client: root, target: root });
+    let replacement = graphics(&resources, &broker, RenderViewRoot { local: root, target: root });
     drop(input.block.replace(replacement));
     for _ in 0..3 {
         renderer.render(info(), stream.as_com_ref()).map_err(|error| error.status).unwrap();
     }
-    drop((foreign_resources, foreign_controller, foreign_clients, foreign_broker, foreign_factory, foreign));
+    drop((foreign_resources, foreign_controller, foreign_groups, foreign_broker, foreign_factory, foreign));
     assert!(foreign_device.upgrade().is_none());
     let physical = Rc::downgrade(&device.upgrade().unwrap().access().unwrap().state().gpu.core());
-    drop((stream, input, resources, controller, clients, broker, factory, renderer, unknown, platform));
+    drop((stream, input, resources, controller, groups, broker, factory, renderer, unknown, platform));
     assert!(device.upgrade().is_none(), "immutable images must release the driver facade");
     assert!(physical.upgrade().is_some(), "image retains its physical native lifetime");
     drop(background);

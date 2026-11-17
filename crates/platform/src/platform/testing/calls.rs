@@ -29,7 +29,7 @@ thread_local! {
 pub(crate) fn take() -> Calls {
     COUNTS.with(|value| value.replace(Calls::default()))
 }
-/// Forward the native call without changing any argument or client memory obligation.
+/// Forward the native call without changing any argument or caller memory obligation.
 unsafe extern "system" fn buffer(target: u32, size: isize, data: *const c_void, usage: u32) {
     COUNTS.with(|cell| {
         let mut value = cell.get();

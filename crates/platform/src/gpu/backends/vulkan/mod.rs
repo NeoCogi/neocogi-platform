@@ -179,7 +179,7 @@ enum RebuildPoint {
 }
 
 /// Vulkan presentation and texture ownership with one validated generic graphics executor.
-/// Prepared commands never expose the device, render pass or command buffer to clients.
+/// Prepared commands never expose the device, render pass or command buffer to callers.
 pub struct VulkanRenderer {
     /// Generic caches and completion owners drop before context-owned fences and presentation.
     generic: generic::Executor,

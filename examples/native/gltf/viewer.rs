@@ -1,5 +1,5 @@
 //! Native glTF viewer using public platform/graphics COM contracts exclusively.
-//! The application owns its client domain and every GPU resource until the loop ends.
+//! The application owns its resource group and every GPU resource until the loop ends.
 
 #[path = "camera.rs"]
 mod camera;
@@ -373,7 +373,7 @@ fn texture(resources: &ComPtr<IRenderResourcesAbi>, size: Size, pixels: Vec<u8>)
     )
 }
 
-/// Host-owned native target and its client admission controller, separate from scene resources.
+/// Host-owned native target and its resource-group admission controller, separate from scene resources.
 struct Target {
     /// Native window/event lifetime and current drawable extent.
     window: ComPtr<IPlatformWindowAbi>,
@@ -384,16 +384,16 @@ struct Target {
     /// Restricted resource factory used by this example's geometry.
     resources: ComPtr<IRenderResourcesAbi>,
     /// Retains domain admission for the entire loop; factory observers cannot own its authority.
-    _domain: ComBox<IRenderClientDomainAbi>,
+    _domain: ComBox<IRenderResourceGroupAbi>,
 }
 impl Target {
     /// Selects a view of this window's existing framebuffer before creating the scene's resource group.
     /// Default permissions allow depth-tested 3D drawing and buffer updates for animation. The temporary
     /// surface capability can drop after construction: the group retains its immutable target metadata.
     fn new(window: ComPtr<IPlatformWindowAbi>) -> Result<Self, NcStatus> {
-        let clients: ComPtr<IRenderClientFactoryAbi> = window.query()?;
+        let groups: ComPtr<IRenderResourceGroupFactoryAbi> = window.query()?;
         let surface = window.query::<IRenderSurfaceFactoryAbi>()?.create_surface(RenderSurfaceDesc::Framebuffer)?;
-        let domain = clients.create_client(RenderClientLimits::default(), surface.as_com_ref(), RenderClientPermissions::default())?;
+        let domain = groups.create_group(RenderGroupLimits::default(), surface.as_com_ref(), RenderGroupPermissions::default())?;
         Ok(Self {
             renderer: window.query()?,
             host: window.graphics_host()?,
@@ -420,7 +420,7 @@ impl Target {
             width: size.width,
             height: size.height,
         };
-        let mut session = frame.begin_view(RenderViewRoot { client: bounds, target: bounds }, self.resources.as_com_ref())?;
+        let mut session = frame.begin_view(RenderViewRoot { local: bounds, target: bounds }, self.resources.as_com_ref())?;
         let mut view = session.view()?;
         record(&mut view)?;
         view.finish()?;

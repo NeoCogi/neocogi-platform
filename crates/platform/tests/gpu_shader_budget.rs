@@ -63,10 +63,10 @@ fn generated_output_obeys_remaining_domain_quota_before_large_allocation() {
         neocogi_platform::render::shader::ShaderTarget::GlslEs300,
     );
     let domain = device
-        .create_client(
-            RenderClientLimits { live_bytes: 8192, ..Default::default() },
+        .create_group(
+            RenderGroupLimits { live_bytes: 8192, ..Default::default() },
             device.surface_target(neocogi_platform::render::abi::RenderSurfaceKind::Framebuffer).unwrap(),
-            neocogi_platform::render::abi::RenderClientPermissions::default(),
+            neocogi_platform::render::abi::RenderGroupPermissions::default(),
         )
         .unwrap();
     let factory = domain.resources().unwrap();

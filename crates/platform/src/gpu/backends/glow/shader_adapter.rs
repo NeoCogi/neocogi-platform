@@ -152,7 +152,7 @@ fn is_call(source: &str, mut end: usize) -> bool {
 /// Normalizes window Y position and signed differential axes independently.
 /// Canonical fragment Y increases downwards. Raw window GL derivatives have the opposite
 /// axis, even when a shader uses only interpolated values and never reads gl_FragCoord.
-/// Helpers use explicit precision and are injected after rewriting client calls, so their
+/// Helpers use explicit precision and are injected after rewriting application shader calls, so their
 /// native derivative calls cannot recursively rewrite themselves. Offscreen stays unchanged.
 pub(super) fn fragment(source: &str, offscreen: bool) -> Result<(String, Option<String>), String> {
     if offscreen {

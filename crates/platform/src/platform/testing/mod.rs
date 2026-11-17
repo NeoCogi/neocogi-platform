@@ -15,11 +15,11 @@ pub use neocogi_platform::gpu::backends::webgl::Backend as NativeBackend;
 pub(crate) mod calls;
 /// Owned metadata for one measurement; never enters a renderer ABI.
 pub struct Sample {
-    /// Window/assets/UI/client construction, including CPU shader compilation.
+    /// Window/assets/UI/application drawing setup, including CPU shader compilation.
     pub setup_ns: u128,
     /// Real retained painting into authenticated immutable blocks.
     pub record_ns: u128,
-    /// Includes a separately owned procedural client contribution.
+    /// Includes a separately owned procedural application drawing contribution.
     pub mixed: bool,
     /// Actual admitted commands in painter order.
     pub commands: usize,

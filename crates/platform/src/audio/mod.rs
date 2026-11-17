@@ -1,7 +1,7 @@
 //! Typed PCM services. No application/COM callback executes on a native audio thread.
 #![deny(missing_docs)]
 use neocogi_com::{ComBox, ComPtr, INcStringAbi, NcCopyFromBufferOffset, NcOutputWriter, NcStatus, NcString, NC_E_NOINTERFACE, com_object};
-/// Canonical audio values and generated clients, exposed here for linked Rust applications.
+/// Canonical audio values and generated wrappers, exposed here for linked Rust applications.
 pub use neocogi_platform_contracts::audio::*;
 
 /// Actual browser playback/capture acceptance under the repository's fake-device headless fixture.

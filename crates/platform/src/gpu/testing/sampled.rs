@@ -96,7 +96,7 @@ fn record_fragment<B: neocogi_platform::gpu::native::NativeResources>(
     let pipeline = resources.create_pipeline(desc.as_com_ref(), vs.as_com_ref(), fs.as_com_ref()).unwrap();
     let sampler = resources.create_sampler(GpuSamplerDesc::default()).unwrap();
     let mut frame = gpu.broker().begin_frame().unwrap();
-    let mut session = frame.begin_view(RenderViewRoot { client: root, target: root }, resources.as_com_ref()).unwrap();
+    let mut session = frame.begin_view(RenderViewRoot { local: root, target: root }, resources.as_com_ref()).unwrap();
     let mut view = session.view().unwrap();
     view.bind_pipeline(pipeline.as_com_ref()).unwrap();
     view.bind_texture(GpuShaderStage::Fragment, 0, texture, sampler.as_com_ref()).unwrap();
@@ -191,7 +191,7 @@ pub fn zero_storage_block<B: neocogi_platform::gpu::native::NativeResources>(
     let indices = resources.create_streamed_buffer(GpuBufferDesc::Index { byte_len: 6 }).unwrap();
     let root = Rect { x: 0, y: 0, width: 8, height: 8 };
     let mut frame = gpu.broker().begin_frame().unwrap();
-    let mut session = frame.begin_view(RenderViewRoot { client: root, target: root }, resources.as_com_ref()).unwrap();
+    let mut session = frame.begin_view(RenderViewRoot { local: root, target: root }, resources.as_com_ref()).unwrap();
     let mut view = session.view().unwrap();
     view.bind_pipeline(pipeline.as_com_ref()).unwrap();
     view.bind_vertex_buffer(0, vertices.as_com_ref(), 0).unwrap();

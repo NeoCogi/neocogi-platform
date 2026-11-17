@@ -9,7 +9,7 @@ no separate shader descriptor or registration, and
 no additional shared library to deploy. WGPU retains its internal translation dependency.
 
 The contracts crate owns `neocogi.renderer` compiler declarations in
-`schemas/neocogi/renderer/compiler.ncidl`. Static and loaded clients use exactly
+`schemas/neocogi/renderer/compiler.ncidl`. Static and loaded callers use exactly
 these generated interfaces and `render::shader` snapshots/readers.
 
 ## COM acquisition and outcomes

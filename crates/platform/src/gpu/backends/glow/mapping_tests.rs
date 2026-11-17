@@ -19,7 +19,7 @@ fn uploaded_resource_slots_keep_native_names_across_uploads() {
     let mut executor = Executor::new(core.clone()).unwrap();
     let gpu = crate::gpu::GpuDevice::<Backend>::new(core).unwrap();
     let domain = gpu
-        .create_client(
+        .create_group(
             Default::default(),
             gpu.surface_target(RenderSurfaceKind::Framebuffer).unwrap(),
             Default::default(),
@@ -125,7 +125,7 @@ fn logical_uniform_spans_use_private_native_extents() {
     let mut renderer = super::super::GLRenderer::new(core.clone(), 8, 8).unwrap();
     let gpu = crate::gpu::GpuDevice::<Backend>::new(core).unwrap();
     let domain = gpu
-        .create_client(
+        .create_group(
             Default::default(),
             gpu.surface_target(RenderSurfaceKind::Framebuffer).unwrap(),
             Default::default(),

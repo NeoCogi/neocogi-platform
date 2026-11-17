@@ -8,7 +8,7 @@ use neocogi_platform_contracts::render::{
 #[com_object(interfaces(IInputSink))]
 /// Immutable expected transition; comparison observes the values decoded by a real COM call.
 struct ExpectedInput {
-    /// Exact event the generated client must deliver.
+    /// Exact event the generated wrapper must deliver.
     expected: KeyStroke,
 }
 impl IInputSink for ExpectedInput {

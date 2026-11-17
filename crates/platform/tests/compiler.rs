@@ -7,7 +7,7 @@ use neocogi_platform::{
 };
 
 // The contracts crate compiles these generated callers independently of the implementation.
-use neocogi_platform_contracts::render::abi as client;
+use neocogi_platform_contracts::render::abi as gpu_contracts;
 
 const SOURCE: &str = r#"(module
   (struct U (value vec4))
@@ -28,10 +28,10 @@ fn targets() -> Vec<ShaderTarget> {
 }
 
 /// Uses the contracts crate's generated caller against the separate renderer implementation.
-fn compile(stage: GpuShaderStage, target: ShaderTarget, source: &str, entry: &str, cap: u64) -> ComPtr<client::IShaderCompilationAbi> {
-    let root: ComPtr<client::ShaderCompilerAbi> = CompilerObject::from_value(CompilerObject::new(target).unwrap()).query().unwrap();
+fn compile(stage: GpuShaderStage, target: ShaderTarget, source: &str, entry: &str, cap: u64) -> ComPtr<gpu_contracts::IShaderCompilationAbi> {
+    let root: ComPtr<gpu_contracts::ShaderCompilerAbi> = CompilerObject::from_value(CompilerObject::new(target).unwrap()).query().unwrap();
     root.compile_result(
-        client::ShaderCompileRequest { stage, max_output_bytes: cap },
+        gpu_contracts::ShaderCompileRequest { stage, max_output_bytes: cap },
         NcCopyFromBufferOffset::new(0, source.as_bytes()),
         NcCopyFromBufferOffset::new(0, entry.as_bytes()),
     )
@@ -149,10 +149,10 @@ fn unavailable_configurations_and_unknown_wire_stages_reject() {
         }
     }
     assert!(matches!(CompilerObject::new(ShaderTarget::from_raw(255)), Err(NC_E_INVALID_ARG)));
-    let root: ComPtr<client::ShaderCompilerAbi> = CompilerObject::from_value(CompilerObject::new(ShaderTarget::Wgsl).unwrap()).query().unwrap();
+    let root: ComPtr<gpu_contracts::ShaderCompilerAbi> = CompilerObject::from_value(CompilerObject::new(ShaderTarget::Wgsl).unwrap()).query().unwrap();
     let result = root.compile_result(
-        client::ShaderCompileRequest {
-            stage: client::GpuShaderStage::from_raw(255),
+        gpu_contracts::ShaderCompileRequest {
+            stage: gpu_contracts::GpuShaderStage::from_raw(255),
             max_output_bytes: 4194304,
         },
         NcCopyFromBufferOffset::new(0, SOURCE.as_bytes()),

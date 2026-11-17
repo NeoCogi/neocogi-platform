@@ -77,7 +77,7 @@ mod tests {
             .unwrap(),
         );
         let domain = gpu
-            .create_client(
+            .create_group(
                 Default::default(),
                 gpu.surface_target(RenderSurfaceKind::Framebuffer).unwrap(),
                 Default::default(),

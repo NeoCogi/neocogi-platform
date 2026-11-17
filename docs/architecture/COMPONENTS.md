@@ -34,7 +34,7 @@ The SDK always contains audio, window hosting and shader compilation. Glow is
 the default renderer; exactly one of `glow`, `vulkan`, `wgpu` or `webgl` must be
 selected. Alternate renderers disable default features first. Browser WebGL uses
 `webgl` with `wasm32-unknown-unknown`. `audio` and `platform` are modules, not Cargo
-features. Contracts-only clients use the independent contracts crate.
+features. Contracts-only callers use the independent contracts crate.
 
 `shader-python` is the only shader feature. WGSL, SPIR-V and GLSL writers are
 implied by `wgpu`, `vulkan` and `glow`/`webgl`. Each compiler instance has one

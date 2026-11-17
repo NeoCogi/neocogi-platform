@@ -157,7 +157,7 @@ macro_rules! notifying {
     };
 }
 
-/// Raw device/instance ownership is independent of presentation, caches and client domains.
+/// Raw device/instance ownership is independent of presentation, caches and resource groups.
 pub struct Core {
     /// Retained metadata token has no native back-edge.
     identity: neocogi_platform::render::source::DriverIdentity,
@@ -167,7 +167,7 @@ pub struct Core {
     _entry: Entry,
     /// Parent of the logical device; no swapchain or cache is owned here.
     instance: ash::Instance,
-    /// Shared native dispatch and allocation owner, never a client-facing capability.
+    /// Shared native dispatch and allocation owner, never a drawing capability.
     pub(in crate::gpu::backends::vulkan) device: ash::Device,
     /// Query handle and immutable native limits belong to this exact logical device.
     physical: vk::PhysicalDevice,
@@ -324,7 +324,7 @@ impl Drop for Memory {
     }
 }
 
-/// Shared native sampler owner enforces the physical count independently of client quotas.
+/// Shared native sampler owner enforces the physical count independently of group quotas.
 pub(in crate::gpu::backends::vulkan) struct NativeSampler {
     /// Cache-free device remains live for destruction.
     core: Rc<Core>,
@@ -608,7 +608,7 @@ notifying!(Sampler, SamplerAllocation);
 pub struct Signature {
     /// Host-selected single color attachment format.
     pub(in crate::gpu::backends::vulkan) color: vk::Format,
-    /// Optional host depth attachment; clients cannot add one.
+    /// Optional host depth attachment; callers cannot add one.
     pub(in crate::gpu::backends::vulkan) depth: Option<vk::Format>,
 }
 /// Pipeline layouts/descriptors are owned independently of the presentation render pass.
@@ -621,7 +621,7 @@ pub struct PipelineAllocation {
     raw: vk::Pipeline,
     /// Four stage-separated descriptor namespaces.
     groups: [vk::DescriptorSetLayout; 4],
-    /// Graphics pipeline layout has no push constants or native client escapes.
+    /// Graphics pipeline layout has no push constants and grants callers no direct native access.
     layout: vk::PipelineLayout,
 }
 impl Drop for PipelineAllocation {
@@ -683,7 +683,7 @@ struct DescriptorPools {
     idle: Vec<PoolAllocation>,
     /// Total retained set capacity, independent of logical recording charges.
     sets: u32,
-    /// Total cached uniform-buffer descriptors, not current client bindings.
+    /// Total cached uniform-buffer descriptors, not current draw bindings.
     uniforms: u32,
     /// Total cached descriptors of each sampled-image/sampler category.
     images: u32,
@@ -744,7 +744,7 @@ struct PreparedData {
     /// Device-free logical recording capacity remains charged through actual native use.
     _capacity: Vec<CommandCharge>,
 }
-/// Fully realized native operations require no client callbacks or allocations during replay.
+/// Fully realized native operations require no drawing callbacks or allocations during replay.
 enum PreparedCommand {
     /// Complete direct draw state.
     Draw(PreparedDraw),
@@ -804,7 +804,7 @@ enum UploadFailure {
 }
 /// A failed upload wait retains every referenced object until final native synchronization.
 struct Transfer {
-    /// Native destruction owner has no renderer/cache/client back-reference.
+    /// Native destruction owner has no renderer/cache/drawing-code back-reference.
     core: Rc<Core>,
     /// The executor destroys this pool only after retiring every transfer.
     pool: vk::CommandPool,
@@ -820,7 +820,7 @@ struct Transfer {
     /// blocks another compatible executor from refreshing the same staging or
     /// destination while submission/completion remains uncertain.
     _published: Option<Rc<Texture>>,
-    /// Generic allocations retain accounting; ordinary native images have no client-domain charge.
+    /// Generic allocations retain accounting; ordinary native images have no group charge.
     _receipt: Option<BackingCharge>,
     /// Original block capacity follows a failed preparatory upload through uncertain completion.
     _capacity: Vec<CommandCharge>,
@@ -845,7 +845,7 @@ pub(in crate::gpu::backends::vulkan) struct Executor {
     retired_tx: Sender<Retirement>,
     /// Drained after completion, failures, maintenance and shutdown, never owned by Core.
     retired_rx: Receiver<Retirement>,
-    /// Native completion retains private backing/receipts without retaining client domain authority.
+    /// Native completion retains private backing/receipts without retaining resource group authority.
     submitted: Vec<Submitted>,
     /// Descriptor capacity follows the same final-owner and completion boundary as buffers.
     pools: DescriptorPools,
@@ -1430,7 +1430,7 @@ impl Executor {
         Ok(())
     }
 
-    /// Host acquisition must also reject a failed executor, including frames without client blocks.
+    /// Host acquisition must also reject a failed executor, including frames without recorded blocks.
     pub(in crate::gpu::backends::vulkan) fn unusable(&self) -> bool {
         matches!(self.health, Health::Failed) || self.core.lost.get()
     }
@@ -1640,7 +1640,7 @@ impl Executor {
         Ok(())
     }
 
-    /// Replays only native snapshots inside a host-owned pass; no client can select attachments.
+    /// Replays only native snapshots inside a host-owned pass; no recorded operation can select attachments.
     pub(in crate::gpu::backends::vulkan) fn record(
         &self,
         command: vk::CommandBuffer,

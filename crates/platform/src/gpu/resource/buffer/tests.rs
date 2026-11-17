@@ -4,7 +4,7 @@ use crate::gpu::testing::{self, Backend, Preparation};
 use neocogi_platform::render::buffer::{GpuElement, TypedGpuBufferDesc, TypedGpuBufferFactory};
 
 /// Creates one explicitly selected virtual family and ordinary resource group.
-fn setup() -> (GpuDevice<Backend>, ComBox<IRenderClientDomainAbi>, ComPtr<IRenderResourcesAbi>) {
+fn setup() -> (GpuDevice<Backend>, ComBox<IRenderResourceGroupAbi>, ComPtr<IRenderResourcesAbi>) {
     let gpu = testing::device(
         neocogi_platform::render::compiler::CompilerObject::from_value(
             neocogi_platform::render::compiler::CompilerObject::new(neocogi_platform::render::shader::ShaderTarget::Wgsl).unwrap(),
@@ -13,7 +13,7 @@ fn setup() -> (GpuDevice<Backend>, ComBox<IRenderClientDomainAbi>, ComPtr<IRende
         .unwrap(),
     );
     let domain = gpu
-        .create_client(
+        .create_group(
             Default::default(),
             gpu.surface_target(RenderSurfaceKind::Framebuffer).unwrap(),
             Default::default(),
@@ -239,8 +239,8 @@ fn texture_capacity_is_fixed_and_failed_creation_refunds_every_slot() {
     drop(texture);
     assert_eq!(account.live_bytes(), 0);
     let limited = gpu
-        .create_client(
-            RenderClientLimits { live_bytes: 47, ..Default::default() },
+        .create_group(
+            RenderGroupLimits { live_bytes: 47, ..Default::default() },
             gpu.surface_target(RenderSurfaceKind::Framebuffer).unwrap(),
             Default::default(),
         )

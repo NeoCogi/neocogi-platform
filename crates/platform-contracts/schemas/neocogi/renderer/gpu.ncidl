@@ -203,9 +203,9 @@ enum GpuBindingKind: u8 {
 
 /// Exhaustive recording state; terminal states cannot add commands.
 enum RenderViewState: u8 {
-    /// Accepting bounded commands; remains unfinished if the client facade is dropped.
+    /// Accepting bounded commands; remains unfinished if the view handle is dropped.
     Recording,
-    /// First error retained until host expiry; cancellation and client Drop cannot erase it.
+    /// First error retained until host expiry; cancellation and view handle Drop cannot erase it.
     Rejected,
     /// Complete immutable payload sealed for host harvest.
     Committed,
@@ -342,26 +342,26 @@ struct GpuShaderBinding {
 
 /// Host-authoritative root expressed in two coordinate spaces.
 struct RenderViewRoot {
-    /// Final visible client rectangle in that client's own drawing coordinates.
-    client: Rect,
+    /// Final visible rectangle in local drawing coordinates.
+    local: Rect,
     /// Same region in logical target coordinates; extents must match.
     target: Rect,
 }
 
 /// Projection mapping and visibility are independent.
 struct RenderViewInfo {
-    /// Immutable visible root in client drawing coordinates.
-    client: Rect,
-    /// Current viewport in root-client-local coordinates.
+    /// Immutable visible root in local drawing coordinates.
+    root: Rect,
+    /// Current viewport in root-local coordinates.
     viewport: Rect,
-    /// Effective clip in root-client-local coordinates.
+    /// Effective clip in root-local coordinates.
     clip: Rect,
     /// Current local origin zero and viewport extents.
     bounds: Rect,
 }
 
 /// Host-created quotas shared by all factory observations.
-struct RenderClientLimits {
+struct RenderGroupLimits {
     /// Live public GPU resource owners.
     resources: u32,
     /// Live immutable CPU/native version admission bytes.
@@ -374,7 +374,7 @@ struct RenderClientLimits {
     frame_indices: u64,
     /// Live public view metadata owners, including expired shells.
     live_views: u32,
-    /// Maximum client stack depth, including root; at most 64.
+    /// Maximum view stack depth, including root; at most 64.
     stack_depth: u32,
 }
 
@@ -382,7 +382,7 @@ struct RenderClientLimits {
 /// These describe operations, not a widget/compositor/application role.
 /// UI composition normally enables color writes, resource updates and imports, leaving all depth fields false.
 /// Enabling a permission permits that operation; it does not change pipeline state automatically.
-struct RenderClientPermissions {
+struct RenderGroupPermissions {
     /// Permit explicit regional color clears; this does not clear the whole framebuffer on creation.
     clear_color: bool,
     /// Permit explicit regional depth clears when the selected surface has depth.
@@ -525,7 +525,7 @@ interface IRenderView {
     /// Seal a balanced complete payload exactly once; never submits or presents.
     fn finish(&mut self) -> Result<()>;
     /// Cancel healthy recording and release pending storage without refunding attempted work.
-    /// Preserve rejection, commitment and expiry. Client Drop does not imply cancellation.
+    /// Preserve rejection, commitment and expiry. View handle Drop does not imply cancellation.
     fn cancel(&mut self) -> Result<()>;
 }
 
@@ -533,15 +533,15 @@ interface IRenderView {
 interface IRenderViewBlock {
 }
 
-/// Host-only owner of one revocable pending payload; never exposed by client QI.
+/// Host-only owner of one revocable pending payload; never exposed by view QI.
 interface IRenderViewSession {
-    /// Transfer one exclusive client view at most once.
+    /// Transfer one exclusive view handle at most once.
     fn view(&mut self) -> Result<ComBox<IRenderView>>;
     /// Inspect exhaustive session state.
     fn state(&self) -> Result<RenderViewState>;
-    /// Move committed payload once; expire the client facade.
+    /// Move committed payload once; expire the view handle.
     fn take_block(&mut self) -> Result<ComBox<IRenderViewBlock>>;
-    /// Revoke access and release all unmoved storage, including unfinished dropped-client work.
+    /// Revoke access and release all unmoved storage, including unfinished dropped-view work.
     fn expire(&mut self) -> Result<()>;
 }
 
@@ -564,25 +564,25 @@ interface IRenderViewBroker {
 }
 
 /// Exclusive host-only admission controller, on a different identity from its factory.
-interface IRenderClientDomain {
-    /// Delegate only this restricted shareable factory to clients.
+interface IRenderResourceGroup {
+    /// Delegate only this restricted shareable factory to callers.
     fn resources(&self) -> Result<ComPtr<IRenderResources>>;
     /// Close new admission while captured and in-flight storage retires normally.
     fn close(&mut self) -> Result<()>;
 }
 
 /// Application-owned factory for independently limited resource groups bound to an authenticated drawing target.
-interface IRenderClientFactory: IRenderDriverBound {
+interface IRenderResourceGroupFactory: IRenderDriverBound {
     /// Bind a new group to this device's surface with explicit drawing, update and import permissions.
-    /// Only application setup receives this factory; clients receive the resulting restricted resources.
+    /// Only application setup receives this factory; callers receive the resulting restricted resources.
     /// Groups can share a target without sharing resources or quotas. A foreign surface returns RENDER_E_OWNER;
     /// inconsistent permissions (including depth on a color-only image) return NC_E_INVALID_ARG.
-    fn create_client(
+    fn create_group(
         &self,
-        limits: RenderClientLimits,
+        limits: RenderGroupLimits,
         surface: &IRenderSurface,
-        permissions: RenderClientPermissions,
-    ) -> Result<ComBox<IRenderClientDomain>>;
+        permissions: RenderGroupPermissions,
+    ) -> Result<ComBox<IRenderResourceGroup>>;
 }
 
 /// Trusted host-only assembly capability; never delegated to widgets.
@@ -594,7 +594,7 @@ interface IRenderHost: IRenderDriverBound {
     /// Same-device and exact-group ownership remain mandatory; no native handle or image editing is exposed.
     fn import_texture_result(&self, resources: &IRenderResources, image: &ITexture) -> Result<ComBox<ITextureImportResult>>;
     /// Complete fallible preparation of a permitted imported image before the caller publishes its resource revision.
-    /// This never acquires a target or invokes a client during native execution.
+    /// This never acquires a target or invokes a caller during native execution.
     fn prepare_texture_result(&self, resources: &IRenderResources, texture: &IGpuBuffer) -> Result<ComPtr<IRenderOutcome>>;
     /// Creates a narrow CPU recording broker for one host-controlled drawing traversal.
     fn recording_broker(&self) -> Result<ComPtr<IRenderViewBroker>>;

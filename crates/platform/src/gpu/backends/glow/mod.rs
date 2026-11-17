@@ -134,7 +134,7 @@ pub struct Output {
     /// Only native work can clone the attachment owner; callers receive no mutable pixels.
     state: Rc<OutputState>,
 }
-/// Target authority belongs to the exclusively borrowed frame, not client commands.
+/// Target authority belongs to the exclusively borrowed frame, not recorded commands.
 enum DrawTarget {
     /// Actual physical default framebuffer.
     Window,

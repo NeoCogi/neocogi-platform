@@ -25,7 +25,7 @@ fn device_with_limits(limits: wgpu::Limits) -> (wgpu::Device, wgpu::Queue) {
     .unwrap()
 }
 
-/// A client shader owns its color and depth semantics; the renderer only sees reflected bindings.
+/// An application shader owns its color and depth semantics; the renderer only sees reflected bindings.
 const SHADER: &str = r#"(module
   (struct Values (color vec4) (params vec4))
   (uniform vertex_values Values vertex 0)
@@ -83,10 +83,10 @@ fn regional_depth_clears_ordered_views_and_completion_keep_their_contracts() {
     let mut executor = crate::gpu::backends::wgpu::generic::Executor::new(Core::new(native.clone(), queue.clone()));
     let gpu = GpuDevice::new(executor.core.clone()).unwrap();
     let controller = gpu
-        .create_client(
-            RenderClientLimits::default(),
+        .create_group(
+            RenderGroupLimits::default(),
             gpu.surface_target(neocogi_platform::render::abi::RenderSurfaceKind::Framebuffer).unwrap(),
-            neocogi_platform::render::abi::RenderClientPermissions::default(),
+            neocogi_platform::render::abi::RenderGroupPermissions::default(),
         )
         .unwrap();
     let resources = controller.resources().unwrap();
@@ -95,7 +95,7 @@ fn regional_depth_clears_ordered_views_and_completion_keep_their_contracts() {
     let mut recording = gpu.broker().begin_frame().unwrap();
     let root = Rect { x: 4, y: 4, width: 56, height: 56 };
     let mut session = recording
-        .begin_view(RenderViewRoot { client: root, target: root }, resources.as_com_ref())
+        .begin_view(RenderViewRoot { local: root, target: root }, resources.as_com_ref())
         .unwrap();
     let mut view = session.view().unwrap();
     view.bind_pipeline(pipeline.as_com_ref()).unwrap();
@@ -116,7 +116,7 @@ fn regional_depth_clears_ordered_views_and_completion_keep_their_contracts() {
     let first = session.take_block().unwrap();
     let second_root = Rect { x: 20, y: 20, width: 24, height: 24 };
     let mut second = recording
-        .begin_view(RenderViewRoot { client: second_root, target: second_root }, resources.as_com_ref())
+        .begin_view(RenderViewRoot { local: second_root, target: second_root }, resources.as_com_ref())
         .unwrap();
     let mut second_view = second.view().unwrap();
     second_view.bind_pipeline(pipeline.as_com_ref()).unwrap();
@@ -127,7 +127,7 @@ fn regional_depth_clears_ordered_views_and_completion_keep_their_contracts() {
     let second_owner = second.take_block().unwrap();
     let third_root = Rect { x: 1, y: 1, width: 2, height: 2 };
     let mut third = recording
-        .begin_view(RenderViewRoot { client: third_root, target: third_root }, resources.as_com_ref())
+        .begin_view(RenderViewRoot { local: third_root, target: third_root }, resources.as_com_ref())
         .unwrap();
     let mut third_view = third.view().unwrap();
     third_view.bind_pipeline(hidden.as_com_ref()).unwrap();
@@ -244,22 +244,22 @@ fn indexed_texture_case(operation: GpuBlendEquation, imported: bool) {
     let mut executor = crate::gpu::backends::wgpu::generic::Executor::new(Core::new(native.clone(), queue.clone()));
     let gpu = GpuDevice::new(executor.core.clone()).unwrap();
     let controller = if imported {
-        gpu.create_client(
-            RenderClientLimits::default(),
+        gpu.create_group(
+            RenderGroupLimits::default(),
             gpu.surface_target(neocogi_platform::render::abi::RenderSurfaceKind::Framebuffer).unwrap(),
-            neocogi_platform::render::abi::RenderClientPermissions {
+            neocogi_platform::render::abi::RenderGroupPermissions {
                 clear_color: true,
                 write_color: true,
                 write_resources: true,
                 import_images: true,
-                ..neocogi_platform::render::abi::RenderClientPermissions::none()
+                ..neocogi_platform::render::abi::RenderGroupPermissions::none()
             },
         )
     } else {
-        gpu.create_client(
-            RenderClientLimits::default(),
+        gpu.create_group(
+            RenderGroupLimits::default(),
             gpu.surface_target(neocogi_platform::render::abi::RenderSurfaceKind::Framebuffer).unwrap(),
-            neocogi_platform::render::abi::RenderClientPermissions::default(),
+            neocogi_platform::render::abi::RenderGroupPermissions::default(),
         )
     }
     .unwrap();
@@ -362,7 +362,7 @@ fn indexed_texture_case(operation: GpuBlendEquation, imported: bool) {
     let mut recording = gpu.broker().begin_frame().unwrap();
     let root = Rect { x: 0, y: 0, width: 8, height: 8 };
     let mut session = recording
-        .begin_view(RenderViewRoot { client: root, target: root }, resources.as_com_ref())
+        .begin_view(RenderViewRoot { local: root, target: root }, resources.as_com_ref())
         .unwrap();
     let mut view = session.view().unwrap();
     view.bind_pipeline(pipeline.as_com_ref()).unwrap();
@@ -478,7 +478,7 @@ fn indexed_texture_case(operation: GpuBlendEquation, imported: bool) {
 fn clear_block(gpu: &GpuDevice, resources: &ComPtr<IRenderResourcesAbi>) -> ComBox<IRenderViewBlockAbi> {
     let mut frame = gpu.broker().begin_frame().unwrap();
     let root = Rect { x: 0, y: 0, width: 8, height: 8 };
-    let mut session = frame.begin_view(RenderViewRoot { client: root, target: root }, resources.as_com_ref()).unwrap();
+    let mut session = frame.begin_view(RenderViewRoot { local: root, target: root }, resources.as_com_ref()).unwrap();
     let mut view = session.view().unwrap();
     view.clear_color(0xff123456).unwrap();
     view.finish().unwrap();
@@ -495,10 +495,10 @@ fn abandoned_preparation_retains_upload_capacity_until_completion() {
     let mut executor = crate::gpu::backends::wgpu::generic::Executor::new(Core::new(native.clone(), queue.clone()));
     let gpu = GpuDevice::new(executor.core.clone()).unwrap();
     let controller = gpu
-        .create_client(
-            RenderClientLimits::default(),
+        .create_group(
+            RenderGroupLimits::default(),
             gpu.surface_target(neocogi_platform::render::abi::RenderSurfaceKind::Framebuffer).unwrap(),
-            neocogi_platform::render::abi::RenderClientPermissions::default(),
+            neocogi_platform::render::abi::RenderGroupPermissions::default(),
         )
         .unwrap();
     let resources = controller.resources().unwrap();
@@ -529,10 +529,10 @@ fn native_buffer_creation_failure_returns_error_without_panicking_or_leaking_sco
     let mut executor = crate::gpu::backends::wgpu::generic::Executor::new(Core::new(native.clone(), queue.clone()));
     let gpu = GpuDevice::new(executor.core.clone()).unwrap();
     let controller = gpu
-        .create_client(
-            RenderClientLimits::default(),
+        .create_group(
+            RenderGroupLimits::default(),
             gpu.surface_target(neocogi_platform::render::abi::RenderSurfaceKind::Framebuffer).unwrap(),
-            neocogi_platform::render::abi::RenderClientPermissions::default(),
+            neocogi_platform::render::abi::RenderGroupPermissions::default(),
         )
         .unwrap();
     let resources = controller.resources().unwrap();
@@ -568,15 +568,15 @@ fn partial_preparation_failure_keeps_resource_versions_charged_through_upload_co
         let mut executor = crate::gpu::backends::wgpu::generic::Executor::new(Core::new(native.clone(), queue.clone()));
         let gpu = GpuDevice::new(executor.core.clone()).unwrap();
         let controller = gpu
-            .create_client(
-                RenderClientLimits::default(),
+            .create_group(
+                RenderGroupLimits::default(),
                 gpu.surface_target(neocogi_platform::render::abi::RenderSurfaceKind::Framebuffer).unwrap(),
-                neocogi_platform::render::abi::RenderClientPermissions {
+                neocogi_platform::render::abi::RenderGroupPermissions {
                     clear_color: true,
                     write_color: true,
                     write_resources: true,
                     import_images: true,
-                    ..neocogi_platform::render::abi::RenderClientPermissions::none()
+                    ..neocogi_platform::render::abi::RenderGroupPermissions::none()
                 },
             )
             .unwrap();
@@ -647,7 +647,7 @@ fn partial_preparation_failure_keeps_resource_versions_charged_through_upload_co
         let mut recording = gpu.broker().begin_frame().unwrap();
         let root = Rect { x: 0, y: 0, width: 8, height: 8 };
         let mut session = recording
-            .begin_view(RenderViewRoot { client: root, target: root }, resources.as_com_ref())
+            .begin_view(RenderViewRoot { local: root, target: root }, resources.as_com_ref())
             .unwrap();
         let mut view = session.view().unwrap();
         view.bind_pipeline(pipeline.as_com_ref()).unwrap();
@@ -727,15 +727,15 @@ fn imported_preparation_flushes_initialization_before_refunding_native_storage()
     let mut executor = crate::gpu::backends::wgpu::generic::Executor::new(Core::new(native.clone(), queue.clone()));
     let gpu = GpuDevice::new(executor.core.clone()).unwrap();
     let controller = gpu
-        .create_client(
-            RenderClientLimits { live_bytes: 8, ..Default::default() },
+        .create_group(
+            RenderGroupLimits { live_bytes: 8, ..Default::default() },
             gpu.surface_target(neocogi_platform::render::abi::RenderSurfaceKind::Framebuffer).unwrap(),
-            neocogi_platform::render::abi::RenderClientPermissions {
+            neocogi_platform::render::abi::RenderGroupPermissions {
                 clear_color: true,
                 write_color: true,
                 write_resources: true,
                 import_images: true,
-                ..neocogi_platform::render::abi::RenderClientPermissions::none()
+                ..neocogi_platform::render::abi::RenderGroupPermissions::none()
             },
         )
         .unwrap();
@@ -778,15 +778,15 @@ fn native_slots_reuse_variants_reject_other_devices_and_release_without_submissi
     let mut executor = crate::gpu::backends::wgpu::generic::Executor::new(Core::new(native.clone(), queue.clone()));
     let gpu = GpuDevice::new(executor.core.clone()).unwrap();
     let domain = gpu
-        .create_client(
+        .create_group(
             Default::default(),
             gpu.surface_target(neocogi_platform::render::abi::RenderSurfaceKind::Framebuffer).unwrap(),
-            neocogi_platform::render::abi::RenderClientPermissions {
+            neocogi_platform::render::abi::RenderGroupPermissions {
                 clear_color: true,
                 write_color: true,
                 write_resources: true,
                 import_images: true,
-                ..neocogi_platform::render::abi::RenderClientPermissions::none()
+                ..neocogi_platform::render::abi::RenderGroupPermissions::none()
             },
         )
         .unwrap();
@@ -828,10 +828,10 @@ fn initialization_submission_is_scoped_and_invalidates_all_compatible_facades_on
     let mut executor = crate::gpu::backends::wgpu::generic::Executor::new(core.clone());
     let gpu = GpuDevice::new(core.clone()).unwrap();
     let domain = gpu
-        .create_client(
+        .create_group(
             Default::default(),
             gpu.surface_target(neocogi_platform::render::abi::RenderSurfaceKind::Framebuffer).unwrap(),
-            neocogi_platform::render::abi::RenderClientPermissions::default(),
+            neocogi_platform::render::abi::RenderGroupPermissions::default(),
         )
         .unwrap();
     let resources = domain.resources().unwrap();
@@ -882,7 +882,7 @@ fn uploaded_resource_slots_keep_native_storage_across_queue_updates() {
     let mut executor = crate::gpu::backends::wgpu::generic::Executor::new(Core::new(native.clone(), queue));
     let gpu = GpuDevice::new(executor.core.clone()).unwrap();
     let domain = gpu
-        .create_client(
+        .create_group(
             Default::default(),
             gpu.surface_target(RenderSurfaceKind::Framebuffer).unwrap(),
             Default::default(),

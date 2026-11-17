@@ -3,26 +3,26 @@ use neocogi_com::{ComPtr, INcBytesComPtrExt, INcStringComPtrExt, NcCopyFromBuffe
 
 /// Consumer-owned generated definitions negotiate by COM identity.
 #[allow(dead_code, clippy::len_without_is_empty)]
-mod client {
+mod gpu_contracts {
     include!(env!("IDL_NEOCOGI_RENDERER"));
 }
 
 /// Consumer-owned platform projection imports the canonical independent audio namespace.
 #[allow(dead_code, clippy::len_without_is_empty)]
-mod platform_client {
+mod platform_contracts {
     include!(env!("IDL_NEOCOGI_PLATFORM"));
 }
 
 /// Separately emitted audio caller negotiates the canonical audio COM identities and enum codecs.
 #[allow(dead_code, clippy::len_without_is_empty)]
-mod audio_client {
+mod audio_contracts {
     include!(env!("IDL_NEOCOGI_AUDIO"));
 }
 
 /// A separately generated caller reads nested enums and typed arrays from a canonical producer.
 fn typed_pipeline_contract() {
     use neocogi_platform::render::{abi, source::PipelineDesc};
-    let source: ComPtr<client::IGpuPipelineSourceAbi> = PipelineDesc {
+    let source: ComPtr<gpu_contracts::IGpuPipelineSourceAbi> = PipelineDesc {
         state: abi::GpuPipelineInfo {
             blend: abi::GpuBlendState::Blend {
                 color: abi::GpuBlendEquation::Subtract {
@@ -53,28 +53,28 @@ fn typed_pipeline_contract() {
     .unwrap();
     assert_eq!(
         source.info().unwrap().blend,
-        client::GpuBlendState::Blend {
-            color: client::GpuBlendEquation::Subtract {
-                src: client::GpuBlendFactor::SrcAlpha,
-                dst: client::GpuBlendFactor::OneMinusSrcAlpha
+        gpu_contracts::GpuBlendState::Blend {
+            color: gpu_contracts::GpuBlendEquation::Subtract {
+                src: gpu_contracts::GpuBlendFactor::SrcAlpha,
+                dst: gpu_contracts::GpuBlendFactor::OneMinusSrcAlpha
             },
-            alpha: client::GpuBlendEquation::Min,
+            alpha: gpu_contracts::GpuBlendEquation::Min,
         }
     );
-    let mut bindings = neocogi_com::NcOutputBuffer::<client::GpuShaderBinding>::new();
+    let mut bindings = neocogi_com::NcOutputBuffer::<gpu_contracts::GpuShaderBinding>::new();
     source.bindings(bindings.output(0, 2)).unwrap();
     assert_eq!(
         bindings.as_slice(),
         [
-            client::GpuShaderBinding {
-                stage: client::GpuShaderStage::Fragment,
+            gpu_contracts::GpuShaderBinding {
+                stage: gpu_contracts::GpuShaderStage::Fragment,
                 slot: 0,
-                kind: client::GpuBindingKind::Uniform(16)
+                kind: gpu_contracts::GpuBindingKind::Uniform(16)
             },
-            client::GpuShaderBinding {
-                stage: client::GpuShaderStage::Fragment,
+            gpu_contracts::GpuShaderBinding {
+                stage: gpu_contracts::GpuShaderStage::Fragment,
                 slot: 0,
-                kind: client::GpuBindingKind::SampledTexture
+                kind: gpu_contracts::GpuBindingKind::SampledTexture
             },
         ]
     );
@@ -87,13 +87,13 @@ fn dynamic_platform_contract(runtime: Runtime, path: std::path::PathBuf) {
     // Runtime validates its descriptor and pins the provider code for process lifetime.
     let id = unsafe { runtime.load_plugin_library(path) };
     assert_eq!(id, neocogi_com::guid_from_qualified_name("neocogi.platform.glow"));
-    let platform = runtime.acquire_plugin_root::<platform_client::PlatformAbi>(id).unwrap();
-    let factory = platform.query::<client::ShaderCompilerFactoryAbi>().unwrap();
+    let platform = runtime.acquire_plugin_root::<platform_contracts::PlatformAbi>(id).unwrap();
+    let factory = platform.query::<gpu_contracts::ShaderCompilerFactoryAbi>().unwrap();
     drop(platform);
-    let compiler = factory.create(client::ShaderTarget::GlslEs300).unwrap();
+    let compiler = factory.create(gpu_contracts::ShaderTarget::GlslEs300).unwrap();
     drop(factory);
-    let request = client::ShaderCompileRequest {
-        stage: client::GpuShaderStage::Vertex,
+    let request = gpu_contracts::ShaderCompileRequest {
+        stage: gpu_contracts::GpuShaderStage::Vertex,
         max_output_bytes: 4194304,
     };
     let source = b"(module (vertex vs () (returns vec4 (builtin position)) (return (vec4 0.25 0.5 0.75 1.0))))";
@@ -101,7 +101,7 @@ fn dynamic_platform_contract(runtime: Runtime, path: std::path::PathBuf) {
         .compile_result(request, NcCopyFromBufferOffset::new(0, source), NcCopyFromBufferOffset::new(0, b"vs"))
         .unwrap();
     assert_eq!(report.status().unwrap(), NC_OK.code());
-    assert_eq!(report.target().unwrap(), client::ShaderTarget::GlslEs300);
+    assert_eq!(report.target().unwrap(), gpu_contracts::ShaderTarget::GlslEs300);
     let code = report.code().unwrap();
     drop(report);
     let error = compiler
@@ -128,24 +128,24 @@ fn main() {
     typed_pipeline_contract();
     let audio = neocogi_platform::audio::capabilities()
         .unwrap()
-        .query::<audio_client::IAudioCapabilitiesAbi>()
+        .query::<audio_contracts::IAudioCapabilitiesAbi>()
         .unwrap();
-    assert_eq!(audio.info().unwrap().backend, audio_client::AudioBackend::Sdl);
-    let mut supported = neocogi_com::NcOutputBuffer::<audio_client::PcmType>::new();
+    assert_eq!(audio.info().unwrap().backend, audio_contracts::AudioBackend::Sdl);
+    let mut supported = neocogi_com::NcOutputBuffer::<audio_contracts::PcmType>::new();
     audio.pcm_types(supported.output(0, audio.pcm_type_count().unwrap() as usize)).unwrap();
     drop(audio);
-    assert!(supported.as_slice().contains(&audio_client::PcmType::FixedPoint(32, 16)));
-    assert!(supported.as_slice().contains(&audio_client::PcmType::UnsignedInteger(8)));
-    let factory: ComPtr<client::ShaderCompilerFactoryAbi> =
+    assert!(supported.as_slice().contains(&audio_contracts::PcmType::FixedPoint(32, 16)));
+    assert!(supported.as_slice().contains(&audio_contracts::PcmType::UnsignedInteger(8)));
+    let factory: ComPtr<gpu_contracts::ShaderCompilerFactoryAbi> =
         neocogi_platform::render::compiler::Factory::from_value(neocogi_platform::render::compiler::Factory)
             .query()
             .unwrap();
-    let root = factory.create(client::ShaderTarget::GlslEs300).unwrap();
+    let root = factory.create(gpu_contracts::ShaderTarget::GlslEs300).unwrap();
     let source = b"(module (vertex vs () (returns vec4 (builtin position)) (return (vec4 0.0 0.0 0.0 1.0))))";
     let report = root
         .compile_result(
-            client::ShaderCompileRequest {
-                stage: client::GpuShaderStage::Vertex,
+            gpu_contracts::ShaderCompileRequest {
+                stage: gpu_contracts::GpuShaderStage::Vertex,
                 max_output_bytes: 4 * 1024 * 1024,
             },
             NcCopyFromBufferOffset::new(0, source),
@@ -153,8 +153,8 @@ fn main() {
         )
         .unwrap();
     assert_eq!(report.status().unwrap(), NC_OK.code());
-    assert_eq!(report.target().unwrap(), client::ShaderTarget::GlslEs300);
-    assert_eq!(report.info().unwrap().target, client::ShaderTarget::GlslEs300);
+    assert_eq!(report.target().unwrap(), gpu_contracts::ShaderTarget::GlslEs300);
+    assert_eq!(report.info().unwrap().target, gpu_contracts::ShaderTarget::GlslEs300);
     // A consumer generated from the merged renderer schema interoperates with
     // ordinary SDK readers by typed QI, including backend format validation.
     use neocogi_platform::render::{

@@ -77,7 +77,7 @@ pub fn fixture<B: NativeResources>(gpu: &GpuDevice<B>, resources: &ComPtr<IRende
     assert_eq!(read.as_slice(), bytes, "native padding must not enter public contents");
     let root = Rect { x: 0, y: 0, width: 8, height: 8 };
     let mut frame = gpu.broker().begin_frame().unwrap();
-    let mut session = frame.begin_view(RenderViewRoot { client: root, target: root }, resources.as_com_ref()).unwrap();
+    let mut session = frame.begin_view(RenderViewRoot { local: root, target: root }, resources.as_com_ref()).unwrap();
     let mut view = session.view().unwrap();
     view.bind_pipeline(pipeline.as_com_ref()).unwrap();
     // Enlarging the public range to native padding remains invalid.
@@ -89,7 +89,7 @@ pub fn fixture<B: NativeResources>(gpu: &GpuDevice<B>, resources: &ComPtr<IRende
         // A rejected view is terminal, so use a fresh session for the accepted exact range.
         drop(view);
         session.expire().unwrap();
-        session = frame.begin_view(RenderViewRoot { client: root, target: root }, resources.as_com_ref()).unwrap();
+        session = frame.begin_view(RenderViewRoot { local: root, target: root }, resources.as_com_ref()).unwrap();
         view = session.view().unwrap();
         view.bind_pipeline(pipeline.as_com_ref()).unwrap();
     }

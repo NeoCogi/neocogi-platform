@@ -43,7 +43,7 @@ impl<B: NativeResources> SurfaceTarget<B> {
     /// Rejects contradictory creation settings with `NC_E_INVALID_ARG` before group allocation.
     /// An initial depth clear requires clear permission; every depth operation requires an attachment.
     /// These checks grant no operations: immutable permission fields still gate recording/pipelines.
-    pub(crate) fn validate(&self, permissions: RenderClientPermissions) -> Result<(), NcStatus> {
+    pub(crate) fn validate(&self, permissions: RenderGroupPermissions) -> Result<(), NcStatus> {
         if permissions.initialize_depth && !permissions.clear_depth {
             return Err(NC_E_INVALID_ARG);
         }

@@ -51,7 +51,7 @@ The SDK includes audio, window hosting and shader compilation, with **Glow as th
 default renderer**. Select Vulkan or WGPU with `--no-default-features --features
 vulkan` or `wgpu`; exactly one renderer is required. Browser hosting uses
 `--no-default-features --features webgl` and `wasm32-unknown-unknown`.
-Build scripts and contracts-only clients use `neocogi-platform-contracts`, which
+Build scripts and contracts-only callers use `neocogi-platform-contracts`, which
 has no SDK/native implementation dependency. Enable its `build-support` feature
 for generation and resource staging.
 The built-in COM compiler accepts S-expressions and, with the optional

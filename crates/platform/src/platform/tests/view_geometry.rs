@@ -15,7 +15,7 @@ impl IRenderStream for ViewStream {
 }
 
 /// Accepted wide x/y edges draw pixels and leave the following ordinary frame usable.
-/// The bounded reference checks both widened arithmetic and fitting to the visible client area.
+/// The bounded reference checks both widened arithmetic and fitting to the visible local area.
 #[test]
 #[ignore = "requires SDL GL; run with SDL_VIDEODRIVER=offscreen"]
 fn wide_view_edges_draw_and_recover_through_generated_com() {
@@ -27,8 +27,8 @@ fn wide_view_edges_draw_and_recover_through_generated_com() {
     let device = Rc::downgrade(&native.device);
     let window = WindowObject::from_value(native);
     let renderer: ComPtr<IRendererAbi> = window.query().unwrap();
-    let clients: ComPtr<IRenderClientFactoryAbi> = window.query().unwrap();
-    let controller = framebuffer_group(&clients, RenderClientLimits::default(), RenderClientPermissions::default());
+    let groups: ComPtr<IRenderResourceGroupFactoryAbi> = window.query().unwrap();
+    let controller = framebuffer_group(&groups, RenderGroupLimits::default(), RenderGroupPermissions::default());
     let resources = controller.resources().unwrap();
     let broker = window
         .query::<IPlatformWindowAbi>()
@@ -46,13 +46,13 @@ fn wide_view_edges_draw_and_recover_through_generated_com() {
     };
     // Capture only after COM render returns and has released its exclusive device access.
     let draw = |rect: Rect, clip: Rect| {
-        let client = Rect {
+        let local = Rect {
             x: (i64::from(clip.x) - i64::from(rect.x)) as i32,
             y: (i64::from(clip.y) - i64::from(rect.y)) as i32,
             width: clip.width,
             height: clip.height,
         };
-        let block = graphics(&resources, &broker, RenderViewRoot { client, target: clip });
+        let block = graphics(&resources, &broker, RenderViewRoot { local, target: clip });
         let stream: ComPtr<IRenderStreamAbi> = ViewStream::from_value(ViewStream { blocks: vec![block] }).query().unwrap();
         renderer.render(info, stream.as_com_ref()).map_err(|error| error.status).unwrap();
         let owner = device.upgrade().unwrap();

@@ -79,7 +79,7 @@ pub fn block<B: neocogi_platform::gpu::native::NativeResources>(
     let mut recording = gpu.broker().begin_frame().unwrap();
     let root = Rect { x: 0, y: 0, width: 8, height: 8 };
     let mut session = recording
-        .begin_view(RenderViewRoot { client: root, target: root }, resources.as_com_ref())
+        .begin_view(RenderViewRoot { local: root, target: root }, resources.as_com_ref())
         .unwrap();
     let mut view = session.view().unwrap();
     view.bind_pipeline(pipeline.as_com_ref()).unwrap();

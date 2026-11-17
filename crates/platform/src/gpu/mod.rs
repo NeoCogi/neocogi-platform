@@ -1,6 +1,6 @@
 //! Generic graphics admission and the platform's selected renderer backend.
 //!
-//! Semantic geometry, cameras and material shaders belong to clients. Public
+//! Semantic geometry, cameras and material shaders belong to callers. Public
 //! resources have exclusive COM owners; commands retain immutable private data.
 #![deny(missing_docs)]
 

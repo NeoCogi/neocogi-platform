@@ -32,7 +32,7 @@ fn copy<T: ComInlineValue>(data: &[T], mut output: NcOutputWriter<'_, T>) -> Res
 }
 
 #[com_object(interfaces(IGpuPipelineSource))]
-/// Pipeline descriptor reader owned by the client fixture.
+/// Pipeline descriptor reader owned by the resource_group fixture.
 struct PipelineSource {
     /// Counts derive from the arrays in fixture construction.
     info: GpuPipelineInfo,
@@ -65,7 +65,7 @@ impl IGpuPipelineSource for PipelineSource {
 /// Translated visible panel, distinct from its widget-local root origin.
 fn root() -> RenderViewRoot {
     RenderViewRoot {
-        client: Rect { x: 5, y: 7, width: 100, height: 80 },
+        local: Rect { x: 5, y: 7, width: 100, height: 80 },
         target: Rect { x: 10, y: 20, width: 100, height: 80 },
     }
 }
@@ -80,7 +80,7 @@ fn dropping_unfinished_view_preserves_recording_until_host_expiry() {
         .query()
         .unwrap(),
     );
-    let (_controller, factory) = client(&device, RenderClientLimits::default());
+    let (_controller, factory) = resource_group(&device, RenderGroupLimits::default());
     let mut frame = device.broker().begin_frame().unwrap();
     let mut session = frame.begin_view(root(), factory.as_com_ref()).unwrap();
     let mut view = session.view().unwrap();
@@ -98,7 +98,7 @@ fn dropping_unfinished_view_preserves_recording_until_host_expiry() {
     frame.finish().unwrap();
 }
 
-/// The first command error survives both explicit cancellation and client-owner destruction.
+/// The first command error survives both explicit cancellation and view handle destruction.
 #[test]
 fn cancel_and_drop_preserve_rejection_and_its_first_status() {
     let device = new_device(
@@ -108,7 +108,7 @@ fn cancel_and_drop_preserve_rejection_and_its_first_status() {
         .query()
         .unwrap(),
     );
-    let (_controller, factory) = client(&device, RenderClientLimits::default());
+    let (_controller, factory) = resource_group(&device, RenderGroupLimits::default());
     let mut frame = device.broker().begin_frame().unwrap();
     let mut session = frame.begin_view(root(), factory.as_com_ref()).unwrap();
     let mut view = session.view().unwrap();
@@ -128,7 +128,7 @@ fn cancel_and_drop_preserve_rejection_and_its_first_status() {
     assert_eq!(session.state().unwrap(), RenderViewState::Expired);
 }
 
-/// Healthy cancellation releases payload immediately and is the only client abandonment success.
+/// Healthy cancellation releases payload immediately and is the only view abandonment success.
 #[test]
 fn healthy_cancel_is_idempotent_and_finish_survives_facade_drop() {
     let device = new_device(
@@ -138,7 +138,7 @@ fn healthy_cancel_is_idempotent_and_finish_survives_facade_drop() {
         .query()
         .unwrap(),
     );
-    let (_controller, factory) = client(&device, RenderClientLimits::default());
+    let (_controller, factory) = resource_group(&device, RenderGroupLimits::default());
     let mut frame = device.broker().begin_frame().unwrap();
     let mut session = frame.begin_view(root(), factory.as_com_ref()).unwrap();
     let mut view = session.view().unwrap();
@@ -162,13 +162,13 @@ fn healthy_cancel_is_idempotent_and_finish_survives_facade_drop() {
     drop(block);
     assert_eq!(device.recording_usage(factory.as_com_ref()).unwrap(), (0, 0));
 }
-/// Retains the host controller while clients share a restricted factory.
-fn client(device: &GpuDevice, limits: RenderClientLimits) -> (ComBox<IRenderClientDomainAbi>, ComPtr<IRenderResourcesAbi>) {
+/// Retains the host controller while callers share a restricted factory.
+fn resource_group(device: &GpuDevice, limits: RenderGroupLimits) -> (ComBox<IRenderResourceGroupAbi>, ComPtr<IRenderResourcesAbi>) {
     let controller = device
-        .create_client(
+        .create_group(
             limits,
             device.surface_target(neocogi_platform::render::abi::RenderSurfaceKind::Framebuffer).unwrap(),
-            neocogi_platform::render::abi::RenderClientPermissions::default(),
+            neocogi_platform::render::abi::RenderGroupPermissions::default(),
         )
         .unwrap();
     let factory = controller.resources().unwrap();
@@ -207,23 +207,23 @@ fn color_only_groups_seal_without_depth_initialization_and_cannot_clear_depth() 
         .unwrap(),
     );
     let color_only = device
-        .create_client(
-            RenderClientLimits::default(),
+        .create_group(
+            RenderGroupLimits::default(),
             device.surface_target(neocogi_platform::render::abi::RenderSurfaceKind::Framebuffer).unwrap(),
-            neocogi_platform::render::abi::RenderClientPermissions {
+            neocogi_platform::render::abi::RenderGroupPermissions {
                 clear_color: true,
                 write_color: true,
                 write_resources: true,
                 import_images: true,
-                ..neocogi_platform::render::abi::RenderClientPermissions::none()
+                ..neocogi_platform::render::abi::RenderGroupPermissions::none()
             },
         )
         .unwrap();
     let depth_enabled = device
-        .create_client(
-            RenderClientLimits::default(),
+        .create_group(
+            RenderGroupLimits::default(),
             device.surface_target(neocogi_platform::render::abi::RenderSurfaceKind::Framebuffer).unwrap(),
-            neocogi_platform::render::abi::RenderClientPermissions::default(),
+            neocogi_platform::render::abi::RenderGroupPermissions::default(),
         )
         .unwrap();
     for (controller, initialize_depth) in [(&color_only, false), (&depth_enabled, true)] {
@@ -260,15 +260,15 @@ fn color_only_group_pipeline_admission_excludes_depth_state() {
         .unwrap(),
     );
     let controller = device
-        .create_client(
-            RenderClientLimits::default(),
+        .create_group(
+            RenderGroupLimits::default(),
             device.surface_target(neocogi_platform::render::abi::RenderSurfaceKind::Framebuffer).unwrap(),
-            neocogi_platform::render::abi::RenderClientPermissions {
+            neocogi_platform::render::abi::RenderGroupPermissions {
                 clear_color: true,
                 write_color: true,
                 write_resources: true,
                 import_images: true,
-                ..neocogi_platform::render::abi::RenderClientPermissions::none()
+                ..neocogi_platform::render::abi::RenderGroupPermissions::none()
             },
         )
         .unwrap();
@@ -325,7 +325,7 @@ fn make_pipeline(
         .create_pipeline(source.as_com_ref(), vertex.as_com_ref(), fragment.as_com_ref())
         .unwrap()
 }
-/// Standard float3 test layout, still owned entirely by the client.
+/// Standard float3 test layout, still owned entirely by the test fixture.
 fn vertex_pipeline(factory: &ComPtr<IRenderResourcesAbi>) -> ComBox<IGpuPipelineAbi> {
     make_pipeline(
         factory,
@@ -355,7 +355,7 @@ fn draws_snapshot_versions_in_order_and_finished_owner_drop_preserves_the_block(
         .query()
         .unwrap(),
     );
-    let (_controller, factory) = client(&device, RenderClientLimits::default());
+    let (_controller, factory) = resource_group(&device, RenderGroupLimits::default());
     let pipeline = vertex_pipeline(&factory);
     let vertices = factory.create_streamed_buffer(GpuBufferDesc::Vertex { byte_len: 36 }).unwrap();
     let broker = device.broker();
@@ -400,7 +400,7 @@ fn lowered_capacity_receipts_survive_blocks_and_refund_only_after_the_last_copy(
         .query()
         .unwrap(),
     );
-    let (_controller, factory) = client(&device, RenderClientLimits::default());
+    let (_controller, factory) = resource_group(&device, RenderGroupLimits::default());
     let mut frame = device.broker().begin_frame().unwrap();
     let mut session = frame.begin_view(root(), factory.as_com_ref()).unwrap();
     let mut view = session.view().unwrap();
@@ -429,7 +429,7 @@ fn weak_bindings_do_not_keep_resource_owners_alive() {
         .query()
         .unwrap(),
     );
-    let (_controller, factory) = client(&device, RenderClientLimits::default());
+    let (_controller, factory) = resource_group(&device, RenderGroupLimits::default());
     let pipeline = vertex_pipeline(&factory);
     let vertices = buffer(&factory, GpuBufferRole::Vertex, floats(&[0.0; 9]));
     let weak = vertices.downgrade();
@@ -449,7 +449,7 @@ fn weak_bindings_do_not_keep_resource_owners_alive() {
     frame.abort().unwrap();
 }
 
-/// Host expiry releases payload/capacity even while a client keeps the ComBox facade.
+/// Host expiry releases payload/capacity even while a caller retains the ComBox view handle.
 #[test]
 fn retained_expired_views_keep_only_bounded_shells_and_cannot_reactivate() {
     let device = new_device(
@@ -459,11 +459,11 @@ fn retained_expired_views_keep_only_bounded_shells_and_cannot_reactivate() {
         .query()
         .unwrap(),
     );
-    let (_controller, factory) = client(
+    let (_controller, factory) = resource_group(
         &device,
-        RenderClientLimits {
+        RenderGroupLimits {
             live_views: 2,
-            ..RenderClientLimits::default()
+            ..RenderGroupLimits::default()
         },
     );
     let broker = device.broker();
@@ -507,7 +507,7 @@ fn frame_drop_aborts_pending_work_and_old_finished_drop_cannot_abort_a_new_frame
         .query()
         .unwrap(),
     );
-    let (_controller, factory) = client(&device, RenderClientLimits::default());
+    let (_controller, factory) = resource_group(&device, RenderGroupLimits::default());
     let broker = device.broker();
     let mut first = broker.begin_frame().unwrap();
     assert!(broker.begin_frame().is_err());
@@ -538,11 +538,11 @@ fn per_frame_work_is_not_refunded_by_cancel_or_sequential_view_creation() {
         .query()
         .unwrap(),
     );
-    let (_controller, factory) = client(
+    let (_controller, factory) = resource_group(
         &device,
-        RenderClientLimits {
+        RenderGroupLimits {
             frame_draws: 3,
-            ..RenderClientLimits::default()
+            ..RenderGroupLimits::default()
         },
     );
     let broker = device.broker();
@@ -575,7 +575,7 @@ fn scoped_clears_flatten_clips_and_reset_does_not_clear_attachment_depth() {
         .query()
         .unwrap(),
     );
-    let (_controller, factory) = client(&device, RenderClientLimits::default());
+    let (_controller, factory) = resource_group(&device, RenderGroupLimits::default());
     let mut frame = device.broker().begin_frame().unwrap();
     let mut session = frame.begin_view(root(), factory.as_com_ref()).unwrap();
     let mut view = session.view().unwrap();
@@ -617,7 +617,7 @@ fn domain_close_drains_sealed_pending_work_and_rejects_already_harvested_admissi
         .query()
         .unwrap(),
     );
-    let (mut controller, factory) = client(&device, RenderClientLimits::default());
+    let (mut controller, factory) = resource_group(&device, RenderGroupLimits::default());
     let account = device.domain(factory.as_com_ref()).unwrap().account.clone();
     let mut frame = device.broker().begin_frame().unwrap();
     let mut session = frame.begin_view(root(), factory.as_com_ref()).unwrap();
@@ -630,7 +630,7 @@ fn domain_close_drains_sealed_pending_work_and_rejects_already_harvested_admissi
     assert!(session.take_block().is_err());
     assert!(view.info().is_err());
     frame.abort().unwrap();
-    let (mut controller, factory) = client(&device, RenderClientLimits::default());
+    let (mut controller, factory) = resource_group(&device, RenderGroupLimits::default());
     let mut frame = device.broker().begin_frame().unwrap();
     let mut session = frame.begin_view(root(), factory.as_com_ref()).unwrap();
     let mut view = session.view().unwrap();
@@ -664,8 +664,8 @@ fn other_device_blocks_factories_and_client_qi_cannot_recover_host_authority() {
         .query()
         .unwrap(),
     );
-    let (_controller, factory) = client(&device, RenderClientLimits::default());
-    let (_other_controller, foreign) = client(&other, RenderClientLimits::default());
+    let (_controller, factory) = resource_group(&device, RenderGroupLimits::default());
+    let (_other_controller, foreign) = resource_group(&other, RenderGroupLimits::default());
     let mut frame = device.broker().begin_frame().unwrap();
     assert!(matches!(frame.begin_view(root(), foreign.as_com_ref()), Err(RENDER_E_OWNER)));
     let mut session = frame.begin_view(root(), factory.as_com_ref()).unwrap();
@@ -691,11 +691,11 @@ fn zero_instance_index_work_and_unsupported_restart_values_reject() {
         .query()
         .unwrap(),
     );
-    let (_controller, factory) = client(
+    let (_controller, factory) = resource_group(
         &device,
-        RenderClientLimits {
+        RenderGroupLimits {
             frame_indices: 6,
-            ..RenderClientLimits::default()
+            ..RenderGroupLimits::default()
         },
     );
     let pipeline = make_pipeline(&factory, PROCEDURAL, Vec::new(), Vec::new(), Vec::new());
@@ -709,7 +709,7 @@ fn zero_instance_index_work_and_unsupported_restart_values_reject() {
     view.cancel().unwrap();
     assert_eq!(frame.finish(), Err(RENDER_E_STATE));
     frame.abort().unwrap();
-    let (_controller, factory) = client(&device, RenderClientLimits::default());
+    let (_controller, factory) = resource_group(&device, RenderGroupLimits::default());
     let pipeline = make_pipeline(&factory, PROCEDURAL, Vec::new(), Vec::new(), Vec::new());
     let indices = buffer(&factory, GpuBufferRole::Index, [u16::MAX, 0, 1].iter().flat_map(|n| n.to_le_bytes()).collect());
     let mut frame = device.broker().begin_frame().unwrap();
@@ -731,7 +731,7 @@ fn index_range_alignment_vertex_coverage_and_invalid_depth_reject_atomically() {
             .query()
             .unwrap(),
         );
-        let (_controller, factory) = client(&device, RenderClientLimits::default());
+        let (_controller, factory) = resource_group(&device, RenderGroupLimits::default());
         let pipeline = vertex_pipeline(&factory);
         let vertices = buffer(&factory, GpuBufferRole::Vertex, floats(&[0.0; 9]));
         let indices = buffer(&factory, GpuBufferRole::Index, [0u32, 1, 3].iter().flat_map(|n| n.to_le_bytes()).collect());
@@ -772,7 +772,7 @@ fn unbalanced_stack_and_root_pop_reject_even_after_cancel() {
             .query()
             .unwrap(),
         );
-        let (_controller, factory) = client(&device, RenderClientLimits::default());
+        let (_controller, factory) = resource_group(&device, RenderGroupLimits::default());
         let mut frame = device.broker().begin_frame().unwrap();
         let mut session = frame.begin_view(root(), factory.as_com_ref()).unwrap();
         let mut view = session.view().unwrap();
@@ -806,7 +806,7 @@ fn instance_streams_are_validated_independently_and_capture_each_binding() {
             .query()
             .unwrap(),
         );
-        let (_controller, factory) = client(&device, RenderClientLimits::default());
+        let (_controller, factory) = resource_group(&device, RenderGroupLimits::default());
         let pipeline = make_pipeline(
             &factory,
             CODE,
@@ -885,7 +885,7 @@ fn sampled_and_uniform_versions_are_captured_per_draw() {
         .query()
         .unwrap(),
     );
-    let (_controller, factory) = client(&device, RenderClientLimits::default());
+    let (_controller, factory) = resource_group(&device, RenderGroupLimits::default());
     let pipeline = make_pipeline(
         &factory,
         CODE,

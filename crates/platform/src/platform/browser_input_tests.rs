@@ -26,12 +26,12 @@ impl IRenderStream for SurfaceBlocks {
 }
 
 /// Records a regional color clear with depth disabled; no automatic depth command may be required.
-fn surface_clear(host: &ComPtr<IRenderHostAbi>, group: &neocogi_com::ComBox<IRenderClientDomainAbi>) -> ComPtr<IRenderStreamAbi> {
+fn surface_clear(host: &ComPtr<IRenderHostAbi>, group: &neocogi_com::ComBox<IRenderResourceGroupAbi>) -> ComPtr<IRenderStreamAbi> {
     let bounds = Rect { x: 0, y: 0, width: 4, height: 4 };
     let mut frame = host.recording_broker().unwrap().begin_frame().unwrap();
     let resources = group.resources().unwrap();
     let mut session = frame
-        .begin_view(RenderViewRoot { client: bounds, target: bounds }, resources.as_com_ref())
+        .begin_view(RenderViewRoot { local: bounds, target: bounds }, resources.as_com_ref())
         .unwrap();
     let mut view = session.view().unwrap();
     view.clear_color(0xff0000ff).unwrap();
@@ -53,22 +53,22 @@ fn browser_surface_targets() {
     let window: ComPtr<IPlatformWindowAbi> = WindowObject::from_value(object).query().unwrap();
     let drawable = window.size().unwrap();
     let host = window.graphics_host().unwrap();
-    let groups: ComPtr<IRenderClientFactoryAbi> = host.query().unwrap();
+    let groups: ComPtr<IRenderResourceGroupFactoryAbi> = host.query().unwrap();
     let surfaces: ComPtr<IRenderSurfaceFactoryAbi> = host.query().unwrap();
     assert!(host.query::<IRendererAbi>().is_err());
-    let permissions = RenderClientPermissions {
+    let permissions = RenderGroupPermissions {
         clear_color: true,
         write_color: true,
         write_resources: true,
         import_images: true,
-        ..RenderClientPermissions::none()
+        ..RenderGroupPermissions::none()
     };
     let framebuffer = surfaces.create_surface(RenderSurfaceDesc::Framebuffer).unwrap();
     assert_eq!(framebuffer.size().unwrap(), drawable);
     assert!(framebuffer.query::<IRendererAbi>().is_err());
-    let window_group = groups.create_client(Default::default(), framebuffer.as_com_ref(), permissions).unwrap();
+    let window_group = groups.create_group(Default::default(), framebuffer.as_com_ref(), permissions).unwrap();
     let image = surfaces.create_surface(RenderSurfaceDesc::Image(size)).unwrap();
-    let image_group = groups.create_client(Default::default(), image.as_com_ref(), permissions).unwrap();
+    let image_group = groups.create_group(Default::default(), image.as_com_ref(), permissions).unwrap();
     let image_renderer: ComPtr<IRendererAbi> = image.query().unwrap();
     let image_stream = surface_clear(&host, &image_group);
     let info = RenderInfo {
@@ -304,15 +304,15 @@ async fn canonical_browser_derivatives() {
     renderer.create_texture(size, Some(&[0; 4])).unwrap();
     let gpu = neocogi_platform::gpu::GpuDevice::new(renderer.core()).unwrap();
     let domain = gpu
-        .create_client(
+        .create_group(
             Default::default(),
             gpu.surface_target(neocogi_platform::render::abi::RenderSurfaceKind::Framebuffer).unwrap(),
-            neocogi_platform::render::abi::RenderClientPermissions {
+            neocogi_platform::render::abi::RenderGroupPermissions {
                 clear_color: true,
                 write_color: true,
                 write_resources: true,
                 import_images: true,
-                ..neocogi_platform::render::abi::RenderClientPermissions::none()
+                ..neocogi_platform::render::abi::RenderGroupPermissions::none()
             },
         )
         .unwrap();

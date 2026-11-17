@@ -23,7 +23,7 @@ pub(super) type Window = web_sys::HtmlCanvasElement;
 
 /// Concrete native owner. Its field order destroys all UI/application GPU resources before the surface.
 pub(super) struct Gpu {
-    /// UI and generic client graphics execute on this single concrete backend.
+    /// UI and generic application graphics execute on this single concrete backend.
     renderer: Renderer,
     /// Shared loader is used only to check GL execution errors before presentation.
     #[cfg(any(feature = "glow", feature = "webgl"))]
@@ -92,7 +92,7 @@ impl Gpu {
         println!("native_calls setup={setup_calls:?} cold={cold_calls:?} warm_total={warm_calls:?}");
         println!(
             "native_cost workload={} adapter={adapter:?} size=64x64 setup_ns={setup_ns} ui_record_ns={record_ns} commands={commands} draws={draws} buffer_versions={buffers} texture_versions={textures} pipeline_versions={pipelines} cold_prepare_ns={} cold_completed_execute_ns={} warm_frames=100 warm_prepare_ns={} warm_completed_execute_ns={} reused_immutable_versions=true",
-            if mixed { "ui+client" } else { "ui" },
+            if mixed { "ui+application" } else { "ui" },
             cold.0,
             cold.1,
             warm.0 / 100,

@@ -65,7 +65,7 @@ impl std::error::Error for RenderError {
 /// Reads one owned report, with no query of the renderer or any global error state.
 /// Successful reports never read text. If text export fails or exceeds the cap,
 /// preserve the original operation code and supply a bounded local explanation.
-/// Derived creation clients dereference to this same generated base client.
+/// Derived creation wrappers dereference to this same generated base wrapper.
 pub fn check_outcome(report: &IRenderOutcomeClient, operation: &str) -> Result<(), RenderError> {
     let status = NcStatus::from_code(report.status().map_err(|status| RenderError::from(status).context(operation))?);
     if status.is_ok() {
