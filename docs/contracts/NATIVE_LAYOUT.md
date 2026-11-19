@@ -11,7 +11,9 @@ The library stages as `libnc_platform.so` (target-specific suffix/prefix
 on macOS/Windows). No independent compiler library is deployed or loaded.
 Use the same profile/target/output as the application. Dynamic applications build
 with only their `dynamic` feature; backend features belong to static implementations.
-At startup the executable loads that one file and identifies its backend from the
+At startup the executable initializes its linked COM host and loads that one
+file. The host finds the descriptor through `nc_get_plugin_descriptor_v3` and
+checks core generation 21. The executable identifies its backend from the
 descriptor. Optional `--backend NAME` verifies the compiled backend; a mismatch
 rejects before native initialization or asset work. Missing files produce
 preparation instructions. Loading never probes another file or silently chooses

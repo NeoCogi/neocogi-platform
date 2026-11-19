@@ -68,8 +68,7 @@ fn emissive_factors_and_optional_images_survive_loading_and_atlas_preparation() 
 #[ignore = "requires a native SDL GL driver; SDL_VIDEODRIVER=offscreen is sufficient"]
 fn emissive_materials_render_their_factor_and_texture_independently_of_environment_light() {
     let _native = NATIVE_SESSION.lock().expect("previous native viewer case panicked");
-    // SAFETY: This final test executable retains the statically linked process host for every COM call.
-    let _runtime = unsafe { neocogi_com::Runtime::__from_host_api(neocogi_com_host::initialize_process()) }.unwrap();
+    let _runtime = neocogi_com_host::initialize_runtime();
     let region = environment::Region { x: 0, y: 0, width: 1, height: 1 };
     let lighting = Lighting {
         environment: Environment {
@@ -161,8 +160,7 @@ fn command_line_is_checked_before_window_creation() {
 #[ignore = "requires downloaded GLBs and a native SDL GL driver (offscreen is sufficient)"]
 fn models_render_animate_and_respond_to_arcball_pan_zoom() {
     let _native = NATIVE_SESSION.lock().expect("previous native viewer case panicked");
-    // SAFETY: This test executable owns the statically linked immutable process host.
-    let _runtime = unsafe { neocogi_com::Runtime::__from_host_api(neocogi_com_host::initialize_process()) }.expect("COM host");
+    let _runtime = neocogi_com_host::initialize_runtime();
     // Keep all native probes in this one test so SDL's event/context owner is never concurrent.
     hdr_interpolation_probe();
     let mut lighting = Lighting {

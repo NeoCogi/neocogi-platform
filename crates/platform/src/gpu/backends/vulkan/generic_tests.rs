@@ -1,7 +1,7 @@
 //! Headless direct-Vulkan acceptance uses real COM recording, native passes and readback.
 use super::*;
 use crate::gpu::backends::vulkan::sampled;
-use neocogi_com::{ComBox, ComPtr, NcCopyFromBufferOffset};
+use neocogi_com_sdk::{ComBox, ComPtr, NcCopyFromBufferOffset};
 use crate::gpu::{
     source::{Bytes, PipelineDesc},
 };

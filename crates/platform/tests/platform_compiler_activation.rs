@@ -21,8 +21,7 @@ fn platform_plugin_exposes_its_builtin_shader_factory() {
         );
         return;
     }
-    // SAFETY: This executable owns the immutable process-lived host and linked descriptor graph.
-    let runtime = unsafe { neocogi_com::Runtime::__from_host_api(neocogi_com_host::initialize_process()) }.unwrap();
+    let runtime = neocogi_com_host::initialize_runtime();
     let descriptor = neocogi_platform::platform::plugin_descriptor();
     // SAFETY: All descriptor metadata and code remain statically mapped for process lifetime.
     unsafe { runtime.register_plugin_descriptor(descriptor) }.unwrap();
@@ -43,15 +42,15 @@ fn platform_plugin_exposes_its_builtin_shader_factory() {
                 stage: neocogi_platform::render::abi::GpuShaderStage::Vertex,
                 max_output_bytes: 4194304,
             },
-            neocogi_com::NcCopyFromBufferOffset::new(0, b"(module (vertex vs () (returns vec4 (builtin position)) (return (vec4 0.0 0.0 0.5 1.0))))"),
-            neocogi_com::NcCopyFromBufferOffset::new(0, b"vs"),
+            neocogi_com_sdk::NcCopyFromBufferOffset::new(0, b"(module (vertex vs () (returns vec4 (builtin position)) (return (vec4 0.0 0.0 0.5 1.0))))"),
+            neocogi_com_sdk::NcCopyFromBufferOffset::new(0, b"vs"),
         )
         .unwrap();
     assert_eq!(result.target().unwrap(), target);
     drop((first, second));
     assert!(
         runtime
-            .plugin_info(neocogi_com::guid_from_qualified_name("neocogi.shader.compiler"))
+            .plugin_info(neocogi_com_sdk::guid_from_qualified_name("neocogi.shader.compiler"))
             .unwrap()
             .is_none()
     );
@@ -60,7 +59,7 @@ fn platform_plugin_exposes_its_builtin_shader_factory() {
 /// Platform's generated external audio signatures use the canonical namespace without initializing video.
 #[test]
 fn platform_audio_imports_preserve_typed_stream_authority() {
-    use neocogi_com::NC_E_NOINTERFACE;
+    use neocogi_com_sdk::NC_E_NOINTERFACE;
     use neocogi_platform_contracts::audio::*;
     const CHILD: &str = "NEOCOGI_PLATFORM_AUDIO_NAMESPACE";
     if std::env::var_os(CHILD).is_none() {
@@ -79,8 +78,7 @@ fn platform_audio_imports_preserve_typed_stream_authority() {
         );
         return;
     }
-    // SAFETY: This final executable owns the process-lived host tables and linked descriptor.
-    let runtime = unsafe { neocogi_com::Runtime::__from_host_api(neocogi_com_host::initialize_process()) }.unwrap();
+    let runtime = neocogi_com_host::initialize_runtime();
     let descriptor = neocogi_platform::platform::plugin_descriptor();
     // SAFETY: Descriptor metadata and provider code stay statically mapped throughout the process.
     unsafe { runtime.register_plugin_descriptor(descriptor) }.unwrap();

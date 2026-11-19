@@ -1143,7 +1143,6 @@ dependencies = [
 name = "neocogi-browser-tests"
 version = "0.3.0-alpha.2"
 dependencies = [
- "neocogi-com",
  "neocogi-com-host",
  "neocogi-platform",
  "wasm-bindgen",
@@ -1152,65 +1151,65 @@ dependencies = [
 
 [[package]]
 name = "neocogi-com"
-version = "0.3.0-alpha.1"
+version = "0.4.0-alpha.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "17e7fb30f381640047e9b25a72ecb329961f7a468b209b5f76210c14af29052c"
-dependencies = [
- "neocogi-com-core",
- "neocogi-com-macros",
-]
-
-[[package]]
-name = "neocogi-com-core"
-version = "0.3.0-alpha.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "73d0b32336745a9fc1d6d7b2df93638bde022cce3634e3e0f9108dda04a9aca7"
+checksum = "e9a50e191180bec96b13fb193fcfbb44fa2e2a154590d0916dc85b7ae631bc19"
 
 [[package]]
 name = "neocogi-com-host"
-version = "0.3.0-alpha.1"
+version = "0.4.0-alpha.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a19843c5ba61529a25c2a292cfa759550a02257bf2d7bc943f3c77457aafc910"
+checksum = "a38d28264be96d6460ce5ca527fc7ece442df6b02fd549a81b1d357bc6d47a73"
 dependencies = [
  "neocogi-com",
- "neocogi-com-core",
+ "neocogi-com-sdk",
 ]
 
 [[package]]
 name = "neocogi-com-macros"
-version = "0.3.0-alpha.1"
+version = "0.4.0-alpha.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2c5e0e450a37a4d73224e5fc77962041f7e66280bf3d78a9c4ae3be125625f70"
+checksum = "ef618582b79a2432bad73fc4423c6aa75643775d5d6e7eebb733cae95c705547"
 dependencies = [
  "neocogi-idl",
  "syn 2.0.119",
 ]
 
 [[package]]
-name = "neocogi-com-serialization"
-version = "0.3.0-alpha.1"
+name = "neocogi-com-sdk"
+version = "0.4.0-alpha.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2254b68afd6d0a4093c3f5b6344c8e9bd37d796cabe35ef29a69f742ece2b090"
+checksum = "cd08e834776bf167da19dca0d18036830a4bd46aabc6a008146c213914913793"
 dependencies = [
  "neocogi-com",
+ "neocogi-com-macros",
+]
+
+[[package]]
+name = "neocogi-com-serialization"
+version = "0.4.0-alpha.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1b91489cefb199e7815bc49648d64a66822b05fc22482f559c91b272557d070a"
+dependencies = [
+ "neocogi-com-sdk",
 ]
 
 [[package]]
 name = "neocogi-example-plugins"
 version = "0.3.0-alpha.2"
 dependencies = [
- "neocogi-com",
+ "neocogi-com-sdk",
  "neocogi-platform-contracts",
  "tempfile",
 ]
 
 [[package]]
 name = "neocogi-idl"
-version = "0.3.0-alpha.1"
+version = "0.4.0-alpha.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ad62a2460af5c1e6641d30a8a9ae648dcd49803bf875350d43bb22f2f1e7f272"
+checksum = "40bc921cd1f51610a80ede02dcdf8a455c905c215228fc1a266061151c0ed193"
 dependencies = [
- "neocogi-com-core",
+ "neocogi-com",
  "prettyplease",
  "proc-macro2",
  "quote",
@@ -1227,8 +1226,8 @@ dependencies = [
  "ash-window",
  "glow 0.18.0",
  "js-sys",
- "neocogi-com",
  "neocogi-com-host",
+ "neocogi-com-sdk",
  "neocogi-platform-contracts",
  "pollster",
  "raw-window-handle",
@@ -1247,8 +1246,8 @@ dependencies = [
 name = "neocogi-platform-contracts"
 version = "0.3.0-alpha.2"
 dependencies = [
- "neocogi-com",
  "neocogi-com-host",
+ "neocogi-com-sdk",
  "neocogi-com-serialization",
  "neocogi-idl",
  "quote",
@@ -1274,8 +1273,8 @@ version = "0.3.0-alpha.2"
 dependencies = [
  "gltf",
  "image",
- "neocogi-com",
  "neocogi-com-host",
+ "neocogi-com-sdk",
  "neocogi-example-plugins",
  "neocogi-platform",
  "neocogi-platform-contracts",
@@ -1310,7 +1309,7 @@ dependencies = [
 name = "neocogi-typed-buffer-tests"
 version = "0.3.0-alpha.2"
 dependencies = [
- "neocogi-com",
+ "neocogi-com-sdk",
  "neocogi-platform",
  "neocogi-platform-contracts",
  "syn 2.0.119",

@@ -1,5 +1,5 @@
 //! Real COM calls through the built-in factory and a loaded platform plugin.
-use neocogi_com::{ComPtr, NcCopyFromBufferOffset, INcStringComPtrExt, INcBytesComPtrExt, NC_E_INVALID_ARG, NC_E_OUT_OF_RANGE};
+use neocogi_com_sdk::{ComPtr, NcCopyFromBufferOffset, ComStringExt, ComBytesExt, NC_E_INVALID_ARG, NC_E_OUT_OF_RANGE};
 use neocogi_platform_contracts::render::{
     abi::*,
     shader::{ShaderTarget, PreparedShader},
@@ -7,8 +7,7 @@ use neocogi_platform_contracts::render::{
 
 #[test]
 fn static_com_factory_and_owned_reports() {
-    // SAFETY: This executable owns the immutable process-lived host services.
-    let _runtime = unsafe { neocogi_com::Runtime::__from_host_api(neocogi_com_host::initialize_process()) }.unwrap();
+    let _runtime = neocogi_com_host::initialize_runtime();
     let factory: ComPtr<ShaderCompilerFactoryAbi> = neocogi_platform::render::compiler::Factory::from_value(neocogi_platform::render::compiler::Factory)
         .query()
         .unwrap();
@@ -77,8 +76,7 @@ fn dynamic_platform_plugin_exposes_its_builtin_compiler() {
         let limit = limit.to_str().unwrap().parse::<u64>().unwrap();
         assert!(bytes < limit, "platform dylib is {bytes} bytes, expected less than {limit}");
     }
-    // SAFETY: This executable owns the immutable host service graph for process lifetime.
-    let runtime = unsafe { neocogi_com::Runtime::__from_host_api(neocogi_com_host::initialize_process()) }.unwrap();
+    let runtime = neocogi_com_host::initialize_runtime();
     // SAFETY: Qualification explicitly selects the trusted Cargo-built shim; the host pins it.
     let id = unsafe { runtime.load_plugin_library(std::path::PathBuf::from(path)) };
     let backend = std::env::var("NEOCOGI_TEST_BACKEND").unwrap_or_else(|_| "vulkan".into());
@@ -88,7 +86,7 @@ fn dynamic_platform_plugin_exposes_its_builtin_compiler() {
         "wgpu" => ShaderTarget::Wgsl,
         _ => panic!("unknown test backend"),
     };
-    assert_eq!(id, neocogi_com::guid_from_qualified_name(&format!("neocogi.platform.{backend}")));
+    assert_eq!(id, neocogi_com_sdk::guid_from_qualified_name(&format!("neocogi.platform.{backend}")));
     let platform: ComPtr<neocogi_platform_contracts::render::platform::PlatformAbi> = runtime.acquire_plugin_root(id).unwrap();
     let factory = platform.query::<ShaderCompilerFactoryAbi>().unwrap();
     drop(platform);
@@ -146,8 +144,7 @@ fn dynamic_platform_plugin_exposes_its_builtin_compiler() {
 #[test]
 #[cfg(feature = "shader-python")]
 fn both_frontends_export_owned_source_diagnostics_through_com() {
-    // SAFETY: This executable owns the immutable process-lived host service tables.
-    let _runtime = unsafe { neocogi_com::Runtime::__from_host_api(neocogi_com_host::initialize_process()) }.unwrap();
+    let _runtime = neocogi_com_host::initialize_runtime();
     let factory: ComPtr<ShaderCompilerFactoryAbi> = neocogi_platform::render::compiler::Factory::from_value(neocogi_platform::render::compiler::Factory)
         .query()
         .unwrap();

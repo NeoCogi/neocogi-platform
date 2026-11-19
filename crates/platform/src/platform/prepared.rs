@@ -1,6 +1,6 @@
 //! Complete generic-frame validation before native target acquisition.
 use neocogi_platform::render::abi::*;
-use neocogi_com::{ComRef, NcStatus, WeakComBox, NC_E_INVALID_ARG, NC_E_OUT_OF_MEMORY};
+use neocogi_com_sdk::{ComRef, NcStatus, WeakComBox, NC_E_INVALID_ARG, NC_E_OUT_OF_MEMORY};
 use neocogi_platform::gpu::{record::Block, native::NativeResources};
 use std::rc::Rc;
 

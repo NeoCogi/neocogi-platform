@@ -261,7 +261,7 @@ fn ui_draws_clears_and_uploads_survive_application_gl_state() {
 #[ignore = "requires SDL GL; run with SDL_VIDEODRIVER=offscreen"]
 fn native_completion_owns_resource_and_command_charges() {
     let _session = NATIVE_SESSION.lock().unwrap_or_else(|error| error.into_inner());
-    use neocogi_com::NcCopyFromBufferOffset;
+    use neocogi_com_sdk::NcCopyFromBufferOffset;
     use crate::gpu::{
         GpuDevice,
         abi::*,
@@ -399,7 +399,7 @@ fn native_completion_owns_resource_and_command_charges() {
 #[ignore = "requires SDL GL; run with SDL_VIDEODRIVER=offscreen"]
 fn dynamic_shader_indices_cannot_escape_uniform_or_private_storage() {
     let _session = NATIVE_SESSION.lock().unwrap_or_else(|error| error.into_inner());
-    use neocogi_com::NcCopyFromBufferOffset;
+    use neocogi_com_sdk::NcCopyFromBufferOffset;
     use crate::gpu::{
         GpuDevice,
         abi::*,
@@ -490,7 +490,7 @@ fn dynamic_shader_indices_cannot_escape_uniform_or_private_storage() {
 #[ignore = "requires SDL GL; run with SDL_VIDEODRIVER=offscreen"]
 fn fragment_identifiers_containing_builtin_names_compile_and_render() {
     let _session = NATIVE_SESSION.lock().unwrap_or_else(|error| error.into_inner());
-    use neocogi_com::NcCopyFromBufferOffset;
+    use neocogi_com_sdk::NcCopyFromBufferOffset;
     use crate::gpu::{
         GpuDevice,
         abi::*,

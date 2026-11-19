@@ -6,7 +6,7 @@
 //! object involved. Creation reports exclusively own unpublished result handles.
 use crate::render::abi::*;
 use crate::render::platform::{IPlatformWindowAbi, IWindowCreationResult, IWindowCreationResultAbi, IWindowCreationResultVtblFor};
-use neocogi_com::{com_object, ComBox, ComPtr, INcStringAbi, INcStringComPtrExt, NcStatus, NcString, NC_E_INVALID_ARG, NC_OK};
+use neocogi_com_sdk::{com_object, ComBox, ComPtr, INcStringAbi, ComStringExt, NcStatus, NcString, NC_E_INVALID_ARG, NC_OK};
 
 /// Maximum UTF-8 length and retained String capacity after failure normalization.
 pub const MAX_RENDER_ERROR_BYTES: usize = 4096;
@@ -66,7 +66,7 @@ impl std::error::Error for RenderError {
 /// Successful reports never read text. If text export fails or exceeds the cap,
 /// preserve the original operation code and supply a bounded local explanation.
 /// Derived creation wrappers dereference to this same generated base wrapper.
-pub fn check_outcome(report: &IRenderOutcomeClient, operation: &str) -> Result<(), RenderError> {
+pub fn check_outcome(report: &IRenderOutcomeWrapper, operation: &str) -> Result<(), RenderError> {
     let status = NcStatus::from_code(report.status().map_err(|status| RenderError::from(status).context(operation))?);
     if status.is_ok() {
         return Ok(());
@@ -80,14 +80,14 @@ pub fn check_outcome(report: &IRenderOutcomeClient, operation: &str) -> Result<(
 }
 
 /// Rust callers receive either an exclusive shader or the owned failure from that exact call.
-impl IRenderResourcesClient {
+impl IRenderResourcesWrapper {
     /// Compiles and imports a shader, copying failure detail before the report is released.
     /// Raw COM consumers use `create_shader_result` and own its one-shot report.
     pub fn create_shader(
         &self,
         stage: GpuShaderStage,
-        code: neocogi_com::ComRef<'_, IGpuDataSourceAbi>,
-        entry: neocogi_com::NcCopyFromBufferOffset<'_, u8>,
+        code: neocogi_com_sdk::ComRef<'_, IGpuDataSourceAbi>,
+        entry: neocogi_com_sdk::NcCopyFromBufferOffset<'_, u8>,
     ) -> Result<ComBox<IGpuShaderAbi>, RenderError> {
         let mut report = self
             .create_shader_result(stage, code, entry)
@@ -285,9 +285,9 @@ pub fn window_creation_result(result: Result<ComPtr<IPlatformWindowAbi>, RenderE
         .unwrap_or_else(|(status, _)| panic!("window result interface: {status}"))
 }
 
-impl crate::render::platform::PlatformClient {
+impl crate::render::platform::PlatformWrapper {
     /// Constructs one window or returns the failure and text belonging to that construction.
-    pub fn create_window(&self, title: neocogi_com::NcCopyFromBufferOffset<'_, u8>, size: Size) -> Result<ComPtr<IPlatformWindowAbi>, RenderError> {
+    pub fn create_window(&self, title: neocogi_com_sdk::NcCopyFromBufferOffset<'_, u8>, size: Size) -> Result<ComPtr<IPlatformWindowAbi>, RenderError> {
         let mut report = self
             .create_window_result(title, size)
             .map_err(|status| RenderError::from(status).context("create window"))?;
@@ -295,9 +295,9 @@ impl crate::render::platform::PlatformClient {
         report.take_window().map_err(|status| RenderError::from(status).context("take window"))
     }
 }
-impl ITextureFactoryClient {
+impl ITextureFactoryWrapper {
     /// Uploads an ordinary immutable image, retaining any native failure in the returned error.
-    pub fn create_texture(&self, size: Size, pixels: neocogi_com::NcValueRef<'_, InitialGpuData>) -> Result<ComPtr<ITextureAbi>, RenderError> {
+    pub fn create_texture(&self, size: Size, pixels: neocogi_com_sdk::NcValueRef<'_, InitialGpuData>) -> Result<ComPtr<ITextureAbi>, RenderError> {
         let mut report = self
             .create_texture_result(size, pixels)
             .map_err(|status| RenderError::from(status).context("create native texture"))?;
@@ -305,14 +305,14 @@ impl ITextureFactoryClient {
         report.take_texture().map_err(|status| RenderError::from(status).context("take native texture"))
     }
 }
-impl IRendererClient {
+impl IRendererWrapper {
     /// Submits one frame and returns that submission's complete owned failure, if any.
-    pub fn render(&self, info: RenderInfo, stream: neocogi_com::ComRef<'_, IRenderStreamAbi>) -> Result<(), RenderError> {
+    pub fn render(&self, info: RenderInfo, stream: neocogi_com_sdk::ComRef<'_, IRenderStreamAbi>) -> Result<(), RenderError> {
         let report = self.render_result(info, stream).map_err(|status| RenderError::from(status).context("render"))?;
         check_outcome(&report, "render")
     }
 }
-impl IRenderHostClient {
+impl IRenderHostWrapper {
     /// Reclaims retired native resources, returning its own status and explanation.
     pub fn maintain(&self) -> Result<(), RenderError> {
         let report = self
@@ -323,8 +323,8 @@ impl IRenderHostClient {
     /// Imports an authenticated image into this group, or returns this import's failure.
     pub fn import_texture(
         &self,
-        resources: neocogi_com::ComRef<'_, IRenderResourcesAbi>,
-        image: neocogi_com::ComRef<'_, ITextureAbi>,
+        resources: neocogi_com_sdk::ComRef<'_, IRenderResourcesAbi>,
+        image: neocogi_com_sdk::ComRef<'_, ITextureAbi>,
     ) -> Result<ComBox<IGpuBufferAbi>, RenderError> {
         let mut report = self
             .import_texture_result(resources, image)
@@ -337,8 +337,8 @@ impl IRenderHostClient {
     /// Prepares one imported image before recording, with owned native failure detail.
     pub fn prepare_texture(
         &self,
-        resources: neocogi_com::ComRef<'_, IRenderResourcesAbi>,
-        texture: neocogi_com::ComRef<'_, IGpuBufferAbi>,
+        resources: neocogi_com_sdk::ComRef<'_, IRenderResourcesAbi>,
+        texture: neocogi_com_sdk::ComRef<'_, IGpuBufferAbi>,
     ) -> Result<(), RenderError> {
         let report = self
             .prepare_texture_result(resources, texture)

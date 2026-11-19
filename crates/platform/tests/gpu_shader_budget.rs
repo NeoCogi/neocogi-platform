@@ -1,5 +1,5 @@
 //! Observe real compiler allocations across the generated COM resource factory.
-use neocogi_com::{NcCopyFromBufferOffset, NC_E_OUT_OF_RANGE};
+use neocogi_com_sdk::{NcCopyFromBufferOffset, NC_E_OUT_OF_RANGE};
 use neocogi_platform::gpu::{abi::*, source::Bytes};
 use std::{
     alloc::{GlobalAlloc, Layout, System},
@@ -83,7 +83,7 @@ fn generated_output_obeys_remaining_domain_quota_before_large_allocation() {
     // rather than merely observing the status returned after an unbounded String grows.
     assert!(largest <= 256 * 1024, "compiler requested {largest} bytes before quota rejection");
     assert_eq!(device.live_bytes(factory.as_com_ref()).unwrap(), 0);
-    let root: neocogi_com::ComPtr<neocogi_platform::render::abi::ShaderCompilerAbi> = neocogi_platform::render::compiler::CompilerObject::from_value(
+    let root: neocogi_com_sdk::ComPtr<neocogi_platform::render::abi::ShaderCompilerAbi> = neocogi_platform::render::compiler::CompilerObject::from_value(
         neocogi_platform::render::compiler::CompilerObject::new(neocogi_platform::render::shader::ShaderTarget::GlslEs300).unwrap(),
     )
     .query()

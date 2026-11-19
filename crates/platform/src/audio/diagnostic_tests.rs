@@ -1,6 +1,6 @@
 //! Actual opening-request COM failures retain normalized text independently of the request.
 use super::*;
-use neocogi_com::INcStringComPtrExt;
+use neocogi_com_sdk::ComStringExt;
 
 /// Failed direction takes preserve the error; cancellation/drop release the request, not its text snapshot.
 #[test]

@@ -1,5 +1,5 @@
 //! Nested renderer values preserve only active data through generated wrappers and checked wire codecs.
-use neocogi_com::{NC_E_INVALID_TAG, NcOutputBuffer, decode_inline, encode_inline};
+use neocogi_com_sdk::{NC_E_INVALID_TAG, NcOutputBuffer, decode_inline, encode_inline};
 use neocogi_platform_contracts::render::{abi::*, source::PipelineDesc};
 
 /// All equation shapes survive copied results and typed bulk binding outputs.

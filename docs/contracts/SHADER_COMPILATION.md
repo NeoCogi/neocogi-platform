@@ -349,9 +349,9 @@ GLSL has standard `main`. Canonical vertex position `(x,y,z,w)` becomes
 presentation restoration, fragment-height normalization, winding, viewport/scissor,
 and target policy. Derivatives retain the existing canonical signed axis.
 
-The complete Vulkan platform bundle exports exactly `nc_get_plugin_descriptor_v2`
-and does not embed the COM host. The executable supplies its one process-lived
-host. Build and qualify this single library with the repository's
+The complete Vulkan platform bundle exports `nc_get_plugin_descriptor_v3`.
+The executable initializes its linked COM host and supplies runtime access to
+the provider. Build and qualify this single library with the repository's
 `channel = "nightly"`, rebuilt std, `min-size`, and immediate-abort panics:
 
 ```sh

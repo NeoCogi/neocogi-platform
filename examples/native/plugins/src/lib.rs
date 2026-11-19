@@ -20,7 +20,7 @@ fn preflight(requested: Option<&str>, directory: &Path) -> Result<(PathBuf, Opti
         .map(|name| {
             Backend::parse(name).ok_or_else(|| {
                 RenderError::new(
-                    neocogi_com::NC_E_INVALID_ARG,
+                    neocogi_com_sdk::NC_E_INVALID_ARG,
                     format!("Unknown backend {name}; --backend accepts glow, vulkan or wgpu"),
                 )
             })
@@ -29,7 +29,7 @@ fn preflight(requested: Option<&str>, directory: &Path) -> Result<(PathBuf, Opti
     let path = directory.join(library_filename());
     if !path.is_file() {
         return Err(RenderError::new(
-            neocogi_com::NC_E_LOAD_FAILED,
+            neocogi_com_sdk::NC_E_LOAD_FAILED,
             format!(
                 "Required plugin library is missing or inaccessible: {}. Build matching library with: {}",
                 path.display(),
@@ -43,22 +43,25 @@ fn preflight(requested: Option<&str>, directory: &Path) -> Result<(PathBuf, Opti
 /// Load the trusted platform library and acquire its typed root.
 /// Its descriptor identifies the build-selected backend; an explicit request must agree.
 /// Missing or incompatible libraries never fall back to another file or linked code.
-pub fn acquire(runtime: neocogi_com::Runtime, requested: Option<&str>) -> Result<neocogi_com::ComPtr<sdk::render::platform::PlatformAbi>, RenderError> {
-    let executable = std::env::current_exe().map_err(|_| neocogi_com::NC_E_INVALID_ARG)?;
-    let directory = executable.parent().ok_or(neocogi_com::NC_E_INVALID_ARG)?.join("lib");
+pub fn acquire(
+    runtime: neocogi_com_sdk::RuntimeHandle,
+    requested: Option<&str>,
+) -> Result<neocogi_com_sdk::ComPtr<sdk::render::platform::PlatformAbi>, RenderError> {
+    let executable = std::env::current_exe().map_err(|_| neocogi_com_sdk::NC_E_INVALID_ARG)?;
+    let directory = executable.parent().ok_or(neocogi_com_sdk::NC_E_INVALID_ARG)?.join("lib");
     let (path, expected) = preflight(requested, &directory)?;
     // SAFETY: This executable deliberately ships the trusted Cargo-built final root.
     // The SDK validates its metadata and pins implementation code for process lifetime.
     let id = unsafe { runtime.load_plugin_library(path) };
     let backend = Backend::ALL
         .into_iter()
-        .find(|backend| id == neocogi_com::guid_from_qualified_name(backend.plugin_name()))
-        .ok_or_else(|| RenderError::new(neocogi_com::NC_E_INVALID_ARG, "Platform library has an unrecognized backend descriptor"))?;
+        .find(|backend| id == neocogi_com_sdk::guid_from_qualified_name(backend.plugin_name()))
+        .ok_or_else(|| RenderError::new(neocogi_com_sdk::NC_E_INVALID_ARG, "Platform library has an unrecognized backend descriptor"))?;
     if let Some(expected) = expected
         && backend != expected
     {
         return Err(RenderError::new(
-            neocogi_com::NC_E_INVALID_ARG,
+            neocogi_com_sdk::NC_E_INVALID_ARG,
             format!(
                 "Platform library {} uses {}; it does not identify the requested {} backend. Rebuild it with --features {}.",
                 library_filename(),
@@ -91,12 +94,12 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         for backend in Backend::ALL {
             let error = preflight(Some(backend.name()), root.path()).unwrap_err();
-            assert_eq!(error.status, neocogi_com::NC_E_LOAD_FAILED);
+            assert_eq!(error.status, neocogi_com_sdk::NC_E_LOAD_FAILED);
             assert!(error.message.contains(library_filename()));
             assert!(error.message.contains(&preparation_command(backend)));
             assert!(!error.message.contains("--examples"));
         }
-        assert_eq!(preflight(None, root.path()).unwrap_err().status, neocogi_com::NC_E_LOAD_FAILED);
+        assert_eq!(preflight(None, root.path()).unwrap_err().status, neocogi_com_sdk::NC_E_LOAD_FAILED);
         let path = root.path().join(library_filename());
         std::fs::write(&path, []).unwrap();
         assert_eq!(preflight(None, root.path()).unwrap(), (path.clone(), None));
@@ -104,7 +107,7 @@ mod tests {
             assert_eq!(preflight(Some(backend.name()), root.path()).unwrap(), (path.clone(), Some(backend)));
         }
         for unknown in ["", "GLow", "metal", "../vulkan"] {
-            assert_eq!(preflight(Some(unknown), root.path()).unwrap_err().status, neocogi_com::NC_E_INVALID_ARG);
+            assert_eq!(preflight(Some(unknown), root.path()).unwrap_err().status, neocogi_com_sdk::NC_E_INVALID_ARG);
         }
     }
 }

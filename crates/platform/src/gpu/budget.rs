@@ -1,6 +1,6 @@
 //! Device-free accounting follows actual backing lifetime rather than public handles.
 use crate::gpu::abi::RenderGroupLimits;
-use neocogi_com::{NC_E_OUT_OF_RANGE, NcStatus};
+use neocogi_com_sdk::{NC_E_OUT_OF_RANGE, NcStatus};
 use std::{cell::Cell, rc::Rc};
 
 /// Mutable counters shared with destruction paths, without a renderer/device back-reference.

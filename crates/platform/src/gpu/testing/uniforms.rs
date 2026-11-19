@@ -5,7 +5,7 @@ use crate::gpu::{
     native::NativeResources,
     source::{Bytes, PipelineDesc},
 };
-use neocogi_com::{ComBox, ComPtr, NcCopyFromBufferOffset, NcOutputBuffer};
+use neocogi_com_sdk::{ComBox, ComPtr, NcCopyFromBufferOffset, NcOutputBuffer};
 
 /// One recorded public-COM draw and its still-owned logical uniform buffer.
 pub struct Fixture {

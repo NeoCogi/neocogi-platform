@@ -8,7 +8,7 @@ repository.workspace = true
 description = "Executable-relative loading of explicitly prepared NeoCogi shared libraries"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-neocogi-com = { workspace = true, features = ["runtime"] }
+neocogi-com-sdk = { workspace = true, features = ["runtime"] }
 neocogi-platform-contracts.workspace = true
 
 [build-dependencies]

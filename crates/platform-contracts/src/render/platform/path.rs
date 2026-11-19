@@ -1,7 +1,7 @@
 //! Host-native conversion for immutable platform path capabilities.
 
 use crate::render::platform::{INativePathAbi, PathEncoding};
-use neocogi_com::{ComRef, NcOutputBuffer, NcStatus, NC_E_INVALID_ARG};
+use neocogi_com_sdk::{ComRef, NcOutputBuffer, NcStatus, NC_E_INVALID_ARG};
 use std::path::PathBuf;
 
 /// Copies a borrowed platform path into exact host-native owned storage.

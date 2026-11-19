@@ -4,7 +4,7 @@
 //! prepared/submitted native owner retains it. Transfers copy synchronously; no
 //! storage pointer, mapping session or lease escapes the public buffer.
 use super::*;
-use neocogi_com::NcOutputWriter;
+use neocogi_com_sdk::NcOutputWriter;
 
 /// Streaming permits the host's conventional two queued frames plus one CPU writer.
 /// Slots are reserved and charged at creation; exhaustion never grows capacity.

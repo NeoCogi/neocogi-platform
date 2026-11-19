@@ -13,7 +13,7 @@ mod scene;
 use camera::Camera;
 use environment::Environment;
 use material::{MaterialAtlas, Tile};
-use neocogi_com::{ComBox, ComPtr, NcCopyFromBufferOffset, NcStatus, com_object};
+use neocogi_com_sdk::{ComBox, ComPtr, NcCopyFromBufferOffset, NcStatus, com_object};
 use neocogi_platform_examples::sdk::render::{abi::*, platform::*};
 use neocogi_platform_examples::sdk::render::source::{Bytes, PipelineDesc};
 use neocogi_platform_examples::sdk::render::buffer::{TypedGpuBuffer, TypedGpuBufferDesc, TypedGpuBufferFactory};
@@ -35,11 +35,11 @@ struct Stream {
 }
 impl IRenderStream for Stream {
     /// Validates the single contribution index before exposing its bounded observer.
-    fn view(&self, _: u64, index: u32) -> Result<neocogi_com::WeakComBox<IRenderViewBlockAbi>, NcStatus> {
+    fn view(&self, _: u64, index: u32) -> Result<neocogi_com_sdk::WeakComBox<IRenderViewBlockAbi>, NcStatus> {
         if index == 0 {
             Ok(self.block.downgrade())
         } else {
-            Err(neocogi_com::NC_E_INVALID_ARG)
+            Err(neocogi_com_sdk::NC_E_INVALID_ARG)
         }
     }
 }
@@ -133,7 +133,7 @@ impl Graphics {
     /// Uploads all immutable scene data once and validates the shader's exact byte contract.
     fn new(scene: &Scene, materials: Vec<MaterialAtlas>, environment: &Environment, resources: &ComPtr<IRenderResourcesAbi>) -> Result<Self, RenderError> {
         if materials.len() != scene.materials.len() {
-            return Err(neocogi_com::NC_E_INVALID_ARG.into());
+            return Err(neocogi_com_sdk::NC_E_INVALID_ARG.into());
         }
         let code = Bytes::source(neocogi_platform_examples::shaders::mesh().into_bytes());
         let vs = resources.create_shader(GpuShaderStage::Vertex, code.as_com_ref(), NcCopyFromBufferOffset::new(0, b"vs"))?;
@@ -205,7 +205,7 @@ impl Graphics {
             meshes.push(Mesh {
                 vertices: buffer(resources, GpuBufferRole::Vertex, vertices)?,
                 indices: buffer(resources, GpuBufferRole::Index, indices)?,
-                count: primitive.indices.len().try_into().map_err(|_| neocogi_com::NC_E_OUT_OF_RANGE)?,
+                count: primitive.indices.len().try_into().map_err(|_| neocogi_com_sdk::NC_E_OUT_OF_RANGE)?,
             });
         }
         let mut gpu_materials = Vec::with_capacity(materials.len());

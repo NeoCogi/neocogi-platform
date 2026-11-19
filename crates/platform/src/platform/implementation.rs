@@ -4,7 +4,7 @@ use neocogi_platform::render::platform::*;
 use neocogi_platform_contracts::audio::{AudioConfig, AudioDirection, IAudioCapabilitiesAbi, IAudioOpenRequestAbi};
 use neocogi_platform::render::abi::*;
 use neocogi_platform::platform::prepared::{PreparedFrame, Resources};
-use neocogi_com::{ComInterface, ComPtr, ComRef, IUnknown, NcCopyFromBufferOffset, NcStatus, NC_E_INVALID_ARG, com_object};
+use neocogi_com_sdk::{ComInterface, ComPtr, ComRef, IUnknown, NcCopyFromBufferOffset, NcStatus, RuntimeHandle, NC_E_INVALID_ARG, com_object};
 use std::{
     cell::{Cell, RefCell},
     collections::HashMap,
@@ -67,11 +67,11 @@ impl Platform for PlatformObject {
     /// Query native/backend observations without constructing a window or requesting capture permission.
     fn audio_capabilities(&self) -> Result<ComPtr<IAudioCapabilitiesAbi>, NcStatus> { crate::audio::capabilities() }
     /// Audio initializes independently of the window host and never constructs a graphics device.
-    fn open_audio(&self, direction: AudioDirection, config: AudioConfig) -> Result<neocogi_com::ComBox<IAudioOpenRequestAbi>, NcStatus> {
+    fn open_audio(&self, direction: AudioDirection, config: AudioConfig) -> Result<neocogi_com_sdk::ComBox<IAudioOpenRequestAbi>, NcStatus> {
         crate::audio::open(direction, config)
     }
     /// Validates input and publishes one complete native object only after the selected backend exists.
-    fn create_window_result(&self, title: NcCopyFromBufferOffset<'_, u8>, size: Size) -> Result<neocogi_com::ComBox<IWindowCreationResultAbi>, NcStatus> {
+    fn create_window_result(&self, title: NcCopyFromBufferOffset<'_, u8>, size: Size) -> Result<neocogi_com_sdk::ComBox<IWindowCreationResultAbi>, NcStatus> {
         let result = (|| -> Result<_, RenderError> {
             if title.offset() != 0 || size.width <= 0 || size.height <= 0 {
                 return Err(NC_E_INVALID_ARG.into());
@@ -223,7 +223,7 @@ impl Device {
         limits: RenderGroupLimits,
         surface: ComRef<'_, IRenderSurfaceAbi>,
         permissions: RenderGroupPermissions,
-    ) -> Result<neocogi_com::ComBox<IRenderResourceGroupAbi>, NcStatus> {
+    ) -> Result<neocogi_com_sdk::ComBox<IRenderResourceGroupAbi>, NcStatus> {
         let _access = self.access()?;
         let record = self.surface(surface.try_add_ref()?)?;
         self.logical.create_group(limits, record.target.clone(), permissions)
@@ -236,7 +236,7 @@ impl IRenderResourceGroupFactory for WindowObject {
         limits: RenderGroupLimits,
         surface: ComRef<'_, IRenderSurfaceAbi>,
         permissions: RenderGroupPermissions,
-    ) -> Result<neocogi_com::ComBox<IRenderResourceGroupAbi>, NcStatus> {
+    ) -> Result<neocogi_com_sdk::ComBox<IRenderResourceGroupAbi>, NcStatus> {
         self.device.create_group(limits, surface, permissions)
     }
 }
@@ -247,7 +247,7 @@ impl IRenderResourceGroupFactory for GraphicsHost {
         limits: RenderGroupLimits,
         surface: ComRef<'_, IRenderSurfaceAbi>,
         permissions: RenderGroupPermissions,
-    ) -> Result<neocogi_com::ComBox<IRenderResourceGroupAbi>, NcStatus> {
+    ) -> Result<neocogi_com_sdk::ComBox<IRenderResourceGroupAbi>, NcStatus> {
         self.device.create_group(limits, surface, permissions)
     }
 }
@@ -275,7 +275,7 @@ impl IRenderHost for GraphicsHost {
         &self,
         resources: ComRef<'_, IRenderResourcesAbi>,
         image: ComRef<'_, ITextureAbi>,
-    ) -> Result<neocogi_com::ComBox<ITextureImportResultAbi>, NcStatus> {
+    ) -> Result<neocogi_com_sdk::ComBox<ITextureImportResultAbi>, NcStatus> {
         let result = self.device.execute(|_| {
             // Canonical QI and receiver-owned foreign Release finish before final admission.
             let record = {
@@ -341,26 +341,26 @@ fn identity<I: ComInterface>(interface: &ComPtr<I>) -> Result<usize, NcStatus> {
 
 #[cfg(feature = "glow")]
 /// Acquires one owned root; object construction remains on its typed methods.
-#[neocogi_com::plugin(name = "neocogi.platform.glow")]
-fn acquire_root(_runtime: ::neocogi_com::Runtime) -> Result<neocogi_com::ComPtr<neocogi_platform::render::platform::PlatformAbi>, neocogi_com::NcStatus> {
+#[neocogi_com_sdk::plugin(name = "neocogi.platform.glow")]
+fn acquire_root(_runtime: RuntimeHandle) -> Result<ComPtr<PlatformAbi>, NcStatus> {
     PlatformObject::from_value(PlatformObject::new()).query()
 }
 #[cfg(feature = "vulkan")]
 /// Acquires one owned root; object construction remains on its typed methods.
-#[neocogi_com::plugin(name = "neocogi.platform.vulkan")]
-fn acquire_root(_runtime: ::neocogi_com::Runtime) -> Result<neocogi_com::ComPtr<neocogi_platform::render::platform::PlatformAbi>, neocogi_com::NcStatus> {
+#[neocogi_com_sdk::plugin(name = "neocogi.platform.vulkan")]
+fn acquire_root(_runtime: RuntimeHandle) -> Result<ComPtr<PlatformAbi>, NcStatus> {
     PlatformObject::from_value(PlatformObject::new()).query()
 }
 #[cfg(feature = "wgpu")]
 /// Acquires one owned root; object construction remains on its typed methods.
-#[neocogi_com::plugin(name = "neocogi.platform.wgpu")]
-fn acquire_root(_runtime: ::neocogi_com::Runtime) -> Result<neocogi_com::ComPtr<neocogi_platform::render::platform::PlatformAbi>, neocogi_com::NcStatus> {
+#[neocogi_com_sdk::plugin(name = "neocogi.platform.wgpu")]
+fn acquire_root(_runtime: RuntimeHandle) -> Result<ComPtr<PlatformAbi>, NcStatus> {
     PlatformObject::from_value(PlatformObject::new()).query()
 }
 #[cfg(feature = "webgl")]
 /// Acquires one owned root; object construction remains on its typed methods.
-#[neocogi_com::plugin(name = "neocogi.platform.webgl")]
-fn acquire_root(_runtime: ::neocogi_com::Runtime) -> Result<neocogi_com::ComPtr<neocogi_platform::render::platform::PlatformAbi>, neocogi_com::NcStatus> {
+#[neocogi_com_sdk::plugin(name = "neocogi.platform.webgl")]
+fn acquire_root(_runtime: RuntimeHandle) -> Result<ComPtr<PlatformAbi>, NcStatus> {
     PlatformObject::from_value(PlatformObject::new()).query()
 }
 // Only the native assembly owns the dynamic entrypoint; browser assembly uses static descriptors.

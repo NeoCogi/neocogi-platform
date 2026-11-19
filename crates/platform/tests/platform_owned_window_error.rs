@@ -1,6 +1,6 @@
 //! Isolated process validates actual SDL construction failure without a display dependency.
 #![cfg(not(target_arch = "wasm32"))]
-use neocogi_com::{ComPtr, NcCopyFromBufferOffset, NC_E_INVALID_ARG};
+use neocogi_com_sdk::{ComPtr, NcCopyFromBufferOffset, NC_E_INVALID_ARG};
 use neocogi_platform::render::{
     abi::Size,
     platform::{PlatformAbi, PLATFORM_E_BACKEND},

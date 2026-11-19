@@ -2,7 +2,7 @@
 use super::*;
 use crate::gpu::testing::device as new_device;
 type GpuDevice = crate::gpu::GpuDevice<crate::gpu::testing::Backend>;
-use neocogi_com::{ComInlineValue, NcOutputWriter};
+use neocogi_com_sdk::{ComInlineValue, NcOutputWriter};
 
 /// Deliberate provider behavior at a foreign-source boundary.
 enum ReadMode {
@@ -141,7 +141,7 @@ fn permitted_image_import_shares_native_storage_without_public_com_or_group_cycl
     assert!(copied.is_empty(), "native-only images provide no CPU readback");
     assert!(Rc::ptr_eq(snapshot.imported_image().unwrap(), &image));
     assert_eq!(
-        imported.as_com_ref().upload(neocogi_com::NcCopyFromBufferOffset::new(0, &[0; 4])),
+        imported.as_com_ref().upload(neocogi_com_sdk::NcCopyFromBufferOffset::new(0, &[0; 4])),
         Err(RENDER_E_PERMISSION)
     );
     let native = snapshot.native(&mut crate::gpu::testing::Preparation::new(&core)).unwrap();
@@ -247,10 +247,10 @@ fn quota_admission_precedes_bulk_copy_and_retained_versions_keep_their_charge() 
     ));
     assert_eq!(reads.get(), 0);
     let captured = device.buffer_snapshot(factory.as_com_ref(), owner.as_com_ref()).unwrap();
-    assert_eq!(owner.upload(neocogi_com::NcCopyFromBufferOffset::new(0, &[5; 4])), Err(RENDER_E_BUSY));
+    assert_eq!(owner.upload(neocogi_com_sdk::NcCopyFromBufferOffset::new(0, &[5; 4])), Err(RENDER_E_BUSY));
     assert_eq!(device.live_bytes(factory.as_com_ref()).unwrap(), 4);
     drop(captured);
-    owner.upload(neocogi_com::NcCopyFromBufferOffset::new(0, &[5; 4])).unwrap();
+    owner.upload(neocogi_com_sdk::NcCopyFromBufferOffset::new(0, &[5; 4])).unwrap();
     assert_eq!(device.live_bytes(factory.as_com_ref()).unwrap(), 4);
 }
 
@@ -283,8 +283,8 @@ fn different_domains_devices_and_forged_buffers_reject() {
     /// Valid foreign COM implementation with no renderer provenance.
     struct Forged;
     impl neocogi_platform::render::abi::IRenderDriverBound for Forged {
-        fn driver_identity(&self) -> Result<neocogi_com::ComPtr<neocogi_platform::render::abi::IRenderDriverIdentityAbi>, neocogi_com::NcStatus> {
-            Err(neocogi_com::NC_E_NOINTERFACE)
+        fn driver_identity(&self) -> Result<neocogi_com_sdk::ComPtr<neocogi_platform::render::abi::IRenderDriverIdentityAbi>, neocogi_com_sdk::NcStatus> {
+            Err(neocogi_com_sdk::NC_E_NOINTERFACE)
         }
     }
     impl IGpuBuffer for Forged {
@@ -294,7 +294,7 @@ fn different_domains_devices_and_forged_buffers_reject() {
         fn upload(&mut self, _: NcCopyFromBufferOffset<'_, u8>) -> Result<(), NcStatus> {
             panic!("forged resource called")
         }
-        fn read(&self, _: neocogi_com::NcOutputWriter<'_, u8>) -> Result<(), NcStatus> {
+        fn read(&self, _: neocogi_com_sdk::NcOutputWriter<'_, u8>) -> Result<(), NcStatus> {
             panic!("forged resource called")
         }
     }
@@ -852,14 +852,14 @@ fn shape_wire_tags_and_static_lengths_are_checked_before_publication() {
     );
     let (_controller, factory) = resource_group(&device, Default::default());
     let (input, reads, _) = source(vec![1; 4], ReadMode::Exact);
-    let mut wire = neocogi_com::encode_inline(&GpuBufferDesc::Vertex { byte_len: 4 }).unwrap();
+    let mut wire = neocogi_com_sdk::encode_inline(&GpuBufferDesc::Vertex { byte_len: 4 }).unwrap();
     wire.tag = 255;
     let raw = factory.as_raw();
-    let mut output = neocogi_com::ComRaw::<IGpuBufferAbi>::null();
+    let mut output = neocogi_com_sdk::ComRaw::<IGpuBufferAbi>::null();
     // SAFETY: This is complete initialized descriptor wire and live interface/output
     // storage. Only its discriminant is invalid; no arbitrary pointer is fabricated.
     let status = unsafe { ((*raw.vtable).create_static_buffer)(raw.object, wire, input.as_raw(), &mut output) };
-    assert_eq!(status, neocogi_com::NC_E_INVALID_TAG);
+    assert_eq!(status, neocogi_com_sdk::NC_E_INVALID_TAG);
     assert!(output.is_null());
     assert_eq!(reads.get(), 0);
     for len in [0, 3, 5] {
@@ -911,7 +911,7 @@ fn nominal_identity_requires_an_exact_contract_signature() {
     // SAFETY: Only QueryInterface uses this marker. The readable vtable prefix matches,
     // and no method is dispatched under the deliberately incompatible signature.
     unsafe impl ComInterface for StaleShape {
-        const INTERFACE_ID: neocogi_com::NcInterfaceId = neocogi_com::NcInterfaceId {
+        const INTERFACE_ID: neocogi_com_sdk::NcInterfaceId = neocogi_com_sdk::NcInterfaceId {
             iid: IRenderResourcesAbi::INTERFACE_ID.iid,
             abi_signature: ITextureFactoryAbi::INTERFACE_ID.abi_signature,
         };
@@ -926,7 +926,7 @@ fn nominal_identity_requires_an_exact_contract_signature() {
         .unwrap(),
     );
     let (_owner, factory) = resource_group(&device, RenderGroupLimits::default());
-    assert_eq!(factory.query::<StaleShape>().unwrap_err(), neocogi_com::NC_E_ABI_VERSION);
+    assert_eq!(factory.query::<StaleShape>().unwrap_err(), neocogi_com_sdk::NC_E_ABI_VERSION);
     assert!(factory.query::<IRenderResourcesAbi>().is_ok());
 }
 

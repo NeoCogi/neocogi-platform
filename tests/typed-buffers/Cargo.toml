@@ -8,7 +8,7 @@ publish = false
 [dev-dependencies]
 neocogi-platform-contracts.workspace = true
 neocogi-platform = { workspace = true, features = ["glow", "test-support"] }
-neocogi-com = { workspace = true, features = ["std", "macros", "runtime"] }
+neocogi-com-sdk = { workspace = true, features = ["std", "macros", "runtime"] }
 
 [build-dependencies]
 neocogi-platform-contracts = { workspace = true, features = ["build-support"] }

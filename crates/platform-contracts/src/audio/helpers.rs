@@ -1,6 +1,6 @@
 //! Rust PCM values, bounded conversion and typed capability readers without a backend implementation.
 use super::*;
-use neocogi_com::{NcOutputBuffer, NcStatus, NC_E_INVALID_ARG};
+use neocogi_com_sdk::{NcOutputBuffer, NcStatus, NC_E_INVALID_ARG};
 
 /// Browser permission/control or reset completion has not arrived.
 pub const AUDIO_E_PENDING: NcStatus = NcStatus::from_code(-2001);
@@ -75,7 +75,7 @@ impl AudioCapabilities {
         }
     }
 }
-impl IAudioCapabilitiesClient {
+impl IAudioCapabilitiesWrapper {
     /// Read all supported numerical variants from a bounded immutable capability snapshot.
     pub fn supported_pcm_types(&self) -> Result<Vec<PcmType>, NcStatus> {
         let count = self.pcm_type_count()? as usize;
@@ -201,14 +201,14 @@ impl AudioConfig {
     }
 }
 
-impl IAudioPlaybackClient {
+impl IAudioPlaybackWrapper {
     /// Enqueue an ordinary Rust f32 slice using the stream's requested integer/fixed/float encoding.
     pub fn write_f32(&mut self, samples: &[f32]) -> Result<(), NcStatus> {
         let bytes = self.info()?.config.encode(samples)?;
-        self.write(neocogi_com::NcCopyFromBufferOffset::new(0, &bytes))
+        self.write(neocogi_com_sdk::NcCopyFromBufferOffset::new(0, &bytes))
     }
 }
-impl IAudioCaptureClient {
+impl IAudioCaptureWrapper {
     /// Read and decode up to the requested complete frames into owned Rust f32 samples without raw casts.
     pub fn read_f32(&mut self, frames: usize) -> Result<Vec<f32>, NcStatus> {
         let config = self.info()?.config;
@@ -477,7 +477,7 @@ mod tests {
     #[test]
     fn owned_diagnostics_are_bounded() {
         assert_eq!(AudioError::new(AUDIO_E_BACKEND, "é".repeat(4097)).message.len(), MAX_AUDIO_ERROR_BYTES);
-        assert_eq!(AudioError::new(neocogi_com::NC_OK, "bad status").status, NC_E_INVALID_ARG);
+        assert_eq!(AudioError::new(neocogi_com_sdk::NC_OK, "bad status").status, NC_E_INVALID_ARG);
     }
 
     /// Moving long text or a short value with spare storage cannot retain that oversized allocation.

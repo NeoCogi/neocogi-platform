@@ -1,5 +1,5 @@
 //! Application-owned triangle recording shared by the executable and native consumer regressions.
-use neocogi_com::{ComBox, ComPtr, NcCopyFromBufferOffset, NcStatus, com_object};
+use neocogi_com_sdk::{ComBox, ComPtr, NcCopyFromBufferOffset, NcStatus, com_object};
 use neocogi_platform_examples::sdk::render::abi::*;
 use neocogi_platform_examples::sdk::render::platform::IPlatformWindowAbi;
 
@@ -14,11 +14,11 @@ struct Stream {
 }
 impl IRenderStream for Stream {
     /// Exposes the single sealed owner only for its valid contribution index.
-    fn view(&self, _: u64, index: u32) -> Result<neocogi_com::WeakComBox<IRenderViewBlockAbi>, NcStatus> {
+    fn view(&self, _: u64, index: u32) -> Result<neocogi_com_sdk::WeakComBox<IRenderViewBlockAbi>, NcStatus> {
         if index == 0 {
             Ok(self.block.downgrade())
         } else {
-            Err(neocogi_com::NC_E_INVALID_ARG)
+            Err(neocogi_com_sdk::NC_E_INVALID_ARG)
         }
     }
 }
@@ -47,7 +47,7 @@ pub fn render_frames(window: ComPtr<IPlatformWindowAbi>, frames: u32) -> Result<
     while rendered < frames {
         let size = window.size()?;
         if size.width < 0 || size.height < 0 {
-            return Err(neocogi_com::NC_E_INVALID_ARG.into());
+            return Err(neocogi_com_sdk::NC_E_INVALID_ARG.into());
         }
         if size.width == 0 || size.height == 0 {
             // Suspension submits no native frame and receives no presentation pacing.

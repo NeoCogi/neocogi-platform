@@ -1,7 +1,7 @@
 //! Native acceptance uses the production platform constructor and real COM resource calls.
 //! Run explicitly with a usable SDL video driver; ordinary unit runs do not open OS windows.
 use super::*;
-use neocogi_com::ComBox;
+use neocogi_com_sdk::ComBox;
 use neocogi_platform::gpu::source::{Bytes, PipelineDesc};
 
 mod keyboard;
@@ -42,8 +42,8 @@ struct Input {
 struct Empty;
 impl IRenderStream for Empty {
     /// This fixture carries no generic GPU block.
-    fn view(&self, _: u64, _: u32) -> Result<neocogi_com::WeakComBox<neocogi_platform::render::abi::IRenderViewBlockAbi>, NcStatus> {
-        Err(neocogi_com::NC_E_INVALID_ARG)
+    fn view(&self, _: u64, _: u32) -> Result<neocogi_com_sdk::WeakComBox<neocogi_platform::render::abi::IRenderViewBlockAbi>, NcStatus> {
+        Err(neocogi_com_sdk::NC_E_INVALID_ARG)
     }
 }
 #[com_object(interfaces(IRenderStream))]
@@ -54,7 +54,7 @@ struct Stream {
 }
 impl IRenderStream for Stream {
     /// The overall batch index selects a sealed weak observer without a semantic item adapter.
-    fn view(&self, _: u64, index: u32) -> Result<neocogi_com::WeakComBox<IRenderViewBlockAbi>, NcStatus> {
+    fn view(&self, _: u64, index: u32) -> Result<neocogi_com_sdk::WeakComBox<IRenderViewBlockAbi>, NcStatus> {
         if index != 0 {
             return Err(NC_E_INVALID_ARG);
         }
@@ -137,7 +137,7 @@ fn framebuffer_group(
     factory: &ComPtr<IRenderResourceGroupFactoryAbi>,
     limits: RenderGroupLimits,
     permissions: RenderGroupPermissions,
-) -> neocogi_com::ComBox<IRenderResourceGroupAbi> {
+) -> neocogi_com_sdk::ComBox<IRenderResourceGroupAbi> {
     let surface = factory
         .query::<IRenderSurfaceFactoryAbi>()
         .unwrap()
@@ -450,7 +450,7 @@ impl IGpuDataSource for InitialReentry {
         );
         Ok(4)
     }
-    fn read(&self, mut output: neocogi_com::NcOutputWriter<'_, u8>) -> Result<(), NcStatus> {
+    fn read(&self, mut output: neocogi_com_sdk::NcOutputWriter<'_, u8>) -> Result<(), NcStatus> {
         if output.offset() != 0 || output.capacity() != 4 {
             return Err(NC_E_INVALID_ARG);
         }

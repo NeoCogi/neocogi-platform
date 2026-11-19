@@ -27,8 +27,11 @@ fn main() {
                         stage: GpuShaderStage::Vertex,
                         max_output_bytes: 4194304,
                     },
-                    neocogi_com::NcCopyFromBufferOffset::new(0, b"(module (vertex vs () (returns vec4 (builtin position)) (return (vec4 0.0 0.0 0.5 1.0))))"),
-                    neocogi_com::NcCopyFromBufferOffset::new(0, b"vs"),
+                    neocogi_com_sdk::NcCopyFromBufferOffset::new(
+                        0,
+                        b"(module (vertex vs () (returns vec4 (builtin position)) (return (vec4 0.0 0.0 0.5 1.0))))",
+                    ),
+                    neocogi_com_sdk::NcCopyFromBufferOffset::new(0, b"vs"),
                 )
                 .unwrap();
             assert_eq!(report.target().unwrap(), target);
@@ -38,7 +41,7 @@ fn main() {
     }
     if launch.arguments == ["--audio"] {
         use neocogi_example_plugins::sdk::audio::{AudioConfig, AudioDirection, AudioOpenState};
-        use neocogi_com::{NcCopyFromBufferOffset, NcOutputBuffer};
+        use neocogi_com_sdk::{NcCopyFromBufferOffset, NcOutputBuffer};
         let capabilities = platform.audio_capabilities().unwrap();
         let config = AudioConfig {
             capacity_frames: 128,
@@ -65,13 +68,12 @@ fn main() {
         capture.close().unwrap();
         println!("Dynamic audio playback and capture acquired without a window or external plugin.");
     }
-    // SAFETY: This executable owns the process-lived host, already initialized by acquisition.
-    let runtime = unsafe { neocogi_com::Runtime::__from_host_api(neocogi_com_host::initialize_process()) }.unwrap();
+    let runtime = neocogi_com_host::initialize_runtime();
     let loaded: Vec<_> = neocogi_example_plugins::Backend::ALL
         .into_iter()
         .filter(|backend| {
             runtime
-                .plugin_info(neocogi_com::guid_from_qualified_name(backend.plugin_name()))
+                .plugin_info(neocogi_com_sdk::guid_from_qualified_name(backend.plugin_name()))
                 .unwrap()
                 .is_some()
         })
@@ -80,7 +82,7 @@ fn main() {
     let name = loaded[0].plugin_name();
     assert!(
         runtime
-            .plugin_info(neocogi_com::guid_from_qualified_name("neocogi.shader.compiler"))
+            .plugin_info(neocogi_com_sdk::guid_from_qualified_name("neocogi.shader.compiler"))
             .unwrap()
             .is_none()
     );

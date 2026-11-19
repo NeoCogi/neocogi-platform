@@ -1,5 +1,5 @@
 //! Generated value persistence uses the SDK's COM format protocol without a renderer.
-use neocogi_com::{
+use neocogi_com_sdk::{
     ComDeserialize, ComSerialize,
     serialization::{Format, Limits},
 };

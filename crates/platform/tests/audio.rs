@@ -1,6 +1,6 @@
 //! Real SDL dummy devices and generated COM calls; no display, GPU or physical microphone is used.
 #![cfg(not(target_arch = "wasm32"))]
-use neocogi_com::{ComBox, INcStringComPtrExt, NcCopyFromBufferOffset, NcOutputBuffer, NC_E_INVALID_ARG, NC_E_NOINTERFACE};
+use neocogi_com_sdk::{ComBox, ComStringExt, NcCopyFromBufferOffset, NcOutputBuffer, NC_E_INVALID_ARG, NC_E_NOINTERFACE};
 use neocogi_platform::audio::*;
 use std::time::{Duration, Instant};
 
@@ -61,8 +61,7 @@ fn native_playback_capture_and_owned_failures() {
         );
         return;
     }
-    // SAFETY: This isolated executable owns its immutable process-lived COM host tables.
-    let _runtime = unsafe { neocogi_com::Runtime::__from_host_api(neocogi_com_host::initialize_process()) }.unwrap();
+    let _runtime = neocogi_com_host::initialize_runtime();
     let config = AudioConfig {
         capacity_frames: 128,
         ..AudioConfig::stereo()
@@ -193,8 +192,7 @@ fn unavailable_audio_driver_has_owned_diagnostic() {
         );
         return;
     }
-    // SAFETY: This isolated child owns the process-lived runtime tables.
-    let _runtime = unsafe { neocogi_com::Runtime::__from_host_api(neocogi_com_host::initialize_process()) }.unwrap();
+    let _runtime = neocogi_com_host::initialize_runtime();
     let mut failed = open(AudioDirection::Playback, AudioConfig::stereo()).unwrap();
     let capabilities = neocogi_platform::audio::capabilities().unwrap().info().unwrap();
     assert!(matches!(capabilities.playback, AudioSupport::Available { devices: AudioDeviceCount::Failed(status), .. } if status == AUDIO_E_BACKEND.code()));

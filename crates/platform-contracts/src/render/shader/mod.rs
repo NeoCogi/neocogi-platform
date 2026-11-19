@@ -12,7 +12,7 @@ pub const MAX_SHADER_ARTIFACT_BYTES: usize = 4 * 1024 * 1024;
 /// Maximum diagnostic UTF-8 bytes, truncated at a character boundary.
 pub const MAX_DIAGNOSTIC_BYTES: usize = 4096;
 /// A known target was not enabled in this compiler build; no alternative is emitted.
-pub const SHADER_E_TARGET_UNAVAILABLE: neocogi_com::NcStatus = neocogi_com::NcStatus::from_code(-3100);
+pub const SHADER_E_TARGET_UNAVAILABLE: neocogi_com_sdk::NcStatus = neocogi_com_sdk::NcStatus::from_code(-3100);
 /// Scalar/vector shape compared across independent shader modules and vertex layouts.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct IoShape {
@@ -139,8 +139,8 @@ pub mod testing;
 
 /// Reads one compiler report without consulting shared provider state.
 /// A failing text getter cannot replace the original compilation status.
-pub fn check_compilation(report: &abi::IShaderCompilationClient) -> Result<(), neocogi_platform_contracts::render::abi::RenderError> {
-    use neocogi_com::{INcStringComPtrExt, NcStatus};
+pub fn check_compilation(report: &abi::IShaderCompilationWrapper) -> Result<(), neocogi_platform_contracts::render::abi::RenderError> {
+    use neocogi_com_sdk::{ComStringExt, NcStatus};
     use neocogi_platform_contracts::render::abi::RenderError;
     let status = NcStatus::from_code(report.status().map_err(RenderError::from)?);
     if status.is_ok() {
@@ -154,16 +154,16 @@ pub fn check_compilation(report: &abi::IShaderCompilationClient) -> Result<(), n
     Err(RenderError::new(status, message))
 }
 
-impl abi::ShaderCompilerClient {
+impl abi::ShaderCompilerWrapper {
     /// Returns complete immutable artifacts or an owned compilation failure.
     /// The COM transport exposes `compile_result`; this facade reads that same report
     /// before returning, so callers never perform a separate last-error lookup.
     pub fn compile(
         &self,
         request: abi::ShaderCompileRequest,
-        source: neocogi_com::NcCopyFromBufferOffset<'_, u8>,
-        entry: neocogi_com::NcCopyFromBufferOffset<'_, u8>,
-    ) -> Result<neocogi_com::ComPtr<abi::IShaderCompilationAbi>, neocogi_platform_contracts::render::abi::RenderError> {
+        source: neocogi_com_sdk::NcCopyFromBufferOffset<'_, u8>,
+        entry: neocogi_com_sdk::NcCopyFromBufferOffset<'_, u8>,
+    ) -> Result<neocogi_com_sdk::ComPtr<abi::IShaderCompilationAbi>, neocogi_platform_contracts::render::abi::RenderError> {
         use neocogi_platform_contracts::render::abi::RenderError;
         let report = self
             .compile_result(request, source, entry)

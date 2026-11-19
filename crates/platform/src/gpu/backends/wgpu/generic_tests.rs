@@ -1,7 +1,7 @@
 //! Headless native-adapter acceptance exercises real COM recording and WGPU validation/pixels.
 use super::*;
 use crate::gpu::abi::{Rect, Size};
-use neocogi_com::{ComBox, ComPtr, NcCopyFromBufferOffset};
+use neocogi_com_sdk::{ComBox, ComPtr, NcCopyFromBufferOffset};
 use crate::gpu::{
     abi::*,
     source::{Bytes, PipelineDesc},

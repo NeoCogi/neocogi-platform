@@ -1,5 +1,5 @@
 //! Schema-generated COM calls verify format selection, ownership and exact quotas.
-use neocogi_com::{ComPtr, INcBytesComPtrExt, INcStringComPtrExt, NcCopyFromBufferOffset, NC_OK, NC_E_INVALID_ARG, NC_E_NOINTERFACE, NC_E_OUT_OF_RANGE};
+use neocogi_com_sdk::{ComPtr, ComBytesExt, ComStringExt, NcCopyFromBufferOffset, NC_OK, NC_E_INVALID_ARG, NC_E_NOINTERFACE, NC_E_OUT_OF_RANGE};
 use neocogi_platform::{
     render::compiler::CompilerObject,
     render::abi::GpuShaderStage,
@@ -158,7 +158,7 @@ fn unavailable_configurations_and_unknown_wire_stages_reject() {
         NcCopyFromBufferOffset::new(0, SOURCE.as_bytes()),
         NcCopyFromBufferOffset::new(0, b"vs"),
     );
-    assert!(matches!(result, Err(neocogi_com::NC_E_INVALID_TAG)));
+    assert!(matches!(result, Err(neocogi_com_sdk::NC_E_INVALID_TAG)));
 }
 
 /// Owned failures remain independent of later calls and compiler lifetime for every target.

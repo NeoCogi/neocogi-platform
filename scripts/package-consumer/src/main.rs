@@ -1,5 +1,5 @@
 //! Runs independently generated COM calls against packaged platform and renderer providers.
-use neocogi_com::{ComPtr, INcBytesComPtrExt, INcStringComPtrExt, NcCopyFromBufferOffset, Runtime, NC_OK};
+use neocogi_com_sdk::{ComPtr, ComBytesExt, ComStringExt, NcCopyFromBufferOffset, RuntimeHandle, NC_OK};
 
 /// Consumer-owned generated definitions negotiate by COM identity.
 #[allow(dead_code, clippy::len_without_is_empty)]
@@ -61,7 +61,7 @@ fn typed_pipeline_contract() {
             alpha: gpu_contracts::GpuBlendEquation::Min,
         }
     );
-    let mut bindings = neocogi_com::NcOutputBuffer::<gpu_contracts::GpuShaderBinding>::new();
+    let mut bindings = neocogi_com_sdk::NcOutputBuffer::<gpu_contracts::GpuShaderBinding>::new();
     source.bindings(bindings.output(0, 2)).unwrap();
     assert_eq!(
         bindings.as_slice(),
@@ -82,11 +82,11 @@ fn typed_pipeline_contract() {
 
 /// A normal packaged cdylib exposes the built-in compiler through independently generated COM bindings.
 /// No SDK descriptor registration or renderer linkage in the caller supplies the loaded provider.
-fn dynamic_platform_contract(runtime: Runtime, path: std::path::PathBuf) {
+fn dynamic_platform_contract(runtime: RuntimeHandle, path: std::path::PathBuf) {
     // SAFETY: The qualification command supplies the trusted library built from the extracted shim archive.
-    // Runtime validates its descriptor and pins the provider code for process lifetime.
+    // The linked host validates its descriptor and pins the provider code for process lifetime.
     let id = unsafe { runtime.load_plugin_library(path) };
-    assert_eq!(id, neocogi_com::guid_from_qualified_name("neocogi.platform.glow"));
+    assert_eq!(id, neocogi_com_sdk::guid_from_qualified_name("neocogi.platform.glow"));
     let platform = runtime.acquire_plugin_root::<platform_contracts::PlatformAbi>(id).unwrap();
     let factory = platform.query::<gpu_contracts::ShaderCompilerFactoryAbi>().unwrap();
     drop(platform);
@@ -107,7 +107,7 @@ fn dynamic_platform_contract(runtime: Runtime, path: std::path::PathBuf) {
     let error = compiler
         .compile_result(request, NcCopyFromBufferOffset::new(0, b"(module"), NcCopyFromBufferOffset::new(0, b"vs"))
         .unwrap();
-    assert_eq!(error.status().unwrap(), neocogi_com::NC_E_INVALID_ARG.code());
+    assert_eq!(error.status().unwrap(), neocogi_com_sdk::NC_E_INVALID_ARG.code());
     let diagnostic = error.diagnostic().unwrap();
     drop((error, compiler));
     let emitted = code.to_vec().unwrap();
@@ -120,8 +120,7 @@ fn dynamic_platform_contract(runtime: Runtime, path: std::path::PathBuf) {
 
 /// Retained artifact exports stay usable after their report and compiler are released.
 fn main() {
-    // SAFETY: This executable owns the process-lived immutable host tables.
-    let runtime = unsafe { Runtime::__from_host_api(neocogi_com_host::initialize_process()) }.unwrap();
+    let runtime = neocogi_com_host::initialize_runtime();
     if let Some(path) = std::env::args_os().nth(1) {
         dynamic_platform_contract(runtime, path.into());
     }
@@ -131,7 +130,7 @@ fn main() {
         .query::<audio_contracts::IAudioCapabilitiesAbi>()
         .unwrap();
     assert_eq!(audio.info().unwrap().backend, audio_contracts::AudioBackend::Sdl);
-    let mut supported = neocogi_com::NcOutputBuffer::<audio_contracts::PcmType>::new();
+    let mut supported = neocogi_com_sdk::NcOutputBuffer::<audio_contracts::PcmType>::new();
     audio.pcm_types(supported.output(0, audio.pcm_type_count().unwrap() as usize)).unwrap();
     drop(audio);
     assert!(supported.as_slice().contains(&audio_contracts::PcmType::FixedPoint(32, 16)));
@@ -164,7 +163,7 @@ fn main() {
     let canonical = report.query::<abi::IShaderCompilationAbi>().unwrap();
     assert!(matches!(
         PreparedShader::new(canonical.clone(), abi::GpuShaderStage::Vertex, ShaderTarget::SpirV, b"vs", 4 * 1024 * 1024),
-        Err(neocogi_com::NC_E_INVALID_ARG)
+        Err(neocogi_com_sdk::NC_E_INVALID_ARG)
     ));
     let prepared = PreparedShader::new(canonical, abi::GpuShaderStage::Vertex, ShaderTarget::GlslEs300, b"vs", 4 * 1024 * 1024).unwrap();
     assert_eq!(prepared.copy().unwrap().code.target(), ShaderTarget::GlslEs300);

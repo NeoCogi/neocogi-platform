@@ -2,7 +2,7 @@
 
 One normal Cargo `cdylib` named `nc_platform`, containing the selected renderer,
 its built-in COM shader compiler and audio services. The sole discovery export is
-`nc_get_plugin_descriptor_v2`. The executable owns the COM host; this library uses
+`nc_get_plugin_descriptor_v3`. The executable owns the COM host; this library uses
 its supplied services. Static Rust applications use `neocogi-platform` instead. The SDK also includes
 audio/window hosting unconditionally and defaults to Glow; neither service has a
 separate feature flag.
@@ -63,14 +63,15 @@ with COM/IDL `0.2.0-alpha.4`:
 
 All four are below 512 KiB. Source-archive screenshots do not enter the native library.
 
-## Build from crates.io
+## Build as a dependency
 
-Declare the deployment artifact in a consumer's `Cargo.toml`. Use a separate
-build package when the application's graph should contain only contracts:
+Declare the deployment artifact from a Platform checkout that pins COM
+`0.4.0-alpha.2`. Use a separate build package when the application's graph
+should contain only contracts:
 
 ```toml
 [dependencies]
-neocogi-platform-dylib = "=0.3.0-alpha.2"
+neocogi-platform-dylib = { path = "../neocogi-platform/crates/platform-dylib" }
 ```
 
 Then build the dependency's normal library and deploy it:
@@ -81,9 +82,8 @@ cargo build --release -p neocogi-platform-dylib --lib
 ```
 
 This is a deployment artifact, not a Rust API to import. A cdylib-only dependency
-may produce a Cargo warning about having no Rust-linkable target; select it with
-`-p` as above. Published consumers choose their own profile and toolchain; they
-need no checkout-relative build paths or Cargo artifact dependencies.
+may produce a Cargo warning about having no Rust-linkable target. Select it
+with `-p` as above and choose the target and profile for your deployment.
 
 ## Load it from an application
 
@@ -92,21 +92,20 @@ dependency. For the default Glow library built above:
 
 ```toml
 [dependencies]
-neocogi-platform-contracts = { version = "=0.3.0-alpha.2", default-features = false }
-neocogi-com = { version = "=0.3.0-alpha.1", default-features = false, features = ["std", "runtime"] }
-neocogi-com-host = { version = "=0.3.0-alpha.1", default-features = false }
+neocogi-platform-contracts = { path = "../neocogi-platform/crates/platform-contracts", default-features = false }
+neocogi-com-sdk = { version = "=0.4.0-alpha.2", default-features = false, features = ["std", "runtime"] }
+neocogi-com-host = { version = "=0.4.0-alpha.2", default-features = false }
 ```
 
 ```rust
-use neocogi_com::{ComPtr, INcBytesComPtrExt, NcCopyFromBufferOffset, Runtime};
+use neocogi_com_sdk::{ComBytesExt, ComPtr, NcCopyFromBufferOffset};
 use neocogi_platform_contracts::render::{
     abi::{GpuShaderStage, ShaderCompileRequest, ShaderCompilerFactoryAbi, ShaderTarget},
     platform::PlatformAbi,
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // SAFETY: This final executable owns the process-lived COM host tables.
-    let runtime = unsafe { Runtime::__from_host_api(neocogi_com_host::initialize_process()) }?;
+    let runtime = neocogi_com_host::initialize_runtime();
     let library = std::env::args_os().nth(1).expect("pass the trusted platform library path");
     // SAFETY: The application deliberately loads its trusted, matching platform deployment.
     // The host validates the descriptor and pins provider code for process lifetime.
@@ -135,10 +134,10 @@ Compile failures return owned source-located diagnostics. The target is fixed pe
 compiler; requests contain only stage and output budget. S-expression and
 optional Python-like input share validation and the optimized backend writers.
 
-COM/host/IDL use exact `0.2.0` dependencies. Rebuild providers and generated
-consumers together after contract/toolchain changes; compatibility uses derived
-identities and exact signatures. Runtime backend selection belongs to the loaded
-library. An application's `--backend` option can verify that choice, not replace it.
+Rebuild the host, generated consumers and providers together for COM
+`0.4.0-alpha.2`, which uses provisional ABI v3, core generation 21.
+The loaded library selects the backend. An application's `--backend` option
+verifies that choice.
 
 ## Run the repository examples dynamically
 

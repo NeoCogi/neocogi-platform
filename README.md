@@ -107,9 +107,10 @@ Left-drag rotates, right/middle-drag pans, and the wheel zooms. Press R to reset
 Space to pause animation, B to toggle the skybox, or Escape to close. See the [example guide](examples/native/gltf/README.md)
 for backend selection, bounded headless runs, supported glTF features and asset licenses.
 
-The Platform workspace pins the published COM, host and IDL packages to exact
-`0.3.0-alpha.1`. Rebuild generated consumers and providers together after this
-toolchain upgrade. Shared dependencies participate in one application Cargo graph.
+This checkout pins the COM base, SDK, host, serialization and IDL compiler to
+`0.4.0-alpha.2` and uses provisional COM ABI v3, core generation 21. Rebuild
+the host, providers and generated consumers together. Shared dependencies
+participate in one application Cargo graph.
 Independent builds can reuse compatible artifacts through `CARGO_TARGET_DIR`.
 
 See [documentation](docs/README.md), [component ownership](docs/architecture/COMPONENTS.md),
@@ -117,8 +118,9 @@ See [documentation](docs/README.md), [component ownership](docs/architecture/COM
 [GPU contracts](docs/contracts/GPU_RENDERING.md), [shader compilation](docs/contracts/SHADER_COMPILATION.md),
 and [dependency compatibility and revision history](docs/project/HISTORY.md).
 
-The current release target is `0.3.0-alpha.2`. See [release preparation](docs/project/RELEASING.md)
-for the published package set, self-contained build inputs and verification.
+The published Platform `0.3.0-alpha.2` packages use COM `0.3.0-alpha.1`.
+See [release preparation](docs/project/RELEASING.md) for the package set,
+self-contained build inputs and verification.
 
 Asset downloads, package qualification, browser tests and local debugging helpers
 are Rust commands. See [repository tools](scripts/README.md); no Python interpreter

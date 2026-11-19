@@ -1,12 +1,12 @@
 //! Real minimal compiler builds: no test-support feature may enable another output.
 use neocogi_platform::render::abi::*;
-use neocogi_com::{com_object, ComPtr, NcCopyFromBufferOffset, NcStatus, NcBytes, INcStringAbi, INcBytesAbi, INcBytesComPtrExt, NC_OK, NC_E_INVALID_ARG};
+use neocogi_com_sdk::{com_object, ComPtr, NcCopyFromBufferOffset, NcStatus, NcBytes, INcStringAbi, INcBytesAbi, ComBytesExt, NC_OK, NC_E_INVALID_ARG};
 use neocogi_platform::{
     render::compiler::CompilerObject,
     render::abi::GpuShaderStage,
     render::shader::{self, PreparedShader, ShaderCode, ShaderTarget},
 };
-use neocogi_com::INcStringComPtrExt;
+use neocogi_com_sdk::ComStringExt;
 
 /// Portable layout with one selected uniform and one unused declaration.
 const SOURCE: &str = r#"(module
@@ -91,7 +91,7 @@ fn repeated_requests_cannot_change_a_compilers_configured_output() {
         for (target, compiler) in &compilers {
             for (source, cap, status) in [
                 ("invalid WGSL", 4194304, NC_E_INVALID_ARG),
-                (SOURCE, 1, neocogi_com::NC_E_OUT_OF_RANGE),
+                (SOURCE, 1, neocogi_com_sdk::NC_E_OUT_OF_RANGE),
                 (SOURCE, 4194304, NC_OK),
             ] {
                 let report = compiler
@@ -189,7 +189,7 @@ fn a_mismatched_target_rejects_before_the_code_getter_is_called() {
         }
         let report: ComPtr<IShaderCompilationAbi> = ReportProbe::from_value(ReportProbe {
             inner: compile(target),
-            code: Err(neocogi_com::NC_E_LOAD_FAILED),
+            code: Err(neocogi_com_sdk::NC_E_LOAD_FAILED),
         })
         .query()
         .unwrap();
@@ -204,7 +204,7 @@ fn a_mismatched_target_rejects_before_the_code_getter_is_called() {
         ));
         assert!(matches!(
             PreparedShader::new(report, GpuShaderStage::Vertex, target, b"vs", 4194304),
-            Err(neocogi_com::NC_E_LOAD_FAILED)
+            Err(neocogi_com_sdk::NC_E_LOAD_FAILED)
         ));
     }
 }

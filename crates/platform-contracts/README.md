@@ -14,18 +14,19 @@ and supplies concrete renderers and their owned shader compilers.
 Build scripts enable `build-support` and use `build::{Module, sources, build}`
 for consumer-owned projections or `build::layout` for native resource staging.
 All ten authored schemas live in this archive, are embedded by the helper and
-are reconstructed in each consumer's own OUT_DIR. The pinned COM/IDL toolchain is
-`0.2.0`; declaration identities and exact signatures are derived from the
-contract without manual `#[version(...)]` attributes. Rebuild providers and
-generated consumers together after upgrading this toolchain.
+are reconstructed in each consumer's own OUT_DIR. The pinned IDL compiler is
+`0.4.0-alpha.2` and generated Rust refers to the `neocogi_com_sdk` crate.
+An independent generator consumer declares `neocogi-com-sdk` directly at the
+same version. Rebuild providers and generated consumers together when changing
+the toolchain. The schema determines declaration identities and exact signatures.
 The sibling `neocogi.renderer`, `neocogi.audio` and `neocogi.platform` namespaces
 live in matching schema folders. `Module::Audio` selects audio-only generation;
 platform imports audio service types instead of owning them.
 
 Generated data values implement `ComSerialize` and `ComDeserialize` when their
 fields support persistence. Live COM capabilities cannot be reconstructed
-automatically. Callers select a format through `neocogi_com::serialization::Format`;
-codec implementations live in `neocogi-com-serialization` and are not a runtime
-dependency of these contracts. Tests exercise NCB and JSON, including malformed
+automatically. Callers select a format through `neocogi_com_sdk::serialization::Format`.
+The application supplies its chosen codec from `neocogi-com-serialization`.
+Tests exercise NCB and JSON, including malformed
 documents and owned source/field diagnostics. Deserialization checks representation;
 callers still apply the subsystem's semantic validation before admitting resources.

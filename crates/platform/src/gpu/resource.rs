@@ -11,7 +11,7 @@ use crate::gpu::{
     budget::{Account, ByteCharge, ResourceCharge},
     shader::Shader,
 };
-use neocogi_com::{
+use neocogi_com_sdk::{
     com_object, ComBox, ComInterface, ComObject, ComPtr, ComRef, IUnknown, LocalBox, NcCopyFromBufferOffset, NcOutputBuffer, NcStatus, ThreadLocal, WeakComBox,
     WeakComPtr, WeakLocalBox, NC_E_DROPPED, NC_E_INVALID_ARG, NC_E_OUT_OF_MEMORY, NC_E_OUT_OF_RANGE,
 };

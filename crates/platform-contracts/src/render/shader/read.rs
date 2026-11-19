@@ -2,7 +2,7 @@
 //! charge across construction, copying, errors and final destruction of this reader.
 use neocogi_platform_contracts::render::abi::*;
 use crate::render::shader::{*};
-use neocogi_com::{ComPtr, INcStringAbi, INcBytesAbi, INcStringComPtrExt, INcBytesComPtrExt, NcStatus, NC_E_INVALID_ARG, NC_E_OUT_OF_RANGE, NC_E_OUT_OF_MEMORY};
+use neocogi_com_sdk::{ComPtr, INcStringAbi, INcBytesAbi, ComStringExt, ComBytesExt, NcStatus, NC_E_INVALID_ARG, NC_E_OUT_OF_RANGE, NC_E_OUT_OF_MEMORY};
 
 /// Owned foreign exports admitted before receiving code allocation. Metadata is
 /// separately bounded and deliberately excluded from the code-payload receipt.
@@ -68,7 +68,7 @@ impl PreparedShader {
             return Err(NC_E_INVALID_ARG);
         }
         let status = NcStatus::from_code(report.status()?);
-        if status != neocogi_com::NC_OK {
+        if status != neocogi_com_sdk::NC_OK {
             return Err(if status.is_err() { status } else { NC_E_INVALID_ARG });
         }
         let info = report.info()?;

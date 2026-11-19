@@ -11,7 +11,6 @@ shader-python = ["neocogi-platform/shader-python"]
 crate-type = ["cdylib"]
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 neocogi-platform = { workspace = true, features = ["webgl", "test-support"] }
-neocogi-com = { workspace = true, features = ["runtime"] }
 neocogi-com-host.workspace = true
 wasm-bindgen.workspace = true
 wasm-bindgen-futures = "=0.4.77"

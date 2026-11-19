@@ -1,5 +1,5 @@
 //! Logical key payloads are validated and preserved through the generated COM boundary.
-use neocogi_com::{ComPtr, NC_E_INVALID_ARG, NC_E_INVALID_TAG, NcStatus, NcCopyFromBufferOffset, com_object, decode_inline, encode_inline};
+use neocogi_com_sdk::{ComPtr, NC_E_INVALID_ARG, NC_E_INVALID_TAG, NcStatus, NcCopyFromBufferOffset, com_object, decode_inline, encode_inline};
 use neocogi_platform_contracts::render::{
     abi::{RenderSurfaceDesc, Size},
     platform::*,

@@ -6,7 +6,7 @@
 
 use super::*;
 use crate::platform::{PlatformObject, WindowObject, identity};
-use neocogi_com::{ComPtr, NC_E_INVALID_ARG, com_object};
+use neocogi_com_sdk::{ComPtr, NC_E_INVALID_ARG, com_object};
 use neocogi_platform::render::abi::*;
 use wasm_bindgen::prelude::*;
 
@@ -16,17 +16,17 @@ use neocogi_platform::gpu::testing::{derivatives, sampled};
 /// Browser-owned sealed contributions exercise the same generated COM path as native applications.
 struct SurfaceBlocks {
     /// Exclusive owners remain alive through each synchronous image/window submission.
-    blocks: Vec<neocogi_com::ComBox<IRenderViewBlockAbi>>,
+    blocks: Vec<neocogi_com_sdk::ComBox<IRenderViewBlockAbi>>,
 }
 impl IRenderStream for SurfaceBlocks {
     /// Borrows a sealed contribution without transferring its owner to the renderer.
-    fn view(&self, _: u64, index: u32) -> Result<neocogi_com::WeakComBox<IRenderViewBlockAbi>, NcStatus> {
-        self.blocks.get(index as usize).map(neocogi_com::ComBox::downgrade).ok_or(NC_E_INVALID_ARG)
+    fn view(&self, _: u64, index: u32) -> Result<neocogi_com_sdk::WeakComBox<IRenderViewBlockAbi>, NcStatus> {
+        self.blocks.get(index as usize).map(neocogi_com_sdk::ComBox::downgrade).ok_or(NC_E_INVALID_ARG)
     }
 }
 
 /// Records a regional color clear with depth disabled; no automatic depth command may be required.
-fn surface_clear(host: &ComPtr<IRenderHostAbi>, group: &neocogi_com::ComBox<IRenderResourceGroupAbi>) -> ComPtr<IRenderStreamAbi> {
+fn surface_clear(host: &ComPtr<IRenderHostAbi>, group: &neocogi_com_sdk::ComBox<IRenderResourceGroupAbi>) -> ComPtr<IRenderStreamAbi> {
     let bounds = Rect { x: 0, y: 0, width: 4, height: 4 };
     let mut frame = host.recording_broker().unwrap().begin_frame().unwrap();
     let resources = group.resources().unwrap();
@@ -88,7 +88,7 @@ fn browser_surface_targets() {
             .map_err(|error| error.status),
         Err(RENDER_E_OWNER)
     );
-    assert!(matches!(other.completed_image(), Err(neocogi_com::NC_E_NOT_FOUND)));
+    assert!(matches!(other.completed_image(), Err(neocogi_com_sdk::NC_E_NOT_FOUND)));
     let renderer: ComPtr<IRendererAbi> = window.query().unwrap();
     assert_eq!(
         renderer
@@ -183,7 +183,7 @@ async fn browser_texture_refresh(
             // WebGL exposes completed fences only after a browser task boundary. Keep
             // the real in-flight exclusion and wait for ordinary maintenance to retire it.
             for attempt in 0..200 {
-                match buffer.upload(neocogi_com::NcCopyFromBufferOffset::new(0, &bytes)) {
+                match buffer.upload(neocogi_com_sdk::NcCopyFromBufferOffset::new(0, &bytes)) {
                     Ok(()) => break,
                     Err(crate::render::abi::RENDER_E_BUSY) if attempt < 199 => {
                         wasm_bindgen_futures::JsFuture::from(next_test_task()).await.unwrap();
@@ -466,7 +466,7 @@ async fn canonical_browser_derivatives() {
     assert!(renderer.make_current().is_err(), "actual WebGL loss invalidates the physical owner");
     assert!(renderer.prepare_texture(version).is_err(), "a Ready image cannot bypass terminal context loss");
     assert_eq!(
-        image.upload(neocogi_com::NcCopyFromBufferOffset::new(0, &[0; 4])),
+        image.upload(neocogi_com_sdk::NcCopyFromBufferOffset::new(0, &[0; 4])),
         Err(neocogi_platform::render::abi::RENDER_E_BACKEND),
         "uploads must observe actual WebGL loss"
     );

@@ -3,7 +3,7 @@
 #[path = "../triangle.rs"]
 mod triangle;
 
-use neocogi_com::{com_object, ComBox, ComPtr, ComRef, NcCopyFromBufferOffset, NcStatus};
+use neocogi_com_sdk::{com_object, ComBox, ComPtr, ComRef, NcCopyFromBufferOffset, NcStatus};
 use neocogi_platform_examples::sdk::render::abi::*;
 use neocogi_platform_examples::sdk::render::platform::*;
 use std::{
@@ -192,7 +192,7 @@ impl IRenderer for ObservedWindow {
     /// Native submission enforces actual pixel dimensions and validates every recorded view's bounds.
     fn render_result(&self, info: RenderInfo, stream: ComRef<'_, IRenderStreamAbi>) -> Result<ComPtr<IRenderOutcomeAbi>, NcStatus> {
         let report = self.window.query::<IRendererAbi>()?.render_result(info, stream)?;
-        if neocogi_com::NcStatus::from_code(report.status()?).is_ok() {
+        if neocogi_com_sdk::NcStatus::from_code(report.status()?).is_ok() {
             self.submissions.set(self.submissions.get() + 1);
         }
         Ok(report)

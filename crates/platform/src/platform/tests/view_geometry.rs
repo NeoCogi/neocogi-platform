@@ -9,7 +9,7 @@ pub(super) struct ViewStream {
 }
 impl IRenderStream for ViewStream {
     /// Borrows the only sealed contribution through the exclusive weak protocol.
-    fn view(&self, _: u64, index: u32) -> Result<neocogi_com::WeakComBox<IRenderViewBlockAbi>, NcStatus> {
+    fn view(&self, _: u64, index: u32) -> Result<neocogi_com_sdk::WeakComBox<IRenderViewBlockAbi>, NcStatus> {
         self.blocks.get(index as usize).map(ComBox::downgrade).ok_or(NC_E_INVALID_ARG)
     }
 }

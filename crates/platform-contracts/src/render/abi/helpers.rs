@@ -4,7 +4,7 @@
 //! generated ABI description or declaration identities.
 
 use crate::render::abi::*;
-use neocogi_com::{NC_E_INVALID_ARG, NcStatus};
+use neocogi_com_sdk::{NC_E_INVALID_ARG, NcStatus};
 
 /// Maximum byte count accepted for one uncompressed RGBA image.
 pub const MAX_IMAGE_BYTES: usize = 64 * 1024 * 1024;
@@ -54,7 +54,7 @@ impl GpuBufferDesc {
     pub fn byte_len(self) -> Result<usize, NcStatus> {
         let len = match self {
             Self::Vertex { byte_len } | Self::Index { byte_len } | Self::Uniform { byte_len } => {
-                usize::try_from(byte_len).map_err(|_| neocogi_com::NC_E_OUT_OF_RANGE)?
+                usize::try_from(byte_len).map_err(|_| neocogi_com_sdk::NC_E_OUT_OF_RANGE)?
             }
             Self::Texture { size, format, mip_count } => {
                 if mip_count != 1 || !matches!(format, GpuTextureFormat::Rgba8Unorm | GpuTextureFormat::Rgba8Srgb) {
@@ -64,7 +64,7 @@ impl GpuBufferDesc {
             }
         };
         if len == 0 || len > MAX_IMAGE_BYTES {
-            return Err(neocogi_com::NC_E_OUT_OF_RANGE);
+            return Err(neocogi_com_sdk::NC_E_OUT_OF_RANGE);
         }
         Ok(len)
     }

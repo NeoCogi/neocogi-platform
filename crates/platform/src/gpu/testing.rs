@@ -25,16 +25,16 @@ pub struct Core {
 }
 
 /// Copies a fixture range through the production synchronous buffer ABI.
-pub fn write_buffer(mut buffer: neocogi_com::ComRef<'_, IGpuBufferAbi>, offset: u64, bytes: &[u8]) -> Result<(), neocogi_com::NcStatus> {
-    buffer.upload(neocogi_com::NcCopyFromBufferOffset::new(offset, bytes))
+pub fn write_buffer(mut buffer: neocogi_com_sdk::ComRef<'_, IGpuBufferAbi>, offset: u64, bytes: &[u8]) -> Result<(), neocogi_com_sdk::NcStatus> {
+    buffer.upload(neocogi_com_sdk::NcCopyFromBufferOffset::new(offset, bytes))
 }
 
 /// Fixture-only rectangle composition above the flat row-major byte transfer API.
 /// A single upload publishes the completed image, including preserving dynamic pixels.
-pub fn write_pixels(mut buffer: neocogi_com::ComRef<'_, IGpuBufferAbi>, rect: Rect, bytes: &[u8]) -> Result<(), neocogi_com::NcStatus> {
+pub fn write_pixels(mut buffer: neocogi_com_sdk::ComRef<'_, IGpuBufferAbi>, rect: Rect, bytes: &[u8]) -> Result<(), neocogi_com_sdk::NcStatus> {
     let info = buffer.info()?;
     let GpuBufferDesc::Texture { size, .. } = info.desc else {
-        return Err(neocogi_com::NC_E_INVALID_ARG);
+        return Err(neocogi_com_sdk::NC_E_INVALID_ARG);
     };
     if rect.x < 0
         || rect.y < 0
@@ -43,13 +43,13 @@ pub fn write_pixels(mut buffer: neocogi_com::ComRef<'_, IGpuBufferAbi>, rect: Re
         || i64::from(rect.x) + i64::from(rect.width) > i64::from(size.width)
         || i64::from(rect.y) + i64::from(rect.height) > i64::from(size.height)
     {
-        return Err(neocogi_com::NC_E_OUT_OF_RANGE);
+        return Err(neocogi_com_sdk::NC_E_OUT_OF_RANGE);
     }
     let row = rect.width as usize * 4;
     if row * rect.height as usize != bytes.len() {
-        return Err(neocogi_com::NC_E_INVALID_ARG);
+        return Err(neocogi_com_sdk::NC_E_INVALID_ARG);
     }
-    let mut pixels = neocogi_com::NcOutputBuffer::new();
+    let mut pixels = neocogi_com_sdk::NcOutputBuffer::new();
     let mut image = vec![0; info.desc.byte_len()?];
     if info.usage == GpuBufferUsage::Dynamic {
         buffer.read(pixels.output(0, image.len()))?;
@@ -60,17 +60,17 @@ pub fn write_pixels(mut buffer: neocogi_com::ComRef<'_, IGpuBufferAbi>, rect: Re
         let first = (rect.y as usize + y) * pitch + rect.x as usize * 4;
         image[first..first + row].copy_from_slice(&bytes[y * row..(y + 1) * row]);
     }
-    buffer.upload(neocogi_com::NcCopyFromBufferOffset::new(0, &image))
+    buffer.upload(neocogi_com_sdk::NcCopyFromBufferOffset::new(0, &image))
 }
 
 /// Keeps the public uniform owner explicit until the consuming fixture draw captures it.
 pub fn bind_uniform(
-    resources: neocogi_com::ComRef<'_, IRenderResourcesAbi>,
-    view: &mut IRenderViewClient,
+    resources: neocogi_com_sdk::ComRef<'_, IRenderResourcesAbi>,
+    view: &mut IRenderViewWrapper,
     stage: GpuShaderStage,
     slot: u32,
     bytes: &[u8],
-) -> Result<neocogi_com::ComBox<IGpuBufferAbi>, neocogi_com::NcStatus> {
+) -> Result<neocogi_com_sdk::ComBox<IGpuBufferAbi>, neocogi_com_sdk::NcStatus> {
     let source = neocogi_platform::render::source::Bytes::source(bytes.to_vec());
     let buffer = resources.create_static_buffer(GpuBufferDesc::Uniform { byte_len: bytes.len() as u64 }, source.as_com_ref())?;
     view.bind_uniform_buffer(stage, slot, buffer.as_com_ref(), 0, bytes.len() as u64)?;
@@ -264,7 +264,7 @@ impl NativeResources for Backend {
     }
 }
 /// Explicit fixture constructor used by common CPU tests; production always supplies a real core.
-pub fn device(compiler: neocogi_com::ComPtr<neocogi_platform::render::abi::ShaderCompilerAbi>) -> GpuDevice<Backend> {
+pub fn device(compiler: neocogi_com_sdk::ComPtr<neocogi_platform::render::abi::ShaderCompilerAbi>) -> GpuDevice<Backend> {
     GpuDevice::with_compiler(Core::new(), compiler)
 }
 
@@ -279,7 +279,7 @@ pub mod uniforms;
 
 /// Explicit target fixture; it never selects a compiler fallback or native graphics backend.
 pub fn device_with_target(
-    compiler: neocogi_com::ComPtr<crate::render::abi::ShaderCompilerAbi>,
+    compiler: neocogi_com_sdk::ComPtr<crate::render::abi::ShaderCompilerAbi>,
     target: crate::render::shader::ShaderTarget,
 ) -> GpuDevice<Backend> {
     GpuDevice::with_compiler(Core::with_target(target), compiler)

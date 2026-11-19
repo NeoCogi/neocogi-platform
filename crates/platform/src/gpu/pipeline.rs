@@ -4,7 +4,7 @@ use crate::gpu::{
     resource::{self, Domain},
     shader::IoShape,
 };
-use neocogi_com::{ComBox, ComRef, NcOutputBuffer, NcStatus, NC_E_INVALID_ARG, NC_E_OUT_OF_RANGE};
+use neocogi_com_sdk::{ComBox, ComRef, NcOutputBuffer, NcStatus, NC_E_INVALID_ARG, NC_E_OUT_OF_RANGE};
 use std::rc::Rc;
 
 /// Reads bounded descriptor arrays before taking any resource gate, then captures shader snapshots.

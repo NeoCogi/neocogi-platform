@@ -2,7 +2,7 @@
 
 use std::{cell::RefCell, rc::Rc, collections::VecDeque};
 use neocogi_platform::render::platform::*;
-use neocogi_com::{ComRef, NcCopyFromBufferOffset, NcStatus};
+use neocogi_com_sdk::{ComRef, NcCopyFromBufferOffset, NcStatus};
 use wasm_bindgen::{JsCast, closure::Closure};
 use web_sys::{Event, EventTarget, FocusEvent, HtmlCanvasElement, HtmlTextAreaElement, KeyboardEvent, PointerEvent, WheelEvent};
 use neocogi_platform::platform::wheel::{WheelAccumulator, WheelUnit};

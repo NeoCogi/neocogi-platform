@@ -1,7 +1,7 @@
 //! Real native/WebGL COM submissions mutate the drawable in the last stream callback.
 use super::*;
 use glow::HasContext;
-use neocogi_com::{ComBox, WeakComBox};
+use neocogi_com_sdk::{ComBox, WeakComBox};
 
 /// Shared-receiver COM callbacks record observations without retaining a borrow across reentry.
 struct Observed {

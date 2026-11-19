@@ -3,7 +3,7 @@
 //! The factory owns only `IRenderResources`. Drivers allocate ordinary buffers;
 //! application element types and shader packing never become backend parameters.
 use crate::render::{abi::*, source::Bytes};
-use neocogi_com::{ComBox, ComPtr, ComRef, WeakComBox, NcCopyFromBufferOffset, NcOutput, NcStatus, NC_E_INVALID_ARG, NC_E_OUT_OF_MEMORY, NC_E_OUT_OF_RANGE};
+use neocogi_com_sdk::{ComBox, ComPtr, ComRef, WeakComBox, NcCopyFromBufferOffset, NcOutput, NcStatus, NC_E_INVALID_ARG, NC_E_OUT_OF_MEMORY, NC_E_OUT_OF_RANGE};
 use std::{marker::PhantomData, mem, slice};
 
 /// Plain initialized native values whose exact bytes are their declared GPU layout.

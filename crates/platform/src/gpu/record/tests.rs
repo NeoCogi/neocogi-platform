@@ -2,7 +2,7 @@
 use super::*;
 use crate::gpu::testing::device as new_device;
 type GpuDevice = crate::gpu::GpuDevice<crate::gpu::testing::Backend>;
-use neocogi_com::{NcCopyFromBufferOffset, ComInlineValue, NcOutputWriter, NC_E_DROPPED};
+use neocogi_com_sdk::{NcCopyFromBufferOffset, ComInlineValue, NcOutputWriter, NC_E_DROPPED};
 
 #[com_object(interfaces(IGpuDataSource))]
 /// Independently callable exact byte producer, without access to renderer internals.

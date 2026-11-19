@@ -1,6 +1,6 @@
 //! Real COM streams exercise generic provenance, bounded intake, closure and cleanup.
 use super::*;
-use neocogi_com::{com_object, ComBox, ComPtr, NC_E_DROPPED};
+use neocogi_com_sdk::{com_object, ComBox, ComPtr, NC_E_DROPPED};
 type GpuDevice = neocogi_platform::gpu::GpuDevice<neocogi_platform::gpu::testing::Backend>;
 use std::cell::{Cell, RefCell};
 

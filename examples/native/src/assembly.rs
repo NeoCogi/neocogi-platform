@@ -1,6 +1,6 @@
 //! Example-owned command-line bootstrap shared by all native binaries.
 use crate::sdk::render::{abi::RenderError, platform::PlatformAbi};
-use neocogi_com::ComPtr;
+use neocogi_com_sdk::ComPtr;
 
 /// Runtime backend request separated from each application's remaining arguments.
 pub struct LaunchArguments {
@@ -17,12 +17,12 @@ impl LaunchArguments {
         while let Some(argument) = args.next() {
             if argument == "--backend" {
                 if result.backend.is_some() {
-                    return Err(RenderError::new(neocogi_com::NC_E_INVALID_ARG, "--backend may be specified only once"));
+                    return Err(RenderError::new(neocogi_com_sdk::NC_E_INVALID_ARG, "--backend may be specified only once"));
                 }
                 let value = args
                     .next()
                     .filter(|value| !value.is_empty() && !value.starts_with("--"))
-                    .ok_or_else(|| RenderError::new(neocogi_com::NC_E_INVALID_ARG, "--backend requires a name: glow, vulkan or wgpu"))?;
+                    .ok_or_else(|| RenderError::new(neocogi_com_sdk::NC_E_INVALID_ARG, "--backend requires a name: glow, vulkan or wgpu"))?;
                 result.backend = Some(value);
             } else {
                 result.arguments.push(argument);
@@ -46,13 +46,12 @@ pub fn acquire_platform(requested: Option<&str>) -> Result<ComPtr<PlatformAbi>, 
         };
         if requested != compiled {
             return Err(RenderError::new(
-                neocogi_com::NC_E_INVALID_ARG,
+                neocogi_com_sdk::NC_E_INVALID_ARG,
                 format!("This static application uses {compiled}; rebuild its backend or use dynamic assembly for --backend {requested}"),
             ));
         }
     }
-    // SAFETY: This final executable owns the immutable process-lived host tables.
-    let runtime = unsafe { neocogi_com::Runtime::__from_host_api(neocogi_com_host::initialize_process()) }?;
+    let runtime = neocogi_com_host::initialize_runtime();
     #[cfg(feature = "static")]
     {
         // SAFETY: The complete descriptor graph and implementation stay linked for process lifetime.
@@ -97,7 +96,7 @@ mod tests {
     fn static_assembly_rejects_other_backends_before_host_or_native_initialization() {
         let other = if cfg!(feature = "glow") { "vulkan" } else { "glow" };
         let error = acquire_platform(Some(other)).unwrap_err();
-        assert_eq!(error.status, neocogi_com::NC_E_INVALID_ARG);
+        assert_eq!(error.status, neocogi_com_sdk::NC_E_INVALID_ARG);
         assert!(error.message.contains("static application"));
     }
 }

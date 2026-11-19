@@ -1,5 +1,5 @@
 //! Per-frame intake limits precede owned copies and expensive primitive expansion.
-use neocogi_com::{NcStatus, NC_E_OUT_OF_RANGE};
+use neocogi_com_sdk::{NcStatus, NC_E_OUT_OF_RANGE};
 
 /// Maximum submitted drawing operations, including fully clipped and empty operations.
 pub const MAX_DRAW_COMMANDS: usize = 65_536;

@@ -24,13 +24,13 @@ Images, credits and license notices are included in this crate archive.
 ## Static Rust integration
 
 Audio, window hosting and shader compilation are built in. **Glow is the default
-renderer**, so an ordinary dependency is sufficient:
+renderer**. Use a Platform checkout that pins COM `0.4.0-alpha.2` for this example:
 
 ```toml
 [dependencies]
-neocogi-platform = "=0.3.0-alpha.2"
-neocogi-com = { version = "=0.3.0-alpha.1", default-features = false, features = ["std", "runtime"] }
-neocogi-com-host = { version = "=0.3.0-alpha.1", default-features = false }
+neocogi-platform = { path = "../neocogi-platform/crates/platform" }
+neocogi-com-sdk = { version = "=0.4.0-alpha.2", default-features = false, features = ["std", "runtime"] }
+neocogi-com-host = { version = "=0.4.0-alpha.2", default-features = false }
 ```
 
 The application owns one COM host, registers the linked platform descriptor, and
@@ -38,15 +38,14 @@ acquires its typed root. This complete example compiles a vertex shader through
 the built-in COM service without opening a window:
 
 ```rust
-use neocogi_com::{ComPtr, INcBytesComPtrExt, NcCopyFromBufferOffset, Runtime};
+use neocogi_com_sdk::{ComBytesExt, ComPtr, NcCopyFromBufferOffset};
 use neocogi_platform::render::{
     abi::{GpuShaderStage, ShaderCompileRequest, ShaderCompilerFactoryAbi, ShaderTarget},
     platform::PlatformAbi,
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // SAFETY: This final executable owns the process-lived COM host tables.
-    let runtime = unsafe { Runtime::__from_host_api(neocogi_com_host::initialize_process()) }?;
+    let runtime = neocogi_com_host::initialize_runtime();
     let descriptor = neocogi_platform::platform::plugin_descriptor();
     // SAFETY: The complete descriptor and implementation stay linked for process lifetime.
     unsafe { runtime.register_plugin_descriptor(descriptor) }?;
@@ -70,7 +69,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 For Vulkan or WGPU, replace the SDK dependency with an explicit renderer selection:
 
 ```toml
-neocogi-platform = { version = "=0.3.0-alpha.2", default-features = false, features = ["vulkan"] }
+neocogi-platform = { path = "../neocogi-platform/crates/platform", default-features = false, features = ["vulkan"] }
 ```
 
 Use `ShaderTarget::SpirV` for Vulkan and `ShaderTarget::Wgsl` for WGPU.
@@ -136,9 +135,9 @@ glTF run at a fixed animation pose. Add `shader-python` to use Python-like Trian
 `neocogi-platform-contracts` owns the canonical schemas, generated ABI and shared
 validation; `render` reexports those exact types. Build scripts depend on that
 crate with `build-support` for schema generation and native resource staging.
-COM/host/IDL are pinned together to `0.2.0`. Compatibility uses derived
-contract identities and signatures: rebuild generated consumers and providers
-together after a toolchain or contract change.
+This source uses COM/IDL `0.4.0-alpha.2`. Rebuild the linked host, providers and
+generated consumers together for provisional ABI v3, core generation 21.
+Exact derived interface identities and signatures still govern individual calls.
 
 Measured complete platform libraries with COM/IDL `0.2.0-alpha.4`, nightly,
 rebuilt std and immediate-abort panics:

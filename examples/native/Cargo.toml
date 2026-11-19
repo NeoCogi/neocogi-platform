@@ -20,7 +20,7 @@ shader-python = ["provider?/shader-python"]
 test-support = ["static", "provider/test-support"]
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-neocogi-com = { workspace = true, features = ["std", "macros", "runtime"] }
+neocogi-com-sdk = { workspace = true, features = ["std", "macros", "runtime"] }
 neocogi-com-host.workspace = true
 provider = { package = "neocogi-platform", path = "../../crates/platform", default-features = false, optional = true }
 neocogi-example-plugins = { path = "plugins", default-features = false, optional = true }

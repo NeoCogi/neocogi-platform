@@ -1,5 +1,21 @@
 # Unreleased
 
+## COM/IDL 0.4.0-alpha.2
+
+The workspace uses the published `0.4.0-alpha.2` cohort. The portable ABI base
+is now `neocogi-com`; Rust interface consumers and providers use
+`neocogi-com-sdk`. Regenerated bindings use the new SDK path and expose
+`Wrapper` types for Rust method access. Byte and string conversions use
+`ComBytesExt` and `ComStringExt`.
+
+Final applications initialize their linked host with `initialize_runtime()`.
+Provider bootstrap receives a `RuntimeHandle` from that host. The native shim
+exports `nc_get_plugin_descriptor_v3`. Provisional ABI v3 uses core generation
+21, including distinct shared and boxed provider lifetime headers. Rebuild
+the complete composition. IDL encoding v14 and NCB documents at wire version 1
+retain their formats. Host snapshot/restore still requires an explicitly
+registered or loaded `nc.serialization` provider.
+
 # 0.3.0-alpha.2
 
 The coordinated contracts, SDK and shared-library packages now target

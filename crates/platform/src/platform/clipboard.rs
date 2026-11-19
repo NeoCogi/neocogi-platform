@@ -37,7 +37,7 @@ fn text(input: NcCopyFromBufferOffset<'_, u8>) -> Result<&str, NcStatus> {
 fn complete(completion: ComRef<'_, IClipboardCompletionAbi>, result: Result<String, NcStatus>) -> Result<(), NcStatus> {
     let result = result.and_then(|text| {
         if text.len() > MAX_CLIPBOARD_BYTES {
-            Err(neocogi_com::NC_E_OUT_OF_RANGE)
+            Err(neocogi_com_sdk::NC_E_OUT_OF_RANGE)
         } else {
             Ok(text)
         }
@@ -90,7 +90,7 @@ fn await_result(promise: js_sys::Promise, completion: ComPtr<IClipboardCompletio
                 match value.dyn_into::<js_sys::JsString>() {
                     // UTF-16 length bounds conversion work before allocating a Rust UTF-8 copy.
                     Ok(text) if text.length() as usize <= MAX_CLIPBOARD_BYTES => Ok(String::from(text)),
-                    Ok(_) => Err(neocogi_com::NC_E_OUT_OF_RANGE),
+                    Ok(_) => Err(neocogi_com_sdk::NC_E_OUT_OF_RANGE),
                     Err(_) => Err(PLATFORM_E_BACKEND),
                 }
             }

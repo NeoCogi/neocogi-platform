@@ -117,7 +117,10 @@ fn uploads_obey_permission_independently_of_creation_and_drawing() {
                 crate::gpu::source::Bytes::source(vec![1, 2, 3, 4]).as_com_ref(),
             )
             .unwrap();
-        assert_eq!(immutable.upload(neocogi_com::NcCopyFromBufferOffset::new(0, &[0; 4])), Err(RENDER_E_PERMISSION));
+        assert_eq!(
+            immutable.upload(neocogi_com_sdk::NcCopyFromBufferOffset::new(0, &[0; 4])),
+            Err(RENDER_E_PERMISSION)
+        );
         let linear = resources.create_dynamic_buffer(GpuBufferDesc::Vertex { byte_len: 4 }).unwrap();
         let texture = resources
             .create_dynamic_buffer(GpuBufferDesc::Texture {
@@ -159,13 +162,17 @@ fn pipeline_color_write_depth_write_and_depth_read_permissions_are_separate() {
         let target = device.surface_target(RenderSurfaceKind::Framebuffer).unwrap();
         let (_owner, resources) = group(&device, target, permissions);
         let vertex = resources
-            .create_shader(GpuShaderStage::Vertex, source.as_com_ref(), neocogi_com::NcCopyFromBufferOffset::new(0, b"vs"))
+            .create_shader(
+                GpuShaderStage::Vertex,
+                source.as_com_ref(),
+                neocogi_com_sdk::NcCopyFromBufferOffset::new(0, b"vs"),
+            )
             .unwrap();
         let fragment = resources
             .create_shader(
                 GpuShaderStage::Fragment,
                 source.as_com_ref(),
-                neocogi_com::NcCopyFromBufferOffset::new(0, b"fs"),
+                neocogi_com_sdk::NcCopyFromBufferOffset::new(0, b"fs"),
             )
             .unwrap();
         for requested in 0..8 {
@@ -219,7 +226,7 @@ fn target_identity_group_ownership_and_closure_are_independent() {
         Err(RENDER_E_OWNER)
     ));
     owner.close().unwrap();
-    assert_eq!(block.admit_target(&image), Err(neocogi_com::NC_E_DROPPED));
+    assert_eq!(block.admit_target(&image), Err(neocogi_com_sdk::NC_E_DROPPED));
 }
 
 /// Existing native image import is explicitly delegated, regardless of which target was selected.
@@ -264,8 +271,14 @@ fn denied_upload_preserves_initialized_storage_and_logical_capacity() {
         })
         .unwrap();
     let before = device.live_bytes(resources.as_com_ref()).unwrap();
-    assert_eq!(linear.upload(neocogi_com::NcCopyFromBufferOffset::new(0, &[0; 4])), Err(RENDER_E_PERMISSION));
-    assert_eq!(texture.upload(neocogi_com::NcCopyFromBufferOffset::new(0, &[0; 4])), Err(RENDER_E_PERMISSION));
+    assert_eq!(
+        linear.upload(neocogi_com_sdk::NcCopyFromBufferOffset::new(0, &[0; 4])),
+        Err(RENDER_E_PERMISSION)
+    );
+    assert_eq!(
+        texture.upload(neocogi_com_sdk::NcCopyFromBufferOffset::new(0, &[0; 4])),
+        Err(RENDER_E_PERMISSION)
+    );
     assert_eq!(device.live_bytes(resources.as_com_ref()).unwrap(), before);
     assert_eq!(
         device.buffer_snapshot(resources.as_com_ref(), linear.as_com_ref()).unwrap().bytes().as_slice(),

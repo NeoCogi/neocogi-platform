@@ -35,8 +35,8 @@ impl ITextureFactory for WindowObject {
     fn create_texture_result(
         &self,
         size: Size,
-        pixels: neocogi_com::NcValueRef<'_, InitialGpuData>,
-    ) -> Result<neocogi_com::ComBox<ITextureCreationResultAbi>, NcStatus> {
+        pixels: neocogi_com_sdk::NcValueRef<'_, InitialGpuData>,
+    ) -> Result<neocogi_com_sdk::ComBox<ITextureCreationResultAbi>, NcStatus> {
         let result = (|| -> Result<_, RenderError> {
             let len = rgba_bytes(size)?;
             let image = self.device.execute(|state| {
@@ -75,7 +75,7 @@ pub(super) fn publish_texture(record: Rc<TextureRecord>) -> ComPtr<ITextureAbi> 
 impl Resources for Device {
     type Backend = gpu::Backend;
     /// Authenticates construction-proven generic blocks before any target is acquired.
-    fn view(&self, view: neocogi_com::WeakComBox<IRenderViewBlockAbi>) -> Result<Rc<neocogi_platform::gpu::record::Block<gpu::Backend>>, NcStatus> {
+    fn view(&self, view: neocogi_com_sdk::WeakComBox<IRenderViewBlockAbi>) -> Result<Rc<neocogi_platform::gpu::record::Block<gpu::Backend>>, NcStatus> {
         self.logical.block_snapshot(view.as_com_ref())
     }
 }
@@ -84,7 +84,7 @@ impl Resources for Device {
 impl Resources for WindowObject {
     type Backend = gpu::Backend;
     /// Uses construction-proven exclusive identity, never a caller-provided device number.
-    fn view(&self, view: neocogi_com::WeakComBox<IRenderViewBlockAbi>) -> Result<Rc<neocogi_platform::gpu::record::Block<gpu::Backend>>, NcStatus> {
+    fn view(&self, view: neocogi_com_sdk::WeakComBox<IRenderViewBlockAbi>) -> Result<Rc<neocogi_platform::gpu::record::Block<gpu::Backend>>, NcStatus> {
         self.device.logical.block_snapshot(view.as_com_ref())
     }
 }

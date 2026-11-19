@@ -4,7 +4,7 @@
 //! Framebuffer views are realized by their enclosing window frame. Image surfaces
 //! allocate a fresh unpublished color destination for each independent submission.
 use crate::gpu::{abi::*, native::NativeResources};
-use neocogi_com::{NcStatus, NC_E_INVALID_ARG};
+use neocogi_com_sdk::{NcStatus, NC_E_INVALID_ARG};
 use std::rc::Rc;
 
 /// Immutable identity for the surface selected when a resource group is created.

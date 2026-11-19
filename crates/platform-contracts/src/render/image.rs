@@ -142,7 +142,7 @@ mod tests {
                 }
                 None => {
                     assert!(native.is_err());
-                    assert_eq!(contract, Err(neocogi_com::NC_E_INVALID_ARG));
+                    assert_eq!(contract, Err(neocogi_com_sdk::NC_E_INVALID_ARG));
                 }
             }
         }

@@ -1,6 +1,6 @@
 //! Checked viewport/clip geometry, independent of pipelines and backend state.
 use crate::gpu::abi::{Rect, RenderViewInfo, RenderViewRoot, Size};
-use neocogi_com::{NcStatus, NC_E_INVALID_ARG, NC_E_OUT_OF_MEMORY, NC_E_OUT_OF_RANGE};
+use neocogi_com_sdk::{NcStatus, NC_E_INVALID_ARG, NC_E_OUT_OF_MEMORY, NC_E_OUT_OF_RANGE};
 
 /// One flattened logical state; clip changes never refit the viewport mapping.
 #[derive(Clone, Copy, Debug)]

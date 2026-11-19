@@ -10,7 +10,7 @@ use crate::gpu::{
     resource::{self, *},
     scope::ViewStack,
 };
-use neocogi_com::{com_object, ComBox, ComPtr, ComRef, NcStatus, WeakLocalBox, NC_E_INVALID_ARG, NC_E_OUT_OF_MEMORY, NC_E_OUT_OF_RANGE};
+use neocogi_com_sdk::{com_object, ComBox, ComPtr, ComRef, NcStatus, WeakLocalBox, NC_E_INVALID_ARG, NC_E_OUT_OF_MEMORY, NC_E_OUT_OF_RANGE};
 use std::{
     cell::{Cell, RefCell},
     collections::HashMap,

@@ -139,7 +139,7 @@ with a `Float32x3` position and `Unorm8x4` color; the application's pipeline mus
 declare those attributes at offsets 0 and 12 with stride 16:
 
 ```rust,no_run
-use neocogi_com::{ComPtr, NcStatus};
+use neocogi_com_sdk::{ComPtr, NcStatus};
 use neocogi_platform_contracts::render::{
     abi::IRenderResourcesAbi,
     buffer::{GpuElement, TypedGpuBuffer, TypedGpuBufferDesc, TypedGpuBufferFactory},

@@ -1,5 +1,5 @@
 //! Shared canonical derivative pixels, exercised through real compiler/resource COM calls.
-use neocogi_com::{ComBox, ComPtr, NcCopyFromBufferOffset};
+use neocogi_com_sdk::{ComBox, ComPtr, NcCopyFromBufferOffset};
 use neocogi_platform::gpu::{
     GpuDevice,
     abi::*,

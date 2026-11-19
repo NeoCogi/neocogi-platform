@@ -2,7 +2,7 @@
 //! their own metadata/name. There are no back edges or whole-code item captures.
 use neocogi_platform_contracts::render::abi::*;
 use super::{Compiler, CompileError};
-use neocogi_com::{
+use neocogi_com_sdk::{
     com_object, ComPtr, NcStatus, NcString, NcBytes, NcCopyFromBufferOffset, INcStringAbi, INcBytesAbi, NC_E_INVALID_ARG, NC_E_OUT_OF_RANGE, NC_E_OUT_OF_MEMORY,
 };
 use neocogi_platform_contracts::render::shader::{Shader, ShaderCode, MAX_DIAGNOSTIC_BYTES};
@@ -236,7 +236,7 @@ impl Report {
 impl IShaderCompilation for Report {
     fn status(&self) -> Result<i32, NcStatus> {
         Ok(match &self.outcome {
-            Outcome::Succeeded(_) => neocogi_com::NC_OK,
+            Outcome::Succeeded(_) => neocogi_com_sdk::NC_OK,
             Outcome::Rejected { status, .. } => *status,
         }
         .code())
@@ -296,7 +296,7 @@ impl IShaderUniform for Uniform {
         Ok(self.info)
     }
     fn glsl_block_name(&self) -> Result<ComPtr<INcStringAbi>, NcStatus> {
-        self.name.clone().ok_or(neocogi_com::NC_E_NOINTERFACE)
+        self.name.clone().ok_or(neocogi_com_sdk::NC_E_NOINTERFACE)
     }
 }
 /// Independent sampled-pair item and native name.
@@ -312,7 +312,7 @@ impl IShaderSampledTexture for Texture {
         Ok(self.info)
     }
     fn glsl_name(&self) -> Result<ComPtr<INcStringAbi>, NcStatus> {
-        self.name.clone().ok_or(neocogi_com::NC_E_NOINTERFACE)
+        self.name.clone().ok_or(neocogi_com_sdk::NC_E_NOINTERFACE)
     }
 }
 /// Generates only storage/retention mechanics for three explicitly named contracts.

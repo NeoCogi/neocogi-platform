@@ -3,7 +3,7 @@
 //! These helpers encode no vertex, camera or material convention. Applications choose their
 //! byte layout and declare it explicitly in the graphics pipeline descriptor.
 use crate::render::abi::*;
-use neocogi_com::{com_object, ComInlineValue, ComPtr, NcOutputWriter, NcStatus, NC_E_INVALID_ARG, NC_E_OUT_OF_RANGE};
+use neocogi_com_sdk::{com_object, ComInlineValue, ComPtr, NcOutputWriter, NcStatus, NC_E_INVALID_ARG, NC_E_OUT_OF_RANGE};
 
 #[com_object(interfaces(IGpuDataSource))]
 /// Complete immutable byte source with bounded, exact-prefix reads over generated COM.
@@ -89,21 +89,21 @@ pub fn initial(source: Option<ComPtr<IGpuDataSourceAbi>>) -> InitialGpuData {
 
 /// Acquires a shared source for callers that currently hold only a borrowed interface.
 /// AddRef is a foreign call and may fail; callers must propagate that failure.
-pub fn supplied(source: neocogi_com::ComRef<'_, IGpuDataSourceAbi>) -> Result<InitialGpuData, NcStatus> {
+pub fn supplied(source: neocogi_com_sdk::ComRef<'_, IGpuDataSourceAbi>) -> Result<InitialGpuData, NcStatus> {
     source.try_add_ref().map(|source| initial(Some(source)))
 }
 
 impl InitialGpuData {
     /// Borrows the generated wire representation without assuming Rust Option layout.
-    pub fn borrow(&self) -> Result<neocogi_com::NcValueRef<'_, Self>, NcStatus> {
-        neocogi_com::NcValueRef::new(self)
+    pub fn borrow(&self) -> Result<neocogi_com_sdk::NcValueRef<'_, Self>, NcStatus> {
+        neocogi_com_sdk::NcValueRef::new(self)
     }
 }
 
 /// Copies supplied initial bytes in bounded chunks, or represents absent zero data by None.
 /// The receiver's owned source and its final foreign Release end before this returns.
 /// Callers validate shape/reserve quotas first, then recheck admission before publication.
-pub fn read_initial(source: neocogi_com::NcValueRef<'_, InitialGpuData>, len: usize) -> Result<Option<Vec<u8>>, NcStatus> {
+pub fn read_initial(source: neocogi_com_sdk::NcValueRef<'_, InitialGpuData>, len: usize) -> Result<Option<Vec<u8>>, NcStatus> {
     match source.to_owned()? {
         InitialGpuData::None => Ok(None),
         InitialGpuData::Some(source) => {
@@ -111,8 +111,8 @@ pub fn read_initial(source: neocogi_com::NcValueRef<'_, InitialGpuData>, len: us
                 return Err(NC_E_INVALID_ARG);
             }
             let mut bytes = Vec::new();
-            bytes.try_reserve_exact(len).map_err(|_| neocogi_com::NC_E_OUT_OF_MEMORY)?;
-            let mut output = neocogi_com::NcOutputBuffer::new();
+            bytes.try_reserve_exact(len).map_err(|_| neocogi_com_sdk::NC_E_OUT_OF_MEMORY)?;
+            let mut output = neocogi_com_sdk::NcOutputBuffer::new();
             for offset in (0..len).step_by(64 * 1024) {
                 let wanted = (len - offset).min(64 * 1024);
                 source.read(output.output(offset as u64, wanted))?;

@@ -3,7 +3,7 @@ extern crate self as fixture_typed_buffers;
 
 #[cfg(test)]
 mod tests {
-    use neocogi_com::*;
+    use neocogi_com_sdk::*;
     use neocogi_platform::render::{
         abi::*,
         buffer::{GpuElement, TypedGpuBuffer, TypedGpuBufferFactory, TypedGpuBufferDesc},

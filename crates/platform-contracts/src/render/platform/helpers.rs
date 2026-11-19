@@ -1,7 +1,7 @@
 //! Rust validation conveniences layered over the generated platform ABI.
 
 use crate::render::platform::*;
-use neocogi_com::{NC_E_INVALID_ARG, NcStatus};
+use neocogi_com_sdk::{NC_E_INVALID_ARG, NcStatus};
 
 impl Default for Point {
     /// Returns the coordinate-system origin.

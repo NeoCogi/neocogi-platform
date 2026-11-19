@@ -1,5 +1,5 @@
 //! Shared native-test input: a procedural sampled triangle using the public graphics vocabulary.
-use neocogi_com::{ComBox, ComPtr, ComRef, NcCopyFromBufferOffset};
+use neocogi_com_sdk::{ComBox, ComPtr, ComRef, NcCopyFromBufferOffset};
 use neocogi_platform::gpu::{
     GpuDevice,
     abi::*,

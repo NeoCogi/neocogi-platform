@@ -7,7 +7,7 @@ use crate::gpu::{
     native::NativeResources,
     source::{Bytes, PipelineDesc},
 };
-use neocogi_com::{ComBox, ComPtr, NcCopyFromBufferOffset};
+use neocogi_com_sdk::{ComBox, ComPtr, NcCopyFromBufferOffset};
 
 /// Uniform layout: 64 matrices, four colors, then four matrix/color records.
 pub const UNIFORM_BYTES: u32 = 64 * 64 + 4 * 16 + 4 * 80;

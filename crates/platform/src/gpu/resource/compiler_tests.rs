@@ -7,7 +7,7 @@ fn new_device(compiler: ComPtr<ShaderCompilerAbi>) -> GpuDevice {
 }
 type GpuDevice = crate::gpu::GpuDevice<crate::gpu::testing::Backend>;
 use neocogi_platform::render::abi::*;
-use neocogi_com::{INcStringAbi, INcBytesAbi, NcBytes};
+use neocogi_com_sdk::{INcStringAbi, INcBytesAbi, NcBytes};
 /// Valid source with a small deterministic artifact.
 const SOURCE: &str = "(module\n(vertex vs () (returns vec4 (builtin position)) (return (vec4 0.0 0.0 0.0 1.0)))\n)";
 
@@ -163,7 +163,7 @@ struct Probe {
     /// Chosen fault, immutable for a test.
     fault: Fault,
     /// Real COM factory reached through a weak capability, avoiding a strong cycle.
-    factory: RefCell<Option<neocogi_com::WeakComPtr<IRenderResourcesAbi>>>,
+    factory: RefCell<Option<neocogi_com_sdk::WeakComPtr<IRenderResourcesAbi>>>,
     /// Every provider/report boundary sees Busy.
     calls: Cell<u32>,
     /// Live charge at report destruction.
@@ -232,7 +232,7 @@ impl IShaderCompilation for ReportProxy {
     fn diagnostic(&self) -> Result<ComPtr<INcStringAbi>, NcStatus> {
         match self.probe.fault {
             Fault::Diagnostic => Err(RENDER_E_BUSY),
-            Fault::LongDiagnostic => Ok(neocogi_com::NcString::from_utf8_str(&"x".repeat(4097))),
+            Fault::LongDiagnostic => Ok(neocogi_com_sdk::NcString::from_utf8_str(&"x".repeat(4097))),
             _ => self.inner.diagnostic(),
         }
     }
@@ -271,7 +271,7 @@ impl IShaderCompilation for ReportProxy {
             domain.close();
         }
         if matches!(self.probe.fault, Fault::Binary) {
-            use neocogi_com::INcBytesComPtrExt;
+            use neocogi_com_sdk::ComBytesExt;
             let size = self.inner.code()?.len()?;
             return Ok(NcBytes::from_vec(vec![0; size as usize]));
         }
@@ -349,7 +349,7 @@ fn transfer_failures_reentry_and_release_close_are_atomic() {
         (Fault::CopyError, NC_E_INVALID_ARG),
         (Fault::Count, NC_E_INVALID_ARG),
         (Fault::LocationCount, NC_E_OUT_OF_RANGE),
-        (Fault::LocationEnum, neocogi_com::NC_E_INVALID_TAG),
+        (Fault::LocationEnum, neocogi_com_sdk::NC_E_INVALID_TAG),
         (Fault::DuplicateLocation, NC_E_INVALID_ARG),
         (Fault::LocationDirection, NC_E_INVALID_ARG),
     ] {
@@ -456,7 +456,7 @@ impl ExportProbe {
         }));
         // SAFETY: allocation and table agree, are initialized and transfer one owned reference.
         unsafe {
-            ComPtr::from_raw_owned(neocogi_com::ComRaw {
+            ComPtr::from_raw_owned(neocogi_com_sdk::ComRaw {
                 object: object.cast(),
                 vtable: &EXPORT_TABLE,
             })
@@ -476,8 +476,8 @@ impl Drop for ExportProbe {
     }
 }
 /// Exact INcBytes table. All pointers supplied by these tests have matching live storage.
-static EXPORT_TABLE: neocogi_com::INcBytesVTable = neocogi_com::INcBytesVTable {
-    unknown: neocogi_com::IUnknownVTable {
+static EXPORT_TABLE: neocogi_com_sdk::INcBytesVTable = neocogi_com_sdk::INcBytesVTable {
+    unknown: neocogi_com_sdk::IUnknownVTable {
         interface_id: &INcBytesAbi::INTERFACE_ID,
         query_interface: export_query,
         add_ref: export_add,
@@ -489,7 +489,7 @@ static EXPORT_TABLE: neocogi_com::INcBytesVTable = neocogi_com::INcBytesVTable {
     copy_to: export_copy,
 };
 /// Proper IUnknown projection preserves canonical identity and refcount.
-static EXPORT_UNKNOWN: neocogi_com::IUnknownVTable = neocogi_com::IUnknownVTable {
+static EXPORT_UNKNOWN: neocogi_com_sdk::IUnknownVTable = neocogi_com_sdk::IUnknownVTable {
     interface_id: &IUnknown::INTERFACE_ID,
     query_interface: export_query,
     add_ref: export_add,
@@ -498,20 +498,24 @@ static EXPORT_UNKNOWN: neocogi_com::IUnknownVTable = neocogi_com::IUnknownVTable
 };
 /// Query only the two projections this fixture implements.
 /// SAFETY: matching object, readable identity and writable distinct raw output are supplied by COM.
-unsafe extern "C" fn export_query(this: *mut core::ffi::c_void, id: *const neocogi_com::NcInterfaceId, out: *mut neocogi_com::ComRaw<IUnknown>) -> NcStatus {
+unsafe extern "C" fn export_query(
+    this: *mut core::ffi::c_void,
+    id: *const neocogi_com_sdk::NcInterfaceId,
+    out: *mut neocogi_com_sdk::ComRaw<IUnknown>,
+) -> NcStatus {
     unsafe {
-        out.write(neocogi_com::ComRaw::null());
+        out.write(neocogi_com_sdk::ComRaw::null());
         let vtable = if *id == INcBytesAbi::INTERFACE_ID {
-            (&EXPORT_TABLE as *const neocogi_com::INcBytesVTable).cast()
+            (&EXPORT_TABLE as *const neocogi_com_sdk::INcBytesVTable).cast()
         } else if *id == IUnknown::INTERFACE_ID {
             &EXPORT_UNKNOWN
         } else {
-            return neocogi_com::NC_E_NOINTERFACE;
+            return neocogi_com_sdk::NC_E_NOINTERFACE;
         };
         export_add(this);
-        out.write(neocogi_com::ComRaw { object: this, vtable });
+        out.write(neocogi_com_sdk::ComRaw { object: this, vtable });
     }
-    neocogi_com::NC_OK
+    neocogi_com_sdk::NC_OK
 }
 /// SAFETY: paired live allocation remains borrowed for this retain operation.
 unsafe extern "C" fn export_add(this: *mut core::ffi::c_void) -> u32 {
@@ -534,7 +538,7 @@ unsafe extern "C" fn export_release(this: *mut core::ffi::c_void) -> u32 {
 }
 /// SAFETY: caller supplies a matching live object and one writable u64 output.
 unsafe extern "C" fn export_len(this: *mut core::ffi::c_void, out: *mut u64) -> NcStatus {
-    use neocogi_com::INcBytesComPtrExt;
+    use neocogi_com_sdk::ComBytesExt;
     let value = unsafe { &*this.cast::<ExportProbe>() };
     value.probe.call();
     match value.inner.len() {
@@ -548,7 +552,7 @@ unsafe extern "C" fn export_len(this: *mut core::ffi::c_void, out: *mut u64) -> 
                     len
                 });
             }
-            neocogi_com::NC_OK
+            neocogi_com_sdk::NC_OK
         }
         Err(e) => e,
     }

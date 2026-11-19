@@ -1,7 +1,7 @@
 //! Actual browser audio acceptance. The repository runner supplies fake microphone/permission devices.
 use super::*;
 use js_sys::{Function, Promise};
-use neocogi_com::{INcStringComPtrExt, NcOutputBuffer};
+use neocogi_com_sdk::{ComStringExt, NcOutputBuffer};
 use wasm_bindgen::{JsCast, JsValue, prelude::wasm_bindgen};
 use wasm_bindgen_futures::JsFuture;
 
@@ -62,7 +62,7 @@ fn ensure(condition: bool, message: &str) -> Result<(), JsValue> {
 }
 
 /// Wait for one construction transaction without mutating its ownership on pending/error phases.
-async fn ready(request: &mut IAudioOpenRequestClient) -> Result<(), JsValue> {
+async fn ready(request: &mut IAudioOpenRequestWrapper) -> Result<(), JsValue> {
     for _ in 0..2000 {
         match request.poll().map_err(status)? {
             AudioOpenState::Ready => return Ok(()),
@@ -79,7 +79,7 @@ async fn ready(request: &mut IAudioOpenRequestClient) -> Result<(), JsValue> {
     Err("audio open timed out".into())
 }
 /// Observe exact control completion through the generated inherited stream wrapper.
-async fn phase(stream: &mut IAudioStreamClient, target: AudioState) -> Result<(), JsValue> {
+async fn phase(stream: &mut IAudioStreamWrapper, target: AudioState) -> Result<(), JsValue> {
     for _ in 0..2000 {
         let info = stream.info().map_err(status)?;
         if info.state == target {

@@ -1,7 +1,7 @@
 # Preparing and publishing Platform packages
 
-The current release target is **0.3.0-alpha.2**; the last published release is
-**0.3.0-alpha.1**. The release set contains three publishable packages:
+The last published Platform release is **0.3.0-alpha.2**. The release set
+contains three publishable packages:
 
 1. `neocogi-platform-contracts`: schemas, generated bindings, shared types, limits, validation and build support.
 2. `neocogi-platform`: renderer SDK with optional backends, owned compiler and hosting.
@@ -13,14 +13,12 @@ modules belong to the SDK archive. There are no private path
 or Git dependencies hidden behind a facade. All internal registry requirements
 pin the same exact release version.
 
-The `0.3.0-alpha.1` minor-version advance marks incompatible Rust API, generated
-contract and renderer feature changes since `0.2.0`; see the [release history](HISTORY.md).
-Upgrade contracts, SDK and shims together and regenerate consumers. COM/IDL
-`0.3.0-alpha.1` derives nominal identities and exact compatibility signatures from
-the contract; deprecated manual declaration versions are removed. Rebuild all
-providers and consumers together for this toolchain migration. Old generated
-identities and signatures are incompatible even where field layouts are unchanged.
-The platform shim exports `nc_get_plugin_descriptor_v2`, matching this SDK loader.
+This checkout uses COM/IDL `0.4.0-alpha.2`. Upgrade contracts, SDK and shims
+together, regenerate consumers against `neocogi-com-sdk` and rebuild all hosts
+and providers. The platform shim exports `nc_get_plugin_descriptor_v3`, and
+the linked host checks the descriptor family and core generation before
+acquiring the root using its exact interface identity and signature.
+See the [release history](HISTORY.md) for the previous COM baseline.
 
 ## Package inputs and verification
 
@@ -92,7 +90,8 @@ has no external compiler plugin dependency. See [native staging](../contracts/NA
 Run relevant native/browser acceptance and review the actual archives before
 publication. Publication remains a separate explicit action. Publish the contracts crate first, then the SDK, then the shim, waiting for each
 dependency version to appear in the crates.io index before publishing its consumer.
-COM/host/IDL dependencies use the published exact `0.3.0-alpha.1` versions. A successful
+COM/host/serialization/IDL dependencies use the published exact `0.4.0-alpha.2`
+versions. A successful
 `--list` or `--no-verify` alone is insufficient release evidence.
 
 Shader qualification includes isolated `wgpu`, `vulkan` and `glow` renderer

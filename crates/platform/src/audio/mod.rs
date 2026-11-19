@@ -1,6 +1,6 @@
 //! Typed PCM services. No application/COM callback executes on a native audio thread.
 #![deny(missing_docs)]
-use neocogi_com::{ComBox, ComPtr, INcStringAbi, NcCopyFromBufferOffset, NcOutputWriter, NcStatus, NcString, NC_E_NOINTERFACE, com_object};
+use neocogi_com_sdk::{ComBox, ComPtr, INcStringAbi, NcCopyFromBufferOffset, NcOutputWriter, NcStatus, NcString, NC_E_NOINTERFACE, com_object};
 /// Canonical audio values and generated wrappers, exposed here for linked Rust applications.
 pub use neocogi_platform_contracts::audio::*;
 
@@ -248,10 +248,10 @@ struct CapabilitySnapshot {
     types: Vec<PcmType>,
 }
 /// Validate a complete copied interval before publishing any output element.
-fn copy_capabilities<T: neocogi_com::ComInlineValue>(values: &[T], mut output: NcOutputWriter<'_, T>) -> Result<(), NcStatus> {
-    let start = usize::try_from(output.offset()).map_err(|_| neocogi_com::NC_E_INVALID_ARG)?;
-    let end = start.checked_add(output.capacity()).ok_or(neocogi_com::NC_E_INVALID_ARG)?;
-    output.extend_from_slice(values.get(start..end).ok_or(neocogi_com::NC_E_INVALID_ARG)?)
+fn copy_capabilities<T: neocogi_com_sdk::ComInlineValue>(values: &[T], mut output: NcOutputWriter<'_, T>) -> Result<(), NcStatus> {
+    let start = usize::try_from(output.offset()).map_err(|_| neocogi_com_sdk::NC_E_INVALID_ARG)?;
+    let end = start.checked_add(output.capacity()).ok_or(neocogi_com_sdk::NC_E_INVALID_ARG)?;
+    output.extend_from_slice(values.get(start..end).ok_or(neocogi_com_sdk::NC_E_INVALID_ARG)?)
 }
 impl IAudioCapabilities for CapabilitySnapshot {
     fn info(&self) -> Result<AudioCapabilities, NcStatus> {

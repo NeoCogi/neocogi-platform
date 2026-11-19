@@ -9,7 +9,7 @@ struct Blocks {
 }
 impl IRenderStream for Blocks {
     /// Returns a weak observer while this stream retains each exclusive sealed block owner.
-    fn view(&self, _: u64, index: u32) -> Result<neocogi_com::WeakComBox<IRenderViewBlockAbi>, NcStatus> {
+    fn view(&self, _: u64, index: u32) -> Result<neocogi_com_sdk::WeakComBox<IRenderViewBlockAbi>, NcStatus> {
         self.blocks.get(index as usize).map(ComBox::downgrade).ok_or(NC_E_INVALID_ARG)
     }
 }
@@ -128,7 +128,7 @@ fn framebuffer_views_and_image_targets_select_actual_surfaces_without_ui_roles()
         framebuffer.query::<IRendererAbi>().is_err(),
         "the view has no independent frame/presentation authority"
     );
-    assert!(matches!(framebuffer.completed_image(), Err(neocogi_com::NC_E_NOT_FOUND)));
+    assert!(matches!(framebuffer.completed_image(), Err(neocogi_com_sdk::NC_E_NOT_FOUND)));
     assert_eq!(framebuffer.resize(SIZE), Err(NC_E_INVALID_ARG));
     let first = groups.create_group(Default::default(), framebuffer.as_com_ref(), color_permissions()).unwrap();
     let second = groups.create_group(Default::default(), framebuffer.as_com_ref(), color_permissions()).unwrap();
@@ -168,7 +168,7 @@ fn framebuffer_views_and_image_targets_select_actual_surfaces_without_ui_roles()
     let extent = Size { width: 32, height: 32 };
     let image = surfaces.create_surface(RenderSurfaceDesc::Image(extent)).unwrap();
     assert_eq!(image.kind().unwrap(), RenderSurfaceKind::Image);
-    assert!(matches!(image.completed_image(), Err(neocogi_com::NC_E_NOT_FOUND)));
+    assert!(matches!(image.completed_image(), Err(neocogi_com_sdk::NC_E_NOT_FOUND)));
     let image_renderer: ComPtr<IRendererAbi> = image.query().unwrap();
     let first_image_group = groups.create_group(Default::default(), image.as_com_ref(), color_permissions()).unwrap();
     let second_image_group = groups.create_group(Default::default(), image.as_com_ref(), color_permissions()).unwrap();
@@ -225,7 +225,7 @@ fn framebuffer_views_and_image_targets_select_actual_surfaces_without_ui_roles()
             .map_err(|error| error.status),
         Err(RENDER_E_OWNER)
     );
-    assert!(matches!(other.completed_image(), Err(neocogi_com::NC_E_NOT_FOUND)));
+    assert!(matches!(other.completed_image(), Err(neocogi_com_sdk::NC_E_NOT_FOUND)));
     assert_eq!(
         renderer
             .render(
@@ -309,7 +309,7 @@ impl IRenderSurface for ForgedSurface {
     /// The foreign object supplies no image; rejection must precede this method too.
     fn completed_image(&self) -> Result<ComPtr<ITextureAbi>, NcStatus> {
         self.metadata_calls.set(self.metadata_calls.get() + 1);
-        Err(neocogi_com::NC_E_NOT_FOUND)
+        Err(neocogi_com_sdk::NC_E_NOT_FOUND)
     }
 }
 impl IRenderDriverBound for ForgedSurface {
@@ -388,7 +388,7 @@ struct ClosingStream {
 }
 impl IRenderStream for ClosingStream {
     /// The final callback invalidates earlier admission; the renderer must recheck every block.
-    fn view(&self, _: u64, index: u32) -> Result<neocogi_com::WeakComBox<IRenderViewBlockAbi>, NcStatus> {
+    fn view(&self, _: u64, index: u32) -> Result<neocogi_com_sdk::WeakComBox<IRenderViewBlockAbi>, NcStatus> {
         if index == 1 {
             let controller = self.close.borrow_mut().take();
             drop(controller);
@@ -432,7 +432,7 @@ fn image_submission_rechecks_group_closure_after_the_final_stream_callback() {
         renderer
             .render(RenderInfo { block_count: 2, ..info() }, source.as_com_ref())
             .map_err(|error| error.status),
-        Err(neocogi_com::NC_E_DROPPED)
+        Err(neocogi_com_sdk::NC_E_DROPPED)
     );
     assert_eq!(identity(&completed).unwrap(), identity(&image.completed_image().unwrap()).unwrap());
     // The other group and the surface remain usable after the failed frame.

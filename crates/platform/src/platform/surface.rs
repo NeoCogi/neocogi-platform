@@ -111,7 +111,7 @@ impl IRenderSurface for FramebufferSurface {
     }
     /// A framebuffer view publishes no immutable output; only image surfaces do.
     fn completed_image(&self) -> Result<ComPtr<ITextureAbi>, NcStatus> {
-        Err(neocogi_com::NC_E_NOT_FOUND)
+        Err(neocogi_com_sdk::NC_E_NOT_FOUND)
     }
 }
 impl IRenderDriverBound for FramebufferSurface {
@@ -134,7 +134,7 @@ pub(super) fn create(device: &Rc<Device>, desc: RenderSurfaceDesc) -> Result<Com
     };
     let _access = device.access()?;
     let target = device.logical.surface_target(kind)?;
-    device.surfaces.borrow_mut().try_reserve(1).map_err(|_| neocogi_com::NC_E_OUT_OF_MEMORY)?;
+    device.surfaces.borrow_mut().try_reserve(1).map_err(|_| neocogi_com_sdk::NC_E_OUT_OF_MEMORY)?;
     let record = Rc::new(SurfaceRecord {
         device: device.clone(),
         target,
@@ -205,7 +205,7 @@ impl IRenderSurface for ImageSurface {
             .ok_or(RENDER_E_BUSY)?
             .completed
             .clone()
-            .ok_or(neocogi_com::NC_E_NOT_FOUND)
+            .ok_or(neocogi_com_sdk::NC_E_NOT_FOUND)
     }
 }
 
