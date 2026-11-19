@@ -16,6 +16,73 @@ impl IInputSink for TextSink {
     }
 }
 
+#[com_object(interfaces(IClipboardCompletion))]
+/// Copies the bounded receipt while the native clipboard owns its text storage.
+struct ClipboardReceipt {
+    /// COM callbacks share a receiver, with no borrow retained beyond delivery.
+    results: Rc<RefCell<Vec<(i32, String)>>>,
+}
+
+impl IClipboardCompletion for ClipboardReceipt {
+    /// Both an empty write receipt and a successful read must arrive once.
+    fn complete(&self, result: i32, text: NcCopyFromBufferOffset<'_, u8>) -> Result<(), NcStatus> {
+        self.results
+            .borrow_mut()
+            .push((result, std::str::from_utf8(text.as_slice()).unwrap().to_owned()));
+        Ok(())
+    }
+}
+
+/// The retained clipboard keeps SDL services alive through actual window destruction.
+#[test]
+#[ignore = "requires an isolated clipboard, for example SDL_VIDEODRIVER=offscreen with Glow"]
+fn retained_clipboard_survives_application_window_destruction() {
+    let _session = native_session();
+    let platform = PlatformObject::new();
+    let native = platform.window("clipboard-only lifetime", SIZE).unwrap();
+    let id = native.device.window.id();
+    let device = Rc::downgrade(&native.device);
+    let host = Rc::downgrade(&native.device.host);
+    let window = WindowObject::from_value(native).query::<IPlatformWindowAbi>().unwrap();
+    let clipboard = window.clipboard().unwrap();
+    assert!(clipboard.query::<IPlatformWindowAbi>().is_err());
+    assert!(clipboard.query::<IRendererAbi>().is_err());
+    #[cfg(windows)]
+    let (private_id, _video, second) = {
+        let host = host.upgrade().unwrap();
+        let owner = host.clipboard_window().unwrap();
+        assert_ne!(owner.id(), id);
+        assert!(!host.queues.borrow().contains_key(&owner.id()));
+        (owner.id(), host.video.clone(), window.clipboard().unwrap())
+    };
+    drop(window);
+    drop(platform);
+    assert!(device.upgrade().is_none());
+    assert!(host.upgrade().is_none());
+    // SAFETY: SDL stays initialized through the retained clipboard's VideoSubsystem.
+    // The returned pointer is only checked for existence and never dereferenced.
+    assert!(unsafe { sdl2::sys::SDL_GetWindowFromID(id) }.is_null());
+    #[cfg(windows)]
+    assert!(!unsafe { sdl2::sys::SDL_GetWindowFromID(private_id) }.is_null());
+
+    let results = Rc::new(RefCell::new(Vec::new()));
+    let receipt = ClipboardReceipt::from_value(ClipboardReceipt { results: results.clone() })
+        .query::<IClipboardCompletionAbi>()
+        .unwrap();
+    let value = "retained clipboard é☃";
+    clipboard.write(NcCopyFromBufferOffset::new(0, value.as_bytes()), receipt.as_com_ref()).unwrap();
+    clipboard.read(receipt.as_com_ref()).unwrap();
+    assert_eq!(results.borrow().as_slice(), [(0, String::new()), (0, value.to_owned())]);
+    #[cfg(windows)]
+    {
+        drop(clipboard);
+        // SAFETY: The fixture retains the video subsystem for both handle existence queries.
+        assert!(!unsafe { sdl2::sys::SDL_GetWindowFromID(private_id) }.is_null());
+        drop(second);
+        assert!(unsafe { sdl2::sys::SDL_GetWindowFromID(private_id) }.is_null());
+    }
+}
+
 /// A retained graphics host must not keep an abandoned SDL input queue registered.
 #[test]
 #[ignore = "requires native SDL; run with SDL_VIDEODRIVER=offscreen for GL"]

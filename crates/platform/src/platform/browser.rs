@@ -77,7 +77,7 @@ impl IPlatformWindow for WindowObject {
 
     /// Returns only the separate delegable clipboard identity.
     fn clipboard(&self) -> Result<ComPtr<ITextClipboardAbi>, NcStatus> {
-        clipboard::Clipboard::for_window(&self.device.window)
+        clipboard::Clipboard::browser()
     }
 
     /// Synchronizes CSS/device scaling before returning the physical drawable allocation.

@@ -9,6 +9,9 @@ pub(super) struct NativeHost {
     pub(super) queues: RefCell<BTreeMap<u32, VecDeque<Event>>>,
     /// SDL permits one event pump; shared interior access rejects reentrant polling.
     pump: RefCell<sdl2::EventPump>,
+    /// Windows clipboard projections share one lazy private owner while any projection is live.
+    #[cfg(windows)]
+    clipboard_window: RefCell<Weak<gpu::Window>>,
     /// Video subsystem remains alive until all windows have been destroyed.
     pub(super) video: sdl2::VideoSubsystem,
     /// Root SDL guard is dropped after the pump and video subsystem.
@@ -24,9 +27,24 @@ impl NativeHost {
         Ok(Rc::new(Self {
             queues: RefCell::default(),
             pump: RefCell::new(pump),
+            #[cfg(windows)]
+            clipboard_window: RefCell::default(),
             video,
             _sdl: sdl,
         }))
+    }
+
+    /// SDL2 uses a live HWND when publishing clipboard data. This hidden owner
+    /// keeps that service usable without keeping a graphics window or input route.
+    #[cfg(windows)]
+    pub(super) fn clipboard_window(&self) -> Result<Rc<gpu::Window>, NcStatus> {
+        if let Some(owner) = self.clipboard_window.borrow().upgrade() {
+            return Ok(owner);
+        }
+        let window = self.video.window("NeoCogi clipboard", 1, 1).hidden().build().map_err(|_| PLATFORM_E_BACKEND)?;
+        let owner = Rc::new(window);
+        self.clipboard_window.replace(Rc::downgrade(&owner));
+        Ok(owner)
     }
     /// Routes native events to their own windows; global quit is broadcast to every live window.
     pub(super) fn poll(&self, id: u32) -> Result<Option<Event>, NcStatus> {

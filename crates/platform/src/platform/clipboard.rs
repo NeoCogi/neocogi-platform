@@ -4,20 +4,30 @@ use super::*;
 #[com_object(interfaces(ITextClipboard))]
 /// Delegable clipboard with no renderer, factory, or window interface on its COM identity.
 pub(super) struct Clipboard {
-    /// SDL clipboard access needs only a live platform window, never the graphics device.
+    /// Keeps SDL video services alive after the public window and platform root are released.
     #[cfg(not(target_arch = "wasm32"))]
-    window: gpu::Window,
+    clipboard: sdl2::clipboard::ClipboardUtil,
+    /// SDL2's Win32 writes require a live HWND even after the last public window goes away.
+    #[cfg(windows)]
+    _owner: Rc<gpu::Window>,
 }
 
 impl Clipboard {
-    /// Constructs the narrow projection before it enters UI-owned widget services.
-    pub(super) fn for_window(window: &gpu::Window) -> Result<ComPtr<ITextClipboardAbi>, NcStatus> {
-        #[cfg(target_arch = "wasm32")]
-        let _ = window;
+    /// Retains clipboard services independently of the application window and graphics objects.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(super) fn for_host(host: &NativeHost) -> Result<ComPtr<ITextClipboardAbi>, NcStatus> {
         Self::from_value(Self {
-            #[cfg(not(target_arch = "wasm32"))]
-            window: window.clone(),
-        }).query()
+            clipboard: host.video.clipboard(),
+            #[cfg(windows)]
+            _owner: host.clipboard_window()?,
+        })
+        .query()
+    }
+
+    /// Browser clipboard operations resolve the navigator service without a canvas owner.
+    #[cfg(target_arch = "wasm32")]
+    pub(super) fn browser() -> Result<ComPtr<ITextClipboardAbi>, NcStatus> {
+        Self::from_value(Self {}).query()
     }
 }
 
@@ -52,19 +62,13 @@ fn complete(completion: ComRef<'_, IClipboardCompletionAbi>, result: Result<Stri
 impl ITextClipboard for Clipboard {
     /// SDL completes synchronously, but uses the same copied receipt as asynchronous platforms.
     fn read(&self, completion: ComRef<'_, IClipboardCompletionAbi>) -> Result<(), NcStatus> {
-        let result = self.window.subsystem().clipboard().clipboard_text().map_err(|_| PLATFORM_E_BACKEND);
+        let result = self.clipboard.clipboard_text().map_err(|_| PLATFORM_E_BACKEND);
         complete(completion, result)
     }
     /// Never acknowledge a cut until the OS accepted the entire validated selection.
     fn write(&self, input: NcCopyFromBufferOffset<'_, u8>, completion: ComRef<'_, IClipboardCompletionAbi>) -> Result<(), NcStatus> {
         let text = text(input)?;
-        let result = self
-            .window
-            .subsystem()
-            .clipboard()
-            .set_clipboard_text(text)
-            .map(|_| String::new())
-            .map_err(|_| PLATFORM_E_BACKEND);
+        let result = self.clipboard.set_clipboard_text(text).map(|_| String::new()).map_err(|_| PLATFORM_E_BACKEND);
         complete(completion, result)
     }
 }

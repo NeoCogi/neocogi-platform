@@ -6,6 +6,7 @@ interface IPlatformWindow {
     fn graphics_host(&self) -> Result<ComPtr<IRenderHost>>;
     /// Creates a separate narrow clipboard identity safe to delegate to widget services.
     /// QueryInterface on this result cannot recover this window or its renderer/factories.
+    /// Keeping this capability alive does not retain the application window.
     fn clipboard(&self) -> Result<ComPtr<ITextClipboard>>;
     /// Returns current drawable dimensions in physical pixels, including device scaling and resize.
     /// Query before recording each frame; use the same value for drawing bounds and RenderInfo.size.
