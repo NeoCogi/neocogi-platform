@@ -264,7 +264,7 @@ pub(crate) fn qualify(allow_dirty: bool, offline: bool, stable: Option<&str>) ->
     let outside = tempfile::Builder::new().prefix("neocogi-package-check-").tempdir()?;
     let packages = outside.path().join("packages");
     fs::create_dir(&packages)?;
-    let mut members = vec!["consumer".to_owned()];
+    let mut members = vec!["consumer".to_owned(), "local-consumer".to_owned()];
     let mut excluded = Vec::new();
     let mut manifest = toml::toml! { workspace = { resolver = "3" } };
     let mut patches = toml::map::Map::new();
@@ -301,6 +301,7 @@ pub(crate) fn qualify(allow_dirty: bool, offline: bool, stable: Option<&str>) ->
     );
     fs::write(outside.path().join("Cargo.toml"), toml::to_string(&manifest)?)?;
     copy_tree(&crate::root().join("scripts/package-consumer"), &outside.path().join("consumer"))?;
+    copy_tree(&crate::root().join("scripts/package-local-consumer"), &outside.path().join("local-consumer"))?;
     fs::copy(crate::root().join("Cargo.lock"), outside.path().join("Cargo.lock"))?;
     let execute = |toolchain: &str, arguments: &[&str]| -> Result<()> {
         // Cargo options must precede the executable's argument separator.
@@ -370,6 +371,19 @@ pub(crate) fn qualify(allow_dirty: bool, offline: bool, stable: Option<&str>) ->
         platform.to_str().context("platform path is not UTF-8")?,
     ];
     execute(toolchain, &consumer)?;
+    let local_consumer = |toolchain, platform: &Path| {
+        execute(
+            toolchain,
+            &[
+                "run",
+                "-p",
+                "neocogi-package-local-consumer",
+                "--",
+                platform.to_str().context("platform path is not UTF-8")?,
+            ],
+        )
+    };
+    local_consumer(toolchain, &platform)?;
     fs::remove_file(outside.path().join("consumer/staged/asset.txt"))?;
     execute(toolchain, &consumer)?;
     fs::write(outside.path().join("consumer/asset.txt"), b"changed packaged staging input\n")?;
@@ -387,13 +401,14 @@ pub(crate) fn qualify(allow_dirty: bool, offline: bool, stable: Option<&str>) ->
                 platform.to_str().context("stable platform path is not UTF-8")?,
             ],
         )?;
+        local_consumer(stable, &platform)?;
     }
     ensure!(
         !outside.path().join("target").exists(),
         "package qualification created a second target directory"
     );
     println!(
-        "PASS: {} archives and external consumer; internal sources came only from extracted archives",
+        "PASS: {} archives and both external consumers; internal sources came only from extracted archives",
         selected.len()
     );
     Ok(())

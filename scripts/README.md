@@ -9,7 +9,7 @@ the repository root, `cargo tools` expands to
 | --- | --- |
 | `cargo tools profile-shaders --backend vulkan --output DIR [--reference DIR] [--perf] [--intel-stats]` | Validate every production shader and aggregate workload, build the normal min-size library and applications, then measure repeated fixed-frame native runs. Retains artifacts, raw logs and a JSON report outside Cargo targets. |
 | `cargo tools fetch-gltf-examples [--output DIR]` | Download the pinned models/HDR over Rust HTTPS, verify SHA-256, then atomically install each file. Verified cached files need no network. |
-| `cargo tools check-packages [--offline] [--allow-dirty] [--stable-toolchain stable]` | Construct and inspect the three release archives, extract outside the checkout, and build/test them with an independent generated COM consumer, including a normally built and dynamically loaded platform library. Never publishes. |
+| `cargo tools check-packages [--offline] [--allow-dirty] [--stable-toolchain stable]` | Construct and inspect the three release archives, extract outside the checkout, and test them with two independent generated COM consumers and a normally built and dynamically loaded platform library. Never publishes. |
 | `cargo tools install-wasm-bindgen` | Install `wasm-bindgen-cli` at the exact workspace pin using Cargo. |
 | `cargo tools test-browser [--browser PATH] [--wasm-bindgen PATH]` | Build the real Wasm fixture, generate web bindings and execute DOM/WebGL/audio tests in headless Chrome/Chromium with fake microphone devices. |
 | `cargo tools lldb-source-map EXECUTABLE [--output FILE]` | Translate Cargo's adjacent `.trim-paths.json` into native LLDB commands; absent sidecars produce no commands. |
@@ -67,8 +67,8 @@ Qualification uses one disposable build target sequentially and removes it along
 with the extracted workspace. The developer target continues to own the release
 archives. The fixture tests staging restoration and propagation of changed input bytes.
 The shim is resolved as a nonmember registry dependency, built as a normal
-library, then loaded through its real COM export by the independent consumer.
-The stable option builds and runs both the library and caller on stable.
+library, then loaded through its real COM export by both consumers. The stable
+option builds and runs the library and both callers on stable.
 
 The browser runner requires exactly one `<pre id="result">PASS</pre>` in the
 captured DOM. Missing/stuck/failed or duplicate results, mismatched binding tools,
@@ -109,8 +109,10 @@ maps retain precedence because generated mappings append. Paths are quoted as
 LLDB arguments; control characters and unsupported/corrupt metadata reject
 before output. This replaces the former Python debugger import hook.
 
-`package-consumer/` is an independent qualification fixture, copied outside the
-checkout before Cargo is invoked there. `com_dependencies.rs` remains a Rust
+`package-consumer/` exercises local generation with a canonical import.
+`package-local-consumer/` generates all three namespaces with Contracts as a
+build-only dependency. Qualification copies both fixtures outside the checkout
+before invoking Cargo there. `com_dependencies.rs` remains a Rust
 source helper for repository fixtures.
 
 ## Using local sources in a consumer workspace

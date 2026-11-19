@@ -20,8 +20,14 @@ An independent generator consumer declares `neocogi-com-sdk` directly at the
 same version. Rebuild providers and generated consumers together when changing
 the toolchain. The schema determines declaration identities and exact signatures.
 The sibling `neocogi.renderer`, `neocogi.audio` and `neocogi.platform` namespaces
-live in matching schema folders. `Module::Audio` selects audio-only generation;
-platform imports audio service types instead of owning them.
+live in matching schema folders. For example, pass
+`sources(&[(Module::Audio, "app_projection::audio")])`, declare
+`extern crate self as app_projection`, and include `IDL_NEOCOGI_AUDIO` in `audio`.
+With all three namespaces selected, generated cross-namespace references use those
+local paths and Contracts is only a build dependency. Reachable namespaces left
+out of the selection use their canonical Rust definitions and require Contracts
+as a regular dependency. Platform imports its audio service types from the audio
+namespace in either case.
 
 Generated data values implement `ComSerialize` and `ComDeserialize` when their
 fields support persistence. Live COM capabilities cannot be reconstructed

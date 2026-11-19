@@ -5,9 +5,8 @@ use schema::{Module, build, sources};
 
 /// Generate this package's namespaces from its declared build dependency.
 fn main() {
-    let modules = sources(&[Module::Renderer, Module::Audio, Module::Platform])
-        .and_then(build)
-        .expect("generate renderer/audio/platform bindings");
+    let local = [Module::Renderer, Module::Audio, Module::Platform].map(|module| (module, module.rust_path()));
+    let modules = sources(&local).and_then(build).expect("generate renderer/audio/platform bindings");
     let renderer = modules.iter().find(|module| module.module_name == "neocogi.renderer").expect("renderer module");
     let syntax = syn::parse_file(&std::fs::read_to_string(&renderer.bindings).expect("renderer bindings")).expect("generated Rust");
     let source = syntax

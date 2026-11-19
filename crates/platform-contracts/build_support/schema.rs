@@ -38,7 +38,7 @@ impl Module {
     }
 
     /// Library path used when importing ordinary Rust values from this namespace.
-    fn rust_path(self) -> &'static str {
+    pub(crate) fn rust_path(self) -> &'static str {
         match self {
             Self::Renderer => "neocogi_platform_contracts::render::abi",
             Self::Audio => "neocogi_platform_contracts::audio",
@@ -109,24 +109,27 @@ fn materialize(output: &Path) -> Result<PathBuf, BuildError> {
 
 /// Configures local generation and imports for the three shared namespaces.
 ///
-/// `local` selects independent emissions for this consumer. Other reachable
-/// namespaces use their ordinary library definitions; this matters when Rust
-/// helper APIs exchange values, without changing COM identities. Repeating a
-/// selected module is harmless. An empty selection is useful when extending the
+/// Each `local` entry selects an independent emission and its crate-rooted Rust
+/// path. Name this crate through an explicit self alias and include the generated
+/// file at that path. Other reachable namespaces use their canonical library
+/// definitions. Local placement changes Rust type names without changing COM
+/// identities. The IDL toolchain validates the supplied locators and rejects
+/// conflicting placements. An empty selection is useful when extending the
 /// request with a consumer-owned namespace using [`SharedSources::module`].
 /// Every reachable external namespace still needs an explicit Rust location.
 /// Embedded inputs are materialized under the calling build script's OUT_DIR;
 /// missing environment or filesystem failures return before generation. Cached
 /// helpers never depend on their original downloaded source path remaining live.
-pub fn sources(local: &[Module]) -> Result<SharedSources, BuildError> {
+pub fn sources(local: &[(Module, &str)]) -> Result<SharedSources, BuildError> {
     let output = std::env::var_os("OUT_DIR").ok_or(BuildError::MissingEnvironment("OUT_DIR"))?;
     let mut request = SharedSources::new(materialize(Path::new(&output))?);
     for module in [Module::Renderer, Module::Audio, Module::Platform] {
-        request = if local.contains(&module) {
-            request.module(module.name(), module.rust_path())
-        } else {
-            request.import(module.name(), module.rust_path())
-        };
+        if !local.iter().any(|(selected, _)| *selected == module) {
+            request = request.import(module.name(), module.rust_path());
+        }
+    }
+    for &(module, path) in local {
+        request = request.module(module.name(), path);
     }
     Ok(request)
 }

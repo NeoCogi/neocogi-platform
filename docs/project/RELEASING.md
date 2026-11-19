@@ -64,17 +64,19 @@ archives together, rejects unexpected release packages and duplicate schema
 ownership, extracts them outside this checkout and uses only extracted contents
 for internal registry patches. It builds the extracted workspace targets in a
 disposable target and intermediate directory owned by the qualification run,
-runs the contracts and focused SDK tests, and executes an independent
-generated COM consumer with retained shader exports and
+runs the contracts and focused SDK tests, and executes independent generated COM
+consumers. The mixed-projection fixture tests retained shader exports and
 real build-script resource staging, including restoration of deleted outputs and
 propagation of changed authored bytes through Cargo rebuilds. It also builds the
 shim as a nonmember registry-style dependency with ordinary `cargo build --lib`,
 reads Cargo's artifact receipt, and inspects the actual library's descriptor
 and root signature against the independently generated COM bindings. The
 consumer then loads the library and uses a second handle to the linked host
-to acquire its root and call the built-in compiler. The optional stable run
-builds both the shim and consumer without repository nightly configuration. It does not claim all native
-adapters or browser execution are qualified on stable.
+to acquire its root and call the built-in compiler. Both consumers also call the
+packaged Platform audio service. The mixed caller uses canonical audio types and
+the build-only caller uses three local namespaces with custom Rust locators.
+The optional stable run builds the shim and both callers without repository
+nightly configuration. The matrix covers the packaged native Glow provider.
 
 Native builds require SDL2 development libraries; Vulkan needs its loader.
 The development workspace uses the rolling nightly toolchain for build-std and its min-size

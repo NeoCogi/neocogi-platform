@@ -1,5 +1,8 @@
 //! Runs independently generated COM calls against packaged platform and renderer providers.
 use neocogi_com_sdk::{ComInterface, ComPtr, ComBytesExt, ComStringExt, NcCopyFromBufferOffset, RuntimeHandle, NC_OK};
+use neocogi_platform_contracts::audio as audio_contracts;
+
+extern crate self as package_projection;
 
 /// Consumer-owned generated definitions negotiate by COM identity.
 #[allow(dead_code, clippy::len_without_is_empty)]
@@ -7,16 +10,10 @@ mod gpu_contracts {
     include!(env!("IDL_NEOCOGI_RENDERER"));
 }
 
-/// Consumer-owned platform projection imports the canonical independent audio namespace.
+/// Consumer-owned platform projection imports local renderer and canonical audio types.
 #[allow(dead_code, clippy::len_without_is_empty)]
 mod platform_contracts {
     include!(env!("IDL_NEOCOGI_PLATFORM"));
-}
-
-/// Separately emitted audio caller negotiates the canonical audio COM identities and enum codecs.
-#[allow(dead_code, clippy::len_without_is_empty)]
-mod audio_contracts {
-    include!(env!("IDL_NEOCOGI_AUDIO"));
 }
 
 /// A separately generated caller reads nested enums and typed arrays from a canonical producer.
@@ -104,6 +101,8 @@ fn dynamic_platform_contract(runtime: RuntimeHandle, path: std::path::PathBuf) {
     let platform = neocogi_com_host::initialize_runtime()
         .acquire_plugin_root::<platform_contracts::PlatformAbi>(id)
         .unwrap();
+    let audio: ComPtr<audio_contracts::IAudioCapabilitiesAbi> = platform.audio_capabilities().unwrap();
+    assert_eq!(audio.info().unwrap().backend, audio_contracts::AudioBackend::Sdl);
     let factory = platform.query::<gpu_contracts::ShaderCompilerFactoryAbi>().unwrap();
     drop(platform);
     let compiler = factory.create(gpu_contracts::ShaderTarget::GlslEs300).unwrap();
@@ -140,10 +139,7 @@ fn main() {
     let runtime = neocogi_com_host::initialize_runtime();
     dynamic_platform_contract(runtime, path.into());
     typed_pipeline_contract();
-    let audio = neocogi_platform::audio::capabilities()
-        .unwrap()
-        .query::<audio_contracts::IAudioCapabilitiesAbi>()
-        .unwrap();
+    let audio = neocogi_platform::audio::capabilities().unwrap();
     assert_eq!(audio.info().unwrap().backend, audio_contracts::AudioBackend::Sdl);
     let mut supported = neocogi_com_sdk::NcOutputBuffer::<audio_contracts::PcmType>::new();
     audio.pcm_types(supported.output(0, audio.pcm_type_count().unwrap() as usize)).unwrap();
