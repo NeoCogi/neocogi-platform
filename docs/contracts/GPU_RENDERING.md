@@ -334,6 +334,9 @@ surface selects an existing framebuffer view or an independently rendered image.
 Permissions separately control regional color/depth clears, color/depth writes,
 depth comparisons, resource updates, image imports and initial depth clearing.
 Several groups can share a target while retaining separate resources and quotas.
+Each window frame starts with a whole-window depth clear to one. Subsequent
+groups in that frame share the resulting depth until their own permitted depth
+commands change it. Image frames have only a color attachment.
 See [drawing targets and resource groups](RENDER_SURFACES.md) for the fields,
 target authentication and errors. There is no UI role test or alternate UI constructor.
 

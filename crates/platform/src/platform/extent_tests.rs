@@ -246,3 +246,134 @@ fn callback_drawable_changes_reject_before_native_clear_and_recover() {
     let _session = super::tests::native_session();
     run();
 }
+
+#[com_object(interfaces(IRenderStream))]
+/// Real contributions from independent groups sharing one window depth attachment.
+struct DepthBlocks {
+    /// Keeps each sealed production block live through synchronous submission.
+    blocks: Vec<ComBox<IRenderViewBlockAbi>>,
+}
+
+impl IRenderStream for DepthBlocks {
+    /// Supplies the immutable block at its original painter position.
+    fn view(&self, _: u64, index: u32) -> Result<WeakComBox<IRenderViewBlockAbi>, NcStatus> {
+        self.blocks.get(index as usize).map(ComBox::downgrade).ok_or(NC_E_INVALID_ARG)
+    }
+}
+
+/// Generates real GLES/WebGL shaders and seals a draw with no group depth clear.
+fn depth_block(host: &ComPtr<IRenderHostAbi>, resources: &ComPtr<IRenderResourcesAbi>, size: Size, near: bool) -> ComBox<IRenderViewBlockAbi> {
+    use neocogi_platform::render::source::{Bytes, PipelineDesc};
+    let (depth, color, compare) = if near {
+        ("0.25", "1.0 0.0 0.0 1.0", GpuCompare::Always)
+    } else {
+        ("0.5", "0.0 1.0 0.0 1.0", GpuCompare::Less)
+    };
+    let source = Bytes::source(
+        format!(
+            r#"(module
+      (vertex vs ((i u32 (builtin vertex_index))) (returns vec4 (builtin position))
+        (let p ((array vec2 3) (vec2 (- 1.0) (- 1.0)) (vec2 3.0 (- 1.0)) (vec2 (- 1.0) 3.0)))
+        (return (vec4 (index p i) {depth} 1.0)))
+      (fragment fs () (returns vec4 (location 0)) (return (vec4 {color}))))"#
+        )
+        .into_bytes(),
+    );
+    let vs = resources
+        .create_shader(GpuShaderStage::Vertex, source.as_com_ref(), NcCopyFromBufferOffset::new(0, b"vs"))
+        .unwrap();
+    let fs = resources
+        .create_shader(GpuShaderStage::Fragment, source.as_com_ref(), NcCopyFromBufferOffset::new(0, b"fs"))
+        .unwrap();
+    let desc = PipelineDesc {
+        state: GpuPipelineInfo {
+            depth_compare: compare,
+            depth_write: near,
+            ..Default::default()
+        },
+        ..Default::default()
+    }
+    .source()
+    .unwrap();
+    let pipeline = resources.create_pipeline(desc.as_com_ref(), vs.as_com_ref(), fs.as_com_ref()).unwrap();
+    let mut recording = host.recording_broker().unwrap().begin_frame().unwrap();
+    let bounds = Rect {
+        x: 0,
+        y: 0,
+        width: size.width,
+        height: size.height,
+    };
+    let mut session = recording
+        .begin_view(RenderViewRoot { local: bounds, target: bounds }, resources.as_com_ref())
+        .unwrap();
+    let mut view = session.view().unwrap();
+    view.bind_pipeline(pipeline.as_com_ref()).unwrap();
+    view.draw(3, 1, 0).unwrap();
+    view.finish().unwrap();
+    let block = session.take_block().unwrap();
+    recording.finish().unwrap();
+    block
+}
+
+/// Independent groups share near depth within a frame. The next frame starts at
+/// one even when the last pipeline of the previous frame disabled depth writes.
+pub(super) fn run_window_depth() {
+    let object = PlatformObject::new()
+        .window("window depth initialization", Size { width: 8, height: 8 })
+        .unwrap();
+    #[cfg(target_arch = "wasm32")]
+    object.device.window.style().set_css_text("width:8px;height:8px");
+    let device = Rc::downgrade(&object.device);
+    let window: ComPtr<IPlatformWindowAbi> = WindowObject::from_value(object).query().unwrap();
+    let size = window.size().unwrap();
+    let renderer: ComPtr<IRendererAbi> = window.query().unwrap();
+    let host = window.graphics_host().unwrap();
+    let surface = host
+        .query::<IRenderSurfaceFactoryAbi>()
+        .unwrap()
+        .create_surface(RenderSurfaceDesc::Framebuffer)
+        .unwrap();
+    let groups = host.query::<IRenderResourceGroupFactoryAbi>().unwrap();
+    let group = |near| {
+        groups
+            .create_group(
+                Default::default(),
+                surface.as_com_ref(),
+                RenderGroupPermissions {
+                    write_color: true,
+                    read_depth: !near,
+                    write_depth: near,
+                    ..RenderGroupPermissions::none()
+                },
+            )
+            .unwrap()
+    };
+    let near_domain = group(true);
+    let far_domain = group(false);
+    let near = depth_block(&host, &near_domain.resources().unwrap(), size, true);
+    let far_resources = far_domain.resources().unwrap();
+    let farther = || depth_block(&host, &far_resources, size, false);
+    let submit = |blocks: Vec<ComBox<IRenderViewBlockAbi>>, invocation| {
+        let info = RenderInfo {
+            size,
+            clear: 0xffff0000,
+            invocation,
+            block_count: blocks.len() as u32,
+        };
+        let stream = DepthBlocks::from_value(DepthBlocks { blocks }).query::<IRenderStreamAbi>().unwrap();
+        renderer.render(info, stream.as_com_ref()).unwrap();
+        let pixels = rendered_pixels(&device);
+        pixels[(size.height as usize / 2) * size.width as usize + size.width as usize / 2]
+    };
+    assert_eq!(submit(vec![near, farther()], 1), [255, 0, 0, 255]);
+    assert_eq!(submit(vec![farther()], 2), [0, 255, 0, 255]);
+}
+
+/// Runs through SDL GLES and observes the real backbuffer before swap.
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[test]
+#[ignore = "requires SDL GL; run with SDL_VIDEODRIVER=offscreen"]
+fn window_depth_initialization_is_per_frame_through_com() {
+    let _session = super::tests::native_session();
+    run_window_depth();
+}

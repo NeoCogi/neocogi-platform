@@ -277,7 +277,14 @@ impl GLRenderer {
             self.bind_target(self.full_clip());
             self.gl
                 .clear_color(color.r as f32 / 255., color.g as f32 / 255., color.b as f32 / 255., color.a as f32 / 255.);
-            self.gl.clear(glow::COLOR_BUFFER_BIT);
+            let mut attachments = glow::COLOR_BUFFER_BIT;
+            if matches!(&self.target, DrawTarget::Window) {
+                // glClear respects the write mask, which a preceding color-only draw can leave off.
+                self.gl.depth_mask(true);
+                self.gl.clear_depth_f32(1.0);
+                attachments |= glow::DEPTH_BUFFER_BIT;
+            }
+            self.gl.clear(attachments);
         }
         self.generic.check().map_err(FrameError::new)
     }

@@ -771,6 +771,7 @@ pub async fn run_platform_input_tests() {
     clamped_drawing_buffer_uses_physical_coordinates();
     drawable_loss_keeps_render_diagnostics();
     crate::platform::extent_tests::run();
+    crate::platform::extent_tests::run_window_depth();
     let document = web_sys::window().unwrap().document().unwrap();
     let canvas = document.create_element("canvas").unwrap().dyn_into::<HtmlCanvasElement>().unwrap();
     canvas.set_width(200);
