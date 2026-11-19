@@ -62,13 +62,16 @@ cargo tools check-packages --offline --stable-toolchain stable --allow-dirty
 Omit `--allow-dirty` for release qualification. The checker constructs all three real
 archives together, rejects unexpected release packages and duplicate schema
 ownership, extracts them outside this checkout and uses only extracted contents
-for internal registry patches. It builds all targets, runs focused SDK tests and
-executes an independent generated COM consumer with retained shader exports and
+for internal registry patches. It builds the extracted workspace targets,
+runs the contracts and focused SDK tests, and executes an independent
+generated COM consumer with retained shader exports and
 real build-script resource staging, including restoration of deleted outputs and
 propagation of changed authored bytes through Cargo rebuilds. It also builds the
 shim as a nonmember registry-style dependency with ordinary `cargo build --lib`,
-reads Cargo's artifact receipt, loads the actual library, and calls its built-in
-compiler through independently generated COM bindings. The optional stable run
+reads Cargo's artifact receipt, and inspects the actual library's descriptor
+and root signature against the independently generated COM bindings. The
+consumer then loads the library and uses a second handle to the linked host
+to acquire its root and call the built-in compiler. The optional stable run
 builds both the shim and consumer without repository nightly configuration. It does not claim all native
 adapters or browser execution are qualified on stable.
 

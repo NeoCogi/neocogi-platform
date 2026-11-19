@@ -9,10 +9,16 @@ pub async fn run_platform_input_tests() {
     neocogi_platform::platform::testing::run_platform_input_tests().await;
 }
 
-/// Exercises actual AudioWorklet processing, typed COM, capture permissions and microphone teardown.
+/// Acquires the WebGL provider through the linked host and exercises its browser audio service.
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen::prelude::wasm_bindgen]
 pub async fn run_platform_audio_tests() -> Result<(), wasm_bindgen::JsValue> {
-    let _runtime = neocogi_com_host::initialize_runtime();
-    neocogi_platform::audio::testing::run().await
+    let runtime = neocogi_com_host::initialize_runtime();
+    let descriptor = neocogi_platform::platform::plugin_descriptor();
+    // SAFETY: The descriptor and provider code remain linked for the lifetime of this Wasm instance.
+    unsafe { runtime.register_plugin_descriptor(descriptor) }.map_err(|status| wasm_bindgen::JsValue::from_str(&status.to_string()))?;
+    let platform = runtime
+        .acquire_plugin_root(descriptor.plugin_id)
+        .map_err(|status| wasm_bindgen::JsValue::from_str(&status.to_string()))?;
+    neocogi_platform::audio::testing::run(platform).await
 }

@@ -1,5 +1,5 @@
 //! Runs independently generated COM calls against packaged platform and renderer providers.
-use neocogi_com_sdk::{ComPtr, ComBytesExt, ComStringExt, NcCopyFromBufferOffset, RuntimeHandle, NC_OK};
+use neocogi_com_sdk::{ComInterface, ComPtr, ComBytesExt, ComStringExt, NcCopyFromBufferOffset, RuntimeHandle, NC_OK};
 
 /// Consumer-owned generated definitions negotiate by COM identity.
 #[allow(dead_code, clippy::len_without_is_empty)]
@@ -80,14 +80,30 @@ fn typed_pipeline_contract() {
     );
 }
 
-/// A normal packaged cdylib exposes the built-in compiler through independently generated COM bindings.
-/// No SDK descriptor registration or renderer linkage in the caller supplies the loaded provider.
+/// Inspects, loads and calls the packaged compiler through independently generated COM bindings.
 fn dynamic_platform_contract(runtime: RuntimeHandle, path: std::path::PathBuf) {
+    let expected_id = neocogi_com_sdk::guid_from_qualified_name("neocogi.platform.glow");
+    // SAFETY: Qualification supplies the trusted library built from the extracted shim archive.
+    let inspection = unsafe { neocogi_com_host::inspect_plugin_library(&path) }.unwrap();
+    let expected_root = platform_contracts::PlatformAbi::INTERFACE_ID;
+    assert_eq!(inspection.description_abi_version, 3);
+    assert_eq!(inspection.core_abi_version, 21);
+    assert_eq!(inspection.plugin_id, expected_id);
+    assert_eq!(inspection.factory.root_factory_id, expected_root.iid);
+    // SAFETY: The generated interface identity borrows an immutable static digest.
+    assert_eq!(
+        inspection.factory.root_factory_signature,
+        *unsafe { expected_root.abi_signature.as_digest() }.unwrap()
+    );
+    assert!(runtime.plugin_info(expected_id).unwrap().is_none());
     // SAFETY: The qualification command supplies the trusted library built from the extracted shim archive.
     // The linked host validates its descriptor and pins the provider code for process lifetime.
     let id = unsafe { runtime.load_plugin_library(path) };
-    assert_eq!(id, neocogi_com_sdk::guid_from_qualified_name("neocogi.platform.glow"));
-    let platform = runtime.acquire_plugin_root::<platform_contracts::PlatformAbi>(id).unwrap();
+    assert_eq!(id, expected_id);
+    // A fresh handle must see the registration performed through the original handle.
+    let platform = neocogi_com_host::initialize_runtime()
+        .acquire_plugin_root::<platform_contracts::PlatformAbi>(id)
+        .unwrap();
     let factory = platform.query::<gpu_contracts::ShaderCompilerFactoryAbi>().unwrap();
     drop(platform);
     let compiler = factory.create(gpu_contracts::ShaderTarget::GlslEs300).unwrap();
@@ -120,10 +136,9 @@ fn dynamic_platform_contract(runtime: RuntimeHandle, path: std::path::PathBuf) {
 
 /// Retained artifact exports stay usable after their report and compiler are released.
 fn main() {
+    let path = std::env::args_os().nth(1).expect("pass the packaged platform library path");
     let runtime = neocogi_com_host::initialize_runtime();
-    if let Some(path) = std::env::args_os().nth(1) {
-        dynamic_platform_contract(runtime, path.into());
-    }
+    dynamic_platform_contract(runtime, path.into());
     typed_pipeline_contract();
     let audio = neocogi_platform::audio::capabilities()
         .unwrap()

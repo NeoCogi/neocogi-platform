@@ -37,11 +37,13 @@ fn all_contract_features_exclude_renderer_shader_compiler_and_native_backends() 
         "ash",
         "wgpu",
         "glow",
+        "neocogi-com-core",
         "neocogi-com-host",
         "neocogi-com-serialization",
     ] {
         assert!(!names.contains(forbidden), "contracts package enabled {forbidden}: {names:?}");
     }
     assert!(names.contains("neocogi-com"));
+    assert!(names.contains("neocogi-com-sdk"));
     assert!(names.contains("neocogi-idl"));
 }

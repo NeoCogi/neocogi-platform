@@ -25,6 +25,36 @@ fn cargo_declares_one_normal_platform_library() {
     assert_eq!(targets[0]["crate_types"], serde_json::json!(["cdylib"]));
 }
 
+/// The SDK and shim receive runtime access from the caller across every supported target.
+#[test]
+fn platform_providers_do_not_link_the_com_host() {
+    let output = Command::new(env!("CARGO"))
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .args([
+            "tree",
+            "--locked",
+            "--offline",
+            "-p",
+            "neocogi-platform",
+            "-p",
+            "neocogi-platform-dylib",
+            "--all-features",
+            "--target",
+            "all",
+            "--edges",
+            "normal,build",
+            "--prefix",
+            "none",
+            "--format",
+            "{p}",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let tree = String::from_utf8(output.stdout).unwrap();
+    assert!(!tree.lines().any(|line| line.starts_with("neocogi-com-host ")), "{tree}");
+}
+
 /// Resolve one isolated consumer, explicitly selecting normal and/or build dependency edges.
 fn graph(features: &[&str], edges: &str) -> HashSet<String> {
     let directory = tempfile::tempdir().unwrap();

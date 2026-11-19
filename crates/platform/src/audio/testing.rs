@@ -1,5 +1,6 @@
 //! Actual browser audio acceptance. The repository runner supplies fake microphone/permission devices.
 use super::*;
+use crate::render::platform::PlatformAbi;
 use js_sys::{Function, Promise};
 use neocogi_com_sdk::{ComStringExt, NcOutputBuffer};
 use wasm_bindgen::{JsCast, JsValue, prelude::wasm_bindgen};
@@ -96,9 +97,9 @@ async fn phase(stream: &mut IAudioStreamWrapper, target: AudioState) -> Result<(
     Err(JsValue::from_str(&format!("audio phase {target:?} timed out")))
 }
 
-/// Execute real playback/capture, bounded credit, typed capabilities, cancellation and owned errors.
-pub async fn run() -> Result<(), JsValue> {
-    let capabilities = capabilities().map_err(status)?;
+/// Exercises browser audio through the platform root acquired from the linked host.
+pub async fn run(platform: ComPtr<PlatformAbi>) -> Result<(), JsValue> {
+    let capabilities = platform.audio_capabilities().map_err(status)?;
     let info = capabilities.info().map_err(status)?;
     ensure(info.backend == AudioBackend::WebAudio, "wrong browser audio backend")?;
     ensure(
@@ -120,7 +121,7 @@ pub async fn run() -> Result<(), JsValue> {
         ..AudioConfig::stereo()
     };
     ensure(capabilities.supports_config(config).map_err(status)?, "default audio config unsupported")?;
-    let mut request = open(AudioDirection::Playback, config).map_err(status)?;
+    let mut request = platform.open_audio(AudioDirection::Playback, config).map_err(status)?;
     ready(&mut request).await?;
     ensure(
         request.take_capture().err() == Some(NC_E_NOINTERFACE),
@@ -153,7 +154,7 @@ pub async fn run() -> Result<(), JsValue> {
     ensure(playback.info().map_err(status)?.state == AudioState::Closed, "playback close not terminal")?;
 
     let previous = deny_media();
-    let mut denied = open(AudioDirection::Capture, config).map_err(status)?;
+    let mut denied = platform.open_audio(AudioDirection::Capture, config).map_err(status)?;
     let outcome = ready(&mut denied).await;
     restore_media(&previous);
     ensure(outcome.is_err(), "denied microphone permission unexpectedly opened")?;
@@ -165,7 +166,7 @@ pub async fn run() -> Result<(), JsValue> {
     )?;
 
     let previous = gate_media();
-    let mut cancelled = open(AudioDirection::Capture, config).map_err(status)?;
+    let mut cancelled = platform.open_audio(AudioDirection::Capture, config).map_err(status)?;
     tick().await?;
     cancelled.cancel().map_err(status)?;
     let media = JsFuture::from(release_media(&previous)).await?.dyn_into::<web_sys::MediaStream>()?;
@@ -200,7 +201,7 @@ pub async fn run() -> Result<(), JsValue> {
         capacity_frames: 256,
         ..config
     };
-    let mut request = open(AudioDirection::Capture, config).map_err(status)?;
+    let mut request = platform.open_audio(AudioDirection::Capture, config).map_err(status)?;
     ready(&mut request).await?;
     let mut capture = request.take_capture().map_err(status)?;
     ensure(capture.query_ref::<IAudioPlaybackAbi>().is_err(), "capture QI leaked output")?;

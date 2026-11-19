@@ -294,14 +294,13 @@ Compilation is CPU work and needs no open window. The SPIR-V writer uses the sma
 external compiler process or temporary cross-language round trip is used by the
 plugin. WGPU's independent native translation may still depend on Naga.
 
-With audio/window hosting unconditional and Glow selected by default, fresh
-min-size qualification produced 473,872 bytes for Glow and 515,432 with Python;
-Vulkan remains 418,120 and 459,440 bytes. All four complete libraries remain
-below 524,288 bytes, export only `nc_get_plugin_descriptor_v2`, pass loaded COM
-probes and run all three examples. Default and explicit renderer builds, 28
-invalid native/browser selections, full native suites, Chromium and independent
-nightly/stable archive consumers pass. Evidence is retained locally under
-`/tmp/neocogi-builtin-platform/`; these smoke runs make no new performance comparison.
+The COM/IDL `0.2.0-alpha.4` qualification for built-in audio/window hosting and
+default Glow measured 473,872 bytes for Glow and 515,432 with Python. Vulkan
+measured 418,120 and 459,440 bytes. All four libraries fit below 524,288 bytes
+and exported the ABI v2 discovery symbol. Loaded COM probes, three example
+runs, default and explicit renderer builds, 28 invalid feature selections,
+native suites, Chromium and independent nightly/stable archive consumers
+passed. The local evidence is in `/tmp/neocogi-builtin-platform/`.
 
 All writers consume the same validated typed IR. Generated shaders return
 zero for out-of-range array/vector/matrix/image reads; local writes outside the
