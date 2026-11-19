@@ -77,6 +77,8 @@ Cancellation/drop closes untaken devices and invalidates pending completion.
 Tracks from late permission are stopped without publication. Close is idempotent;
 final release also stops tracks, disconnects nodes and unregisters callbacks before
 releasing their Rust closures. Partial construction owns cleanup across every await.
+The pending browser open owns the worklet module URL. It revokes that URL
+once the module settles or the request is cancelled or dropped.
 
 Start/pause retain PCM and are idempotent in completed phases. Browser promises
 expose Starting/Pausing. Clear requires Paused and preserves lifetime counters;

@@ -26,8 +26,84 @@ export async function releaseMedia(old) {
   const resolve = mediaResolve; mediaResolve = undefined; resolve(stream);
   return stream;
 }
+export function probeWorklet(mode) {
+  const descriptor = Object.getOwnPropertyDescriptor(AudioContext.prototype, 'audioWorklet');
+  const add = Worklet.prototype.addModule;
+  const create = URL.createObjectURL;
+  const revoke = URL.revokeObjectURL;
+  const Node = globalThis.AudioWorkletNode;
+  let url, created = 0, revoked = 0, nodes = 0, finishModule;
+  globalThis.AudioWorkletNode = new Proxy(Node, {
+    construct(target, argumentsList, newTarget) {
+      nodes++;
+      return Reflect.construct(target, argumentsList, newTarget);
+    }
+  });
+  URL.createObjectURL = function (blob) {
+    url = create.call(this, blob);
+    created++;
+    return url;
+  };
+  URL.revokeObjectURL = function (address) {
+    if (url === address) revoked++;
+    return revoke.call(this, address);
+  };
+  const failure = () => new Error('injected worklet ' + mode);
+  if (mode === 'getter') {
+    Object.defineProperty(AudioContext.prototype, 'audioWorklet', {configurable: true, get() { throw failure(); }});
+  } else if (mode !== 'observe') {
+    Worklet.prototype.addModule = function () {
+      if (mode === 'throw') throw failure();
+      if (mode === 'reject') return Promise.reject(failure());
+      return new Promise((resolve, reject) => {
+        finishModule = mode === 'resolve-late' ? resolve : () => reject(failure());
+      });
+    };
+  }
+  return {
+    created() { return created; },
+    revoked() { return revoked; },
+    nodes() { return nodes; },
+    pending() { return finishModule !== undefined; },
+    async revokedFetch() {
+      try { await fetch(url); return false; } catch { return true; }
+    },
+    settle() {
+      if (finishModule) finishModule();
+      finishModule = undefined;
+    },
+    restore() {
+      this.settle();
+      if (descriptor) Object.defineProperty(AudioContext.prototype, 'audioWorklet', descriptor);
+      else delete AudioContext.prototype.audioWorklet;
+      Worklet.prototype.addModule = add;
+      globalThis.AudioWorkletNode = Node;
+      URL.createObjectURL = create;
+      URL.revokeObjectURL = revoke;
+    }
+  };
+}
 ")]
 extern "C" {
+    /// Owns the injected module failure and the browser's actual URL observations.
+    type WorkletProbe;
+    #[wasm_bindgen(js_name = probeWorklet)]
+    fn probe_worklet(mode: &str) -> WorkletProbe;
+    #[wasm_bindgen(method)]
+    fn created(this: &WorkletProbe) -> u32;
+    #[wasm_bindgen(method)]
+    fn revoked(this: &WorkletProbe) -> u32;
+    /// Observe even attempted construction when a late mock completion did not load a real module.
+    #[wasm_bindgen(method)]
+    fn nodes(this: &WorkletProbe) -> u32;
+    #[wasm_bindgen(method)]
+    fn pending(this: &WorkletProbe) -> bool;
+    #[wasm_bindgen(method, js_name = revokedFetch)]
+    fn revoked_fetch(this: &WorkletProbe) -> Promise;
+    #[wasm_bindgen(method)]
+    fn settle(this: &WorkletProbe);
+    #[wasm_bindgen(method)]
+    fn restore(this: &WorkletProbe);
     /// Replace permission with an explicit rejection, retaining the exact callable for restoration.
     #[wasm_bindgen(js_name = denyMedia)]
     fn deny_media() -> Function;
@@ -40,6 +116,15 @@ extern "C" {
     /// Complete held permission using the browser's real fake-device implementation.
     #[wasm_bindgen(js_name = releaseMedia)]
     fn release_media(previous: &Function) -> Promise;
+}
+
+/// Restores patched browser functions even if an assertion returns a failure.
+struct ScopedWorkletProbe(WorkletProbe);
+
+impl Drop for ScopedWorkletProbe {
+    fn drop(&mut self) {
+        self.0.restore();
+    }
 }
 
 /// Yield to actual browser message/promise delivery between bounded acceptance polls.
@@ -78,6 +163,56 @@ async fn ready(request: &mut IAudioOpenRequestWrapper) -> Result<(), JsValue> {
         }
     }
     Err("audio open timed out".into())
+}
+
+/// Calls the generated request API and checks URL ownership on every module exit.
+async fn worklet_module_cleanup(platform: &ComPtr<PlatformAbi>, config: AudioConfig) -> Result<(), JsValue> {
+    for mode in ["getter", "throw", "reject"] {
+        let probe = ScopedWorkletProbe(probe_worklet(mode));
+        let mut request = platform.open_audio(AudioDirection::Playback, config).map_err(status)?;
+        let Err(failure) = ready(&mut request).await else {
+            return Err("module failure must reject the audio open".into());
+        };
+        ensure(
+            failure.as_string().is_some_and(|s| s.contains(&format!("injected worklet {mode}"))),
+            "module failure lost its diagnostic",
+        )?;
+        let expected = u32::from(mode != "getter");
+        ensure(probe.0.created() == expected && probe.0.revoked() == expected, "module failure left a live URL")?;
+    }
+    for (mode, cancel) in [("resolve-late", true), ("reject-late", false)] {
+        let probe = ScopedWorkletProbe(probe_worklet(mode));
+        let mut request = platform.open_audio(AudioDirection::Playback, config).map_err(status)?;
+        for _ in 0..2000 {
+            if probe.0.pending() {
+                break;
+            }
+            tick().await?;
+        }
+        ensure(probe.0.pending() && probe.0.created() == 1, "worklet load never entered the pending gate")?;
+        let retained = if cancel {
+            request.cancel().map_err(status)?;
+            ensure(
+                request.poll().map_err(status)? == AudioOpenState::Cancelled,
+                "cancel failed to retire the request",
+            )?;
+            Some(request)
+        } else {
+            drop(request);
+            None
+        };
+        ensure(probe.0.revoked() == 1, "pending retirement did not revoke the URL")?;
+        let unavailable = JsFuture::from(probe.0.revoked_fetch()).await?.as_bool().unwrap_or(false);
+        ensure(unavailable, "a new fetch could still read the revoked worklet module")?;
+        probe.0.settle();
+        tick().await?;
+        ensure(probe.0.revoked() == 1, "late module completion revoked the URL twice")?;
+        ensure(probe.0.nodes() == 0, "late module completion constructed an audio node")?;
+        if let Some(mut request) = retained {
+            ensure(request.poll().map_err(status)? == AudioOpenState::Cancelled, "late success reopened the request")?;
+        }
+    }
+    Ok(())
 }
 /// Observe exact control completion through the generated inherited stream wrapper.
 async fn phase(stream: &mut IAudioStreamWrapper, target: AudioState) -> Result<(), JsValue> {
@@ -121,8 +256,16 @@ pub async fn run(platform: ComPtr<PlatformAbi>) -> Result<(), JsValue> {
         ..AudioConfig::stereo()
     };
     ensure(capabilities.supports_config(config).map_err(status)?, "default audio config unsupported")?;
+    worklet_module_cleanup(&platform, config).await?;
     let mut request = platform.open_audio(AudioDirection::Playback, config).map_err(status)?;
-    ready(&mut request).await?;
+    {
+        let probe = ScopedWorkletProbe(probe_worklet("observe"));
+        ready(&mut request).await?;
+        ensure(
+            probe.0.created() == 1 && probe.0.revoked() == 1 && probe.0.nodes() == 1,
+            "successful audio open did not retire its URL before publishing the node",
+        )?;
+    }
     ensure(
         request.take_capture().err() == Some(NC_E_NOINTERFACE),
         "playback request leaked capture authority",

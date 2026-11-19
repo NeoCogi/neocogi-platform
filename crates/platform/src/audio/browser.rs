@@ -41,16 +41,28 @@ fn error(value: JsValue) -> AudioError {
     AudioError::new(AUDIO_E_BACKEND, message)
 }
 
+/// The single revocation obligation for a registered worklet module URL.
+struct WorkletUrl(String);
+
+impl Drop for WorkletUrl {
+    fn drop(&mut self) {
+        let _ = web_sys::Url::revoke_object_url(&self.0);
+    }
+}
+
 /// One typed cleanup record shared only while an opening future is outstanding.
 struct OpeningResources {
     /// An allocated context must close immediately on request cancellation, even during addModule.
     context: Option<AudioContext>,
     /// Late microphone permission must stop every track even if the request was already dropped.
     media: Option<MediaStream>,
+    /// Cancelling revokes the module URL even if its load promise has not settled.
+    worklet_url: Option<WorkletUrl>,
 }
 impl OpeningResources {
     /// Release physical resources without borrowing any request or completion state across JS calls.
     fn close(self) {
+        drop(self.worklet_url);
         stop_tracks(self.media.as_ref());
         if let Some(context) = self.context {
             close_context(&context);
@@ -84,7 +96,11 @@ impl Drop for Pending {
 pub(super) fn open(direction: AudioDirection, config: AudioConfig) -> RequestState {
     let completion = Rc::new(RefCell::new(None));
     let weak = Rc::downgrade(&completion);
-    let resources = Rc::new(RefCell::new(Some(OpeningResources { context: None, media: None })));
+    let resources = Rc::new(RefCell::new(Some(OpeningResources {
+        context: None,
+        media: None,
+        worklet_url: None,
+    })));
     let cleanup = resources.clone();
     spawn_local(async move {
         let result = create(direction, config, &weak, &cleanup).await;
@@ -371,18 +387,29 @@ async fn create(
     if destination.upgrade().is_none() {
         return Err(AUDIO_E_STATE.into());
     }
+    let worklet = browser.context.audio_worklet().map_err(error)?;
     let parts = Array::of1(&JsValue::from_str(include_str!("processor.js")));
     let properties = web_sys::BlobPropertyBag::new();
     properties.set_type("text/javascript");
     let blob = web_sys::Blob::new_with_str_sequence_and_options(&parts, &properties).map_err(error)?;
     let url = web_sys::Url::create_object_url_with_blob(&blob).map_err(error)?;
-    let module = browser.context.audio_worklet().map_err(error)?.add_module(&url);
-    // Revocation occurs after either module outcome; no generated resource URL escapes the provider.
-    let loaded = match module {
+    let registration = WorkletUrl(url.clone());
+    {
+        let mut pending = cleanup.borrow_mut();
+        let Some(resources) = pending.as_mut() else {
+            drop(pending);
+            return Err(AUDIO_E_STATE.into());
+        };
+        // Construction registers exactly one module. The borrow ends before invoking JavaScript.
+        resources.worklet_url = Some(registration);
+    }
+    let loaded = match worklet.add_module(&url) {
         Ok(promise) => JsFuture::from(promise).await.map(|_| ()).map_err(error),
         Err(value) => Err(error(value)),
     };
-    let _ = web_sys::Url::revoke_object_url(&url);
+    // Cancellation may have already taken the registration. Drop a remaining owner outside the borrow.
+    let registration = cleanup.borrow_mut().as_mut().and_then(|resources| resources.worklet_url.take());
+    drop(registration);
     loaded?;
     if destination.upgrade().is_none() {
         return Err(AUDIO_E_STATE.into());
