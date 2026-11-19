@@ -109,6 +109,9 @@ struct Device {
     surfaces: RefCell<HashMap<usize, Weak<surface::SurfaceRecord>>>,
     /// Polling can access a live SDL owner even while renderer state is detached.
     window: gpu::Window,
+    /// The drawing buffer remains observable while the owning renderer is detached.
+    #[cfg(target_arch = "wasm32")]
+    drawable: Rc<gpu::Core>,
     /// SDL subsystems outlive the backend and every native window clone.
     #[cfg(not(target_arch = "wasm32"))]
     host: Rc<NativeHost>,
@@ -124,18 +127,20 @@ struct RenderAccess<'a> {
 impl Device {
     /// Observes the actual drawable without synchronizing browser CSS or acquiring a frame.
     /// Metadata queries and final submission admission share this owner even while render state is detached.
-    fn drawable_size(&self) -> Result<Size, NcStatus> {
+    fn drawable_size(&self) -> Result<Size, RenderError> {
         #[cfg(not(target_arch = "wasm32"))]
         {
             Ok(gpu::pixel_size(&self.window))
         }
         #[cfg(target_arch = "wasm32")]
         {
-            Ok(Size {
-                width: self.window.width() as i32,
-                height: self.window.height() as i32,
-            })
+            self.drawable.drawable_size().map_err(|error| self.failure(error))
         }
+    }
+
+    /// Metadata getters expose the platform status, while renderer outcomes retain native detail.
+    fn drawable_size_status(&self) -> Result<Size, NcStatus> {
+        self.drawable_size().map_err(|_| PLATFORM_E_BACKEND)
     }
 
     /// Takes the complete native state; nested render/upload attempts cannot borrow its internals.
@@ -309,7 +314,9 @@ impl IRenderer for WindowObject {
     /// Prepares the complete frame without borrowing native state, then executes and explicitly finishes it.
     fn render_result(&self, info: RenderInfo, stream: ComRef<'_, IRenderStreamAbi>) -> Result<ComPtr<IRenderOutcomeAbi>, NcStatus> {
         let result = (|| -> Result<(), RenderError> {
-            if info.size != self.size()? {
+            #[cfg(target_arch = "wasm32")]
+            browser::resize(&self.device.window);
+            if info.size != self.device.drawable_size()? {
                 return Err(RenderError::new(NC_E_INVALID_ARG, "submitted frame size differs from the window drawable size"));
             }
             self.device.execute(|state| {

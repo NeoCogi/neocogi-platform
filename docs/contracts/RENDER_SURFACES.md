@@ -44,6 +44,10 @@ returns an owned `NC_E_INVALID_ARG` failure before its clear/draw. Recording is
 never reinterpreted at a substituted extent. The callback's own resize is not
 rolled back; the next submission uses the new size. Unchanged-size queries remain
 available during preparation.
+On WebGL, CSS size and device scale set the requested canvas attributes.
+The context's actual drawing buffer governs window and framebuffer size,
+submission, and browser pointer, wheel, and text-input coordinates. An allocation
+clamped by the browser keeps all of those operations in the same pixel space.
 Surface identity is authenticated through the creating device's local registration;
 an external implementation cannot substitute matching public metadata.
 

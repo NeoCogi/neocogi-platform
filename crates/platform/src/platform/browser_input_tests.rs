@@ -26,7 +26,10 @@ impl IRenderStream for SurfaceBlocks {
 }
 
 /// Records a regional color clear with depth disabled; no automatic depth command may be required.
-fn surface_clear(host: &ComPtr<IRenderHostAbi>, group: &neocogi_com_sdk::ComBox<IRenderResourceGroupAbi>) -> ComPtr<IRenderStreamAbi> {
+fn surface_clear_block(
+    host: &ComPtr<IRenderHostAbi>,
+    group: &neocogi_com_sdk::ComBox<IRenderResourceGroupAbi>,
+) -> neocogi_com_sdk::ComBox<IRenderViewBlockAbi> {
     let bounds = Rect { x: 0, y: 0, width: 4, height: 4 };
     let mut frame = host.recording_broker().unwrap().begin_frame().unwrap();
     let resources = group.resources().unwrap();
@@ -38,7 +41,16 @@ fn surface_clear(host: &ComPtr<IRenderHostAbi>, group: &neocogi_com_sdk::ComBox<
     view.finish().unwrap();
     let block = session.take_block().unwrap();
     frame.finish().unwrap();
-    SurfaceBlocks::from_value(SurfaceBlocks { blocks: vec![block] }).query().unwrap()
+    block
+}
+
+/// Wraps one regional clear block for a normal synchronous submission.
+fn surface_clear(host: &ComPtr<IRenderHostAbi>, group: &neocogi_com_sdk::ComBox<IRenderResourceGroupAbi>) -> ComPtr<IRenderStreamAbi> {
+    SurfaceBlocks::from_value(SurfaceBlocks {
+        blocks: vec![surface_clear_block(host, group)],
+    })
+    .query()
+    .unwrap()
 }
 
 /// Actual WebGL COM submission distinguishes framebuffer views from exact image targets.
@@ -144,6 +156,151 @@ fn browser_surface_targets() {
     let resources = window_group.resources().unwrap();
     let imported = host.import_texture(resources.as_com_ref(), old.as_com_ref()).unwrap();
     host.prepare_texture(resources.as_com_ref(), imported.as_com_ref()).unwrap();
+}
+
+/// The Chromium software adapter clamps a tall drawing buffer below its
+/// requested attributes. Check admission and input against that actual allocation.
+fn clamped_drawing_buffer_uses_physical_coordinates() {
+    use glow::HasContext;
+    let object = PlatformObject::new().window("clamped drawing buffer", Size { width: 64, height: 64 }).unwrap();
+    let canvas = object.device.window.clone();
+    let text = object.input.text.clone();
+    let core = object.device.drawable.clone();
+    let gl = core.dispatch();
+    let mut limits = [0; 2];
+    // SAFETY: This test reads the viewport limits of the live owning context.
+    unsafe { gl.get_parameter_i32_slice(glow::MAX_VIEWPORT_DIMS, &mut limits) };
+    canvas.style().set_css_text(&format!("width:64px;height:{}px", limits[1] + 8));
+    let window: ComPtr<IPlatformWindowAbi> = WindowObject::from_value(object).query().unwrap();
+    let actual = core.drawable_size().unwrap();
+    let size = window.size().unwrap();
+    assert_eq!(size, core.drawable_size().unwrap());
+    assert_ne!(size, actual);
+    let requested = Size {
+        width: canvas.width() as i32,
+        height: canvas.height() as i32,
+    };
+    assert!(requested.height > size.height);
+    let surfaces: ComPtr<IRenderSurfaceFactoryAbi> = window.graphics_host().unwrap().query().unwrap();
+    assert_eq!(surfaces.create_surface(RenderSurfaceDesc::Framebuffer).unwrap().size().unwrap(), size);
+
+    let renderer: ComPtr<IRendererAbi> = window.query().unwrap();
+    let stream: ComPtr<IRenderStreamAbi> = SurfaceBlocks::from_value(SurfaceBlocks { blocks: Vec::new() }).query().unwrap();
+    let info = RenderInfo {
+        size,
+        clear: 0xffff0000,
+        invocation: 1,
+        block_count: 0,
+    };
+    assert_eq!(
+        renderer.render(RenderInfo { size: requested, ..info }, stream.as_com_ref()).unwrap_err().status,
+        NC_E_INVALID_ARG
+    );
+    renderer.render(info, stream.as_com_ref()).unwrap();
+    let mut top = [0; 4];
+    // SAFETY: The renderer just cleared this live drawing buffer. The actual
+    // top row is inside its reported extent and fits this one-pixel output.
+    unsafe {
+        gl.read_pixels(
+            0,
+            size.height - 1,
+            1,
+            1,
+            glow::RGBA,
+            glow::UNSIGNED_BYTE,
+            glow::PixelPackData::Slice(Some(&mut top)),
+        );
+        assert_eq!(gl.get_error(), glow::NO_ERROR);
+    }
+    assert_eq!(top, [0, 0, 255, 255]);
+
+    let observations = Rc::new(RefCell::new(Vec::new()));
+    let sink = ShortcutSink::from_value(ShortcutSink { received: observations.clone() })
+        .query::<IInputSinkAbi>()
+        .unwrap();
+    while window.poll(sink.as_com_ref()).unwrap() == PollStatus::Event {}
+    observations.borrow_mut().clear();
+    let bounds = canvas.get_bounding_client_rect();
+    let pointer_y = (bounds.top() + bounds.height() * 0.75).round();
+    let scale = f64::from(size.height) / bounds.height();
+    exercise(canvas.unchecked_ref(), "scaled-drawable");
+    while window.poll(sink.as_com_ref()).unwrap() == PollStatus::Event {}
+    assert!(matches!(observations.borrow().as_slice(), [
+        (UiInput::Pointer(Point { y, .. }), _), (UiInput::Scroll(Point { x: 0, y: scroll }), _),
+    ] if *y == ((pointer_y - bounds.top()) * scale).round() as i32 && *scroll == size.height));
+
+    canvas.focus().unwrap();
+    let height = size.height / 2;
+    window.text_input(TextInputArea::Area(Rect { x: 0, y: 0, width: 1, height })).unwrap();
+    let applied = text.style().get_property_value("height").unwrap();
+    let applied = applied.trim_end_matches("px").parse::<f64>().unwrap();
+    assert!((applied - f64::from(height) / scale).abs() < 0.02);
+}
+
+#[com_object(interfaces(IRenderStream))]
+/// Real stream callback that loses its own drawable after renderer state is detached.
+struct LosingStream {
+    /// Context created for the same window whose submission is invoking this callback.
+    context: web_sys::WebGl2RenderingContext,
+    /// One sealed contribution, returned after the loss to reach final admission.
+    block: neocogi_com_sdk::ComBox<IRenderViewBlockAbi>,
+}
+
+impl IRenderStream for LosingStream {
+    /// Lose the live context while still supplying the authenticated contribution.
+    fn view(&self, _: u64, index: u32) -> Result<neocogi_com_sdk::WeakComBox<IRenderViewBlockAbi>, NcStatus> {
+        assert_eq!(index, 0);
+        lose_test_context(&self.context);
+        assert!(self.context.is_context_lost());
+        Ok(self.block.downgrade())
+    }
+}
+
+/// Context loss reaches both final admission and preflight as an owned renderer error.
+fn drawable_loss_keeps_render_diagnostics() {
+    let object = PlatformObject::new().window("lost drawing buffer", Size { width: 8, height: 8 }).unwrap();
+    object.device.window.style().set_css_text("width:8px;height:8px");
+    let context = object
+        .device
+        .window
+        .get_context("webgl2")
+        .unwrap()
+        .unwrap()
+        .dyn_into::<web_sys::WebGl2RenderingContext>()
+        .unwrap();
+    let window: ComPtr<IPlatformWindowAbi> = WindowObject::from_value(object).query().unwrap();
+    let size = window.size().unwrap();
+    let host = window.graphics_host().unwrap();
+    let surfaces: ComPtr<IRenderSurfaceFactoryAbi> = host.query().unwrap();
+    let framebuffer = surfaces.create_surface(RenderSurfaceDesc::Framebuffer).unwrap();
+    let groups: ComPtr<IRenderResourceGroupFactoryAbi> = host.query().unwrap();
+    let group = groups
+        .create_group(
+            Default::default(),
+            framebuffer.as_com_ref(),
+            RenderGroupPermissions {
+                clear_color: true,
+                ..RenderGroupPermissions::none()
+            },
+        )
+        .unwrap();
+    let block = surface_clear_block(&host, &group);
+    let stream: ComPtr<IRenderStreamAbi> = LosingStream::from_value(LosingStream { context, block }).query().unwrap();
+    let renderer: ComPtr<IRendererAbi> = window.query().unwrap();
+    let info = RenderInfo {
+        size,
+        invocation: 1,
+        clear: 0,
+        block_count: 1,
+    };
+    let post_callback = renderer.render(info, stream.as_com_ref()).unwrap_err();
+    assert_eq!(window.size(), Err(PLATFORM_E_BACKEND));
+    assert_eq!(framebuffer.size(), Err(PLATFORM_E_BACKEND));
+    let preflight = renderer.render(RenderInfo { invocation: 2, ..info }, stream.as_com_ref()).unwrap_err();
+    assert_eq!(post_callback.status, RENDER_E_BACKEND);
+    assert_eq!(preflight.status, RENDER_E_BACKEND);
+    assert!(post_callback.message.contains("WebGL context was lost; recreate the driver and its resources"));
+    assert_eq!(post_callback.message, preflight.message);
 }
 
 /// Mutable native slots must ignore application unpack addressing on every reuse.
@@ -513,6 +670,10 @@ export function exercise(target, name) {
     } else if (name === 'wheel') {
         target.dispatchEvent(new WheelEvent('wheel', {deltaY:0.5, deltaMode:0}));
         target.dispatchEvent(new WheelEvent('wheel', {deltaY:0.5, deltaMode:0}));
+    } else if (name === 'scaled-drawable') {
+        const bounds = target.getBoundingClientRect();
+        target.dispatchEvent(new PointerEvent('pointermove', {isPrimary:true, clientY:Math.round(bounds.top + bounds.height * 0.75)}));
+        target.dispatchEvent(new WheelEvent('wheel', {deltaY:1, deltaMode:2}));
     } else if (name === 'down') {
         target.setPointerCapture = () => {};
         target.dispatchEvent(new PointerEvent('pointerdown', {pointerId:7, isPrimary:true, buttons:1, clientX:10, clientY:10}));
@@ -607,6 +768,8 @@ pub async fn run_platform_input_tests() {
     browser_shortcuts_through_com();
     canonical_browser_derivatives().await;
     browser_surface_targets();
+    clamped_drawing_buffer_uses_physical_coordinates();
+    drawable_loss_keeps_render_diagnostics();
     crate::platform::extent_tests::run();
     let document = web_sys::window().unwrap().document().unwrap();
     let canvas = document.create_element("canvas").unwrap().dyn_into::<HtmlCanvasElement>().unwrap();
@@ -614,9 +777,10 @@ pub async fn run_platform_input_tests() {
     canvas.set_height(200);
     canvas.style().set_css_text("width:100px;height:100px");
     document.body().unwrap().append_child(&canvas).unwrap();
-    let host = BrowserInputHost::new(&canvas).unwrap();
+    let gpu = gpu::Gpu::from_canvas(canvas.clone()).unwrap();
+    let host = BrowserInputHost::new(&canvas, gpu.core()).unwrap();
     canvas.focus().unwrap();
-    host.synchronize(&canvas, Some(Rect { x: 10, y: 10, width: 80, height: 20 }));
+    host.synchronize(&canvas, Some(Rect { x: 10, y: 10, width: 80, height: 20 })).unwrap();
     assert_eq!(document.active_element(), Some(host.text.clone().into()));
     exercise(host.text.unchecked_ref(), "compose-start");
     assert!(host.drain().is_empty(), "preedit and its Enter key must stay browser-owned");

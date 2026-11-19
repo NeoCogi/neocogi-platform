@@ -180,7 +180,7 @@ impl IPlatformWindow for WindowObject {
 
     /// Reports drawable pixels, which are also the coordinates used by every delivered pointer.
     fn size(&self) -> Result<Size, NcStatus> {
-        self.device.drawable_size()
+        self.device.drawable_size_status()
     }
 
     /// Removes only the attempted event; foreign delivery cannot retain any SDL or queue borrow.

@@ -77,6 +77,20 @@ impl Core {
         &self.identity
     }
 
+    /// Observes the actual WebGL drawing buffer without depending on the renderer's
+    /// submission state or changing requested canvas attributes.
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) fn drawable_size(&self) -> Result<neocogi_platform::render::abi::Size, String> {
+        self.current()?;
+        let State::Live(physical) = &*self.state.borrow() else {
+            unreachable!("current verified a live context")
+        };
+        Ok(neocogi_platform::render::abi::Size {
+            width: physical.context.drawing_buffer_width(),
+            height: physical.context.drawing_buffer_height(),
+        })
+    }
+
     /// Selects/checks the actual owning context before each supported native execution phase.
     /// A failure permanently tears down this core's context; later Ready handles cannot be reused.
     pub fn current(&self) -> Result<(), String> {

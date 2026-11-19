@@ -6,6 +6,7 @@ use neocogi_com_sdk::{ComRef, NcCopyFromBufferOffset, NcStatus};
 use wasm_bindgen::{JsCast, closure::Closure};
 use web_sys::{Event, EventTarget, FocusEvent, HtmlCanvasElement, HtmlTextAreaElement, KeyboardEvent, PointerEvent, WheelEvent};
 use neocogi_platform::platform::wheel::{WheelAccumulator, WheelUnit};
+use super::gpu;
 
 /// One pending copied transition owns text only for an actual committed string.
 struct PendingInput {
@@ -85,6 +86,8 @@ pub(super) struct BrowserInputHost {
     queue: Rc<RefCell<InputQueue>>,
     /// Transparent input anchored inside the focused editor, outside pointer hit testing.
     text: HtmlTextAreaElement,
+    /// Physical drawing-buffer lifetime, available while renderer state is detached.
+    drawable: Rc<gpu::Core>,
     /// Registrations are removed when the host is dropped, including partial construction failure.
     listeners: Vec<Listener>,
 }
@@ -99,7 +102,7 @@ impl Drop for BrowserInputHost {
 
 impl BrowserInputHost {
     /// Installs the host's pointer, wheel, keyboard, composition, and focus boundaries.
-    pub(super) fn new(canvas: &HtmlCanvasElement) -> Result<Self, String> {
+    pub(super) fn new(canvas: &HtmlCanvasElement, drawable: Rc<gpu::Core>) -> Result<Self, String> {
         let window = web_sys::window().ok_or("browser window is unavailable")?;
         let document = window.document().ok_or("browser document is unavailable")?;
         let text = document
@@ -118,6 +121,7 @@ impl BrowserInputHost {
         let mut host = Self {
             queue: Rc::new(RefCell::new(InputQueue::default())),
             text,
+            drawable,
             listeners: Vec::new(),
         };
         canvas.set_tab_index(0);
@@ -129,6 +133,7 @@ impl BrowserInputHost {
             let canvas = canvas.clone();
             let target: EventTarget = canvas.clone().into();
             let queue = host.queue.clone();
+            let drawable = host.drawable.clone();
             host.listen(&target, name, move |event| {
                 let Some(pointer) = event.dyn_ref::<PointerEvent>() else { return };
                 if !pointer.is_primary() {
@@ -137,10 +142,11 @@ impl BrowserInputHost {
                 if queue.borrow().pointer.is_some_and(|id| id != pointer.pointer_id()) {
                     return;
                 }
-                let bounds = canvas.get_bounding_client_rect();
-                let scale = canvas_scale(&canvas);
-                let x = ((pointer.client_x() as f64 - bounds.left()) * scale[0]).round() as i32;
-                let y = ((pointer.client_y() as f64 - bounds.top()) * scale[1]).round() as i32;
+                let Ok(coordinates) = CanvasCoordinates::observe(&canvas, &drawable) else {
+                    return;
+                };
+                let x = ((f64::from(pointer.client_x()) - coordinates.bounds.left()) * coordinates.scale[0]).round() as i32;
+                let y = ((f64::from(pointer.client_y()) - coordinates.bounds.top()) * coordinates.scale[1]).round() as i32;
                 if name == "pointerdown" {
                     if canvas.set_pointer_capture(pointer.pointer_id()).is_err() {
                         queue.borrow_mut().cancel();
@@ -194,6 +200,7 @@ impl BrowserInputHost {
             let queue = host.queue.clone();
             let canvas = canvas.clone();
             let target = canvas.clone().into();
+            let drawable = host.drawable.clone();
             host.listen(&target, "wheel", move |event| {
                 let Some(wheel) = event.dyn_ref::<WheelEvent>() else { return };
                 let unit = match wheel.delta_mode() {
@@ -201,13 +208,13 @@ impl BrowserInputHost {
                     2 => WheelUnit::Page,
                     _ => WheelUnit::Pixel,
                 };
+                let Ok(coordinates) = CanvasCoordinates::observe(&canvas, &drawable) else {
+                    return;
+                };
                 let mut queue = queue.borrow_mut();
-                let delta = queue.wheel.translate(
-                    [wheel.delta_x(), wheel.delta_y()],
-                    unit,
-                    canvas_scale(&canvas),
-                    [canvas.width() as f64, canvas.height() as f64],
-                );
+                let delta = queue
+                    .wheel
+                    .translate([wheel.delta_x(), wheel.delta_y()], unit, coordinates.scale, coordinates.extent);
                 if delta != [0, 0] {
                     queue.push(UiInput::Scroll(Point { x: delta[0], y: delta[1] }));
                 }
@@ -312,20 +319,19 @@ impl BrowserInputHost {
     }
 
     /// Places native input using the core's committed editor area without stealing external focus.
-    pub(super) fn synchronize(&self, canvas: &HtmlCanvasElement, area: Option<Rect>) {
+    pub(super) fn synchronize(&self, canvas: &HtmlCanvasElement, area: Option<Rect>) -> Result<(), NcStatus> {
         let active = canvas.owner_document().and_then(|document| document.active_element());
         let on_canvas = active == Some(canvas.clone().into());
         let on_text = active == Some(self.text.clone().into());
         if !on_canvas && !on_text {
-            return;
+            return Ok(());
         }
         if let Some(area) = area {
-            let bounds = canvas.get_bounding_client_rect();
-            let scale = canvas_scale(canvas);
+            let coordinates = CanvasCoordinates::observe(canvas, &self.drawable)?;
             let style = self.text.style();
-            let _ = style.set_property("left", &format!("{}px", bounds.left() + area.x as f64 / scale[0]));
-            let _ = style.set_property("top", &format!("{}px", bounds.top() + area.y as f64 / scale[1]));
-            let _ = style.set_property("height", &format!("{}px", area.height as f64 / scale[1]));
+            let _ = style.set_property("left", &format!("{}px", coordinates.bounds.left() + f64::from(area.x) / coordinates.scale[0]));
+            let _ = style.set_property("top", &format!("{}px", coordinates.bounds.top() + f64::from(area.y) / coordinates.scale[1]));
+            let _ = style.set_property("height", &format!("{}px", f64::from(area.height) / coordinates.scale[1]));
             if !on_text {
                 let _ = self.text.focus();
             }
@@ -334,16 +340,32 @@ impl BrowserInputHost {
             self.text.set_value("");
             let _ = canvas.focus();
         }
+        Ok(())
     }
 }
 
-/// CSS-to-framebuffer scale follows the actual canvas bounds, including nonuniform CSS sizing.
-fn canvas_scale(canvas: &HtmlCanvasElement) -> [f64; 2] {
-    let bounds = canvas.get_bounding_client_rect();
-    [
-        canvas.width() as f64 / bounds.width().max(1.0),
-        canvas.height() as f64 / bounds.height().max(1.0),
-    ]
+/// One observation pairs the CSS bounding rectangle with the actual drawable.
+struct CanvasCoordinates {
+    /// CSS position and dimensions used for both directions of conversion.
+    bounds: web_sys::DomRect,
+    /// Width and height in drawing-buffer pixels, also used for page scrolling.
+    extent: [f64; 2],
+    /// Physical pixels per CSS pixel on the two axes.
+    scale: [f64; 2],
+}
+
+impl CanvasCoordinates {
+    /// Reads both coordinate spaces without resizing or acquiring the drawable.
+    fn observe(canvas: &HtmlCanvasElement, drawable: &gpu::Core) -> Result<Self, NcStatus> {
+        let size = drawable.drawable_size().map_err(|_| PLATFORM_E_BACKEND)?;
+        if size.width <= 0 || size.height <= 0 {
+            return Err(PLATFORM_E_BACKEND);
+        }
+        let extent = [f64::from(size.width), f64::from(size.height)];
+        let bounds = canvas.get_bounding_client_rect();
+        let scale = [extent[0] / bounds.width().max(1.0), extent[1] / bounds.height().max(1.0)];
+        Ok(Self { bounds, extent, scale })
+    }
 }
 
 /// Preserves a browser exception's useful message at the host construction boundary.

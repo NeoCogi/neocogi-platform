@@ -25,8 +25,9 @@ impl PlatformObject {
         document.body().ok_or("browser body unavailable")?.append_child(&canvas).map_err(js_error)?;
         let mut pending = CanvasConstruction { canvas, committed: false };
         resize(&pending.canvas);
-        let input = input::BrowserInputHost::new(&pending.canvas)?;
         let gpu = gpu::Gpu::from_canvas(pending.canvas.clone())?;
+        let drawable = gpu.core();
+        let input = input::BrowserInputHost::new(&pending.canvas, drawable.clone())?;
         let window = gpu.window();
         let device = Rc::new(Device {
             success: operation_result(Ok(())),
@@ -35,6 +36,7 @@ impl PlatformObject {
             textures: Rc::default(),
             surfaces: RefCell::default(),
             window,
+            drawable,
         });
         let window = WindowObject { device, input, polling: Cell::new(false) };
         let _ = window.device.window.focus();
@@ -81,7 +83,7 @@ impl IPlatformWindow for WindowObject {
     /// Synchronizes CSS/device scaling before returning the physical drawable allocation.
     fn size(&self) -> Result<Size, NcStatus> {
         resize(&self.device.window);
-        self.device.drawable_size()
+        self.device.drawable_size_status()
     }
     /// Borrows one destination during delivery and rejects callback-driven recursive polling.
     fn poll(&self, destination: ComRef<'_, IInputSinkAbi>) -> Result<PollStatus, NcStatus> {
@@ -98,13 +100,13 @@ impl IPlatformWindow for WindowObject {
             TextInputArea::Area(area) if area.width >= 0 && area.height >= 0 => Some(area),
             _ => return Err(NC_E_INVALID_ARG),
         };
-        self.input.synchronize(&self.device.window, area);
-        Ok(())
+        self.input.synchronize(&self.device.window, area)
     }
 }
 
-/// Updates the framebuffer only when physical dimensions change; unchanged sizing preserves contents.
-fn resize(canvas: &HtmlCanvasElement) {
+/// Updates requested canvas attributes from CSS and device scale. The active
+/// WebGL context independently reports what drawing buffer it could allocate.
+pub(super) fn resize(canvas: &HtmlCanvasElement) {
     let scale = web_sys::window().map(|window| window.device_pixel_ratio()).unwrap_or(1.0);
     let width = (f64::from(canvas.client_width()) * scale).round().clamp(1.0, f64::from(i32::MAX)) as u32;
     let height = (f64::from(canvas.client_height()) * scale).round().clamp(1.0, f64::from(i32::MAX)) as u32;

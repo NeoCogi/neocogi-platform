@@ -103,7 +103,7 @@ impl IRenderSurface for FramebufferSurface {
     }
     /// Observes current physical pixels; the view owns no independently resizable attachment.
     fn size(&self) -> Result<Size, NcStatus> {
-        self.record.device.drawable_size()
+        self.record.device.drawable_size_status()
     }
     /// Only the owning window may resize the framebuffer.
     fn resize(&self, _: Size) -> Result<(), NcStatus> {

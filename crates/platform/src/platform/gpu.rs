@@ -161,8 +161,9 @@ impl Gpu {
             .dyn_into::<web_sys::WebGl2RenderingContext>()
             .map_err(|_| "canvas context is not WebGL 2")?;
         let core = Core::from_canvas(window.clone(), webgl)?;
+        let actual = core.drawable_size()?;
         let gl = core.dispatch().clone();
-        let renderer = Renderer::new(core, window.width(), window.height())?;
+        let renderer = Renderer::new(core, actual.width as u32, actual.height as u32)?;
         Ok(Self { renderer, gl, window })
     }
     /// SDL's cheap owned clone keeps polling available while render state is temporarily detached.
