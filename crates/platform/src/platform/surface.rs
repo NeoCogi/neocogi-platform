@@ -228,10 +228,7 @@ impl IRenderer for ImageSurface {
                 for block in state.prepared.blocks() {
                     block.admit_target(&self.record.target)?;
                 }
-                state
-                    .gpu
-                    .render_surface(info, &state.prepared)
-                    .map_err(|error| self.record.device.failure(error))
+                state.gpu.render_surface(info, &state.prepared)
             })?;
             session.completed = Some(publish_texture(retain_texture(&self.record.device, image)));
             Ok(())

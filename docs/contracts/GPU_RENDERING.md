@@ -524,21 +524,26 @@ precheck failures preserve a complete existing assembly and return errors.
 
 ## Vulkan presentation failure boundary
 
-Presentation readiness covers the complete swapchain generation as well as acquired
-image/semaphore ownership. Destructive reconstruction marks presentation unavailable
-before waiting or replacing parts. It restores its previous Ready or Acquired phase
-only after complete success; any reconstruction error is terminal for later native
-preparation, upload, output creation and acquisition. An outer acquired finalizer
-preserves a prelatched failure and its original error. No extent equality can make
-an incomplete generation reusable. Initial zero dimensions reject before bootstrap;
-runtime minimization of a complete context remains a no-op.
+Vulkan selects a complete swapchain generation before specializing window blocks.
+Native Rust callers use `drawable_size()` and `prepare_window(size)` before
+`prepare_block`. Finish checks each prepared block's device and attachment
+signature before acquiring, and checks the latest extent against the recording.
+An unfinished window frame can drop before acquisition without consuming an image.
 
-Acquisition out-of-date recovery owns no frame token. A successful rebuild returns
-the existing transient frame error while leaving Ready for retry; a generic frame
-error is not itself proof of terminal presentation failure. Device loss, generic
-upload completion and offscreen submission keep their separate owners/states.
-Renderer usability derives from them instead of caching another disabled flag.
-Retirement and teardown still observe native completion before releasing resources.
+Destructive reconstruction marks presentation unavailable before waiting or
+replacing resources. Complete success restores Ready or Acquired, whichever
+phase initiated the rebuild. Failed destructive reconstruction disables later
+native work. A zero extent defers runtime reconstruction and acquisition.
+An acquired finalizer preserves terminal failures and their original errors.
+
+Out-of-date acquisition owns no frame token. Out-of-date presentation still
+queues the semaphore wait, and successful recovery returns
+`RENDER_E_WINDOW_RETRY` to request a fresh frame. A subsequent retirement error
+takes precedence over that retry when publishing the COM outcome. Device loss, surface loss, generic upload
+completion and offscreen submission retain their own failure states.
+Presentation wait semaphores are owned per swapchain image. Replacement and
+teardown use the device-idle convention for unextended Vulkan, which has no
+native presentation fence. [Khronos Vulkan Guide](https://docs.vulkan.org/guide/latest/swapchain_semaphore_reuse.html)
 
 WGPU window construction preserves the non-sRGB output policy by choosing an
 actually advertised surface format. A preferred sRGB format's non-sRGB partner
@@ -573,8 +578,8 @@ ordinary Rust methods retain the operation name and return `Result<T, RenderErro
 `IRenderDiagnostics` and the device-wide last-error slot have been removed.
 
 Native submission retires its prepared references and restores detached native
-state before its result is published. An operation failure retains precedence
-over a cleanup failure. If the operation succeeded but retirement failed, that
-failure is returned. Image submissions publish their new completed image only
+state before its COM outcome is published. An operation failure other than
+`RENDER_E_WINDOW_RETRY` takes precedence over cleanup. A retirement failure takes
+precedence over a success or retry outcome. Image submissions publish a new completed image only
 after both steps succeed; failure preserves the previous completed image.
 Destructor-only cleanup attempts retirement without emitting a new error.

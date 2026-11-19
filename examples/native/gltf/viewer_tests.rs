@@ -275,7 +275,9 @@ fn models_render_animate_and_respond_to_arcball_pan_zoom() {
         }
         let mut sky_only = |camera: &Camera| {
             invocation += 1;
-            target.submit(invocation, |view| graphics.record_sky(camera, &lighting, view)).unwrap();
+            target
+                .submit(camera.drawable_size(), invocation, |view| graphics.record_sky(camera, &lighting, view))
+                .unwrap();
             native.probe.pixels().unwrap()
         };
         let sky = sky_only(&camera);
@@ -347,7 +349,7 @@ fn hdr_interpolation_probe() {
         .create_pipeline(description.as_com_ref(), vs.as_com_ref(), fs.as_com_ref())
         .unwrap();
     target
-        .submit(1, |view| {
+        .submit(target.window.size().unwrap(), 1, |view| {
             view.bind_pipeline(pipeline.as_com_ref())?;
             let uniform = TypedGpuBufferFactory::new(target.resources.clone()).create_static(
                 TypedGpuBufferDesc::Uniform {

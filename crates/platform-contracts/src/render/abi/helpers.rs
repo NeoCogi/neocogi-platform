@@ -30,6 +30,10 @@ pub const RENDER_E_BACKEND: NcStatus = NcStatus::from_code(-1005);
 /// The resource group's immutable creation permissions forbid this operation.
 pub const RENDER_E_PERMISSION: NcStatus = NcStatus::from_code(-1006);
 
+/// The window frame was rejected during acquisition or present. Query its
+/// drawable size and record a new frame for the recovered presentation path.
+pub const RENDER_E_WINDOW_RETRY: NcStatus = NcStatus::from_code(-1007);
+
 impl GpuBufferDesc {
     /// Builds a linear shape from a selected binding role; textures require dimensions.
     pub fn linear(role: GpuBufferRole, byte_len: u64) -> Result<Self, NcStatus> {

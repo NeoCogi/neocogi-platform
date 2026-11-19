@@ -109,9 +109,9 @@ struct Device {
     surfaces: RefCell<HashMap<usize, Weak<surface::SurfaceRecord>>>,
     /// Polling can access a live SDL owner even while renderer state is detached.
     window: gpu::Window,
-    /// The drawing buffer remains observable while the owning renderer is detached.
-    #[cfg(target_arch = "wasm32")]
-    drawable: Rc<gpu::Core>,
+    /// The physical drawable remains observable while the owning renderer is detached.
+    #[cfg(any(target_arch = "wasm32", feature = "vulkan"))]
+    drawable: Rc<gpu::Drawable>,
     /// SDL subsystems outlive the backend and every native window clone.
     #[cfg(not(target_arch = "wasm32"))]
     host: Rc<NativeHost>,
@@ -128,13 +128,17 @@ impl Device {
     /// Observes the actual drawable without synchronizing browser CSS or acquiring a frame.
     /// Metadata queries and final submission admission share this owner even while render state is detached.
     fn drawable_size(&self) -> Result<Size, RenderError> {
-        #[cfg(not(target_arch = "wasm32"))]
+        #[cfg(not(any(target_arch = "wasm32", feature = "vulkan")))]
         {
             Ok(gpu::pixel_size(&self.window))
         }
         #[cfg(target_arch = "wasm32")]
         {
             self.drawable.drawable_size().map_err(|error| self.failure(error))
+        }
+        #[cfg(feature = "vulkan")]
+        {
+            self.drawable.size().map_err(|error| self.failure(error))
         }
     }
 
@@ -159,14 +163,18 @@ impl Device {
             Err(error) => operation_result(Err(error.context(operation))),
         }
     }
-    /// Retires submitted snapshots before completing an operation. The primary
-    /// failure wins over a cleanup failure; successful work reports failed cleanup.
+    /// Retires submitted snapshots before completing an operation. A primary
+    /// failure wins over a cleanup failure. Success and a recoverable window
+    /// rejection both depend on successful cleanup.
     /// No native/registry borrow spans a foreign stream, source, or destructor.
     fn execute<T>(&self, operation: impl FnOnce(&mut RenderState) -> Result<T, RenderError>) -> Result<T, RenderError> {
         let mut access = self.access()?;
         let result = operation(access.state());
         let cleanup = access.retire();
-        result.and_then(|value| cleanup.map(|()| value))
+        match result {
+            Err(error) if error.status == RENDER_E_WINDOW_RETRY => cleanup.and(Err(error)),
+            result => result.and_then(|value| cleanup.map(|()| value)),
+        }
     }
 }
 impl RenderAccess<'_> {
@@ -330,10 +338,11 @@ impl IRenderer for WindowObject {
                 for block in state.prepared.blocks() {
                     block.admit_framebuffer()?;
                 }
+                #[cfg(not(feature = "vulkan"))]
                 if info.size != self.device.drawable_size()? {
                     return Err(RenderError::new(NC_E_INVALID_ARG, "window drawable size changed during frame preparation"));
                 }
-                state.gpu.render(info, &state.prepared).map_err(|error| self.device.failure(error))
+                state.gpu.render(info, &state.prepared)
             })
         })();
         Ok(self.device.complete(result, "render window"))
@@ -393,3 +402,6 @@ pub mod testing;
 
 #[cfg(all(any(feature = "glow", feature = "webgl"), any(test, all(target_arch = "wasm32", feature = "test-support"))))]
 mod extent_tests;
+
+#[cfg(all(test, feature = "vulkan"))]
+mod vulkan_window_tests;

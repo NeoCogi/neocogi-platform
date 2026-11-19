@@ -37,6 +37,11 @@ pub struct Camera {
 }
 
 impl Camera {
+    /// Physical viewport used to compute this camera's projection and input mapping.
+    pub(super) fn drawable_size(&self) -> Size {
+        self.size
+    }
+
     /// Fits a finite positive bounding sphere in both axes with a small margin.
     pub fn new(center: [f32; 3], radius: f32, size: Size) -> Self {
         let mut camera = Self {
@@ -64,7 +69,7 @@ impl Camera {
 
     /// Updates projection and cancels an active gesture when its coordinate system changes.
     pub fn resize(&mut self, size: Size) {
-        if self.size != size {
+        if self.drawable_size() != size {
             self.size = size;
             self.drag = Drag::Idle;
         }

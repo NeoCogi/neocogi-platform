@@ -1,15 +1,20 @@
 //! Native GPU execution remains local to this plugin; only construction differs between selected backends.
 use super::*;
-use neocogi_platform::render::{Color, FrameInfo, RendererBackend, RendererFrame, prelude::Dimensioni};
+use neocogi_platform::render::{Color, FrameError, FrameInfo, RendererBackend, RendererFrame, prelude::Dimensioni};
 
 #[cfg(feature = "glow")]
 pub(super) use neocogi_platform::gpu::backends::glow::{Backend, Core, GLRenderer as Renderer};
 #[cfg(feature = "vulkan")]
 pub(super) use neocogi_platform::gpu::backends::vulkan::{Backend, VulkanRenderer as Renderer};
+#[cfg(feature = "vulkan")]
+pub(super) use neocogi_platform::gpu::backends::vulkan::SurfaceObserver as Drawable;
 #[cfg(feature = "wgpu")]
 pub(super) use neocogi_platform::gpu::backends::wgpu::{Backend, WgpuRenderer as Renderer};
 #[cfg(feature = "webgl")]
 pub(super) use neocogi_platform::gpu::backends::webgl::{Backend, Core, WebGlCanvasRenderer as Renderer};
+/// WebGL observes the drawing buffer through the physical context owner.
+#[cfg(target_arch = "wasm32")]
+pub(super) type Drawable = Core;
 /// Native immutable image selected with its statically typed resource family.
 pub(super) type Image = <Renderer as RendererBackend>::Image;
 /// Consumed private output target; cannot be reused after publication.
@@ -170,6 +175,11 @@ impl Gpu {
     pub(super) fn window(&self) -> Window {
         self.window.clone()
     }
+    /// Vulkan metadata continues to observe the real surface while renderer state is detached.
+    #[cfg(feature = "vulkan")]
+    pub(super) fn drawable(&self) -> Rc<Drawable> {
+        self.renderer.surface_observer()
+    }
     /// Selects this GL context before any native resource operation; explicit APIs need no global selection.
     fn current(&self) -> Result<(), String> {
         #[cfg(any(feature = "glow", feature = "webgl"))]
@@ -192,49 +202,57 @@ impl Gpu {
         self.renderer.prepare_texture(texture)
     }
     /// Executes only validated owned commands; no foreign method is invoked while a frame is acquired.
-    pub(super) fn render(&mut self, info: RenderInfo, prepared: &Prepared) -> Result<(), String> {
+    pub(super) fn render(&mut self, info: RenderInfo, prepared: &Prepared) -> Result<(), RenderError> {
+        #[cfg(feature = "vulkan")]
+        self.renderer.prepare_window(info.size)?;
         self.render_target(info, prepared, None).map(|_| ())
     }
 
     /// A fresh destination is consumed before a completed immutable image can be published.
-    pub(super) fn render_surface(&mut self, info: RenderInfo, prepared: &Prepared) -> Result<Image, String> {
-        self.current()?;
-        let output = self.renderer.create_render_texture(info.size).map_err(|error| error.to_string())?;
+    pub(super) fn render_surface(&mut self, info: RenderInfo, prepared: &Prepared) -> Result<Image, RenderError> {
+        self.current().map_err(FrameError::new)?;
+        let output = self
+            .renderer
+            .create_render_texture(info.size)
+            .map_err(|error| FrameError::new(error.to_string()))?;
         self.render_target(info, prepared, Some(output))?
-            .ok_or_else(|| "offscreen frame returned no image".into())
+            .ok_or_else(|| RenderError::from(FrameError::new("offscreen frame returned no image")))
     }
 
     /// Shares validated command execution while keeping target acquisition and presentation explicit.
-    fn render_target(&mut self, info: RenderInfo, prepared: &Prepared, target: Option<Output>) -> Result<Option<Image>, String> {
-        self.current()?;
+    fn render_target(&mut self, info: RenderInfo, prepared: &Prepared, target: Option<Output>) -> Result<Option<Image>, RenderError> {
+        self.current().map_err(FrameError::new)?;
         let [r, g, b, a] = info.clear.to_le_bytes();
         let dimensions = Dimensioni::new(info.size.width, info.size.height);
-        let frame_info = FrameInfo::try_new(dimensions, Color { r, g, b, a }).map_err(|e| e.to_string())?;
+        let frame_info = FrameInfo::try_new(dimensions, Color { r, g, b, a }).map_err(|error| FrameError::new(error.to_string()))?;
         // Resource compilation/upload finishes before any target acquire or attachment clear.
         let blocks = prepared
             .blocks()
             .iter()
             .map(|block| self.renderer.prepare_block(block, target.is_some()))
-            .collect::<Result<Vec<_>, String>>()?;
+            .collect::<Result<Vec<_>, String>>()
+            .map_err(FrameError::new)?;
         #[cfg(all(not(target_arch = "wasm32"), feature = "glow"))]
         let offscreen = target.is_some();
         let mut frame = match target {
+            #[cfg(feature = "vulkan")]
+            None => self.renderer.window_frame(frame_info),
+            #[cfg(not(feature = "vulkan"))]
             None => self.renderer.frame(frame_info),
             Some(output) => self.renderer.texture_frame(frame_info, output),
-        }
-        .map_err(|error| error.to_string())?;
+        }?;
         for block in &blocks {
             frame.execute_block(block);
         }
         // Drop abandons; consuming finish alone submits. Vulkan/WGPU also present inside their finish.
-        let completed = frame.finish().map_err(|e| e.to_string())?;
+        let completed = frame.finish()?;
         #[cfg(any(feature = "glow", feature = "webgl"))]
         {
             use glow::HasContext;
             // SAFETY: The same live GL context remains current throughout the foreign-call-free execution phase.
             let error = unsafe { self.gl.get_error() };
             if error != glow::NO_ERROR {
-                return Err(format!("OpenGL frame failed with error 0x{error:04x}"));
+                return Err(FrameError::new(format!("OpenGL frame failed with error 0x{error:04x}")).into());
             }
             #[cfg(all(any(test, feature = "test-support"), feature = "glow"))]
             if !offscreen {

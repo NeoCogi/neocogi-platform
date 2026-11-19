@@ -48,6 +48,17 @@ On WebGL, CSS size and device scale set the requested canvas attributes.
 The context's actual drawing buffer governs window and framebuffer size,
 submission, and browser pointer, wheel, and text-input coordinates. An allocation
 clamped by the browser keeps all of those operations in the same pixel space.
+
+Vulkan window and framebuffer queries use the surface's fixed extent when
+specified. Variable extents clamp SDL's physical size to the advertised range.
+After the last stream callback, the renderer selects that extent and completes
+any swapchain replacement before specializing pipelines for its attachments.
+The acquired image belongs to that prepared generation. WSI rejection of the
+frame returns an owned `RENDER_E_WINDOW_RETRY` when subsequent frames can use a
+recovered generation. Query the current extent and record a fresh frame. Zero
+drawable dimensions defer reconstruction until the window can present again.
+An accepted suboptimal present can complete successfully. Device or surface
+loss and uncertain acquired-frame ownership produce terminal backend errors.
 Surface identity is authenticated through the creating device's local registration;
 an external implementation cannot substitute matching public metadata.
 

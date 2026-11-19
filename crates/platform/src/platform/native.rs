@@ -64,6 +64,8 @@ impl PlatformObject {
         let device = Rc::new(Device {
             success: operation_result(Ok(())),
             logical,
+            #[cfg(feature = "vulkan")]
+            drawable: gpu.drawable(),
             render: RefCell::new(Some(RenderState { gpu, prepared: Prepared::default() })),
             textures: Rc::default(),
             surfaces: RefCell::default(),

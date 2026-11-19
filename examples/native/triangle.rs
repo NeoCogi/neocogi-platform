@@ -68,7 +68,7 @@ pub fn render_frames(window: ComPtr<IPlatformWindowAbi>, frames: u32) -> Result<
         view.finish()?;
         let stream: ComPtr<IRenderStreamAbi> = Stream::from_value(Stream { block: session.take_block()? }).query()?;
         frame.finish()?;
-        renderer.render(
+        match renderer.render(
             RenderInfo {
                 size,
                 clear: 0xff181818,
@@ -76,8 +76,11 @@ pub fn render_frames(window: ComPtr<IPlatformWindowAbi>, frames: u32) -> Result<
                 block_count: 1,
             },
             stream.as_com_ref(),
-        )?;
-        rendered += 1;
+        ) {
+            Ok(()) => rendered += 1,
+            Err(error) if error.status == RENDER_E_WINDOW_RETRY => std::thread::sleep(std::time::Duration::from_millis(16)),
+            Err(error) => return Err(error),
+        }
     }
     Ok(())
 }

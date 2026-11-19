@@ -27,27 +27,28 @@ pub(super) struct InputState {
 }
 
 impl InputState {
-    /// Converts one event without invoking foreign code or accessing the SDL event pump.
-    fn translate(&mut self, event: Event, logical: (u32, u32), drawable: Size) -> Transition {
+    /// Converts one event. Only position-based input queries drawable metadata,
+    /// so resize, focus, key, and close transitions can survive a lost surface.
+    fn translate(&mut self, event: Event, logical: (u32, u32), drawable: impl FnOnce() -> Result<Size, NcStatus>) -> Result<Transition, NcStatus> {
         let input = match event {
-            Event::Quit { .. } | Event::Window { win_event: WindowEvent::Close, .. } => return Transition::Close,
+            Event::Quit { .. } | Event::Window { win_event: WindowEvent::Close, .. } => return Ok(Transition::Close),
             Event::Window { win_event: WindowEvent::FocusLost, .. } => {
                 self.wheel = WheelAccumulator::default();
                 UiInput::Cancel
             }
-            Event::Window { .. } => return Transition::Changed,
-            Event::MouseMotion { x, y, .. } => UiInput::Pointer(pointer(x, y, logical, drawable)),
+            Event::Window { .. } => return Ok(Transition::Changed),
+            Event::MouseMotion { x, y, .. } => UiInput::Pointer(pointer(x, y, logical, drawable()?)),
             Event::MouseButtonDown { mouse_btn, x, y, .. } => {
-                let Some(buttons) = button(mouse_btn) else { return Transition::Ignore };
+                let Some(buttons) = button(mouse_btn) else { return Ok(Transition::Ignore) };
                 UiInput::Down {
-                    position: pointer(x, y, logical, drawable),
+                    position: pointer(x, y, logical, drawable()?),
                     buttons,
                 }
             }
             Event::MouseButtonUp { mouse_btn, x, y, .. } => {
-                let Some(buttons) = button(mouse_btn) else { return Transition::Ignore };
+                let Some(buttons) = button(mouse_btn) else { return Ok(Transition::Ignore) };
                 UiInput::Up {
-                    position: pointer(x, y, logical, drawable),
+                    position: pointer(x, y, logical, drawable()?),
                     buttons,
                 }
             }
@@ -55,6 +56,7 @@ impl InputState {
                 // SDL X is positive right, while Y is positive up. Normalize natural scrolling
                 // on both axes, then reverse only Y for the public positive-right/down convention.
                 let direction = if direction == MouseWheelDirection::Flipped { -1.0 } else { 1.0 };
+                let drawable = drawable()?;
                 let delta = self.wheel.translate(
                     [f64::from(precise_x) * direction, -f64::from(precise_y) * direction],
                     WheelUnit::Line,
@@ -65,12 +67,12 @@ impl InputState {
                     [f64::from(drawable.width), f64::from(drawable.height)],
                 );
                 if delta == [0, 0] {
-                    return Transition::Ignore;
+                    return Ok(Transition::Ignore);
                 }
                 UiInput::Scroll(Point { x: delta[0], y: delta[1] })
             }
             Event::KeyDown { keycode: Some(code), keymod, repeat, .. } => {
-                let Some(key) = key(code) else { return Transition::Ignore };
+                let Some(key) = key(code) else { return Ok(Transition::Ignore) };
                 UiInput::Key(KeyStroke {
                     key,
                     action: KeyAction::Pressed { repeat },
@@ -78,19 +80,19 @@ impl InputState {
                 })
             }
             Event::KeyUp { keycode: Some(code), keymod, .. } => {
-                let Some(key) = key(code) else { return Transition::Ignore };
+                let Some(key) = key(code) else { return Ok(Transition::Ignore) };
                 UiInput::Key(KeyStroke {
                     key,
                     action: KeyAction::Released,
                     modifiers: modifiers(keymod),
                 })
             }
-            Event::TextInput { text, .. } => return Transition::Input(UiInput::Text, text),
+            Event::TextInput { text, .. } => return Ok(Transition::Input(UiInput::Text, text)),
             // TextEditing is a composition preview, never committed editor content. SDL owns it
             // until TextInput; forwarding both would duplicate or prematurely publish IME text.
-            _ => return Transition::Ignore,
+            _ => return Ok(Transition::Ignore),
         };
-        Transition::Input(input, String::new())
+        Ok(Transition::Input(input, String::new()))
     }
 }
 
@@ -190,7 +192,7 @@ impl IPlatformWindow for WindowObject {
         }
         let _polling = Polling { active: &self.polling };
         while let Some(event) = self.device.host.poll(self.device.window.id())? {
-            let transition = self.input.borrow_mut().translate(event, self.device.window.size(), self.size()?);
+            let transition = self.input.borrow_mut().translate(event, self.device.window.size(), || self.size())?;
             match transition {
                 Transition::Ignore => continue,
                 Transition::Changed => return Ok(PollStatus::Event),
@@ -312,7 +314,10 @@ mod tests {
             },
         ];
         let translated = events.map(|event| {
-            let Transition::Input(input, text) = state.translate(event, (100, 100), Size { width: 200, height: 200 }) else {
+            let Transition::Input(input, text) = state
+                .translate(event, (100, 100), || panic!("non-positional input must not read the drawable"))
+                .unwrap()
+            else {
                 panic!("input expected")
             };
             (input, text)
@@ -342,7 +347,9 @@ mod tests {
                     mouse_x: 0,
                     mouse_y: 0,
                 };
-                let actual = InputState::default().translate(event, (100, 100), Size { width: 200, height: 300 });
+                let actual = InputState::default()
+                    .translate(event, (100, 100), || Ok(Size { width: 200, height: 300 }))
+                    .unwrap();
                 let Transition::Input(UiInput::Scroll(delta), _) = actual else {
                     panic!("scroll expected")
                 };
@@ -375,27 +382,29 @@ mod tests {
             mouse_y: 0,
         };
         let size = Size { width: 200, height: 200 };
-        assert!(matches!(state.translate(wheel.clone(), (100, 100), size), Transition::Ignore));
-        let Transition::Input(UiInput::Scroll(delta), _) = state.translate(wheel.clone(), (100, 100), size) else {
+        assert!(matches!(state.translate(wheel.clone(), (100, 100), || Ok(size)).unwrap(), Transition::Ignore));
+        let Transition::Input(UiInput::Scroll(delta), _) = state.translate(wheel.clone(), (100, 100), || Ok(size)).unwrap() else {
             panic!("accumulated wheel expected")
         };
         assert_eq!(delta, Point { x: 1, y: 1 });
-        state.translate(
-            Event::Window {
-                timestamp: 0,
-                window_id: 1,
-                win_event: WindowEvent::FocusLost,
-            },
-            (100, 100),
-            size,
-        );
+        state
+            .translate(
+                Event::Window {
+                    timestamp: 0,
+                    window_id: 1,
+                    win_event: WindowEvent::FocusLost,
+                },
+                (100, 100),
+                || panic!("focus loss must not read the drawable"),
+            )
+            .unwrap();
         let mut flipped = wheel;
         if let Event::MouseWheel { direction, precise_x, precise_y, .. } = &mut flipped {
             *direction = MouseWheelDirection::Flipped;
             *precise_x = 1.0;
             *precise_y = -1.0;
         }
-        let Transition::Input(UiInput::Scroll(delta), _) = state.translate(flipped, (100, 100), size) else {
+        let Transition::Input(UiInput::Scroll(delta), _) = state.translate(flipped, (100, 100), || Ok(size)).unwrap() else {
             panic!("flipped wheel expected")
         };
         assert_eq!(delta, Point { x: -60, y: -60 });

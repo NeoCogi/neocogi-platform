@@ -2,7 +2,76 @@
 use super::*;
 
 /// SDL video lifetime is process-global even though each renderer is thread-local.
-static NATIVE_SESSION: std::sync::Mutex<()> = std::sync::Mutex::new(());
+pub(crate) static NATIVE_SESSION: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Observes real WSI dispatches and scopes one alternate format and rejection.
+#[derive(Default)]
+pub(crate) struct WindowProbe {
+    /// Records format selected for each native swapchain creation attempt.
+    pub(crate) formats: Vec<vk::Format>,
+    /// Counts native acquire calls, including failures before a valid token.
+    pub(crate) acquires: usize,
+    /// Excludes the original format from the next real advertised list.
+    pub(crate) exclude_format: Option<vk::Format>,
+    /// Reports rejection after a real successful present has queued its wait.
+    pub(crate) reject_present: bool,
+}
+
+/// Clears test observations even after panic or an early assertion failure.
+pub(crate) struct WindowScope;
+
+impl WindowScope {
+    /// Begins capture for the current SDL owner thread.
+    pub(crate) fn start() -> Self {
+        WINDOW_PROBE.with_borrow_mut(|slot| {
+            assert!(slot.is_none());
+            *slot = Some(WindowProbe::default());
+        });
+        Self
+    }
+}
+
+impl Drop for WindowScope {
+    fn drop(&mut self) {
+        WINDOW_PROBE.with_borrow_mut(|slot| *slot = None);
+    }
+}
+
+thread_local! {
+    /// Set only by the SDL window COM fixture on its own owner thread.
+    pub(crate) static WINDOW_PROBE: std::cell::RefCell<Option<WindowProbe>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Select only from actual WSI support, excluding the old format once.
+pub(super) fn surface_formats(mut formats: Vec<vk::SurfaceFormatKHR>) -> Vec<vk::SurfaceFormatKHR> {
+    WINDOW_PROBE.with_borrow_mut(|slot| {
+        if let Some(old) = slot.as_mut().and_then(|probe| probe.exclude_format.take()) {
+            formats.retain(|format| format.format != old && format.format != vk::Format::UNDEFINED);
+            assert!(!formats.is_empty(), "fixture requires two advertised color formats");
+        }
+    });
+    formats
+}
+
+/// Counts acquisition at the dispatch boundary.
+pub(super) fn record_acquire() {
+    WINDOW_PROBE.with_borrow_mut(|slot| {
+        if let Some(probe) = slot {
+            probe.acquires += 1;
+        }
+    });
+}
+
+/// Vulkan queues the wait on actual out-of-date errors. Substituting rejection
+/// only after real accepted presentation preserves this semaphore obligation.
+pub(super) fn present_result(actual: std::result::Result<bool, vk::Result>) -> std::result::Result<bool, vk::Result> {
+    let rejected = WINDOW_PROBE.with_borrow_mut(|slot| slot.as_mut().is_some_and(|probe| std::mem::take(&mut probe.reject_present)));
+    if rejected && actual.is_ok() {
+        Err(vk::Result::ERROR_OUT_OF_DATE_KHR)
+    } else {
+        actual
+    }
+}
 
 /// A one-shot query override and observation of the actual native dispatch boundary.
 struct CompositionProbe {
@@ -16,6 +85,80 @@ thread_local! {
     /// Initial construction has no published context on which to install fixture state.
     /// Scope it to the current test thread and restore it on all exits, including panic.
     static COMPOSITION: std::cell::RefCell<Option<CompositionProbe>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Fixed WSI extents override SDL estimates. Variable extents clamp each axis
+/// independently and preserve suspension when a native component is zero.
+#[test]
+fn surface_extent_uses_fixed_or_clamped_physical_size() {
+    let caps = vk::SurfaceCapabilitiesKHR {
+        current_extent: vk::Extent2D { width: 73, height: 91 },
+        min_image_extent: vk::Extent2D { width: 5, height: 7 },
+        max_image_extent: vk::Extent2D { width: 150, height: 120 },
+        ..Default::default()
+    };
+    let size = |caps, width, height| {
+        let extent = VulkanContext::choose_extent(caps, width, height);
+        (extent.width, extent.height)
+    };
+    assert_eq!(size(&caps, 300, 2), (73, 91));
+    let variable = vk::SurfaceCapabilitiesKHR {
+        current_extent: vk::Extent2D { width: u32::MAX, height: u32::MAX },
+        ..caps
+    };
+    assert_eq!(size(&variable, 300, 2), (150, 7));
+    assert_eq!(size(&variable, 20, 0), (20, 0));
+}
+
+/// The low-level public Rust path can receive blocks from an obsolete
+/// generation. It validates their signature before acquiring that next image.
+#[test]
+#[ignore = "requires an SDL native display and Vulkan surface with two advertised color formats"]
+fn rust_window_rejects_stale_prepared_blocks_before_acquiring() {
+    use neocogi_platform::render::abi::{Rect, RenderGroupPermissions, RenderSurfaceKind};
+    let _session = NATIVE_SESSION.lock().unwrap_or_else(|error| error.into_inner());
+    let _scope = WindowScope::start();
+    let sdl = sdl2::init().unwrap();
+    let video = sdl.video().unwrap();
+    let mut window = video.window("Vulkan direct frame generation", 64, 64).vulkan().hidden().build().unwrap();
+    let mut renderer = VulkanRenderer::new(&window, 64, 64).unwrap();
+    let gpu = crate::gpu::GpuDevice::new(renderer.core()).unwrap();
+    let group = gpu
+        .create_group(
+            Default::default(),
+            gpu.surface_target(RenderSurfaceKind::Framebuffer).unwrap(),
+            RenderGroupPermissions::default(),
+        )
+        .unwrap();
+    let resources = group.resources().unwrap();
+    let root = Rect { x: 0, y: 0, width: 64, height: 64 };
+    let owner = sampled::block(&gpu, &resources, root, Size { width: 1, height: 1 }, &[255; 4]);
+    let block = gpu.block_snapshot(owner.as_com_ref()).unwrap();
+    let stale = renderer.prepare_block(&block, false).unwrap();
+    let format = renderer.context.swapchain_format;
+    window.set_size(80, 64).unwrap();
+    WINDOW_PROBE.with_borrow_mut(|slot| slot.as_mut().unwrap().exclude_format = Some(format));
+    let size = renderer.drawable_size().unwrap();
+    assert_ne!(size.width, 64);
+    let info = FrameInfo::try_new(Dimensioni::new(size.width, size.height), color(0, 0, 0, 255)).unwrap();
+    let mut frame = renderer.frame(info).unwrap();
+    frame.execute_block(&stale);
+    let error = frame.finish().err().unwrap().to_string();
+    assert!(error.contains("attachment signature"), "{error}");
+    assert_eq!(renderer.context.presentation, PresentationState::Ready);
+    assert_ne!(renderer.context.swapchain_format.as_raw(), format.as_raw());
+    WINDOW_PROBE.with_borrow(|slot| assert_eq!(slot.as_ref().unwrap().acquires, 0));
+
+    renderer.prepare_window(size).unwrap();
+    let prepared = renderer.prepare_block(&block, false).unwrap();
+    let mut frame = renderer.frame(info).unwrap();
+    frame.execute_block(&prepared);
+    drop(frame);
+    WINDOW_PROBE.with_borrow(|slot| assert_eq!(slot.as_ref().unwrap().acquires, 0));
+    let mut frame = renderer.frame(info).unwrap();
+    frame.execute_block(&prepared);
+    assert!(frame.finish().unwrap().is_none());
+    WINDOW_PROBE.with_borrow(|slot| assert_eq!(slot.as_ref().unwrap().acquires, 1));
 }
 
 /// Owns the bounded constructor/rebuild seam; never changes production renderer state.
@@ -64,10 +207,15 @@ pub(super) fn composition_capabilities(mut caps: vk::SurfaceCapabilitiesKHR) -> 
 }
 
 /// Count exactly at the native call, rather than assuming selector acceptance dispatched.
-pub(super) fn record_swapchain_create() {
+pub(super) fn record_swapchain_create(format: vk::Format) {
     COMPOSITION.with_borrow_mut(|slot| {
         if let Some(probe) = slot {
             probe.creates += 1;
+        }
+    });
+    WINDOW_PROBE.with_borrow_mut(|slot| {
+        if let Some(probe) = slot {
+            probe.formats.push(format);
         }
     });
 }
@@ -116,7 +264,7 @@ fn rebuilt_window_composition_is_admitted_before_native_creation() {
         let mut renderer = VulkanRenderer::new(&window, 64, 64).unwrap();
         let core = renderer.context.core.clone();
         let scope = CompositionScope::new(supported);
-        let result = renderer.context.recreate_swapchain(64, 64);
+        let result = renderer.context.recreate_swapchain();
         if supported.contains(vk::CompositeAlphaFlagsKHR::OPAQUE) {
             result.unwrap();
             scope.assert_observed(1);
@@ -341,23 +489,23 @@ fn reconstruction_failure_rejects_every_native_entry_and_preserves_finalizer_pha
         assert!(
             renderer
                 .context
-                .recover_acquisition(64, 64)
+                .recover_acquisition()
                 .err()
                 .unwrap()
+                .to_string()
                 .contains("changed during frame acquisition")
         );
         assert_eq!(renderer.context.presentation, PresentationState::Ready);
         renderer.frame(info).unwrap().finish().unwrap();
         // Runtime minimization does not destroy an already complete generation.
-        renderer.context.recreate_swapchain(0, 0).unwrap();
+        let caps = renderer.context.surface.capabilities().unwrap();
+        let old_generation = renderer.context.swapchain;
+        renderer.context.recreate_selected(caps, vk::Extent2D { width: 0, height: 0 }).unwrap();
+        assert_eq!(renderer.context.swapchain, old_generation);
         renderer.frame(info).unwrap().finish().unwrap();
         // A real successful post-present reconstruction restores Acquired until finish.
-        let mut frame = renderer.frame(info).unwrap();
-        let FrameTarget::Window(acquired) = frame.target.as_mut().unwrap() else {
-            panic!("window token")
-        };
-        acquired.suboptimal = true;
-        frame.finish().unwrap();
+        renderer.context.force_suboptimal = true;
+        renderer.frame(info).unwrap().finish().unwrap();
         assert_eq!(renderer.context.presentation, PresentationState::Ready);
     }
     for point in points {
@@ -398,19 +546,14 @@ fn reconstruction_failure_rejects_every_native_entry_and_preserves_finalizer_pha
             let output = renderer.create_render_texture(Size { width: 2, height: 2 }).unwrap();
             renderer.context.rebuild_failure = Some(point);
             let error = match entry {
-                0 => renderer
-                    .frame(FrameInfo::try_new(Dimensioni::new(80, 80), color(0, 0, 0, 255)).unwrap())
-                    .err()
-                    .unwrap()
-                    .to_string(),
-                1 => renderer.context.recover_acquisition(64, 64).err().unwrap(),
+                0 => {
+                    renderer.context.reconfigure = true;
+                    renderer.frame(info).err().unwrap().to_string()
+                }
+                1 => renderer.context.recover_acquisition().err().unwrap().to_string(),
                 _ => {
-                    let mut frame = renderer.frame(info).unwrap();
-                    let FrameTarget::Window(acquired) = frame.target.as_mut().unwrap() else {
-                        panic!("window token")
-                    };
-                    acquired.suboptimal = true;
-                    frame.finish().err().unwrap().to_string()
+                    renderer.context.force_suboptimal = true;
+                    renderer.frame(info).unwrap().finish().err().unwrap().to_string()
                 }
             };
             assert!(error.contains("injected swapchain reconstruction"), "entry={entry} point={point:?}: {error}");

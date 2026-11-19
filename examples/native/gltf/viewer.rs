@@ -405,13 +405,14 @@ impl Target {
 
     /// Records one complete contribution and synchronously submits through public contracts.
     fn render(&self, scene: &Scene, graphics: &mut Graphics, camera: &Camera, seconds: f32, lighting: &Lighting, invocation: u64) -> Result<(), RenderError> {
-        self.submit(invocation, |view| graphics.record(scene, camera, seconds, lighting, view))
+        self.submit(camera.drawable_size(), invocation, |view| {
+            graphics.record(scene, camera, seconds, lighting, view)
+        })
     }
 
     /// Owns the complete recording/sealing boundary for either a scene or a sky-only probe.
-    fn submit(&self, invocation: u64, record: impl FnOnce(&mut ComBox<IRenderViewAbi>) -> Result<(), NcStatus>) -> Result<(), RenderError> {
+    fn submit(&self, size: Size, invocation: u64, record: impl FnOnce(&mut ComBox<IRenderViewAbi>) -> Result<(), NcStatus>) -> Result<(), RenderError> {
         self.host.maintain()?;
-        let size = self.window.size()?;
         let broker = self.host.recording_broker()?;
         let mut frame = broker.begin_frame()?;
         let bounds = Rect {
@@ -579,8 +580,11 @@ pub fn run(model: &str) -> scene::Result<()> {
             let size = window.size()?;
             camera.resize(size);
             if size.width > 0 && size.height > 0 {
-                target.render(&scene, &mut graphics, &camera, options.time.unwrap_or(seconds), &lighting, rendered + 1)?;
-                rendered += 1;
+                match target.render(&scene, &mut graphics, &camera, options.time.unwrap_or(seconds), &lighting, rendered + 1) {
+                    Ok(()) => rendered += 1,
+                    Err(error) if error.status == RENDER_E_WINDOW_RETRY => {}
+                    Err(error) => return Err(error),
+                }
                 if options.frames.is_some_and(|limit| rendered >= limit) {
                     break;
                 }

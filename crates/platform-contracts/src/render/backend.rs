@@ -53,7 +53,11 @@
 //! Public renderer integration types.
 
 use super::texture::TextureError;
-use crate::render::{Color, abi::Size};
+use crate::render::{
+    Color,
+    abi::{RENDER_E_BACKEND, RENDER_E_WINDOW_RETRY, RenderError, Size},
+};
+use neocogi_com_sdk::NcStatus;
 use rs_math3d::Dimensioni;
 use std::{error::Error, fmt};
 /// Error returned when constructing frame metadata.
@@ -125,6 +129,8 @@ impl FrameInfo {
 /// Backend-frame acquisition, command, submission, or presentation failure.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FrameError {
+    /// Outcome category retained through the public renderer boundary.
+    status: NcStatus,
     /// Backend-provided detail retained through renderer error propagation.
     message: String,
 }
@@ -132,7 +138,18 @@ pub struct FrameError {
 impl FrameError {
     /// Creates a backend-frame error from a displayable message.
     pub fn new(message: impl Into<String>) -> Self {
-        Self { message: message.into() }
+        Self {
+            status: RENDER_E_BACKEND,
+            message: message.into(),
+        }
+    }
+
+    /// Creates a recoverable window error after WSI rejected this frame.
+    pub fn window_retry(message: impl Into<String>) -> Self {
+        Self {
+            status: RENDER_E_WINDOW_RETRY,
+            message: message.into(),
+        }
     }
 }
 
@@ -143,6 +160,12 @@ impl fmt::Display for FrameError {
 }
 
 impl Error for FrameError {}
+
+impl From<FrameError> for RenderError {
+    fn from(error: FrameError) -> Self {
+        Self::new(error.status, error.message)
+    }
+}
 
 impl From<String> for FrameError {
     fn from(message: String) -> Self {
@@ -187,7 +210,7 @@ pub trait RendererBackend: 'static {
     type Frame<'a>: RendererFrame<Image = Self::Image>
     where
         Self: 'a;
-    /// Acquires and initializes the native presentation target.
+    /// Opens a frame for the presentation target. A backend may defer image acquisition to finish.
     fn frame(&mut self, info: FrameInfo) -> Result<Self::Frame<'_>, FrameError>;
     /// Creates one unpublished destination; allocation alone does not publish undefined pixels.
     fn create_render_texture(&mut self, size: Size) -> Result<Self::Output, TextureError>;
