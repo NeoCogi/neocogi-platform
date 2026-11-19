@@ -62,7 +62,8 @@ cargo tools check-packages --offline --stable-toolchain stable --allow-dirty
 Omit `--allow-dirty` for release qualification. The checker constructs all three real
 archives together, rejects unexpected release packages and duplicate schema
 ownership, extracts them outside this checkout and uses only extracted contents
-for internal registry patches. It builds the extracted workspace targets,
+for internal registry patches. It builds the extracted workspace targets in a
+disposable target and intermediate directory owned by the qualification run,
 runs the contracts and focused SDK tests, and executes an independent
 generated COM consumer with retained shader exports and
 real build-script resource staging, including restoration of deleted outputs and

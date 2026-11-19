@@ -63,8 +63,9 @@ Package inspection rejects paths outside the versioned root, links, duplicate
 members, missing regular manifests/notices, nonregistry dependencies and duplicate
 schema ownership before extraction. Only contracts, SDK and final shims are
 release packages; this tools package and application/test fixtures stay private.
-Qualification uses one target directory sequentially, removes its temporary
-workspace, and tests staging restoration plus propagation of changed input bytes.
+Qualification uses one disposable build target sequentially and removes it along
+with the extracted workspace. The developer target continues to own the release
+archives. The fixture tests staging restoration and propagation of changed input bytes.
 The shim is resolved as a nonmember registry dependency, built as a normal
 library, then loaded through its real COM export by the independent consumer.
 The stable option builds and runs both the library and caller on stable.

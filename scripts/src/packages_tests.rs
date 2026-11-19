@@ -21,6 +21,39 @@ fn normal_platform_artifact_is_required() {
     assert!(platform_artifact(b"not JSON").is_err());
 }
 
+/// Extracted commands select one owned output and build directory on all toolchains.
+#[test]
+fn extracted_build_directories_are_explicit_overrides() {
+    let workspace = Path::new("/extract");
+    let target = Path::new("/qualification/target");
+    let command = extracted_cargo("stable", workspace, target);
+    assert_eq!(command.get_current_dir(), Some(workspace));
+    let env: BTreeMap<_, _> = command.get_envs().collect();
+    assert_eq!(env[std::ffi::OsStr::new("CARGO_TARGET_DIR")], Some(target.as_os_str()));
+    assert_eq!(env[std::ffi::OsStr::new("CARGO_BUILD_BUILD_DIR")], Some(target.join("build").as_os_str()));
+}
+
+/// A receipt cannot accidentally point at a different target's prebuilt provider.
+#[test]
+fn qualification_accepts_only_its_own_reported_library() {
+    let directory = tempfile::tempdir().unwrap();
+    let target = directory.path().join("qualification");
+    fs::create_dir(&target).unwrap();
+    let filename = format!("{}nc_platform.{}", std::env::consts::DLL_PREFIX, std::env::consts::DLL_EXTENSION);
+    let receipt = |path: &Path| {
+        fs::write(path, []).unwrap();
+        serde_json::json!({
+            "reason": "compiler-artifact",
+            "target": { "name": "nc_platform", "kind": ["cdylib"] },
+            "filenames": [path],
+        })
+        .to_string()
+    };
+    let own = target.join(&filename);
+    assert_eq!(qualified_library(receipt(&own).as_bytes(), &target).unwrap(), own.canonicalize().unwrap());
+    assert!(qualified_library(receipt(&directory.path().join(filename)).as_bytes(), &target).is_err());
+}
+
 /// Fixture registry identity, independently checked against the archived manifest.
 fn package(name: &str) -> Package {
     Package {

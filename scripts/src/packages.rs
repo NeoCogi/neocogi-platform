@@ -43,7 +43,7 @@ struct Metadata {
     workspace_members: HashSet<String>,
     /// Cargo's resolved packages and declared publication policy.
     packages: Vec<Package>,
-    /// One shared target directory used sequentially throughout qualification.
+    /// Development Cargo target containing the release archives.
     target_directory: PathBuf,
 }
 
@@ -216,6 +216,29 @@ pub(crate) fn platform_artifact(output: &[u8]) -> Result<PathBuf> {
     artifact.context("Cargo did not produce the normal platform cdylib")
 }
 
+/// All commands in the extracted workspace share private output and intermediate directories.
+/// Explicit environment overrides also supersede paths inherited from the developer.
+fn extracted_cargo(toolchain: &str, workspace: &Path, target: &Path) -> std::process::Command {
+    let mut command = crate::process::cargo(Some(toolchain));
+    command
+        .current_dir(workspace)
+        .env("CARGO_TARGET_DIR", target)
+        .env("CARGO_BUILD_BUILD_DIR", target.join("build"))
+        // Qualification must not require a desktop audio daemon or microphone.
+        .env("SDL_AUDIODRIVER", "dummy");
+    command
+}
+
+/// Verifies a reported native artifact is part of this run's build products.
+fn qualified_library(output: &[u8], target: &Path) -> Result<PathBuf> {
+    let artifact = platform_artifact(output)?.canonicalize()?;
+    ensure!(
+        artifact.starts_with(target.canonicalize()?),
+        "platform library is outside the qualification target"
+    );
+    Ok(artifact)
+}
+
 /// Construct, inspect and exercise actual Cargo archives from an isolated temporary workspace.
 pub(crate) fn qualify(allow_dirty: bool, offline: bool, stable: Option<&str>) -> Result<()> {
     use crate::process::{capture, cargo, run};
@@ -233,6 +256,11 @@ pub(crate) fn qualify(allow_dirty: bool, offline: bool, stable: Option<&str>) ->
         package.args(["-p", name]);
     }
     run(&mut package)?;
+    // Cargo normalizes archive mtimes. A fresh target certifies current archive bytes
+    // and keeps the extracted shim from overwriting the developer's chosen backend.
+    let target = tempfile::Builder::new()
+        .prefix("neocogi-qualification-")
+        .tempdir_in(&metadata.target_directory)?;
     let outside = tempfile::Builder::new().prefix("neocogi-package-check-").tempdir()?;
     let packages = outside.path().join("packages");
     fs::create_dir(&packages)?;
@@ -274,26 +302,12 @@ pub(crate) fn qualify(allow_dirty: bool, offline: bool, stable: Option<&str>) ->
     fs::write(outside.path().join("Cargo.toml"), toml::to_string(&manifest)?)?;
     copy_tree(&crate::root().join("scripts/package-consumer"), &outside.path().join("consumer"))?;
     fs::copy(crate::root().join("Cargo.lock"), outside.path().join("Cargo.lock"))?;
-    // Cargo normalizes archive mtimes. Stale builds of the same version must never
-    // qualify changed archive bytes; retain only third-party dependency artifacts.
-    let mut clean = cargo(Some(toolchain));
-    clean.arg("clean").args(&flags);
-    for name in RELEASE_ORDER {
-        clean.args(["-p", name]);
-    }
-    run(&mut clean)?;
     let execute = |toolchain: &str, arguments: &[&str]| -> Result<()> {
-        // Cargo options must precede the executable's argument separator; otherwise
-        // --target-dir reaches the consumer and silently creates a second build tree.
+        // Cargo options must precede the executable's argument separator.
         let (cargo_arguments, executable_arguments) = arguments.split_at(arguments.iter().position(|argument| *argument == "--").unwrap_or(arguments.len()));
-        run(cargo(Some(toolchain))
-            .current_dir(outside.path())
+        run(extracted_cargo(toolchain, outside.path(), target.path())
             .args(cargo_arguments)
-            // Archive qualification must not depend on a desktop audio daemon or physical microphone.
-            .env("SDL_AUDIODRIVER", "dummy")
             .args(&flags)
-            .arg("--target-dir")
-            .arg(&metadata.target_directory)
             .args(executable_arguments))
     };
     execute(toolchain, &["build", "--workspace", "--all-targets"])?;
@@ -338,14 +352,14 @@ pub(crate) fn qualify(allow_dirty: bool, offline: bool, stable: Option<&str>) ->
     // Build the shim as an ordinary library from extracted registry-style inputs.
     // Read the final path from Cargo rather than accepting a library-example artifact.
     let library = |toolchain: &str| -> Result<PathBuf> {
-        platform_artifact(&capture(
-            cargo(Some(toolchain))
-                .current_dir(outside.path())
-                .args(["build", "--lib", "-p", "neocogi-platform-dylib", "--message-format=json"])
-                .args(&flags)
-                .arg("--target-dir")
-                .arg(&metadata.target_directory),
-        )?)
+        qualified_library(
+            &capture(
+                extracted_cargo(toolchain, outside.path(), target.path())
+                    .args(["build", "--lib", "-p", "neocogi-platform-dylib", "--message-format=json"])
+                    .args(&flags),
+            )?,
+            target.path(),
+        )
     };
     let platform = library(toolchain)?;
     let consumer = [
