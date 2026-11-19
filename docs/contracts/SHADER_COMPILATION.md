@@ -46,6 +46,10 @@ partial artifacts. Invalid source/configuration, unavailable targets, exhausted
 quotas, and fallible output reservations retain distinct statuses. Outer COM
 transport or report-allocation errors remain outer failures.
 
+The reported entry name identifies the selected source declaration. A WGSL
+module emits one independently named entry for its stage, so WGPU selects the
+unique stage entry. SPIR-V uses the source entry name and GLSL uses `main`.
+
 Syntax and validation diagnostics include one-based line/column, a bounded source
 excerpt, and a caret. Raw COM diagnostics are capped at 4096 UTF-8 bytes without
 splitting a character. Allocation failures in infallible parser/IR/SDK allocations
@@ -59,7 +63,8 @@ and semicolon comments. Unicode is allowed in comments. Strings, quoting, macros
 implicit native-source escape hatches, storage/workgroup resources, and compute
 entries are unsupported and reject. Identifiers start with a letter or underscore and contain
 at most 128 ASCII letters, digits, or underscores. Source identifiers are resolved
-before emission and backend symbols are generated independently.
+before emission. The WGSL function namespace is generated independently, including
+the native entry.
 
 ```lisp
 (module
@@ -407,9 +412,10 @@ with no foreign compiler calls during drawing or destruction.
 
 ## Renderer handoff and diagnostics
 
-Vulkan consumes aligned guarded SPIR-V and the selected entry; WGPU consumes
-emitted WGSL and the entry through its checked native module/pipeline path;
-Glow/WebGL consume ES300 and reflected native names. Native linking and resource
+Vulkan consumes aligned guarded SPIR-V and the selected source entry. WGPU selects
+the sole generated entry for the requested stage from emitted WGSL through its
+checked native module and pipeline path. Glow and WebGL consume ES300 with `main`
+and reflected native names. Native linking and resource
 allocation remain fallible. An export failure never falls back to the input.
 
 Shader creation returns the exclusive shader or an owned `RenderError`. The

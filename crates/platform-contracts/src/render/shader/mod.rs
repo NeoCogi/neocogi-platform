@@ -60,7 +60,8 @@ pub struct SampledTexture {
 pub struct Shader {
     /// Selected graphics stage.
     pub stage: GpuShaderStage,
-    /// Selected WGSL/SPIR-V entry point.
+    /// Selected source entry used for report identity and emitted by SPIR-V.
+    /// WGSL uses a generated symbol and supplies one entry for the selected stage.
     pub entry: String,
     /// Exactly one complete backend artifact; no parallel or fallback representation.
     pub code: ShaderCode,

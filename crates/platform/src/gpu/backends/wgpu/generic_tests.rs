@@ -25,24 +25,27 @@ fn device_with_limits(limits: wgpu::Limits) -> (wgpu::Device, wgpu::Queue) {
     .unwrap()
 }
 
-/// An application shader owns its color and depth semantics; the renderer only sees reflected bindings.
+/// A legal portable keyword and generated-name collision both reach the native pipeline.
+/// The unused fragment disagrees with the selected entry's color.
 const SHADER: &str = r#"(module
   (struct Values (color vec4) (params vec4))
   (uniform vertex_values Values vertex 0)
   (uniform fragment_values Values fragment 0)
-  (vertex vs ((i u32 (builtin vertex_index))) (returns vec4 (builtin position))
+  (fn color () (returns vec4) (return (. fragment_values color)))
+  (vertex fn ((i u32 (builtin vertex_index))) (returns vec4 (builtin position))
     (let p ((array vec2 3) (vec2 (- 1.0) (- 1.0)) (vec2 3.0 (- 1.0)) (vec2 (- 1.0) 3.0)))
     (return (vec4 (index p i) (. (. vertex_values params) x) 1.0)))
-  (fragment fs () (returns vec4 (location 0)) (return (. fragment_values color))))"#;
+  (fragment fs () (returns vec4 (location 0)) (return (vec4 0.0 0.0 0.0 1.0)))
+  (fragment nc_f0 () (returns vec4 (location 0)) (return (color))))"#;
 
 /// Publishes the explicit per-stage uniform layout through generated descriptor/source calls.
 fn pipeline(resources: &ComPtr<IRenderResourcesAbi>, mask: u8) -> ComBox<IGpuPipelineAbi> {
     let source = Bytes::source(SHADER.as_bytes().to_vec());
     let vs = resources
-        .create_shader(GpuShaderStage::Vertex, source.as_com_ref(), NcCopyFromBufferOffset::new(0, b"vs"))
+        .create_shader(GpuShaderStage::Vertex, source.as_com_ref(), NcCopyFromBufferOffset::new(0, b"fn"))
         .unwrap();
     let fs = resources
-        .create_shader(GpuShaderStage::Fragment, source.as_com_ref(), NcCopyFromBufferOffset::new(0, b"fs"))
+        .create_shader(GpuShaderStage::Fragment, source.as_com_ref(), NcCopyFromBufferOffset::new(0, b"nc_f0"))
         .unwrap();
     let description = PipelineDesc {
         state: GpuPipelineInfo {

@@ -350,10 +350,8 @@ impl Writer<'_> {
                     self.ty(&f.result.ty)
                 )
             };
-            self.line(format!(
-                "{decoration}fn {}({params}){result} {{",
-                if index == selected { f.name.clone() } else { format!("nc_f{index}") }
-            ));
+            // The selected entry shares the generated function namespace with its helpers.
+            self.line(format!("{decoration}fn nc_f{index}({params}){result} {{"));
         }
         self.statements(&f.body);
         self.line("}");

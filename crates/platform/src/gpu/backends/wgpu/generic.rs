@@ -887,7 +887,8 @@ impl Executor {
             layout: Some(&layout),
             vertex: wgpu::VertexState {
                 module: &vertex,
-                entry_point: Some(&source.vertex().artifact().entry),
+                // Each compiler module emits one entry for this stage. The report's entry is the source name.
+                entry_point: None,
                 compilation_options: Default::default(),
                 buffers: &buffers,
             },
@@ -915,7 +916,7 @@ impl Executor {
             multisample: Default::default(),
             fragment: Some(wgpu::FragmentState {
                 module: &fragment,
-                entry_point: Some(&source.fragment().artifact().entry),
+                entry_point: None,
                 compilation_options: Default::default(),
                 targets: &[Some(wgpu::ColorTargetState {
                     format,
