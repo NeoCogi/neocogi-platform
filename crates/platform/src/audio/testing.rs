@@ -209,7 +209,10 @@ async fn worklet_module_cleanup(platform: &ComPtr<PlatformAbi>, config: AudioCon
         ensure(probe.0.revoked() == 1, "late module completion revoked the URL twice")?;
         ensure(probe.0.nodes() == 0, "late module completion constructed an audio node")?;
         if let Some(mut request) = retained {
-            ensure(request.poll().map_err(status)? == AudioOpenState::Cancelled, "late success reopened the request")?;
+            ensure(
+                request.poll().map_err(status)? == AudioOpenState::Cancelled,
+                "late success reopened the request",
+            )?;
         }
     }
     Ok(())
