@@ -80,8 +80,12 @@ first) scene supplies indexed triangle primitives with normals, UV0 and at most
 four skin influences. Each skin has 1–64 joints. Weights are normalized on import;
 out-of-range joints/indices and inconsistent attribute counts reject. Matrix nodes
 keep their exact transforms; TRS animation targets decomposed nodes. The first
-clip loops in seconds, supports LINEAR and STEP, and uses shortest-arc quaternion
-interpolation. Unsupported topology, morphing, required extensions, nonopaque
+clip loops in seconds. It preserves authored STEP and clamped vector keys, uses
+wide intermediates to blend LINEAR translation and scale, and interpolates
+rotations along the shortest quaternion arc. A nonfinite clock samples time
+zero. The importer walks the complete node forest in linear time. Pose sampling
+evaluates each parent before its children. Shared children and cycles reject even outside the
+selected scene. Unsupported topology, morphing, required extensions, nonopaque
 materials, alternate UV sets and CUBICSPLINE animation fail with a diagnostic.
 This is a sample viewer for the pinned core assets, not a complete glTF importer.
 

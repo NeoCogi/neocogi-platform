@@ -197,21 +197,16 @@ impl Scene {
                 }
             }
         }
-        let mut order = Vec::new();
-        let mut pending: Vec<_> = (0..nodes.len()).collect();
-        while !pending.is_empty() {
-            let before = pending.len();
-            pending.retain(|index| {
-                if nodes[*index].parent.is_none_or(|parent| order.contains(&parent)) {
-                    order.push(*index);
-                    false
-                } else {
-                    true
-                }
-            });
-            if pending.len() == before {
-                return Err("cyclic node hierarchy".into());
-            }
+        let mut order = Vec::with_capacity(nodes.len());
+        let mut pending: Vec<_> = document.nodes().filter(|node| nodes[node.index()].parent.is_none()).collect();
+        while let Some(node) = pending.pop() {
+            order.push(node.index());
+            pending.extend(node.children());
+        }
+        // Each child has one parent at most. Root traversal therefore visits each
+        // reachable node once, and any remaining component must contain a cycle.
+        if order.len() != nodes.len() {
+            return Err("cyclic node hierarchy".into());
         }
         let skins: Vec<_> = document
             .skins()
@@ -422,16 +417,21 @@ impl Scene {
         })
     }
 
-    /// Samples the first clip in a loop. Static scenes keep their exact authored transforms.
+    /// Samples the first clip in a loop. A nonfinite clock samples the first frame.
+    /// Static scenes keep their exact authored transforms.
     pub fn pose(&self, seconds: f32) -> Vec<Mat4f> {
-        let time = if self.duration > 0.0 { seconds.rem_euclid(self.duration) } else { 0.0 };
+        let time = if self.duration > 0.0 && seconds.is_finite() {
+            seconds.rem_euclid(self.duration)
+        } else {
+            0.0
+        };
         let mut transforms: Vec<_> = self.nodes.iter().map(|n| n.rest.clone()).collect();
         for channel in &self.channels {
             let (a, b, factor) = interval(&channel.times, time, channel.step);
             let transform = &mut transforms[channel.node];
             match &channel.values {
-                Values::Translation(v) => transform.translation = v[a] + (v[b] - v[a]) * factor,
-                Values::Scale(v) => transform.scale = v[a] + (v[b] - v[a]) * factor,
+                Values::Translation(v) => transform.translation = blend(v[a], v[b], factor),
+                Values::Scale(v) => transform.scale = blend(v[a], v[b], factor),
                 Values::Rotation(v) => transform.rotation = slerp(v[a], v[b], factor),
             }
         }
@@ -499,6 +499,20 @@ fn interval(times: &[f32], time: f32, step: bool) -> (usize, usize, f32) {
         ((time - times[a]) / (times[b] - times[a])).clamp(0.0, 1.0)
     };
     (a, b, factor)
+}
+
+/// Samples finite vector keys with a clamped weight. Returning exact keys
+/// preserves STEP and endpoints, and wide arithmetic keeps the convex blend finite.
+fn blend(a: Vec3f, b: Vec3f, factor: f32) -> Vec3f {
+    if factor == 0.0 {
+        return a;
+    }
+    if factor == 1.0 {
+        return b;
+    }
+    let factor = f64::from(factor);
+    let blend_axis = |a, b| ((1.0 - factor) * f64::from(a) + factor * f64::from(b)) as f32;
+    Vec3f::new(blend_axis(a.x, b.x), blend_axis(a.y, b.y), blend_axis(a.z, b.z))
 }
 
 /// Normalized shortest-path quaternion interpolation, including antipodal equivalent keys.

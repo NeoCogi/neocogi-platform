@@ -78,6 +78,104 @@ fn rigid_nodes_and_step_animation_keep_authored_semantics() {
     assert_eq!(scene.pose(1.0)[1].col[3].x, 0.0);
 }
 
+/// Exercises real translation and scale accessor values that overflow narrow subtraction.
+#[test]
+fn extreme_vector_keys_keep_representable_clamped_and_interior_poses() {
+    let amplitude = 3e38_f32;
+    for property in ["translation", "scale"] {
+        for interpolation in ["LINEAR", "STEP"] {
+            let scene = fixture(|doc, bytes| {
+                doc["animations"][0]["channels"][0]["target"]["path"] = json!(property);
+                doc["animations"][0]["samplers"][0]["interpolation"] = json!(interpolation);
+                // A separate channel extends the loop so the primary track's
+                // last key and both clamped regions can be sampled by Scene::pose.
+                let time_offset = doc["bufferViews"][3]["byteOffset"].as_u64().unwrap() as usize;
+                bytes[time_offset..time_offset + 4].copy_from_slice(&0.5_f32.to_le_bytes());
+                bytes[time_offset + 4..time_offset + 8].copy_from_slice(&2.5_f32.to_le_bytes());
+                let clip_times = doc["accessors"].as_array().unwrap().len();
+                let view = doc["bufferViews"].as_array().unwrap().len();
+                doc["bufferViews"]
+                    .as_array_mut()
+                    .unwrap()
+                    .push(json!({"buffer":0,"byteOffset":bytes.len(),"byteLength":8}));
+                floats(bytes, [0., 4.].into_iter());
+                doc["buffers"][0]["byteLength"] = json!(bytes.len());
+                doc["accessors"]
+                    .as_array_mut()
+                    .unwrap()
+                    .push(json!({"bufferView":view,"componentType":5126,"count":2,"type":"SCALAR"}));
+                doc["animations"][0]["channels"]
+                    .as_array_mut()
+                    .unwrap()
+                    .push(json!({"sampler":1,"target":{"node":0,"path":"translation"}}));
+                doc["animations"][0]["samplers"]
+                    .as_array_mut()
+                    .unwrap()
+                    .push(json!({"input":clip_times,"output":4}));
+                let offset = doc["bufferViews"][4]["byteOffset"].as_u64().unwrap() as usize;
+                let keys = [-amplitude, 1., 1., amplitude, 1., 1.];
+                for (destination, value) in bytes[offset..].chunks_exact_mut(4).zip(keys) {
+                    destination.copy_from_slice(&value.to_le_bytes());
+                }
+            })
+            .unwrap();
+            let x = |time| {
+                let world = scene.pose(time);
+                let [x_axis, y_axis, z_axis, origin] = world[2].col;
+                assert!(
+                    [x_axis, y_axis, z_axis, origin]
+                        .iter()
+                        .all(|column| column.to_array().iter().all(|v| v.is_finite()))
+                );
+                if property == "scale" { x_axis.x } else { origin.x }
+            };
+            for endpoint in [0., 0.5, 4., f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+                assert_eq!(x(endpoint), -amplitude);
+            }
+            assert_eq!(x(2.5), amplitude);
+            assert_eq!(x(3.), amplitude);
+            if interpolation == "STEP" {
+                assert_eq!(x(1.5), -amplitude);
+            } else {
+                assert_eq!(x(1.), -amplitude / 2.);
+                assert_eq!(x(1.5), 0.);
+                assert_eq!(x(2.), amplitude / 2.);
+            }
+        }
+    }
+}
+
+/// Both numberings of a deep forest produce the same indexed world transforms.
+#[test]
+fn deep_hierarchy_is_iterative_and_rejects_detached_cycles() {
+    const COUNT: usize = 2048;
+    let build = |reverse, detached_cycle| {
+        fixture(|doc, _| {
+            let index = |position| if reverse { COUNT - 1 - position } else { position };
+            let nodes = doc["nodes"].as_array_mut().unwrap();
+            let start = nodes.len();
+            nodes.resize(start + COUNT, json!({"translation": [1., 0., 0.]}));
+            for position in 0..COUNT - 1 {
+                nodes[start + index(position)]["children"] = json!([start + index(position + 1)]);
+            }
+            if detached_cycle {
+                nodes[start + index(COUNT - 1)]["children"] = json!([start + index(0)]);
+            }
+        })
+    };
+    let forward = build(false, false).unwrap().pose(1.0);
+    let reverse = build(true, false).unwrap().pose(1.0);
+    let columns = |matrix: &Mat4f| matrix.col.map(|column| column.to_array());
+    for (a, b) in forward[..3].iter().zip(&reverse[..3]) {
+        assert_eq!(columns(a), columns(b));
+    }
+    for (position, (a, b)) in forward[3..].iter().zip(reverse[3..].iter().rev()).enumerate() {
+        assert_eq!(columns(a), columns(b));
+        assert_eq!(a.col[3].x, (position + 1) as f32);
+    }
+    assert_eq!(build(true, true).err().as_deref(), Some("cyclic node hierarchy"));
+}
+
 /// Each unsupported or inconsistent boundary fails before any native resource is created.
 #[test]
 fn rejects_unsupported_and_inconsistent_inputs() {
