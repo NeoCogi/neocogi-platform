@@ -113,11 +113,19 @@ build paths. `debug` maps to Cargo's `dev` profile. For min-size Vulkan, run
 `cargo build --profile min-size -p neocogi-platform-dylib --no-default-features --features vulkan` before the
 matching `cargo run --profile min-size ... --features dynamic` invocation.
 Both commands default to dev and must select the same profile/target. The build
-script tracks both prebuilt inputs and staged outputs; rebuilding a shim refreshes
+script tracks both prebuilt inputs and staged outputs. Rebuilding a shim refreshes
 its deployed copy, and deleting a staged output causes restoration on the next
-application build. Missing inputs do not prevent compilation or help; acquisition
-returns the preparation error. `NEOCOGI_NATIVE_OUTPUT_DIR` redirects staging through
-the existing output policy. No extra executable or Python builder is required.
+application build. The Cargo development profile mirrors a missing shim by
+retiring its exact, unchanged staged copy. A receipt identifies the file
+published by this profile. If the source is missing, an unowned or edited
+destination is preserved. A present or rebuilt source refreshes the staged copy.
+Missing inputs allow compilation and help, and an absent deployed library
+returns the preparation error at acquisition.
+
+A distinct absolute `NEOCOGI_NATIVE_OUTPUT_DIR` stages a detached export. The
+export retains its library if the Cargo input disappears. Cargo still writes
+the executable into the profile directory. Copy the executable to the export
+root to run with its adjacent staged `lib` directory.
 Preflight does not promise an atomic filesystem snapshot or replace the SDK's
 fail-fatal policy for an existing corrupt/incompatible library. glTF startup does
 this deployment work before model import or HDR preparation; help still needs

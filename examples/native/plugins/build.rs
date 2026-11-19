@@ -5,7 +5,7 @@ pub mod artifacts;
 
 /// Track exact named inputs and deployed outputs, so a later shim build invalidates cached staging.
 fn main() {
-    use neocogi_platform_contracts::build::layout::{output_root, stage_library};
+    use neocogi_platform_contracts::build::layout::{mirror_library, output_root, stage_library};
     let anchor = PathBuf::from(std::env::var_os("OUT_DIR").expect("Cargo OUT_DIR"));
     let profile_root = output_root(Some(&anchor), None).expect("Cargo profile output root");
     let directory = profile_root.file_name().and_then(|value| value.to_str()).expect("Cargo profile name");
@@ -21,7 +21,13 @@ fn main() {
     let staged = output.join("lib").join(filename);
     println!("cargo::rerun-if-changed={}", source.display());
     println!("cargo::rerun-if-changed={}", staged.display());
-    if source.is_file() {
+    if output == profile_root
+        || output
+            .canonicalize()
+            .is_ok_and(|path| path == profile_root.canonicalize().expect("Cargo profile output"))
+    {
+        mirror_library(&profile_root, filename).expect("mirror Cargo plugin in its development profile");
+    } else if source.is_file() {
         stage_library(&source, &output).expect("stage prebuilt Cargo plugin");
     }
     // Missing inputs leave help/build usable; startup returns an owned preparation

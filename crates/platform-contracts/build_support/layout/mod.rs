@@ -5,7 +5,9 @@
 //! Filesystem locking serializes competing compiler processes, not application state.
 #![deny(missing_docs)]
 
+mod mirror;
 mod resources;
+pub use mirror::mirror_library;
 pub use resources::{Resource, StagedResources, stage_resources};
 
 use std::{
@@ -44,6 +46,7 @@ pub fn stage_library(source: &Path, root: &Path) -> io::Result<String> {
         .ok_or_else(|| io::Error::other("Cargo library filename must be UTF-8"))?;
     fs::create_dir_all(root)?;
     let root = root.canonicalize()?;
+    let _lock = resources::lock_output(&root)?;
     let destination = root.join("lib").join(filename);
     resources::check_destination(&root, &destination)?;
     copy_file(source, &destination)?;
@@ -59,12 +62,18 @@ fn copy_file(source: &Path, destination: &Path) -> io::Result<()> {
     if files_equal(source, destination)? {
         return Ok(());
     }
+    let temporary = copy_candidate(source, destination)?;
+    temporary.persist(destination).map_err(|error| error.error)?;
+    Ok(())
+}
+
+/// Copies complete contents into an unpublished sibling on the destination filesystem.
+fn copy_candidate(source: &Path, destination: &Path) -> io::Result<tempfile::NamedTempFile> {
     let directory = destination.parent().ok_or_else(|| io::Error::other("staged file has no directory"))?;
     fs::create_dir_all(directory)?;
     let temporary = tempfile::NamedTempFile::new_in(directory)?;
     fs::copy(source, temporary.path())?;
-    temporary.persist(destination).map_err(|error| error.error)?;
-    Ok(())
+    Ok(temporary)
 }
 
 /// Fixed scratch per comparison, independent of library or asset size.

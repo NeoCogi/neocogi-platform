@@ -100,14 +100,7 @@ pub fn stage_resources(manifest: &Path, root: &Path, resources: &[Resource]) -> 
     let owner: [u8; 32] = Sha256::digest(manifest.canonicalize()?.as_os_str().as_encoded_bytes()).into();
     // Build scripts can run in several Cargo processes. File ownership must be
     // checked and committed under this cross-process lock, with no foreign callbacks.
-    check_destination(&root, &root.join(".neocogi-layout.lock"))?;
-    let lock = OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .read(true)
-        .write(true)
-        .open(root.join(".neocogi-layout.lock"))?;
-    lock.lock()?;
+    let _lock = lock_output(&root)?;
     let path = root.join(".neocogi-layout.json");
     check_destination(&root, &path)?;
     let mut receipts: Receipts = match fs::read(&path) {
@@ -213,6 +206,15 @@ pub fn stage_resources(manifest: &Path, root: &Path, resources: &[Resource]) -> 
         collect_outputs(&prepared.destination, &mut tracked.outputs)?;
     }
     Ok(tracked)
+}
+
+/// Locks one canonical output root across cooperating resource and library writers.
+pub(super) fn lock_output(root: &Path) -> io::Result<fs::File> {
+    let path = root.join(".neocogi-layout.lock");
+    check_destination(root, &path)?;
+    let lock = OpenOptions::new().create(true).truncate(false).read(true).write(true).open(path)?;
+    lock.lock()?;
+    Ok(lock)
 }
 
 /// Validates the authored path component by component before canonicalization can erase link traversal.
