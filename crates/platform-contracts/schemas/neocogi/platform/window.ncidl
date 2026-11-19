@@ -15,6 +15,8 @@ interface IPlatformWindow {
     /// Removes one relevant transition and borrows the destination for synchronous delivery.
     /// A failed delivery consumes the attempted event; later events remain queued. Recursive
     /// polling of this window returns Busy. The destination is never retained by the platform.
+    /// A text commit over 4 MiB returns PLATFORM_E_INPUT_LIMIT at its queue position without
+    /// calling the destination. Later transitions remain available on subsequent polls.
     fn poll(&self, destination: &IInputSink) -> Result<PollStatus>;
     /// Enables or disables native text input and positions composition UI after a UI update.
     /// Calling repeatedly with the same editable focus preserves an active composition.

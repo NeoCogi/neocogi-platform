@@ -87,7 +87,12 @@ impl InputState {
                     modifiers: modifiers(keymod),
                 })
             }
-            Event::TextInput { text, .. } => return Ok(Transition::Input(UiInput::Text, text)),
+            Event::TextInput { text, .. } => {
+                if text.len() > MAX_TEXT_INPUT_BYTES {
+                    return Err(PLATFORM_E_INPUT_LIMIT);
+                }
+                return Ok(Transition::Input(UiInput::Text, text));
+            }
             // TextEditing is a composition preview, never committed editor content. SDL owns it
             // until TextInput; forwarding both would duplicate or prematurely publish IME text.
             _ => return Ok(Transition::Ignore),
@@ -121,6 +126,7 @@ fn button(button: MouseButton) -> Option<u8> {
 
 /// Preserves logical shortcut identity without deriving committed text from key presses.
 /// SDL encodes keypad arithmetic as masked scancodes; normalize those aliases before Unicode fallback.
+/// SDL2's keycode and modifier snapshot are separate even on shifted-symbol layouts.
 fn key(code: Keycode) -> Option<KeyCode> {
     let key = match code {
         Keycode::Backspace => KeyCode::Backspace,
@@ -245,6 +251,22 @@ impl IPlatformWindow for WindowObject {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// SDL normally emits short fixed-size events. Keep the shared admission
+    /// rule at translation, before any future larger native payload reaches COM.
+    #[test]
+    fn complete_text_admission_uses_the_shared_byte_limit() {
+        let mut state = InputState::default();
+        let translate = |state: &mut InputState, text| {
+            state.translate(Event::TextInput { timestamp: 0, window_id: 1, text }, (100, 100), || {
+                panic!("text should not observe the drawable")
+            })
+        };
+        let exact = "🦀".repeat(MAX_TEXT_INPUT_BYTES / 4);
+        let oversized = format!("{exact}a");
+        assert!(matches!(translate(&mut state, exact), Ok(Transition::Input(UiInput::Text, text)) if text.len() == MAX_TEXT_INPUT_BYTES));
+        assert!(matches!(translate(&mut state, oversized), Err(PLATFORM_E_INPUT_LIMIT)));
+    }
 
     /// Masked keypad arithmetic and ordinary operators share the logical shortcut domain.
     #[test]

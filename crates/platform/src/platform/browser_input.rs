@@ -3,17 +3,22 @@
 use std::{cell::RefCell, rc::Rc, collections::VecDeque};
 use neocogi_platform::render::platform::*;
 use neocogi_com_sdk::{ComRef, NcCopyFromBufferOffset, NcStatus};
-use wasm_bindgen::{JsCast, closure::Closure};
+use wasm_bindgen::{JsCast, JsValue, closure::Closure};
 use web_sys::{Event, EventTarget, FocusEvent, HtmlCanvasElement, HtmlTextAreaElement, KeyboardEvent, PointerEvent, WheelEvent};
 use neocogi_platform::platform::wheel::{WheelAccumulator, WheelUnit};
 use super::gpu;
 
-/// One pending copied transition owns text only for an actual committed string.
-struct PendingInput {
-    /// Canonical event used by both the native platform and the UI queue.
-    event: UiInput,
-    /// Complete UTF-8 commit, empty for every other event.
-    text: String,
+/// One FIFO entry, including refusal at the position of a complete oversized commit.
+enum PendingInput {
+    /// A copied transition delivered through the common input sink ABI.
+    Event {
+        /// Canonical event used by both the native platform and the UI queue.
+        event: UiInput,
+        /// Complete bounded UTF-8 commit, empty for every other event.
+        text: String,
+    },
+    /// The oversized payload was discarded before it could occupy the queue.
+    TextLimit,
 }
 
 /// State shared only by DOM listeners and the host's frame drain.
@@ -34,10 +39,10 @@ struct InputQueue {
 impl InputQueue {
     /// Coalesces adjacent pointer positions without crossing a button, key, text or wheel transition.
     fn push(&mut self, event: UiInput) {
-        if matches!(event, UiInput::Pointer(_)) && self.events.back().is_some_and(|previous| matches!(previous.event, UiInput::Pointer(_))) {
+        if matches!(event, UiInput::Pointer(_)) && matches!(self.events.back(), Some(PendingInput::Event { event: UiInput::Pointer(_), .. })) {
             self.events.pop_back();
         }
-        self.events.push_back(PendingInput { event, text: String::new() });
+        self.events.push_back(PendingInput::Event { event, text: String::new() });
     }
 
     /// Revokes local gesture state and appends an ordered core cancellation.
@@ -51,12 +56,25 @@ impl InputQueue {
 
     /// Transfers the committed DOM value once; composition updates remain browser-owned.
     fn commit_text(&mut self, text: &HtmlTextAreaElement) {
-        if !self.composing {
-            let value = text.value();
-            text.set_value("");
-            if !value.is_empty() {
-                self.events.push_back(PendingInput { event: UiInput::Text, text: value });
-            }
+        if self.composing {
+            return;
+        }
+        // Read the DOMString as a JS value first. It costs at least one UTF-8
+        // byte per UTF-16 unit, so a large commit can be rejected before copying.
+        let value = js_sys::Reflect::get(text.as_ref(), &JsValue::from_str("value"))
+            .ok()
+            .and_then(|value| value.dyn_into::<js_sys::JsString>().ok());
+        text.set_value("");
+        let Some(value) = value else { return };
+        if value.length() as usize > MAX_TEXT_INPUT_BYTES {
+            self.events.push_back(PendingInput::TextLimit);
+            return;
+        }
+        let value = String::from(value);
+        if value.len() > MAX_TEXT_INPUT_BYTES {
+            self.events.push_back(PendingInput::TextLimit);
+        } else if !value.is_empty() {
+            self.events.push_back(PendingInput::Event { event: UiInput::Text, text: value });
         }
     }
 }
@@ -307,9 +325,14 @@ impl BrowserInputHost {
     /// Detaches one event before invoking the borrowed destination; failures consume only this event.
     pub(super) fn poll(&self, destination: ComRef<'_, IInputSinkAbi>) -> Result<bool, NcStatus> {
         let pending = self.queue.borrow_mut().events.pop_front();
-        let Some(PendingInput { event, text }) = pending else { return Ok(false) };
-        destination.input(event, NcCopyFromBufferOffset::new(0, text.as_bytes()))?;
-        Ok(true)
+        match pending {
+            Some(PendingInput::Event { event, text }) => {
+                destination.input(event, NcCopyFromBufferOffset::new(0, text.as_bytes()))?;
+                Ok(true)
+            }
+            Some(PendingInput::TextLimit) => Err(PLATFORM_E_INPUT_LIMIT),
+            None => Ok(false),
+        }
     }
 
     /// Test observations consume the same ordered queue used by COM polling.

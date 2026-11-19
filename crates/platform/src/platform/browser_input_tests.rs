@@ -650,6 +650,22 @@ export function exercise_shortcut(target, key, code, location, modifiers) {
     target.dispatchEvent(new KeyboardEvent('keydown', {...init, repeat:true}));
     target.dispatchEvent(new KeyboardEvent('keyup', init));
 }
+export function boundary_text(target, mode, limit) {
+    if (mode === 'preedit') {
+        target.dispatchEvent(new CompositionEvent('compositionstart'));
+        target.value = '🦀'.repeat(limit / 4);
+        target.dispatchEvent(new InputEvent('input', {isComposing:true}));
+        return;
+    }
+    if (mode === 'commit') {
+        target.dispatchEvent(new CompositionEvent('compositionend'));
+        target.dispatchEvent(new InputEvent('input'));
+        return;
+    }
+    target.value = mode === 'ascii-over' ? 'a'.repeat(limit + 1) :
+        mode === 'utf8-over' ? '🦀'.repeat(limit / 4) + 'a' : mode;
+    target.dispatchEvent(new InputEvent('input', {inputType:'insertFromPaste'}));
+}
 export function exercise(target, name) {
     if (name === 'compose-start') {
         target.dispatchEvent(new CompositionEvent('compositionstart'));
@@ -696,6 +712,8 @@ extern "C" {
     fn exercise(target: &EventTarget, name: &str);
     /// Dispatches press/repeat/release with an explicit logical key, physical location and modifiers.
     fn exercise_shortcut(target: &EventTarget, key: &str, code: &str, location: u32, modifiers: u8);
+    /// Drives either actual textarea composition or full-value paste events using browser strings.
+    fn boundary_text(target: &EventTarget, mode: &str, limit: u32);
     fn next_test_task() -> js_sys::Promise;
 }
 
@@ -751,6 +769,46 @@ fn browser_shortcuts_through_com() {
     assert_eq!(Rc::strong_count(&received), 1, "polling does not retain the borrowed sink");
 }
 
+/// Full UTF-8 payloads reach the COM sink once. Either size refusal keeps its FIFO slot.
+fn browser_text_commit_limit_through_com() {
+    let object = PlatformObject::new().window("text commit admission", Size { width: 8, height: 8 }).unwrap();
+    let text = object.input.text.clone();
+    let window = WindowObject::from_value(object).query::<IPlatformWindowAbi>().unwrap();
+    window.text_input(TextInputArea::Area(Rect { x: 0, y: 0, width: 1, height: 1 })).unwrap();
+    let received = Rc::new(RefCell::new(Vec::new()));
+    let sink = ShortcutSink::from_value(ShortcutSink { received: received.clone() })
+        .query::<IInputSinkAbi>()
+        .unwrap();
+    while window.poll(sink.as_com_ref()).unwrap() == PollStatus::Event {}
+    received.borrow_mut().clear();
+    let dispatch = |mode| boundary_text(text.unchecked_ref(), mode, MAX_TEXT_INPUT_BYTES as u32);
+    dispatch("preedit");
+    assert_eq!(window.poll(sink.as_com_ref()), Ok(PollStatus::Idle));
+    dispatch("commit");
+    dispatch("ascii-over");
+    dispatch("é between");
+    dispatch("utf8-over");
+    dispatch("after");
+    for (expected, deliveries) in [
+        (Ok(PollStatus::Event), 1),
+        (Err(PLATFORM_E_INPUT_LIMIT), 1),
+        (Ok(PollStatus::Event), 2),
+        (Err(PLATFORM_E_INPUT_LIMIT), 2),
+        (Ok(PollStatus::Event), 3),
+        (Ok(PollStatus::Idle), 3),
+    ] {
+        assert_eq!(window.poll(sink.as_com_ref()), expected);
+        assert_eq!(received.borrow().len(), deliveries);
+    }
+    let received = received.borrow();
+    assert!(received.iter().all(|(event, _)| *event == UiInput::Text));
+    assert_eq!(received[0].1.len(), MAX_TEXT_INPUT_BYTES);
+    assert!(received[0].1.chars().all(|scalar| scalar == '🦀'));
+    assert_eq!(received[1].1, "é between");
+    assert_eq!(received[2].1, "after");
+    assert!(text.value().is_empty());
+}
+
 /// Runs WebGL target/ownership checks and DOM composition, paste, keyboard, wheel, pointer and teardown assertions.
 pub async fn run_platform_input_tests() {
     std::panic::set_hook(Box::new(|info| record_panic(&info.to_string())));
@@ -766,6 +824,7 @@ pub async fn run_platform_input_tests() {
         assert_eq!(map_key(native), expected);
     }
     browser_shortcuts_through_com();
+    browser_text_commit_limit_through_com();
     canonical_browser_derivatives().await;
     browser_surface_targets();
     clamped_drawing_buffer_uses_physical_coordinates();
@@ -786,20 +845,20 @@ pub async fn run_platform_input_tests() {
     exercise(host.text.unchecked_ref(), "compose-start");
     assert!(host.drain().is_empty(), "preedit and its Enter key must stay browser-owned");
     exercise(host.text.unchecked_ref(), "compose-end");
-    assert!(matches!(host.drain().as_slice(), [PendingInput { event: UiInput::Text, text }] if text == "日本"));
+    assert!(matches!(host.drain().as_slice(), [PendingInput::Event { event: UiInput::Text, text }] if text == "日本"));
     exercise(host.text.unchecked_ref(), "paste");
-    assert!(matches!(host.drain().as_slice(), [PendingInput { event: UiInput::Text, text }] if text == "é\n pasted"));
+    assert!(matches!(host.drain().as_slice(), [PendingInput::Event { event: UiInput::Text, text }] if text == "é\n pasted"));
     exercise(host.text.unchecked_ref(), "key");
-    assert!(matches!(host.drain().as_slice(), [PendingInput { event: UiInput::Key(event), .. }] if event.key == KeyCode::Character(u32::from('F'))));
+    assert!(matches!(host.drain().as_slice(), [PendingInput::Event { event: UiInput::Key(event), .. }] if event.key == KeyCode::Character(u32::from('F'))));
     exercise(canvas.unchecked_ref(), "wheel");
     assert!(matches!(
         host.drain().as_slice(),
         [
-            PendingInput {
+            PendingInput::Event {
                 event: UiInput::Scroll(Point { x: 0, y: 1 }),
                 ..
             },
-            PendingInput {
+            PendingInput::Event {
                 event: UiInput::Scroll(Point { x: 0, y: 1 }),
                 ..
             }
@@ -810,16 +869,16 @@ pub async fn run_platform_input_tests() {
     assert!(matches!(
         host.drain().as_slice(),
         [
-            PendingInput { event: UiInput::Pointer(_), .. },
-            PendingInput { event: UiInput::Down { .. }, .. }
+            PendingInput::Event { event: UiInput::Pointer(_), .. },
+            PendingInput::Event { event: UiInput::Down { .. }, .. }
         ]
     ));
     exercise(canvas.unchecked_ref(), "chord");
     assert!(matches!(
         host.drain().as_slice(),
         [
-            PendingInput { event: UiInput::Pointer(_), .. },
-            PendingInput {
+            PendingInput::Event { event: UiInput::Pointer(_), .. },
+            PendingInput::Event {
                 event: UiInput::Down { buttons: 2, .. },
                 ..
             }
@@ -829,12 +888,12 @@ pub async fn run_platform_input_tests() {
     assert!(matches!(
         host.drain().as_slice(),
         [
-            PendingInput { event: UiInput::Pointer(_), .. },
-            PendingInput {
+            PendingInput::Event { event: UiInput::Pointer(_), .. },
+            PendingInput::Event {
                 event: UiInput::Up { buttons: 1, .. },
                 ..
             },
-            PendingInput {
+            PendingInput::Event {
                 event: UiInput::Up { buttons: 2, .. },
                 ..
             }
@@ -843,7 +902,7 @@ pub async fn run_platform_input_tests() {
     exercise(canvas.unchecked_ref(), "down");
     host.drain();
     exercise(canvas.unchecked_ref(), "cancel");
-    assert!(matches!(host.drain().as_slice(), [PendingInput { event: UiInput::Cancel, .. }]));
+    assert!(matches!(host.drain().as_slice(), [PendingInput::Event { event: UiInput::Cancel, .. }]));
 
     // Holding the queue here verifies teardown removes the actual registrations, not just handles.
     let queue = host.queue.clone();

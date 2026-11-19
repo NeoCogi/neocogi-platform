@@ -52,5 +52,11 @@ pub const PLATFORM_E_BUSY: NcStatus = NcStatus::from_code(-1001);
 /// Native window, event-pump, or browser integration failed; errors retain detail.
 pub const PLATFORM_E_BACKEND: NcStatus = NcStatus::from_code(-1005);
 
+/// A complete text commit exceeded the platform's limit. Poll again to receive later input.
+pub const PLATFORM_E_INPUT_LIMIT: NcStatus = NcStatus::from_code(-1008);
+
+/// Maximum UTF-8 payload for one complete committed text event.
+pub const MAX_TEXT_INPUT_BYTES: usize = 4 * 1024 * 1024;
+
 /// Maximum UTF-8 bytes transferred by one clipboard request or successful read.
 pub const MAX_CLIPBOARD_BYTES: usize = 1024 * 1024;

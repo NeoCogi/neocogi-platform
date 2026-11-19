@@ -9,7 +9,8 @@ struct Point {
 /// Logical keyboard identity normalized independently of native scan codes.
 enum KeyCode: u8 {
     /// Printable shortcut key carrying a Unicode scalar, validated before delivery.
-    /// Keypad +, -, * and / share the corresponding ordinary character identity.
+    /// Keypad arithmetic maps to +, -, * or /. An ordinary key has the same identity
+    /// when its host reports that operator as the logical character.
     Character(u32),
     /// Removes the previous character.
     Backspace,
@@ -99,13 +100,13 @@ enum UiInput: u8 {
     Scroll(Point),
     /// Complete key identity, state, and modifiers.
     Key(KeyStroke),
-    /// Complete UTF-8 commit supplied in the accompanying bounded text argument.
+    /// Complete UTF-8 commit of at most 4 MiB in the accompanying text argument.
     Text,
 }
 
 /// Synchronous normalized-input destination implemented by a UI runtime or application adapter.
 interface IInputSink {
-    /// Copies one ordered event. Text requires complete UTF-8 at offset zero; every other event
+    /// Copies one ordered event. Text requires at most 4 MiB of complete UTF-8 at offset zero. Every other event
     /// requires an empty text argument. The platform borrows this interface only during polling.
     fn input(&self, event: UiInput, text: &[u8]) -> Result<()>;
 }

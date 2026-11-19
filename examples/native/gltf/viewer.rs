@@ -548,7 +548,10 @@ pub fn run(model: &str) -> scene::Result<()> {
             previous = tick;
             camera.resize(window.size()?);
             loop {
-                let status = window.poll(sink.as_com_ref())?;
+                let status = match window.poll(sink.as_com_ref()) {
+                    Err(PLATFORM_E_INPUT_LIMIT) => continue,
+                    result => result?,
+                };
                 // End the callback's borrow before changing camera/application state.
                 let batch = std::mem::take(&mut *events.borrow_mut());
                 for event in batch {

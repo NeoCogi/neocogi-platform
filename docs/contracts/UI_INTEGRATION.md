@@ -26,13 +26,22 @@ scalar/function values and unknown modifier bits return `NC_E_INVALID_ARG`
 before input delivery. Key identity describes shortcuts; committed text still
 arrives separately through `UiInput::Text`, including IME and paste.
 
-Keypad arithmetic `+`, `-`, `*` and `/` has the same logical
-`KeyCode::Character` identity as the corresponding ordinary operator on SDL and
-browser hosts. Keypad Enter likewise denotes `KeyCode::Enter`. Key location does
-not alter these shortcuts: press, repeat, release and the current modifier
-snapshot are preserved, and key events never synthesize committed text. This
-rule does not specify NumLock-dependent keypad digits/navigation or locale-specific
-decimal-key normalization.
+The platform admits up to 4 MiB of UTF-8 per complete commit. A larger commit
+is discarded as a unit. Its position in the input queue returns
+`PLATFORM_E_INPUT_LIMIT` (`-1008`) from `window.poll()` without invoking the
+input sink. Continue polling to receive subsequent transitions.
+
+Keypad arithmetic maps to `KeyCode::Character` with the corresponding `+`, `-`,
+`*`, or `/` scalar. An ordinary key has the same identity when the host reports
+that operator as the logical character. Keypad Enter maps to `KeyCode::Enter`.
+Press, repeat, release and the current modifier snapshot are preserved. Behavior
+for NumLock-dependent digits and navigation and locale-specific decimal keys is
+unspecified.
+
+SDL2 reports its layout keycode and the modifier snapshot separately. A browser's
+`KeyboardEvent.key` can already incorporate Shift. For example, SDL2 can report
+`=` with Shift where the browser reports `+` with Shift. Portable shortcuts
+can handle this difference while SDL2 remains the native input backend.
 
 The shared application host supplies `AppState::after_update` after all editor
 event callbacks return and before rendering. Preview compilation, resource
