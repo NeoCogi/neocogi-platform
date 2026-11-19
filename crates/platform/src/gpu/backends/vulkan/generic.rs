@@ -917,7 +917,6 @@ impl Executor {
     }
     /// Converts authenticated CPU captures, publishing no partial prepared block on failure.
     fn prepare_inner(&mut self, block: &Block, pass: vk::RenderPass, signature: Signature) -> Result<PreparedBlock, String> {
-        block.admit_on(&self.core).map_err(|error| error.to_string())?;
         if self.unusable() {
             return Err("Vulkan graphics executor is unavailable after a native submission failure".into());
         }

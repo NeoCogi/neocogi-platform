@@ -36,15 +36,11 @@ impl<B: crate::gpu::native::NativeResources> Block<B> {
     }
 
     /// Rechecks group closure and exact target identity after foreign readers finish.
-    /// Image submission must use this check: matching device, kind or dimensions are insufficient.
+    /// For image submission, matching device, kind or dimensions do not establish exact identity.
     /// Returns `NC_E_DROPPED` for a closed group or `RENDER_E_OWNER` for another selected target.
     pub fn admit_target(&self, target: &Rc<crate::gpu::target::SurfaceTarget<B>>) -> Result<(), NcStatus> {
         self.domain.open()?;
-        if Rc::ptr_eq(&self.domain.target, target) {
-            Ok(())
-        } else {
-            Err(RENDER_E_OWNER)
-        }
+        crate::gpu::target::SubmissionTarget::Exact(target).check(self.target())
     }
 
     /// Framebuffer-view commands join the enclosing window frame without acquiring another target.
@@ -52,11 +48,7 @@ impl<B: crate::gpu::native::NativeResources> Block<B> {
     /// Distinct framebuffer views are allowed because they refer to this device's current frame.
     pub fn admit_framebuffer(&self) -> Result<(), NcStatus> {
         self.domain.open()?;
-        if self.domain.target.kind() == RenderSurfaceKind::Framebuffer {
-            Ok(())
-        } else {
-            Err(RENDER_E_OWNER)
-        }
+        crate::gpu::target::SubmissionTarget::Framebuffer.check(self.target())
     }
 
     /// Retains original command capacity in native/in-flight representations without device authority.

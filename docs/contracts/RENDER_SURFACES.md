@@ -37,6 +37,8 @@ Matching size or device identity does not authorize another image surface to use
 them. The window rejects image-target blocks; an image renderer rejects
 framebuffer-target blocks. Both check closed groups and selected targets after
 foreign stream/resource calls and before native execution or output allocation.
+A group closed during preparation takes precedence over every target mismatch
+in the frame. Retrieval still authenticates each accessor as it returns.
 The window also rechecks its actual drawable extent after the last foreign
 callback and before frame acquisition. If a callback resizes the backing (including
 a browser CSS/DPR synchronization through `window.size()`), an old-size submission

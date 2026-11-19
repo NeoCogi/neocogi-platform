@@ -80,15 +80,6 @@ impl Resources for Device {
     }
 }
 
-/// Window and offscreen sessions authenticate resources in the same concrete device registry.
-impl Resources for WindowObject {
-    type Backend = gpu::Backend;
-    /// Uses construction-proven exclusive identity, never a caller-provided device number.
-    fn view(&self, view: neocogi_com_sdk::WeakComBox<IRenderViewBlockAbi>) -> Result<Rc<neocogi_platform::gpu::record::Block<gpu::Backend>>, NcStatus> {
-        self.device.logical.block_snapshot(view.as_com_ref())
-    }
-}
-
 impl Device {
     /// Resolve ordinary immutable image identity only at trusted UI import, never during native execution.
     pub(super) fn texture(&self, texture: ComPtr<ITextureAbi>) -> Result<Rc<TextureRecord>, NcStatus> {

@@ -222,12 +222,7 @@ impl IRenderer for ImageSurface {
                 let _operation = self.record.device.logical.operation()?;
                 state
                     .prepared
-                    .read(info, stream, self.record.device.as_ref())
-                    .map_err(|status| RenderError::from(status).context("frame preparation"))?;
-                // Foreign callbacks finish before the final closure/target checks and allocation.
-                for block in state.prepared.blocks() {
-                    block.admit_target(&self.record.target)?;
-                }
+                    .read(info, stream, self.record.device.as_ref(), SubmissionTarget::Exact(&self.record.target))?;
                 state.gpu.render_surface(info, &state.prepared)
             })?;
             session.completed = Some(publish_texture(retain_texture(&self.record.device, image)));

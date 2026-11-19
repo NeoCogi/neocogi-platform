@@ -1,7 +1,7 @@
 //! Complete generic-frame validation before native target acquisition.
 use neocogi_platform::render::abi::*;
 use neocogi_com_sdk::{ComRef, NcStatus, WeakComBox, NC_E_INVALID_ARG, NC_E_OUT_OF_MEMORY};
-use neocogi_platform::gpu::{record::Block, native::NativeResources};
+use neocogi_platform::gpu::{record::Block, native::NativeResources, target::SubmissionTarget};
 use std::rc::Rc;
 
 /// Trusted device assembly authenticates canonical block identities without calling drawing code.
@@ -33,16 +33,41 @@ impl<B: NativeResources> PreparedFrame<B> {
         self.blocks.clear();
     }
 
-    /// Validate the complete envelope and snapshot all blocks before native execution.
+    /// Validates the whole envelope and admits every snapshot for one native target.
     /// On any failure, release every partially prepared contribution. Callers own this storage
-    /// across foreign callbacks; this method rechecks all domain gates after the last callback.
-    pub fn read<R: Resources<Backend = B>>(&mut self, info: RenderInfo, stream: ComRef<'_, IRenderStreamAbi>, resources: &R) -> Result<(), NcStatus> {
+    /// across foreign callbacks. A closure failure takes precedence over a target mismatch.
+    pub(super) fn read<R: Resources<Backend = B>>(
+        &mut self,
+        info: RenderInfo,
+        stream: ComRef<'_, IRenderStreamAbi>,
+        resources: &R,
+        target: SubmissionTarget<'_, B>,
+    ) -> Result<(), RenderError> {
         self.clear();
-        let result = self.read_once(info, stream, resources);
+        let result = self
+            .read_once(info, stream, resources)
+            .map_err(Self::preparation_error)
+            .and_then(|()| self.admit(target));
         if result.is_err() {
             self.clear();
         }
         result
+    }
+
+    /// Foreign envelope, identity and closure failures belong to the preparation phase.
+    fn preparation_error(status: NcStatus) -> RenderError {
+        RenderError::from(status).context("frame preparation")
+    }
+
+    /// Rechecks closure after the last callback and remembers the first target
+    /// failure until every contributing domain has passed that closure check.
+    fn admit(&self, target: SubmissionTarget<'_, B>) -> Result<(), RenderError> {
+        let mut target_status = Ok(());
+        for block in &self.blocks {
+            block.admit().map_err(Self::preparation_error)?;
+            target_status = target_status.and_then(|()| target.check(block.target()));
+        }
+        target_status.map_err(RenderError::from)
     }
 
     /// Count limits precede reservations and callbacks; roots cannot extend beyond the drawable.
@@ -63,11 +88,6 @@ impl<B: NativeResources> PreparedFrame<B> {
                 return Err(NC_E_INVALID_ARG);
             }
             self.blocks.push(block);
-        }
-        // Every foreign accessor has returned. A later callback may have closed an earlier
-        // controller, so admission is a complete-frame decision, never a per-accessor cache.
-        for block in &self.blocks {
-            block.admit()?;
         }
         Ok(())
     }

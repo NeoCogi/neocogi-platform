@@ -3,6 +3,7 @@
 use neocogi_platform::render::platform::*;
 use neocogi_platform_contracts::audio::{AudioConfig, AudioDirection, IAudioCapabilitiesAbi, IAudioOpenRequestAbi};
 use neocogi_platform::render::abi::*;
+use neocogi_platform::gpu::target::SubmissionTarget;
 use neocogi_platform::platform::prepared::{PreparedFrame, Resources};
 use neocogi_com_sdk::{ComInterface, ComPtr, ComRef, IUnknown, NcCopyFromBufferOffset, NcStatus, RuntimeHandle, NC_E_INVALID_ARG, com_object};
 use std::{
@@ -329,15 +330,8 @@ impl IRenderer for WindowObject {
             }
             self.device.execute(|state| {
                 let _operation = self.device.logical.operation()?;
-                state
-                    .prepared
-                    .read(info, stream, self)
-                    .map_err(|status| RenderError::from(status).context("frame preparation"))?;
-                // Foreign callbacks may close groups, replace targets or synchronize a browser
-                // canvas resize. Recheck all admission inputs before any native frame acquisition.
-                for block in state.prepared.blocks() {
-                    block.admit_framebuffer()?;
-                }
+                state.prepared.read(info, stream, self.device.as_ref(), SubmissionTarget::Framebuffer)?;
+                // A final callback may also have resized the physical drawable.
                 #[cfg(not(feature = "vulkan"))]
                 if info.size != self.device.drawable_size()? {
                     return Err(RenderError::new(NC_E_INVALID_ARG, "window drawable size changed during frame preparation"));

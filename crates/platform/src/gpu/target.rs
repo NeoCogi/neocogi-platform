@@ -19,6 +19,25 @@ pub struct SurfaceTarget<B: NativeResources> {
     kind: RenderSurfaceKind,
 }
 
+/// Target requirement for already authenticated blocks on a single device.
+pub(crate) enum SubmissionTarget<'a, B: NativeResources> {
+    /// Any view of the same device's window framebuffer joins its enclosing frame.
+    Framebuffer,
+    /// An independent image render requires the exact construction identity.
+    Exact(&'a Rc<SurfaceTarget<B>>),
+}
+
+impl<B: NativeResources> SubmissionTarget<'_, B> {
+    /// Checks immutable target compatibility. Callers separately handle domain closure.
+    pub(crate) fn check(&self, actual: &Rc<SurfaceTarget<B>>) -> Result<(), NcStatus> {
+        let matches = match self {
+            Self::Framebuffer => actual.kind() == RenderSurfaceKind::Framebuffer,
+            Self::Exact(expected) => Rc::ptr_eq(actual, expected),
+        };
+        if matches { Ok(()) } else { Err(RENDER_E_OWNER) }
+    }
+}
+
 impl<B: NativeResources> SurfaceTarget<B> {
     /// Creates trusted target metadata; native attachment allocation belongs to frame execution.
     /// Rejects unknown wire-enum values before publishing an identity.
