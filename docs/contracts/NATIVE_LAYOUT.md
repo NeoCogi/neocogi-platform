@@ -15,8 +15,8 @@ At startup the executable initializes its linked COM host and loads that one
 file. The host finds the descriptor through `nc_get_plugin_descriptor_v3` and
 checks core generation 21. The executable identifies its backend from the
 descriptor. Optional `--backend NAME` verifies the compiled backend; a mismatch
-rejects before native initialization or asset work. Missing files produce
-preparation instructions. Loading never probes another file or silently chooses
+rejects before native initialization or asset work. Missing or unreadable
+providers produce preparation instructions. Loading never probes another file or silently chooses
 another implementation on activation failure. The compiler
 contains only that backend's required output support; formats never fall back to
 another representation. Missing libraries
@@ -102,12 +102,11 @@ package qualification exercises a real consumer build script on stable Rust.
 
 ## Missing development artifacts
 
-Dynamic examples preflight the executable-relative platform library path before loading
-its provider. Missing/inaccessible files return an owned `RenderError` with
-`NC_E_LOAD_FAILED`, the actual missing selected path and a backend/profile preparation command.
-A missing library lists a normal Cargo library preparation command. Unknown
-backend names reject before loading, and a mismatched requested backend reports
-the actual descriptor and required rebuild.
+Dynamic examples require the executable-relative platform library to be a regular
+file that can be opened for reading. Failed admission returns an owned `RenderError`
+with `NC_E_LOAD_FAILED`, the selected path and a backend/profile preparation command.
+Unknown backend names reject before loading, and a mismatched requested backend
+reports the actual descriptor and required rebuild.
 The build-script hint records only a known Cargo profile name, without embedding
 private build paths. `debug` maps to Cargo's `dev` profile. For min-size Vulkan, run
 `cargo build --profile min-size -p neocogi-platform-dylib --no-default-features --features vulkan` before the
@@ -134,7 +133,8 @@ A distinct absolute `NEOCOGI_NATIVE_OUTPUT_DIR` stages a detached export. The
 export retains its library if the Cargo input disappears. Cargo still writes
 the executable into the profile directory. Copy the executable to the export
 root to run with its adjacent staged `lib` directory.
-Preflight does not promise an atomic filesystem snapshot or replace the SDK's
-fail-fatal policy for an existing corrupt/incompatible library. glTF startup does
-this deployment work before model import or HDR preparation; help still needs
-neither libraries nor a graphics device.
+The SDK separately opens and validates the admitted path, so admission and
+loading are distinct filesystem operations. A readable corrupt or incompatible
+library still terminates startup through the SDK's fatal validation policy.
+glTF checks the deployment before model import or HDR preparation. Help can run
+without a staged library or a graphics device.

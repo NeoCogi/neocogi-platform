@@ -6,15 +6,18 @@ mod artifacts;
 /// Recognized platform identities; runtime requests verify the library's compiled backend.
 pub use artifacts::Backend;
 use sdk::render::abi::RenderError;
-use std::path::{Path, PathBuf};
+use std::{
+    fs::File,
+    path::{Path, PathBuf},
+};
 
 /// Exact filename of the platform library on this executable's target system.
 pub fn library_filename() -> &'static str {
     artifacts::library_filename(artifacts::System::from_os(std::env::consts::OS))
 }
 
-/// Resolve the one deployed file and optional expected identity before loading native code.
-/// Invalid backend requests reject before filesystem or plugin work.
+/// Admit the selected library as a readable regular file and resolve its expected identity.
+/// Invalid requests reject before filesystem work. The SDK opens the path again to load it.
 fn preflight(requested: Option<&str>, directory: &Path) -> Result<(PathBuf, Option<Backend>), RenderError> {
     let expected = requested
         .map(|name| {
@@ -27,7 +30,7 @@ fn preflight(requested: Option<&str>, directory: &Path) -> Result<(PathBuf, Opti
         })
         .transpose()?;
     let path = directory.join(library_filename());
-    if !path.is_file() {
+    if !path.is_file() || File::open(&path).is_err() {
         return Err(RenderError::new(
             neocogi_com_sdk::NC_E_LOAD_FAILED,
             format!(
@@ -42,7 +45,7 @@ fn preflight(requested: Option<&str>, directory: &Path) -> Result<(PathBuf, Opti
 
 /// Load the trusted platform library and acquire its typed root.
 /// Its descriptor identifies the build-selected backend; an explicit request must agree.
-/// Missing or incompatible libraries never fall back to another file or linked code.
+/// File admission returns an owned startup error. The SDK handles native validation.
 pub fn acquire(
     runtime: neocogi_com_sdk::RuntimeHandle,
     requested: Option<&str>,
@@ -106,6 +109,11 @@ mod tests {
         }
         assert_eq!(preflight(None, root.path()).unwrap_err().status, neocogi_com_sdk::NC_E_LOAD_FAILED);
         let path = root.path().join(library_filename());
+        std::fs::create_dir(&path).unwrap();
+        let error = preflight(None, root.path()).unwrap_err();
+        assert_eq!(error.status, neocogi_com_sdk::NC_E_LOAD_FAILED);
+        assert!(error.message.contains(&path.display().to_string()));
+        std::fs::remove_dir(&path).unwrap();
         std::fs::write(&path, []).unwrap();
         assert_eq!(preflight(None, root.path()).unwrap(), (path.clone(), None));
         for backend in Backend::ALL {

@@ -62,6 +62,9 @@ impl Deployment {
         }
         let root = directory.path().join("relocated");
         fs::rename(before, &root).unwrap();
+        // Unix resolves the running executable through any aliases in the temporary root.
+        #[cfg(unix)]
+        let root = root.canonicalize().unwrap();
         Self { _directory: directory, root, backend }
     }
     /// Launches directly with a neutral CWD and no Cargo-supplied loader search path.
@@ -78,6 +81,26 @@ impl Deployment {
             command.env("SDL_AUDIODRIVER", "dummy");
         }
         command.output().unwrap()
+    }
+
+    /// Confirms admission failed with the selected path and preparation command before artwork work.
+    fn expect_library_admission_error(&self, library: &Path) {
+        let binary = Path::new(env!("CARGO_BIN_EXE_deployment_probe"));
+        let profile = binary.parent().unwrap().file_name().unwrap().to_str().unwrap();
+        let profile = if profile == "debug" { "dev" } else { profile };
+        for (binary, code, args) in [
+            ("deployment_probe", 24, &["--backend", self.backend.name()][..]),
+            ("gltf_damaged_helmet", 1, &["--frames", "1", "--backend", self.backend.name()][..]),
+            ("gltf_brainstem", 1, &["--frames", "1", "--backend", self.backend.name()][..]),
+        ] {
+            let failure = self.run(binary, args, false);
+            let error = String::from_utf8_lossy(&failure.stderr);
+            assert_eq!(failure.status.code(), Some(code), "{binary}: {error}");
+            assert!(error.contains("NC_E_LOAD_FAILED"), "{binary}: {error}");
+            assert!(error.contains(&library.display().to_string()), "{binary}: {error}");
+            assert!(error.contains(&format!("cargo build --profile {profile}")), "{binary}: {error}");
+            assert!(!error.contains("Preparing HDR") && !String::from_utf8_lossy(&failure.stdout).contains("Preparing HDR"));
+        }
     }
 }
 
@@ -135,31 +158,53 @@ fn relocated_platform_owns_compilation_and_missing_library_reports_setup() {
     let valid = app.run("deployment_probe", &["valid"], false);
     assert!(valid.status.success(), "{}", String::from_utf8_lossy(&valid.stderr));
     assert!(String::from_utf8_lossy(&valid.stdout).contains("Dynamic platform root acquired"));
-    for filename in [neocogi_example_plugins::library_filename()] {
-        let source = app.root.join("lib").join(filename);
-        let held = app.root.join(filename);
-        fs::rename(&source, &held).unwrap();
-        let result = app.run("deployment_probe", &["--backend", app.backend.name()], false);
-        assert_eq!(result.status.code(), Some(24), "missing {filename} must return an owned setup error");
-        let error = String::from_utf8_lossy(&result.stderr);
-        assert!(error.contains(filename));
-        assert!(error.contains("cargo build --profile"));
-        let binary = Path::new(env!("CARGO_BIN_EXE_deployment_probe"));
-        let profile = binary.parent().unwrap().file_name().unwrap().to_str().unwrap();
-        let profile = if profile == "debug" { "dev" } else { profile };
-        assert!(error.contains(&format!("--profile {profile}")), "{error}");
-        for binary in ["gltf_damaged_helmet", "gltf_brainstem"] {
-            let missing = app.run(binary, &["--frames", "1", "--backend", app.backend.name()], false);
-            assert_eq!(missing.status.code(), Some(1), "missing deployment must be a normal application error");
-            let error = String::from_utf8_lossy(&missing.stderr);
-            assert!(error.contains(filename) && error.contains("cargo build --profile"), "{binary}: {error}");
-            assert!(!error.contains("Preparing HDR") && !String::from_utf8_lossy(&missing.stdout).contains("Preparing HDR"));
-        }
-        fs::rename(held, source).unwrap();
-    }
+    let filename = neocogi_example_plugins::library_filename();
+    let source = app.root.join("lib").join(filename);
+    let held = app.root.join(filename);
+    fs::rename(&source, &held).unwrap();
+    app.expect_library_admission_error(&source);
+    fs::rename(held, source).unwrap();
     for binary in ["gltf_damaged_helmet", "gltf_brainstem"] {
         assert!(app.run(binary, &["--help"], false).status.success(), "help needs no GPU or artwork");
     }
+}
+
+/// Mode-zero regular files yield the same owned startup error as absent files under an unprivileged account.
+#[cfg(unix)]
+#[test]
+fn relocated_unreadable_library_returns_owned_error() {
+    use std::{io::ErrorKind, os::unix::fs::PermissionsExt};
+
+    let app = Deployment::new(false);
+    let source = app.root.join("lib").join(neocogi_example_plugins::library_filename());
+    let original = fs::metadata(&source).unwrap().permissions();
+    fs::set_permissions(&source, fs::Permissions::from_mode(0)).unwrap();
+    assert!(source.is_file());
+    match fs::File::open(&source) {
+        Err(error) => assert_eq!(error.kind(), ErrorKind::PermissionDenied),
+        Ok(_) => {
+            eprintln!("Unreadable-provider case requires an account subject to mode-bit read permission");
+            return;
+        }
+    }
+    app.expect_library_admission_error(&source);
+    fs::set_permissions(&source, original).unwrap();
+    let valid = app.run("deployment_probe", &["--backend", app.backend.name()], false);
+    assert!(valid.status.success(), "{}", String::from_utf8_lossy(&valid.stderr));
+    assert!(String::from_utf8_lossy(&valid.stdout).contains("Dynamic platform root acquired"));
+}
+
+/// The SDK still terminates the subprocess when a readable file is an invalid native library.
+#[test]
+fn relocated_readable_corrupt_library_fails_in_sdk_validation() {
+    let app = Deployment::new(false);
+    let source = app.root.join("lib").join(neocogi_example_plugins::library_filename());
+    fs::write(&source, b"invalid library").unwrap();
+    let failure = app.run("deployment_probe", &["--backend", app.backend.name()], false);
+    let error = String::from_utf8_lossy(&failure.stderr);
+    assert!(!failure.status.success() && failure.status.code() != Some(24), "{error}");
+    assert!(error.contains("fatal neocogi-com-sdk plugin load failure:"), "{error}");
+    assert!(error.contains(&source.display().to_string()), "{error}");
 }
 
 /// The same public render loop draws models through the one loaded platform library.
