@@ -62,9 +62,12 @@ cargo tools check-packages --offline --stable-toolchain stable --allow-dirty
 Omit `--allow-dirty` for release qualification. The checker constructs all three real
 archives together, rejects unexpected release packages and duplicate schema
 ownership, extracts them outside this checkout and uses only extracted contents
-for internal registry patches. Qualification resolves the OS temporary parent
-and rejects locations inside the checkout, including aliases that resolve there,
-before it invokes Cargo. If the temporary parent is inside the checkout, set
+for internal registry patches. The checker selects the source workspace from the
+invocation directory and uses Cargo configuration from that directory. A direct
+tools executable can select the workspace and Cargo configuration directory with
+`--workspace PATH`. Qualification resolves the OS temporary parent and rejects
+locations inside the selected checkout, including aliases that resolve there,
+before packaging or building consumers. If the temporary parent is inside it, set
 `TMPDIR` on Unix or `TMP`/`TEMP` on Windows to a directory outside it.
 The extracted Cargo commands use that same canonical parent for temporary files.
 The checker retains inherited Cargo registry, cache and toolchain configuration.

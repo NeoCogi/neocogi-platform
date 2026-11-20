@@ -1,6 +1,7 @@
 //! Direct command execution and owned process-tree deadlines, without shell interpolation.
 use anyhow::{Context, Result, bail};
 use std::{
+    path::Path,
     process::{Command, Output, Stdio},
     thread,
     time::{Duration, Instant},
@@ -10,13 +11,13 @@ use std::{
 mod tree;
 use tree::ProcessTree;
 
-/// Create a Rustup-dispatched Cargo command in this repository, optionally selecting a toolchain.
-pub(crate) fn cargo(toolchain: Option<&str>) -> Command {
+/// Create a Rustup-dispatched Cargo command in the selected configuration context.
+pub(crate) fn cargo(directory: &Path, toolchain: Option<&str>) -> Command {
     let mut command = Command::new("cargo");
     if let Some(toolchain) = toolchain {
         command.arg(format!("+{toolchain}"));
     }
-    command.current_dir(crate::root());
+    command.current_dir(directory);
     command
 }
 

@@ -5,6 +5,15 @@ the repository root, `cargo tools` expands to
 `cargo run --locked --package neocogi-platform-tools --`. Rust unit and CLI tests run with
 `cargo test -p neocogi-platform-tools`.
 
+Checkout-dependent commands select the NeoCogi Platform workspace through Cargo
+at invocation. They read sources from the selected workspace and run Cargo with
+the caller's configuration, including settings in a workspace subdirectory.
+A built tools executable can also run from elsewhere with `--workspace PATH`.
+That path selects the source workspace and the Cargo configuration directory.
+Relative user-supplied paths still resolve from the caller's directory. Help,
+`local-sources`, `lldb-source-map` and an explicit `fetch-gltf-examples --output`
+work outside a workspace without Cargo discovery.
+
 | Command | Behavior |
 | --- | --- |
 | `cargo tools profile-shaders --backend vulkan --output DIR [--reference DIR] [--perf] [--intel-stats]` | Validate every production shader and aggregate workload, build the normal min-size library and applications, then measure repeated fixed-frame native runs. Retains artifacts, raw logs and a JSON report outside Cargo targets. |

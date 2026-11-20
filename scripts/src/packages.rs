@@ -1,4 +1,5 @@
 //! Release-set policy, archive inspection and external consumer qualification, without publication.
+use crate::workspace::Workspace;
 use anyhow::{Context, Result, ensure};
 use flate2::read::GzDecoder;
 use serde::Deserialize;
@@ -7,6 +8,7 @@ use std::{
     fs,
     io::Read,
     path::{Component, Path, PathBuf},
+    process::Command,
 };
 
 /// Canonical source owner must be published before its implementation consumers.
@@ -262,18 +264,14 @@ fn create_cargo_target(artifacts: &Path, name: &str) -> Result<PathBuf> {
 }
 
 /// Select explicit run-owned Cargo output paths while inheriting other Cargo configuration.
-fn qualification_cargo(toolchain: Option<&str>, workspace: &Path, target: &Path) -> std::process::Command {
-    let mut command = crate::process::cargo(toolchain);
-    command
-        .current_dir(workspace)
-        .env("CARGO_TARGET_DIR", target)
-        .env("CARGO_BUILD_BUILD_DIR", target.join("build"));
+fn qualification_cargo(mut command: Command, target: &Path) -> Command {
+    command.env("CARGO_TARGET_DIR", target).env("CARGO_BUILD_BUILD_DIR", target.join("build"));
     command
 }
 
 /// Build and test the extracted workspace with a canonical temporary parent and no audio device.
-fn extracted_cargo(toolchain: &str, workspace: &Path, target: &Path) -> std::process::Command {
-    let mut command = qualification_cargo(Some(toolchain), workspace, target);
+fn extracted_cargo(toolchain: &str, workspace: &Path, target: &Path) -> Command {
+    let mut command = qualification_cargo(crate::process::cargo(workspace, Some(toolchain)), target);
     command.env("SDL_AUDIODRIVER", "dummy");
     // Resource staging also checks ancestors of temporary inputs created by the tests.
     let temporary_parent = workspace.parent().expect("the extracted workspace has a temporary parent");
@@ -380,20 +378,23 @@ fn external_workspace(checkout: &Path, parent: &Path) -> Result<(tempfile::TempD
 }
 
 /// Construct, inspect and exercise actual Cargo archives from an isolated temporary workspace.
-pub(crate) fn qualify(allow_dirty: bool, offline: bool, stable: Option<&str>) -> Result<()> {
-    use crate::process::{capture, cargo, run};
-    let (_outside, workspace) = external_workspace(crate::root(), &std::env::temp_dir())?;
+pub(crate) fn qualify(source: &Workspace, allow_dirty: bool, offline: bool, stable: Option<&str>) -> Result<()> {
+    use crate::process::{capture, run};
+    let root = source.root();
+    let (_outside, workspace) = external_workspace(root, &std::env::temp_dir())?;
     let flags = if offline { vec!["--offline"] } else { vec![] };
-    let metadata: Metadata = serde_json::from_slice(&capture(cargo(None).args(["metadata", "--locked", "--format-version=1"]).args(&flags))?)?;
+    let metadata: Metadata = serde_json::from_slice(&capture(
+        source.cargo_workspace("metadata").args(["--locked", "--format-version=1"]).args(&flags),
+    )?)?;
     let selected = published_packages(&metadata)?;
     let artifacts = private_cargo_artifacts(&metadata.target_directory)?;
     let package_target = create_cargo_target(artifacts.path(), "package-target")?;
     let target = create_cargo_target(artifacts.path(), "consumer-target")?;
-    let toolchain: toml::Value = toml::from_str(&fs::read_to_string(crate::root().join("rust-toolchain.toml"))?)?;
+    let toolchain: toml::Value = toml::from_str(&fs::read_to_string(root.join("rust-toolchain.toml"))?)?;
     let toolchain = toolchain["toolchain"]["channel"].as_str().context("missing workspace toolchain channel")?;
     // Package together so Cargo resolves the unpublished release chain in this run's package index.
-    let mut package = qualification_cargo(None, crate::root(), &package_target);
-    package.args(["package", "--locked", "--no-verify"]).args(&flags);
+    let mut package = qualification_cargo(source.cargo_workspace("package"), &package_target);
+    package.args(["--locked", "--no-verify"]).args(&flags);
     if allow_dirty {
         package.arg("--allow-dirty");
     }
@@ -439,9 +440,9 @@ pub(crate) fn qualify(allow_dirty: bool, offline: bool, stable: Option<&str>) ->
         toml::Value::Table(toml::map::Map::from_iter([("crates-io".into(), toml::Value::Table(patches))])),
     );
     fs::write(workspace.join("Cargo.toml"), toml::to_string(&manifest)?)?;
-    copy_tree(&crate::root().join("scripts/package-consumer"), &workspace.join("consumer"))?;
-    copy_tree(&crate::root().join("scripts/package-local-consumer"), &workspace.join("local-consumer"))?;
-    fs::copy(crate::root().join("Cargo.lock"), workspace.join("Cargo.lock"))?;
+    copy_tree(&root.join("scripts/package-consumer"), &workspace.join("consumer"))?;
+    copy_tree(&root.join("scripts/package-local-consumer"), &workspace.join("local-consumer"))?;
+    fs::copy(root.join("Cargo.lock"), workspace.join("Cargo.lock"))?;
     let resolve = |toolchain: &str, lock: &[&str]| -> Result<String> {
         let metadata: Metadata = serde_json::from_slice(&capture(
             extracted_cargo(toolchain, &workspace, &target)

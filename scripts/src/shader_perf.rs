@@ -1,5 +1,6 @@
 //! Reproducible native shader qualification, outside product startup and build scripts.
 use crate::artwork::{DOWNLOADS, LICENSES, STAGED_DIR};
+use crate::workspace::Workspace;
 use anyhow::{Context, Result, ensure};
 use serde::Serialize;
 use std::{
@@ -146,9 +147,9 @@ fn staged_library_bytes(candidate: &Path, library_name: &OsStr) -> Result<u64> {
     Ok(metadata.len())
 }
 /// Build/validate before timing, using the same normal library assembly as end users.
-fn prepare(options: &Options, output: &Path) -> Result<(PathBuf, u64)> {
-    use crate::process::{cargo, capture, run};
-    let authored = crate::assets::gltf_download_directory();
+fn prepare(workspace: &Workspace, options: &Options, output: &Path) -> Result<(PathBuf, u64)> {
+    use crate::process::{capture, run};
+    let authored = crate::assets::gltf_download_directory(workspace.root());
     crate::assets::require_gltf_downloads(&authored)?;
     let candidate = output.join("candidate");
     fs::create_dir(&candidate).with_context(|| format!("create fresh candidate at {}", candidate.display()))?;
@@ -158,8 +159,9 @@ fn prepare(options: &Options, output: &Path) -> Result<(PathBuf, u64)> {
     let application_features = if options.shader_python { "dynamic,shader-python" } else { "dynamic" };
     // The static corpus reads authored sources and never uses deployed artwork.
     let corpus_stage = tempfile::tempdir_in(output).context("create isolated corpus staging directory")?;
-    run(cargo(None)
-        .args(["test", "--locked", "-p", "neocogi-platform-examples", "--no-default-features", "--features"])
+    run(workspace
+        .cargo_workspace("test")
+        .args(["--locked", "-p", "neocogi-platform-examples", "--no-default-features", "--features"])
         .arg(format!("static,{},test-support", backend_features))
         .args(["--test", "shader_corpus"])
         .env_remove("NEOCOGI_CARGO_PROFILE_DIR")
@@ -168,9 +170,9 @@ fn prepare(options: &Options, output: &Path) -> Result<(PathBuf, u64)> {
         .env("NEOCOGI_SHADER_VALIDATORS", "1"))?;
     corpus_stage.close().context("remove unused corpus staging files")?;
     let library = crate::packages::platform_artifact(&capture(
-        cargo(None)
+        workspace
+            .cargo_workspace("build")
             .args([
-                "build",
                 "--locked",
                 "--profile",
                 "min-size",
@@ -185,9 +187,9 @@ fn prepare(options: &Options, output: &Path) -> Result<(PathBuf, u64)> {
     )?)?
     .path;
     let built = executables(&capture(
-        cargo(None)
+        workspace
+            .cargo_workspace("build")
             .args([
-                "build",
                 "--locked",
                 "--profile",
                 "min-size",
@@ -307,7 +309,7 @@ fn median(mut values: Vec<f64>) -> f64 {
     }
 }
 /// Perform complete qualification and retain a report before returning any cost-regression failure.
-pub(crate) fn run(options: Options) -> Result<()> {
+pub(crate) fn run(workspace: &Workspace, options: Options) -> Result<()> {
     ensure!(
         options.frames >= 30 && options.runs > 0 && options.runs <= 20,
         "use at least 30 frames and 1..20 runs"
@@ -326,17 +328,15 @@ pub(crate) fn run(options: Options) -> Result<()> {
         "report output must be new or empty: {}",
         output.display()
     );
-    let metadata: serde_json::Value = serde_json::from_slice(&crate::process::capture(crate::process::cargo(None).args([
-        "metadata",
-        "--no-deps",
-        "--format-version=1",
-    ]))?)?;
+    let metadata: serde_json::Value = serde_json::from_slice(&crate::process::capture(
+        workspace.cargo_workspace("metadata").args(["--no-deps", "--format-version=1"]),
+    )?)?;
     let target = Path::new(metadata["target_directory"].as_str().context("Cargo target directory")?);
     fs::create_dir_all(&output)?;
     let output = output.canonicalize()?;
     ensure!(!output.starts_with(target.canonicalize()?), "keep qualification reports outside Cargo targets");
     let reference = options.reference.as_ref().map(|path| path.canonicalize()).transpose()?;
-    let (candidate, bytes) = prepare(&options, &output)?;
+    let (candidate, bytes) = prepare(workspace, &options, &output)?;
     let rustc = String::from_utf8(crate::process::capture(Command::new("rustc").arg("--version"))?)?
         .trim()
         .to_owned();

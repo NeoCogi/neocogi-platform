@@ -12,15 +12,20 @@ mod packages;
 mod process;
 mod shader_perf;
 mod source_map;
+mod workspace;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use clap::{Parser, Subcommand};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
+use workspace::Workspace;
 
 /// Development commands available through the repository's `cargo tools` alias.
 #[derive(Parser)]
 #[command(about, version)]
 struct Arguments {
+    /// Workspace root to use for checkout-dependent operations from outside the workspace.
+    #[arg(long, global = true)]
+    workspace: Option<PathBuf>,
     /// Operation to perform; commands never upload or publish packages.
     #[command(subcommand)]
     command: Operation,
@@ -104,23 +109,11 @@ enum Operation {
     },
 }
 
-/// Repository location comes from this private package, independent of the caller's CWD.
-fn root() -> &'static Path {
-    Path::new(env!("CARGO_MANIFEST_DIR")).parent().expect("scripts is a workspace member")
-}
-
-/// Read the single authored workspace pin used by both CLI installation and execution.
-fn bindgen_version() -> Result<String> {
-    let manifest: toml::Value = toml::from_str(&std::fs::read_to_string(root().join("Cargo.toml"))?)?;
-    let version = manifest["workspace"]["dependencies"]["wasm-bindgen"]
-        .as_str()
-        .context("workspace wasm-bindgen must have an exact string pin")?;
-    Ok(version.strip_prefix('=').context("workspace wasm-bindgen must be pinned exactly")?.to_owned())
-}
-
 /// Dispatch explicitly selected operations and return owned, contextual errors.
 fn main() -> Result<()> {
-    match Arguments::parse().command {
+    let arguments = Arguments::parse();
+    let workspace = || Workspace::discover(arguments.workspace.as_deref());
+    match arguments.command {
         Operation::ProfileShaders {
             backend,
             shader_python,
@@ -131,21 +124,39 @@ fn main() -> Result<()> {
             max_slowdown,
             perf,
             intel_stats,
-        } => shader_perf::run(shader_perf::Options {
-            backend,
-            shader_python,
-            output,
-            reference,
-            frames,
-            runs,
-            max_slowdown,
-            perf,
-            intel_stats,
-        }),
-        Operation::FetchGltfExamples { output } => assets::fetch(&output.unwrap_or_else(assets::gltf_download_directory)),
-        Operation::CheckPackages { allow_dirty, offline, stable_toolchain } => packages::qualify(allow_dirty, offline, stable_toolchain.as_deref()),
-        Operation::TestBrowser { browser, wasm_bindgen } => browser::run(browser, wasm_bindgen),
-        Operation::InstallWasmBindgen => process::run(process::cargo(None).args(["install", "wasm-bindgen-cli", "--version", &bindgen_version()?, "--locked"])),
+        } => shader_perf::run(
+            &workspace()?,
+            shader_perf::Options {
+                backend,
+                shader_python,
+                output,
+                reference,
+                frames,
+                runs,
+                max_slowdown,
+                perf,
+                intel_stats,
+            },
+        ),
+        Operation::FetchGltfExamples { output } => {
+            let directory = match output {
+                Some(directory) => directory,
+                None => assets::gltf_download_directory(workspace()?.root()),
+            };
+            assets::fetch(&directory)
+        }
+        Operation::CheckPackages { allow_dirty, offline, stable_toolchain } => {
+            packages::qualify(&workspace()?, allow_dirty, offline, stable_toolchain.as_deref())
+        }
+        Operation::TestBrowser { browser, wasm_bindgen } => browser::run(&workspace()?, browser, wasm_bindgen),
+        Operation::InstallWasmBindgen => {
+            let workspace = workspace()?;
+            process::run(
+                workspace
+                    .cargo("install")
+                    .args(["wasm-bindgen-cli", "--version", &workspace.bindgen_version()?, "--locked"]),
+            )
+        }
         Operation::LldbSourceMap { executable, output } => {
             let commands = source_map::commands(&executable)?;
             if let Some(output) = output {

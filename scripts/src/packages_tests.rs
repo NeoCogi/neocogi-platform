@@ -91,7 +91,7 @@ fn qualification_directories_are_explicit_private_overrides() {
             assert!(roots.insert(build.clone()));
             assert!(target.is_dir());
             assert!(build.is_dir());
-            let command = qualification_cargo(toolchain, cwd, &target);
+            let command = qualification_cargo(crate::process::cargo(cwd, toolchain), &target);
             assert_eq!(command.get_current_dir(), Some(cwd));
             let env: BTreeMap<_, _> = command.get_envs().collect();
             assert_eq!(env[std::ffi::OsStr::new("CARGO_TARGET_DIR")], Some(target.as_os_str()));

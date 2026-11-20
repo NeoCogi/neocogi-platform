@@ -1,4 +1,5 @@
 //! Build the real Wasm artifact, serve its web bindings and require an exact completed browser result.
+use crate::workspace::Workspace;
 use anyhow::{Context, Result, ensure};
 use serde::Deserialize;
 use std::{
@@ -51,9 +52,8 @@ fn require_pass(document: &str) -> Result<()> {
 }
 
 /// A failed Cargo build never yields success even if earlier JSON contained a Wasm filename.
-fn build_artifact() -> Result<PathBuf> {
-    let bytes = crate::process::capture(crate::process::cargo(None).args([
-        "build",
+fn build_artifact(workspace: &Workspace) -> Result<PathBuf> {
+    let bytes = crate::process::capture(workspace.cargo_workspace("build").args([
         "--locked",
         "-p",
         "neocogi-browser-tests",
@@ -79,10 +79,10 @@ fn artifact(bytes: &[u8]) -> Result<PathBuf> {
     anyhow::bail!("Cargo did not report the browser regression Wasm artifact")
 }
 
-/// Find explicit tools unchanged, otherwise search PATH including Windows executable extensions.
+/// Resolve explicit tools from the caller, otherwise search PATH including Windows executable extensions.
 fn tool(explicit: Option<PathBuf>, names: &[&str], option: &str) -> Result<PathBuf> {
     if let Some(path) = explicit {
-        return Ok(path);
+        return Ok(std::path::absolute(path)?);
     }
     for name in names {
         for directory in std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()) {
@@ -207,17 +207,17 @@ fn serve(request: tiny_http::Request, root: &Path) {
 }
 
 /// Require matching binding tools, then execute the real DOM/WebGL fixture with disposable browser state.
-pub(crate) fn run(browser: Option<PathBuf>, bindgen: Option<PathBuf>) -> Result<()> {
+pub(crate) fn run(workspace: &Workspace, browser: Option<PathBuf>, bindgen: Option<PathBuf>) -> Result<()> {
     let browser = tool(browser, &["chrome", "google-chrome", "chromium", "chromium-browser"], "browser")?;
     let bindgen = tool(bindgen, &["wasm-bindgen"], "wasm-bindgen")?;
-    let version = crate::bindgen_version()?;
+    let version = workspace.bindgen_version()?;
     let actual = crate::process::capture(Command::new(&bindgen).arg("--version"))?;
     ensure!(
         std::str::from_utf8(&actual)?.trim() == format!("wasm-bindgen {version}"),
         "Expected wasm-bindgen {version}, found {}",
         String::from_utf8_lossy(&actual).trim()
     );
-    let artifact = build_artifact()?;
+    let artifact = build_artifact(workspace)?;
     let directory = tempfile::Builder::new().prefix("neocogi-browser-").tempdir()?;
     let web = directory.path().join("web");
     fs::create_dir(&web)?;
@@ -228,7 +228,10 @@ pub(crate) fn run(browser: Option<PathBuf>, bindgen: Option<PathBuf>) -> Result<
             .arg(&web)
             .args(["--out-name", "input-test"]),
     )?;
-    fs::copy(crate::root().join("crates/platform/tests/platform_browser-input.html"), web.join("index.html"))?;
+    fs::copy(
+        workspace.root().join("crates/platform/tests/platform_browser-input.html"),
+        web.join("index.html"),
+    )?;
     let server = WebServer::start(web.canonicalize()?)?;
     let output = crate::process::timed_output(
         Command::new(browser)

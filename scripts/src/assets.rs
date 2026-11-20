@@ -37,8 +37,8 @@ const ASSETS: &[Asset<'static>] = &[
 ];
 
 /// Local source directory used by both native staging and the default fetch command.
-pub(crate) fn gltf_download_directory() -> PathBuf {
-    crate::root().join("examples/native/gltf/assets")
+pub(crate) fn gltf_download_directory(root: &Path) -> PathBuf {
+    root.join("examples/native/gltf/assets")
 }
 
 /// Require the authored downloads needed by native staging before starting qualification.
