@@ -34,8 +34,8 @@ trait Driver {
     fn clear(&mut self) -> Result<(), NcStatus>;
     /// Releases native resources idempotently.
     fn close(&mut self);
-    /// Terminal backend failure, independent of other streams and requests.
-    fn failure(&self) -> Option<&AudioError>;
+    /// Copies this stream's terminal failure without advancing the exclusive lifecycle.
+    fn failure(&self) -> Option<AudioError>;
 }
 
 /// A ready opening transaction owns exactly one concrete direction until its successful typed take.
@@ -179,7 +179,8 @@ macro_rules! controls {
                 Ok(())
             }
             fn failure_message(&self) -> Result<ComPtr<INcStringAbi>, NcStatus> {
-                Ok(NcString::from_utf8_str(self.driver.failure().map_or("", |error| error.message.as_str())))
+                let failure = self.driver.failure();
+                Ok(NcString::from_utf8_str(failure.as_ref().map_or("", |error| error.message.as_str())))
             }
         }
     };

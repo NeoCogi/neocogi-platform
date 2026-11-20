@@ -83,6 +83,55 @@ export function probeWorklet(mode) {
     }
   };
 }
+export function probeControl() {
+  const devices = navigator.mediaDevices;
+  const getMedia = devices.getUserMedia;
+  const Node = globalThis.AudioWorkletNode;
+  const resume = AudioContext.prototype.resume;
+  const suspend = AudioContext.prototype.suspend;
+  const close = AudioContext.prototype.close;
+  let track, node, context, settle, closeAttempts = 0;
+  devices.getUserMedia = async function (...args) {
+    const stream = await getMedia.apply(this, args);
+    [track] = stream.getAudioTracks();
+    return stream;
+  };
+  globalThis.AudioWorkletNode = new Proxy(Node, {
+    construct(target, args, newTarget) {
+      node = Reflect.construct(target, args, newTarget);
+      context = args[0];
+      return node;
+    }
+  });
+  AudioContext.prototype.close = function () {
+    if (this === context) closeAttempts++;
+    return close.call(this);
+  };
+  return {
+    hold(method) {
+      AudioContext.prototype[method] = function () {
+        return new Promise((resolve, reject) => {
+          settle = fail => fail ? reject(new Error('injected audio ' + method)) : resolve();
+        });
+      };
+    },
+    finish(fail) {
+      if (!settle) throw new Error('no pending control');
+      const finish = settle; settle = undefined; finish(fail);
+    },
+    processorFailure() { node.onprocessorerror.call(node, new Event('processorerror')); },
+    trackState() { return track.readyState; },
+    closeAttempts() { return closeAttempts; },
+    restore() {
+      if (settle) this.finish(false);
+      devices.getUserMedia = getMedia;
+      globalThis.AudioWorkletNode = Node;
+      AudioContext.prototype.resume = resume;
+      AudioContext.prototype.suspend = suspend;
+      AudioContext.prototype.close = close;
+    }
+  };
+}
 ")]
 extern "C" {
     /// Owns the injected module failure and the browser's actual URL observations.
@@ -116,6 +165,22 @@ extern "C" {
     /// Complete held permission using the browser's real fake-device implementation.
     #[wasm_bindgen(js_name = releaseMedia)]
     fn release_media(previous: &Function) -> Promise;
+    /// Records real graph/track cleanup while settling one intercepted browser control.
+    type ControlProbe;
+    #[wasm_bindgen(js_name = probeControl)]
+    fn probe_control() -> ControlProbe;
+    #[wasm_bindgen(method)]
+    fn hold(this: &ControlProbe, method: &str);
+    #[wasm_bindgen(method)]
+    fn finish(this: &ControlProbe, fail: bool);
+    #[wasm_bindgen(method, js_name = processorFailure)]
+    fn processor_failure(this: &ControlProbe);
+    #[wasm_bindgen(method, js_name = trackState)]
+    fn track_state(this: &ControlProbe) -> String;
+    #[wasm_bindgen(method, js_name = closeAttempts)]
+    fn close_attempts(this: &ControlProbe) -> u32;
+    #[wasm_bindgen(method, js_name = restore)]
+    fn restore_control(this: &ControlProbe);
 }
 
 /// Restores patched browser functions even if an assertion returns a failure.
@@ -124,6 +189,14 @@ struct ScopedWorkletProbe(WorkletProbe);
 impl Drop for ScopedWorkletProbe {
     fn drop(&mut self) {
         self.0.restore();
+    }
+}
+
+/// Scope patched APIs to one graph and restore them even on a failed assertion.
+struct ScopedControlProbe(ControlProbe);
+impl Drop for ScopedControlProbe {
+    fn drop(&mut self) {
+        self.0.restore_control();
     }
 }
 
@@ -217,6 +290,107 @@ async fn worklet_module_cleanup(platform: &ComPtr<PlatformAbi>, config: AudioCon
     }
     Ok(())
 }
+
+/// Require physical capture cleanup before any subsequent call into the stream.
+async fn control_failure_cleanup(platform: &ComPtr<PlatformAbi>, config: AudioConfig) -> Result<(), JsValue> {
+    for method in ["resume", "suspend"] {
+        let probe = ScopedControlProbe(probe_control());
+        let mut request = platform.open_audio(AudioDirection::Capture, config).map_err(status)?;
+        ready(&mut request).await?;
+        let mut capture = request.take_capture().map_err(status)?;
+        if method == "suspend" {
+            capture.start().map_err(status)?;
+            phase(&mut capture, AudioState::Running).await?;
+        }
+        probe.0.hold(method);
+        if method == "resume" {
+            capture.start().map_err(status)?;
+        } else {
+            capture.pause().map_err(status)?;
+        }
+        ensure(probe.0.track_state() == "live", "fake microphone must be live before control rejection")?;
+        probe.0.finish(true);
+        tick().await?;
+        ensure(probe.0.track_state() == "ended", "rejected audio control left microphone live until polling")?;
+        probe.0.processor_failure();
+        let cause = capture.failure_message().map_err(status)?.to_string().map_err(status)?;
+        ensure(cause == format!("injected audio {method}"), "read-only audio diagnostic lost the first failure")?;
+        ensure(
+            capture.info().map_err(status)?.state == AudioState::Failed(AUDIO_E_BACKEND.code()),
+            "control did not enter Failed",
+        )?;
+        capture.close().map_err(status)?;
+        ensure(probe.0.close_attempts() == 1, "competing failure or close retired the same graph twice")?;
+    }
+
+    for settle_as_failure in [false, true] {
+        let probe = ScopedControlProbe(probe_control());
+        let mut request = platform.open_audio(AudioDirection::Capture, config).map_err(status)?;
+        ready(&mut request).await?;
+        let mut capture = request.take_capture().map_err(status)?;
+        probe.0.hold("resume");
+        capture.start().map_err(status)?;
+        probe.0.processor_failure();
+        probe.0.finish(settle_as_failure);
+        tick().await?;
+        let cause = capture.failure_message().map_err(status)?.to_string().map_err(status)?;
+        ensure(
+            cause == "audio worklet processing failed",
+            &format!("late control displaced the processor failure: {cause:?}"),
+        )?;
+        ensure(
+            capture.info().map_err(status)?.state == AudioState::Failed(AUDIO_E_BACKEND.code()),
+            "late control reopened capture",
+        )?;
+        ensure(
+            probe.0.track_state() == "ended" && probe.0.close_attempts() == 1,
+            "processor failure retained the capture graph",
+        )?;
+    }
+
+    for close in [true, false] {
+        let probe = ScopedControlProbe(probe_control());
+        let mut request = platform.open_audio(AudioDirection::Capture, config).map_err(status)?;
+        ready(&mut request).await?;
+        let mut capture = request.take_capture().map_err(status)?;
+        probe.0.hold("resume");
+        capture.start().map_err(status)?;
+        let retained = if close {
+            capture.close().map_err(status)?;
+            Some(capture)
+        } else {
+            drop(capture);
+            None
+        };
+        ensure(probe.0.track_state() == "ended", "retiring pending capture left the track live")?;
+        probe.0.finish(!close);
+        tick().await?;
+        if let Some(mut capture) = retained {
+            ensure(
+                capture.info().map_err(status)?.state == AudioState::Closed,
+                "late completion reopened closed capture",
+            )?;
+            ensure(
+                capture.failure_message().map_err(status)?.to_string().map_err(status)?.is_empty(),
+                "close acquired a late failure",
+            )?;
+        }
+        ensure(probe.0.close_attempts() == 1, "late completion attempted to close the retired graph")?;
+    }
+
+    let probe = ScopedControlProbe(probe_control());
+    let mut request = platform.open_audio(AudioDirection::Playback, config).map_err(status)?;
+    ready(&mut request).await?;
+    let mut playback = request.take_playback().map_err(status)?;
+    probe.0.hold("resume");
+    playback.start().map_err(status)?;
+    probe.0.finish(true);
+    tick().await?;
+    ensure(probe.0.close_attempts() == 1, "playback context survived rejected control until polling")?;
+    let cause = playback.failure_message().map_err(status)?.to_string().map_err(status)?;
+    ensure(cause == "injected audio resume", "playback lost the failure diagnostic")
+}
+
 /// Observe exact control completion through the generated inherited stream wrapper.
 async fn phase(stream: &mut IAudioStreamWrapper, target: AudioState) -> Result<(), JsValue> {
     for _ in 0..2000 {
@@ -260,6 +434,7 @@ pub async fn run(platform: ComPtr<PlatformAbi>) -> Result<(), JsValue> {
     };
     ensure(capabilities.supports_config(config).map_err(status)?, "default audio config unsupported")?;
     worklet_module_cleanup(&platform, config).await?;
+    control_failure_cleanup(&platform, config).await?;
     let mut request = platform.open_audio(AudioDirection::Playback, config).map_err(status)?;
     {
         let probe = ScopedWorkletProbe(probe_worklet("observe"));

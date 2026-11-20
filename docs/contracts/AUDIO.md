@@ -81,7 +81,10 @@ The pending browser open owns the worklet module URL. It revokes that URL
 once the module settles or the request is cancelled or dropped.
 
 Start/pause retain PCM and are idempotent in completed phases. Browser promises
-expose Starting/Pausing. Clear requires Paused and preserves lifetime counters;
+expose Starting/Pausing. A rejected browser control or terminal processor error
+records the first failure and immediately stops capture tracks and begins context
+close. The failure message is available without polling stream state. A late
+completion cannot restart a failed or closed stream. Clear requires Paused and preserves lifetime counters;
 browsers expose Clearing until a generation acknowledgement. Pending controls
 reject conflicts with Pending. Closed/Failed are terminal except for close.
 `AudioInfo` contains either Playback queue/starvation data or Capture queue/overrun

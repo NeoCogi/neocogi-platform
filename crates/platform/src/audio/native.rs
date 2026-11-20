@@ -204,7 +204,7 @@ macro_rules! native_controls {
                 }
                 self.0.state = AudioState::Closed;
             }
-            fn failure(&self) -> Option<&AudioError> {
+            fn failure(&self) -> Option<AudioError> {
                 None
             }
         }

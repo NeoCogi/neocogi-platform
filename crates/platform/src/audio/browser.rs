@@ -119,8 +119,18 @@ pub(super) fn open(direction: AudioDirection, config: AudioConfig) -> RequestSta
     RequestState::Pending(Pending { completion, resources })
 }
 
-/// Main-realm state shared with browser message/promise callbacks; PCM never exceeds fixed capacity.
-struct Shared {
+/// Browser stream authority. Only Open can still stop tracks or initiate context close.
+enum GraphState {
+    /// One open graph, with microphone ownership only for capture.
+    Open(Option<MediaStream>),
+    /// The first terminal failure, whose transition took physical cleanup authority.
+    Failed(AudioError),
+    /// The stream was explicitly closed or dropped and ignores later completions.
+    Closed,
+}
+
+/// Main-realm mailbox shared with browser callbacks; PCM never exceeds fixed capacity.
+struct Mailbox {
     /// Preallocated delivered capture samples; output PCM stays on the worklet thread.
     capture: VecDeque<f32>,
     /// Playback frames include transferred messages still in flight until consumption is acknowledged.
@@ -133,14 +143,41 @@ struct Shared {
     silent: u64,
     /// At most one stats request is in flight, bounding idle status-message traffic.
     stats_pending: bool,
-    /// Resume/suspend promises deliver one typed control result into the exclusive stream owner.
-    control: Option<Result<AudioState, AudioError>>,
+    /// A successful resume/suspend is adopted by the exclusive stream owner.
+    control: Option<AudioState>,
     /// Reset acknowledgement permits a new generation to start only after older messages were delivered.
     reset: bool,
-    /// Terminal processor/message failure is latched until explicit close.
-    failure: Option<AudioError>,
-    /// Ignore late asynchronous completions after close.
-    closed: bool,
+    /// Terminal state and physical cleanup authority for every callback and close path.
+    graph: GraphState,
+}
+
+/// The stream owns this graph. Callbacks use weak access and cannot prolong its lifetime.
+struct Shared {
+    /// The context handle remains accessible to live operations and the first terminal transition.
+    context: AudioContext,
+    /// Browser callbacks and the exclusive Rust stream exchange state through short borrows.
+    mailbox: RefCell<Mailbox>,
+}
+impl Shared {
+    /// Claim the open graph once, then stop processing without a mailbox borrow across browser calls.
+    fn fail(&self, failure: AudioError) {
+        let media = {
+            let mut mailbox = self.mailbox.borrow_mut();
+            let GraphState::Open(media) = &mut mailbox.graph else { return };
+            let media = media.take();
+            mailbox.graph = GraphState::Failed(failure);
+            mailbox.control = None;
+            mailbox.reset = false;
+            media
+        };
+        self.stop(media.as_ref());
+    }
+
+    /// Tear down physical audio; only the owner that took the open state can call this.
+    fn stop(&self, media: Option<&MediaStream>) {
+        stop_tracks(media);
+        close_context(&self.context);
+    }
 }
 
 /// Decoded worklet event; arbitrary JS data never escapes the wire boundary.
@@ -148,7 +185,7 @@ enum Message {
     /// Playback credit is returned only for frames actually consumed.
     Consumed(u32, u64),
     /// Transferred finite PCM and latest capture overrun count.
-    Capture(Float32Array, u64),
+    Capture(Vec<f32>, u64),
     /// Loss counters from one explicitly requested snapshot.
     Snapshot(u64, u64),
     /// All older-generation messages precede this acknowledgement on the same port.
@@ -204,6 +241,11 @@ fn decode(value: JsValue, epoch: u32, config: AudioConfig) -> Result<Option<Mess
         if samples.length() == 0 || samples.length() % config.channels.count() != 0 || samples.length() / config.channels.count() > config.capacity_frames {
             return Err(error("invalid PCM capture extent".into()));
         }
+        // Copy and validate the complete packet before borrowing the main-realm mailbox again.
+        let samples = samples.to_vec();
+        if samples.iter().any(|sample| !sample.is_finite() || !(-1.0..=1.0).contains(sample)) {
+            return Err(error("invalid normalized capture PCM".into()));
+        }
         Ok(Some(Message::Capture(samples, integer(payload.get(1))?)))
     } else if tag == EventCode::Snapshot as u64 {
         Ok(Some(Message::Snapshot(integer(payload.get(0))?, integer(payload.get(1))?)))
@@ -218,18 +260,12 @@ struct Browser {
     config: AudioConfig,
     /// Exclusive stream lifecycle, with explicit asynchronous intermediate phases.
     state: AudioState,
-    /// Copied terminal error, refreshed from callbacks only by the exclusive owner.
-    failure: Option<AudioError>,
-    /// Physical context remains private until final release/close.
-    context: AudioContext,
     /// Exactly one private worklet node; capture output is silent.
     node: Option<AudioWorkletNode>,
     /// A capture source is retained until close and never connected directly to speakers.
     source: Option<MediaStreamAudioSourceNode>,
-    /// Only capture owns microphone tracks; all tracks stop on every close/error/drop path.
-    media: Option<MediaStream>,
     /// Main-realm event/promise mailbox, with short borrows that never span JS calls.
-    shared: Rc<RefCell<Shared>>,
+    shared: Rc<Shared>,
     /// Closure ownership lasts exactly as long as the node's message registration.
     message: Option<Closure<dyn FnMut(MessageEvent)>>,
     /// Processor failure registration is removed before releasing its Rust closure.
@@ -287,21 +323,6 @@ fn close_context(context: &AudioContext) {
         });
     }
 }
-/// Copy a backend failure, release the shared-state borrow, then stop microphone/context processing immediately.
-fn fail(shared: &Rc<RefCell<Shared>>, failure: AudioError, context: &AudioContext, media: Option<&MediaStream>) {
-    {
-        let mut shared = shared.borrow_mut();
-        if shared.closed {
-            return;
-        }
-        if shared.failure.is_none() {
-            shared.failure = Some(failure);
-        }
-    }
-    stop_tracks(media);
-    close_context(context);
-}
-
 /// Build a message with its explicit wire tag and generation, without shell/script interpolation.
 fn command(tag: Command, epoch: u32, value: &JsValue) -> Array {
     Array::of3(&JsValue::from(tag as u32), &JsValue::from(epoch), value)
@@ -359,35 +380,35 @@ async fn create(
     samples
         .try_reserve_exact(config.capacity_frames as usize * config.channels.count() as usize)
         .map_err(|failure| AudioError::new(AUDIO_E_LIMIT, failure.to_string()))?;
-    let shared = Rc::new(RefCell::new(Shared {
-        capture: samples,
-        playback: 0,
-        epoch: 0,
-        dropped: 0,
-        silent: 0,
-        stats_pending: false,
-        control: None,
-        reset: false,
-        failure: None,
-        closed: false,
-    }));
+    let shared = Rc::new(Shared {
+        context,
+        mailbox: RefCell::new(Mailbox {
+            capture: samples,
+            playback: 0,
+            epoch: 0,
+            dropped: 0,
+            silent: 0,
+            stats_pending: false,
+            control: None,
+            reset: false,
+            graph: GraphState::Open(media.clone()),
+        }),
+    });
     let mut browser = Browser {
         config,
         state: AudioState::Paused,
-        failure: None,
-        context,
         node: None,
         source: None,
-        media,
         shared,
         message: None,
         processor_error: None,
     };
-    JsFuture::from(browser.context.suspend().map_err(error)?).await.map_err(error)?;
+    let context = &browser.shared.context;
+    JsFuture::from(context.suspend().map_err(error)?).await.map_err(error)?;
     if destination.upgrade().is_none() {
         return Err(AUDIO_E_STATE.into());
     }
-    let worklet = browser.context.audio_worklet().map_err(error)?;
+    let worklet = context.audio_worklet().map_err(error)?;
     let parts = Array::of1(&JsValue::from_str(include_str!("processor.js")));
     let properties = web_sys::BlobPropertyBag::new();
     properties.set_type("text/javascript");
@@ -439,24 +460,29 @@ async fn create(
     }
     Reflect::set(&parameters, &"protocol".into(), &protocol).map_err(error)?;
     options.set_processor_options(Some(&parameters));
-    let node = AudioWorkletNode::new_with_options(&browser.context, "neocogi-pcm-v1", &options).map_err(error)?;
+    let node = AudioWorkletNode::new_with_options(context, "neocogi-pcm-v1", &options).map_err(error)?;
     browser.node = Some(node.clone());
     let weak = Rc::downgrade(&browser.shared);
-    let context = browser.context.clone();
-    let media = browser.media.clone();
     let message = Closure::new(move |event: MessageEvent| {
         let Some(shared) = weak.upgrade() else {
             return;
         };
-        if shared.borrow().closed {
-            return;
-        }
-        let decoded = decode(event.data(), shared.borrow().epoch, config);
+        let epoch = {
+            let mailbox = shared.mailbox.borrow();
+            if !matches!(mailbox.graph, GraphState::Open(_)) {
+                return;
+            }
+            mailbox.epoch
+        };
+        let decoded = decode(event.data(), epoch, config);
         let outcome = (|| -> Result<(), AudioError> {
             let Some(message) = decoded? else {
                 return Ok(());
             };
-            let mut shared = shared.borrow_mut();
+            let mut shared = shared.mailbox.borrow_mut();
+            if !matches!(shared.graph, GraphState::Open(_)) || shared.epoch != epoch {
+                return Ok(());
+            }
             match message {
                 Message::Consumed(frames, silent) => {
                     if frames > shared.playback {
@@ -466,13 +492,8 @@ async fn create(
                     shared.silent = shared.silent.max(silent);
                 }
                 Message::Capture(samples, dropped) => {
-                    if shared.capture.len() + samples.length() as usize > config.capacity_frames as usize * config.channels.count() as usize {
+                    if shared.capture.len() + samples.len() > config.capacity_frames as usize * config.channels.count() as usize {
                         return Err(error("PCM capture credit exceeded capacity".into()));
-                    }
-                    // Validate the complete packet before committing any main-realm capture samples.
-                    let samples = samples.to_vec();
-                    if samples.iter().any(|sample| !sample.is_finite() || !(-1.0..=1.0).contains(sample)) {
-                        return Err(error("invalid normalized capture PCM".into()));
                     }
                     shared.capture.extend(samples);
                     shared.dropped = shared.dropped.max(dropped);
@@ -487,7 +508,7 @@ async fn create(
             Ok(())
         })();
         if let Err(failure) = outcome {
-            fail(&shared, failure, &context, media.as_ref());
+            shared.fail(failure);
         }
     });
     let port = node.port().map_err(error)?;
@@ -495,23 +516,21 @@ async fn create(
     port.start();
     browser.message = Some(message);
     let weak = Rc::downgrade(&browser.shared);
-    let context = browser.context.clone();
-    let media = browser.media.clone();
     let processor_error = Closure::new(move |_: web_sys::Event| {
         if let Some(shared) = weak.upgrade() {
-            fail(&shared, error("audio worklet processing failed".into()), &context, media.as_ref());
+            shared.fail(error("audio worklet processing failed".into()));
         }
     });
     node.set_onprocessorerror(Some(processor_error.as_ref().unchecked_ref()));
     // Deserialization failures also terminate the graph; they cannot silently stall queue credits.
     port.set_onmessageerror(Some(processor_error.as_ref().unchecked_ref()));
     browser.processor_error = Some(processor_error);
-    if let Some(media) = &browser.media {
-        let source = browser.context.create_media_stream_source(media).map_err(error)?;
+    if let Some(media) = &media {
+        let source = context.create_media_stream_source(media).map_err(error)?;
         source.connect_with_audio_node(&node).map_err(error)?;
         browser.source = Some(source);
     }
-    node.connect_with_audio_node(&browser.context.destination()).map_err(error)?;
+    node.connect_with_audio_node(&context.destination()).map_err(error)?;
     Ok(if direction == AudioDirection::Playback {
         Stream::Playback(Playback(browser))
     } else {
@@ -522,30 +541,18 @@ async fn create(
 impl Browser {
     /// Refresh asynchronous control and terminal failure before admitting another operation.
     fn refresh(&mut self) {
-        let (control, reset, failure) = {
-            let mut shared = self.shared.borrow_mut();
-            (shared.control.take(), std::mem::take(&mut shared.reset), shared.failure.clone())
-        };
-        if self.state == AudioState::Closed {
-            return;
-        }
-        if let Some(failure) = failure {
-            self.state = AudioState::Failed(failure.status.code());
-            self.failure = Some(failure);
-            return;
-        }
-        if let Some(control) = control {
-            match control {
-                Ok(state) => self.state = state,
-                Err(failure) => {
-                    fail(&self.shared, failure.clone(), &self.context, self.media.as_ref());
-                    self.state = AudioState::Failed(failure.status.code());
-                    self.failure = Some(failure);
+        let mut mailbox = self.shared.mailbox.borrow_mut();
+        match &mailbox.graph {
+            GraphState::Failed(failure) => self.state = AudioState::Failed(failure.status.code()),
+            GraphState::Closed => self.state = AudioState::Closed,
+            GraphState::Open(_) => {
+                if let Some(state) = mailbox.control.take() {
+                    self.state = state;
+                }
+                if std::mem::take(&mut mailbox.reset) && self.state == AudioState::Clearing {
+                    self.state = AudioState::Paused;
                 }
             }
-        }
-        if reset && self.state == AudioState::Clearing {
-            self.state = AudioState::Paused;
         }
     }
     /// Writes/reads are available only in stable open phases; terminal and pending phases remain distinct.
@@ -563,30 +570,35 @@ impl Browser {
     }
     /// Post a control message, latching and cleaning up any backend transmission failure.
     fn post(&mut self, tag: Command, payload: &JsValue) -> Result<(), NcStatus> {
-        let epoch = self.shared.borrow().epoch;
+        let epoch = self.shared.mailbox.borrow().epoch;
         self.port()?.post_message(&command(tag, epoch, payload)).map_err(|value| {
             let failure = error(value);
             let status = failure.status;
-            fail(&self.shared, failure, &self.context, self.media.as_ref());
+            self.shared.fail(failure);
             self.refresh();
             status
         })
     }
-    /// Resume/suspend are serialized; their promises write only to a typed completion mailbox.
+    /// Resume/suspend are serialized. Rejection retires the graph, while success is adopted on observation.
     fn control(&mut self, running: bool) -> Result<(), NcStatus> {
         self.active()?;
         let target = if running { AudioState::Running } else { AudioState::Paused };
         if self.state == target {
             return Ok(());
         }
-        let promise = if running { self.context.resume() } else { self.context.suspend() }.map_err(|value| {
+        let context = &self.shared.context;
+        let promise = if running { context.resume() } else { context.suspend() }.map_err(|value| {
             let failure = error(value);
             let status = failure.status;
-            fail(&self.shared, failure, &self.context, self.media.as_ref());
+            self.shared.fail(failure);
             self.refresh();
             status
         })?;
-        if let Some(media) = &self.media {
+        let media = match &self.shared.mailbox.borrow().graph {
+            GraphState::Open(media) => media.clone(),
+            GraphState::Failed(_) | GraphState::Closed => None,
+        };
+        if let Some(media) = media {
             for track in media.get_audio_tracks().iter() {
                 if let Ok(track) = track.dyn_into::<MediaStreamTrack>() {
                     track.set_enabled(running);
@@ -596,12 +608,16 @@ impl Browser {
         self.state = if running { AudioState::Starting } else { AudioState::Pausing };
         let weak = Rc::downgrade(&self.shared);
         spawn_local(async move {
-            let result = JsFuture::from(promise).await.map(|_| target).map_err(error);
-            if let Some(shared) = weak.upgrade() {
-                let mut shared = shared.borrow_mut();
-                if !shared.closed {
-                    shared.control = Some(result);
+            let result = JsFuture::from(promise).await;
+            let Some(shared) = weak.upgrade() else { return };
+            match result {
+                Ok(_) => {
+                    let mut mailbox = shared.mailbox.borrow_mut();
+                    if matches!(mailbox.graph, GraphState::Open(_)) {
+                        mailbox.control = Some(target);
+                    }
                 }
+                Err(value) => shared.fail(error(value)),
             }
         });
         Ok(())
@@ -611,13 +627,14 @@ impl Browser {
         if self.state == AudioState::Closed {
             return;
         }
-        {
-            let mut shared = self.shared.borrow_mut();
-            shared.closed = true;
-            shared.capture.clear();
-            shared.playback = 0;
-            shared.failure = None;
-        }
+        let previous = {
+            let mut mailbox = self.shared.mailbox.borrow_mut();
+            mailbox.capture.clear();
+            mailbox.playback = 0;
+            mailbox.control = None;
+            mailbox.reset = false;
+            std::mem::replace(&mut mailbox.graph, GraphState::Closed)
+        };
         if let Some(node) = self.node.take() {
             if let Ok(port) = node.port() {
                 port.set_onmessage(None);
@@ -630,12 +647,11 @@ impl Browser {
         if let Some(source) = self.source.take() {
             let _ = source.disconnect();
         }
-        stop_tracks(self.media.as_ref());
-        self.media = None;
-        close_context(&self.context);
+        if let GraphState::Open(media) = previous {
+            self.shared.stop(media.as_ref());
+        }
         self.message = None;
         self.processor_error = None;
-        self.failure = None;
         self.state = AudioState::Closed;
     }
 }
@@ -655,14 +671,14 @@ macro_rules! controls {
             fn info(&mut self) -> Result<AudioInfo, NcStatus> {
                 self.0.refresh();
                 let query = {
-                    let shared = self.0.shared.borrow();
-                    !shared.stats_pending && !shared.closed && shared.failure.is_none() && self.0.state != AudioState::Clearing
+                    let shared = self.0.shared.mailbox.borrow();
+                    !shared.stats_pending && matches!(shared.graph, GraphState::Open(_)) && self.0.state != AudioState::Clearing
                 };
                 if query {
                     self.0.post(Command::Stats, &JsValue::NULL)?;
-                    self.0.shared.borrow_mut().stats_pending = true;
+                    self.0.shared.mailbox.borrow_mut().stats_pending = true;
                 }
-                let shared = self.0.shared.borrow();
+                let shared = self.0.shared.mailbox.borrow();
                 Ok(AudioInfo {
                     config: self.0.config,
                     state: self.0.state,
@@ -690,13 +706,13 @@ macro_rules! controls {
                 if self.0.state != AudioState::Paused {
                     return Err(AUDIO_E_STATE);
                 }
-                let epoch = self.0.shared.borrow().epoch.checked_add(1).ok_or(AUDIO_E_LIMIT)?;
+                let epoch = self.0.shared.mailbox.borrow().epoch.checked_add(1).ok_or(AUDIO_E_LIMIT)?;
                 self.0
                     .port()?
                     .post_message(&command(Command::Reset, epoch, &JsValue::NULL))
                     .map_err(|_| AUDIO_E_BACKEND)?;
                 {
-                    let mut shared = self.0.shared.borrow_mut();
+                    let mut shared = self.0.shared.mailbox.borrow_mut();
                     shared.epoch = epoch;
                     shared.capture.clear();
                     shared.playback = 0;
@@ -709,8 +725,11 @@ macro_rules! controls {
             fn close(&mut self) {
                 self.0.close();
             }
-            fn failure(&self) -> Option<&AudioError> {
-                self.0.failure.as_ref()
+            fn failure(&self) -> Option<AudioError> {
+                match &self.0.shared.mailbox.borrow().graph {
+                    GraphState::Failed(failure) => Some(failure.clone()),
+                    GraphState::Open(_) | GraphState::Closed => None,
+                }
             }
         }
     };
@@ -726,22 +745,22 @@ impl Playback {
         if frames == 0 {
             return Ok(());
         }
-        if self.0.shared.borrow().playback + frames > self.0.config.capacity_frames {
+        if self.0.shared.mailbox.borrow().playback + frames > self.0.config.capacity_frames {
             return Err(AUDIO_E_LIMIT);
         }
         let samples = Float32Array::from(samples);
-        let epoch = self.0.shared.borrow().epoch;
+        let epoch = self.0.shared.mailbox.borrow().epoch;
         self.0
             .port()?
             .post_message_with_transferable(&command(Command::Write, epoch, &samples), &Array::of1(&samples.buffer()))
             .map_err(|value| {
                 let failure = error(value);
                 let status = failure.status;
-                fail(&self.0.shared, failure, &self.0.context, self.0.media.as_ref());
+                self.0.shared.fail(failure);
                 self.0.refresh();
                 status
             })?;
-        self.0.shared.borrow_mut().playback += frames;
+        self.0.shared.mailbox.borrow_mut().playback += frames;
         Ok(())
     }
 }
@@ -750,12 +769,12 @@ impl Capture {
     pub(super) fn read(&mut self, output: &mut [f32]) -> Result<u32, NcStatus> {
         self.0.active()?;
         let channels = self.0.config.channels.count() as usize;
-        let frames = (self.0.shared.borrow().capture.len() / channels).min(output.len() / channels);
+        let frames = (self.0.shared.mailbox.borrow().capture.len() / channels).min(output.len() / channels);
         if frames == 0 {
             return Ok(0);
         }
         self.0.post(Command::Release, &JsValue::from(frames as u32))?;
-        let mut shared = self.0.shared.borrow_mut();
+        let mut shared = self.0.shared.mailbox.borrow_mut();
         for sample in &mut output[..frames * channels] {
             *sample = shared.capture.pop_front().expect("counted capture frame");
         }
@@ -774,7 +793,10 @@ pub(super) async fn verify_drop_cleanup() -> Result<(), JsValue> {
             let Stream::Capture(capture) = result.map_err(|failure| JsValue::from_str(&failure.to_string()))? else {
                 unreachable!()
             };
-            let tracks = capture.0.media.as_ref().expect("capture media").get_tracks();
+            let tracks = match &capture.0.shared.mailbox.borrow().graph {
+                GraphState::Open(Some(media)) => media.get_tracks(),
+                _ => return Err("capture must own open microphone tracks".into()),
+            };
             drop(capture);
             for track in tracks.iter() {
                 if track.unchecked_into::<MediaStreamTrack>().ready_state() != web_sys::MediaStreamTrackState::Ended {
