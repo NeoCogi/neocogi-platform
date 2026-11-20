@@ -1,12 +1,94 @@
 //! SDL subsystem initialization and native event routing remain local to this assembly.
 use super::*;
-use std::collections::{BTreeMap, VecDeque};
-use sdl2::event::Event;
+use super::input_backlog::{Backlog, Delivery};
+use std::collections::BTreeMap;
+use sdl2::event::{Event, WindowEvent};
+
+/// Position of the first outstanding quit/close, whose delivery survives any input overflow.
+enum ClosePosition {
+    /// Number of accepted events ahead of close in the FIFO.
+    AfterEvents(usize),
+    /// A cancellation was reserved before the close event arrived.
+    AfterOverflow,
+}
+
+/// Route-local ordinary input plus the reserved native close transition.
+#[derive(Default)]
+pub(super) struct WindowQueue {
+    /// Bound by event count and the owned size of retained SDL text.
+    backlog: Backlog<Event>,
+    /// Repeated native quit/close notifications need only one outstanding delivery.
+    close: Option<ClosePosition>,
+}
+
+/// One detached native transition delivered without borrowing the shared event pump.
+pub(super) enum RoutedInput {
+    Event(Event),
+    Cancel,
+    Close,
+}
+
+impl WindowQueue {
+    /// Mark the position at which the first native quit or close was observed.
+    fn close(&mut self) {
+        if self.close.is_none() {
+            self.close = Some(if self.backlog.saturated() {
+                ClosePosition::AfterOverflow
+            } else {
+                ClosePosition::AfterEvents(self.backlog.len())
+            });
+        }
+    }
+
+    /// Retain only events the platform can translate, including an ordered close signal.
+    pub(super) fn push(&mut self, event: Event) {
+        let bytes = match &event {
+            Event::Window { win_event: WindowEvent::Close, .. } => return self.close(),
+            Event::MouseMotion { .. } => {
+                // Motion does not cross close, cancellation, or another translation.
+                if !matches!(self.close, Some(ClosePosition::AfterEvents(n)) if n == self.backlog.len())
+                    && let Some(tail @ Event::MouseMotion { .. }) = self.backlog.tail_mut()
+                {
+                    *tail = event;
+                    return;
+                }
+                0
+            }
+            Event::TextInput { text, .. } => text.capacity(),
+            Event::Window { .. } | Event::MouseButtonDown { .. } | Event::MouseButtonUp { .. }
+            | Event::MouseWheel { .. } | Event::KeyDown { .. } | Event::KeyUp { .. } => 0,
+            _ => return,
+        };
+        self.backlog.push(event, bytes);
+    }
+
+    /// Consume one event in order and release its queue charge before translation.
+    fn pop(&mut self) -> Option<RoutedInput> {
+        if matches!(self.close, Some(ClosePosition::AfterEvents(0))) {
+            self.close = None;
+            return Some(RoutedInput::Close);
+        }
+        match self.backlog.pop()? {
+            Delivery::Entry(event) => {
+                if let Some(ClosePosition::AfterEvents(count)) = &mut self.close {
+                    *count -= 1;
+                }
+                Some(RoutedInput::Event(event))
+            }
+            Delivery::Overflow => {
+                if matches!(self.close, Some(ClosePosition::AfterOverflow)) {
+                    self.close = Some(ClosePosition::AfterEvents(0));
+                }
+                Some(RoutedInput::Cancel)
+            }
+        }
+    }
+}
 
 /// Native host lifetime and per-window event queues, owned entirely within this binary.
 pub(super) struct NativeHost {
     /// Pending events are routed by SDL window identity rather than consumed by another window.
-    pub(super) queues: RefCell<BTreeMap<u32, VecDeque<Event>>>,
+    pub(super) queues: RefCell<BTreeMap<u32, WindowQueue>>,
     /// SDL permits one event pump; shared interior access rejects reentrant polling.
     pump: RefCell<sdl2::EventPump>,
     /// Windows clipboard projections share one lazy private owner while any projection is live.
@@ -63,21 +145,18 @@ impl NativeHost {
         Ok(owner)
     }
     /// Routes native events to their own windows; global quit is broadcast to every live window.
-    pub(super) fn poll(&self, id: u32) -> Result<Option<Event>, NcStatus> {
+    pub(super) fn poll(&self, id: u32) -> Result<Option<RoutedInput>, NcStatus> {
         let mut queues = self.queues.try_borrow_mut().map_err(|_| PLATFORM_E_BUSY)?;
         for event in self.pump.try_borrow_mut().map_err(|_| PLATFORM_E_BUSY)?.poll_iter() {
             if matches!(event, Event::Quit { .. }) {
                 for queue in queues.values_mut() {
-                    queue.push_back(event.clone());
+                    queue.close();
                 }
             } else if let Some(queue) = event.get_window_id().and_then(|window| queues.get_mut(&window)) {
-                if matches!(event, Event::MouseMotion { .. }) && matches!(queue.back(), Some(Event::MouseMotion { .. })) {
-                    queue.pop_back();
-                }
-                queue.push_back(event);
+                queue.push(event);
             }
         }
-        Ok(queues.get_mut(&id).and_then(VecDeque::pop_front))
+        Ok(queues.get_mut(&id).and_then(WindowQueue::pop))
     }
 }
 
@@ -136,7 +215,7 @@ impl PlatformObject {
         let window = gpu.window();
         // Compiler composition must succeed before this window gains an input route.
         let logical = neocogi_platform::gpu::GpuDevice::new(gpu.core())?;
-        host.queues.borrow_mut().insert(window.id(), VecDeque::new());
+        host.queues.borrow_mut().insert(window.id(), WindowQueue::default());
         let device = Rc::new(Device {
             success: operation_result(Ok(())),
             logical,

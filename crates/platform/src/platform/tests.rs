@@ -20,6 +20,26 @@ pub(super) fn native_session() -> std::sync::MutexGuard<'static, ()> {
     NATIVE_SESSION.lock().expect("earlier native fixture panicked")
 }
 
+/// Submit one complete short UTF-8 commit through SDL's real process event queue.
+fn push_sdl_text(window_id: u32, value: &str) {
+    assert!(value.len() < 32);
+    let mut bytes = [0; 32];
+    for (target, source) in bytes.iter_mut().zip(value.bytes()) {
+        *target = source as std::ffi::c_char;
+    }
+    let mut event = sdl2::sys::SDL_Event {
+        text: sdl2::sys::SDL_TextInputEvent {
+            type_: sdl2::sys::SDL_EventType::SDL_TEXTINPUT as u32,
+            timestamp: 0,
+            windowID: window_id,
+            text: bytes,
+        },
+    };
+    // SAFETY: SDL is initialized, the union contains matching valid text storage,
+    // and SDL copies the initialized fixed-size record before returning.
+    assert_eq!(unsafe { sdl2::sys::SDL_PushEvent(&mut event) }, 1);
+}
+
 /// Shared ordered stream fixture can inject native reentry and release a resource during block access.
 struct Input {
     /// A foreign block injects a late canonical-provenance failure after an image was resolved.
@@ -362,7 +382,7 @@ fn input_delivery(unknown: &ComPtr<IUnknown>, device: &Weak<Device>) {
     received.borrow_mut().clear();
     let owner = device.upgrade().unwrap();
     let id = owner.window.id();
-    owner.host.queues.borrow_mut().get_mut(&id).unwrap().extend([
+    for event in [
         sdl2::event::Event::TextInput {
             timestamp: 0,
             window_id: id,
@@ -373,7 +393,9 @@ fn input_delivery(unknown: &ComPtr<IUnknown>, device: &Weak<Device>) {
             window_id: id,
             text: "second ☃".to_owned(),
         },
-    ]);
+    ] {
+        owner.host.queues.borrow_mut().get_mut(&id).unwrap().push(event);
+    }
     let sink: ComPtr<IInputSinkAbi> = InputProbe::from_value(InputProbe {
         window: Some(window.clone()),
         empty: Some(empty),

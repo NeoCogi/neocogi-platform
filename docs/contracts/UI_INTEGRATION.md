@@ -31,6 +31,18 @@ is discarded as a unit. Its position in the input queue returns
 `PLATFORM_E_INPUT_LIMIT` (`-1008`) from `window.poll()` without invoking the
 input sink. Continue polling to receive subsequent transitions.
 
+Each Platform window route can retain 4,096 ordinary transitions and 8 MiB of owned
+queued text. The first overflow reserves one `UiInput::Cancel` after the admitted
+prefix. Input arriving before that cancellation is dequeued is discarded on that
+route. Native close and quit keep their insertion position in reserved storage.
+On cancellation, clear held input and resume admitting new transitions. Pointer
+gestures need a fresh down and keyboard repeats need a fresh press of that key.
+The Platform resets its wheel state and any active browser composition before
+the callback. SDL owns native IME preedit. Complete SDL commits delivered after
+recovery are admitted as new standalone transitions.
+An attempted cancel is consumed even if the input sink reports failure. The
+entry and byte limits cover Platform queues, with one detached transition in delivery.
+
 Keypad arithmetic maps to `KeyCode::Character` with the corresponding `+`, `-`,
 `*`, or `/` scalar. An ordinary key has the same identity when the host reports
 that operator as the logical character. Keypad Enter maps to `KeyCode::Enter`.

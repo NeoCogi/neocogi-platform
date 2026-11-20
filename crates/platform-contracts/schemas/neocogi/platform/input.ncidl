@@ -77,7 +77,7 @@ struct KeyStroke {
 
 /// Ordered native input before a UI implementation computes drag, hover, and local coordinates.
 enum UiInput: u8 {
-    /// Native focus or capture was lost; clears held state in input order.
+    /// Focus, capture or queued input history was lost; clears held state in input order.
     Cancel,
     /// Absolute pointer position in drawable coordinates.
     Pointer(Point),

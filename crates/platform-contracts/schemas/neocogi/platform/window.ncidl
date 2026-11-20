@@ -17,6 +17,9 @@ interface IPlatformWindow {
     /// polling of this window returns Busy. The destination is never retained by the platform.
     /// A text commit over 4 MiB returns PLATFORM_E_INPUT_LIMIT at its queue position without
     /// calling the destination. Later transitions remain available on subsequent polls.
+    /// The per-window backlog admits 4096 entries and up to 8 MiB of owned text payload.
+    /// Overflow retains the queued prefix and discards incoming input until an ordered UiInput::Cancel.
+    /// Native close and quit preserve their position even when ordinary input is full.
     fn poll(&self, destination: &IInputSink) -> Result<PollStatus>;
     /// Enables or disables native text input and positions composition UI after a UI update.
     /// Calling repeatedly with the same editable focus preserves an active composition.

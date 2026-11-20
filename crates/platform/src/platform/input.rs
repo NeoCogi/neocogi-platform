@@ -1,5 +1,6 @@
 //! SDL translation owns no UI references. Delivery occurs after every native state borrow ends.
 use super::*;
+use super::{input_backlog::KeyRecovery, native::RoutedInput};
 use neocogi_platform::platform::wheel::{WheelAccumulator, WheelUnit};
 use sdl2::{
     event::{Event, WindowEvent},
@@ -13,8 +14,6 @@ enum Transition {
     Input(UiInput, String),
     /// Resize, exposure or another relevant native window change.
     Changed,
-    /// Native close or process-wide quit request.
-    Close,
     /// No UI-visible effect.
     Ignore,
 }
@@ -24,14 +23,22 @@ enum Transition {
 pub(super) struct InputState {
     /// Fractions accumulate independently on each axis until a whole pixel is available.
     wheel: WheelAccumulator,
+    /// Reject stale native repeats after backlog loss.
+    keys: KeyRecovery,
 }
 
 impl InputState {
+    /// The queue is ready for a new history when its reserved cancellation reaches delivery.
+    fn recover(&mut self) -> Transition {
+        self.wheel = WheelAccumulator::default();
+        self.keys.reset();
+        Transition::Input(UiInput::Cancel, String::new())
+    }
+
     /// Converts one event. Only position-based input queries drawable metadata,
     /// so resize, focus, key, and close transitions can survive a lost surface.
     fn translate(&mut self, event: Event, logical: (u32, u32), drawable: impl FnOnce() -> Result<Size, NcStatus>) -> Result<Transition, NcStatus> {
         let input = match event {
-            Event::Quit { .. } | Event::Window { win_event: WindowEvent::Close, .. } => return Ok(Transition::Close),
             Event::Window { win_event: WindowEvent::FocusLost, .. } => {
                 self.wheel = WheelAccumulator::default();
                 UiInput::Cancel
@@ -97,6 +104,11 @@ impl InputState {
             // until TextInput; forwarding both would duplicate or prematurely publish IME text.
             _ => return Ok(Transition::Ignore),
         };
+        if let UiInput::Key(stroke) = input
+            && !self.keys.accepts(stroke)
+        {
+            return Ok(Transition::Ignore);
+        }
         Ok(Transition::Input(input, String::new()))
     }
 }
@@ -198,11 +210,14 @@ impl IPlatformWindow for WindowObject {
         }
         let _polling = Polling { active: &self.polling };
         while let Some(event) = self.device.host.poll(self.device.window.id())? {
-            let transition = self.input.borrow_mut().translate(event, self.device.window.size(), || self.size())?;
+            let transition = match event {
+                RoutedInput::Event(event) => self.input.borrow_mut().translate(event, self.device.window.size(), || self.size())?,
+                RoutedInput::Cancel => self.input.borrow_mut().recover(),
+                RoutedInput::Close => return Ok(PollStatus::Close),
+            };
             match transition {
                 Transition::Ignore => continue,
                 Transition::Changed => return Ok(PollStatus::Event),
-                Transition::Close => return Ok(PollStatus::Close),
                 Transition::Input(event, text) => {
                     destination.input(event, NcCopyFromBufferOffset::new(0, text.as_bytes()))?;
                     return Ok(PollStatus::Event);

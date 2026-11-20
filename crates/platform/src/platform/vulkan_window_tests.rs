@@ -35,8 +35,8 @@ fn check_surface_loss_input(device: &Device, window: &ComPtr<IPlatformWindowAbi>
     {
         let mut queues = device.host.queues.borrow_mut();
         let queue = queues.get_mut(&window_id).unwrap();
-        queue.clear();
-        queue.extend([
+        *queue = Default::default();
+        for event in [
             Event::MouseMotion {
                 timestamp: 0,
                 window_id,
@@ -57,7 +57,9 @@ fn check_surface_loss_input(device: &Device, window: &ComPtr<IPlatformWindowAbi>
                 repeat: false,
             },
             event(WindowEvent::Close),
-        ]);
+        ] {
+            queue.push(event);
+        }
     }
     let events = Rc::new(RefCell::new(Vec::new()));
     let sink = InputSink::from_value(InputSink { events: events.clone() }).query::<IInputSinkAbi>().unwrap();

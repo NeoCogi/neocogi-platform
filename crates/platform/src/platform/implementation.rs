@@ -15,6 +15,7 @@ mod clipboard;
 mod prepared;
 mod wheel;
 mod gpu;
+mod input_backlog;
 #[cfg(not(target_arch = "wasm32"))]
 mod input;
 #[cfg(not(target_arch = "wasm32"))]

@@ -864,7 +864,20 @@ export function exercise_shortcut(target, key, code, location, modifiers) {
     target.dispatchEvent(new KeyboardEvent('keydown', {...init, repeat:true}));
     target.dispatchEvent(new KeyboardEvent('keyup', init));
 }
+export function keyboard_test_event(target, key, repeat) {
+    const event = new KeyboardEvent('keydown', {key, repeat, cancelable:true});
+    target.dispatchEvent(event);
+    return event.defaultPrevented;
+}
 export function boundary_text(target, mode, limit) {
+    if (mode === 'late-composition-input') {
+        target.value = 'discarded composition';
+        const input = new InputEvent('input');
+        // Chromium can normalize an older browser's input type in the constructor.
+        Object.defineProperty(input, 'inputType', {value:'insertFromComposition'});
+        target.dispatchEvent(input);
+        return;
+    }
     if (mode === 'preedit') {
         target.dispatchEvent(new CompositionEvent('compositionstart'));
         target.value = '🦀'.repeat(limit / 4);
@@ -897,6 +910,8 @@ export function exercise(target, name) {
         target.dispatchEvent(new KeyboardEvent('keyup', {key:'Tab'}));
     } else if (name === 'key') {
         target.dispatchEvent(new KeyboardEvent('keydown', {key:'F'}));
+    } else if (name === 'half-wheel') {
+        target.dispatchEvent(new WheelEvent('wheel', {deltaY:0.5, deltaMode:0}));
     } else if (name === 'wheel') {
         target.dispatchEvent(new WheelEvent('wheel', {deltaY:0.5, deltaMode:0}));
         target.dispatchEvent(new WheelEvent('wheel', {deltaY:0.5, deltaMode:0}));
@@ -928,6 +943,8 @@ extern "C" {
     fn exercise(target: &EventTarget, name: &str);
     /// Dispatches press/repeat/release with an explicit logical key, physical location and modifiers.
     fn exercise_shortcut(target: &EventTarget, key: &str, code: &str, location: u32, modifiers: u8);
+    /// Dispatches a single keydown to test restarts and stale repeats independently.
+    fn keyboard_test_event(target: &EventTarget, key: &str, repeat: bool) -> bool;
     /// Drives either actual textarea composition or full-value paste events using browser strings.
     fn boundary_text(target: &EventTarget, mode: &str, limit: u32);
     fn next_test_task() -> js_sys::Promise;
@@ -1025,6 +1042,91 @@ fn browser_text_commit_limit_through_com() {
     assert!(text.value().is_empty());
 }
 
+#[com_object(interfaces(IInputSink))]
+/// Reenters DOM input at the cancellation callback, then rejects that attempted delivery.
+struct OverflowSink {
+    window: ComPtr<IPlatformWindowAbi>,
+    ordinary: ComPtr<IInputSinkAbi>,
+    canvas: HtmlCanvasElement,
+}
+impl IInputSink for OverflowSink {
+    fn input(&self, event: UiInput, text: NcCopyFromBufferOffset<'_, u8>) -> Result<(), NcStatus> {
+        assert_eq!(event, UiInput::Cancel);
+        assert!(text.as_slice().is_empty());
+        keyboard_test_event(self.canvas.unchecked_ref(), "n", false);
+        assert_eq!(self.window.poll(self.ordinary.as_com_ref()), Err(PLATFORM_E_BUSY));
+        Err(NC_E_INVALID_ARG)
+    }
+}
+
+/// Reserves one cancellation on aggregate byte loss and resumes DOM/COM delivery in order.
+fn browser_text_backlog_recovers_through_com() {
+    let object = PlatformObject::new().window("bounded browser input", Size { width: 8, height: 8 }).unwrap();
+    let text = object.input.text.clone();
+    let canvas = object.device.window.clone();
+    let window = WindowObject::from_value(object).query::<IPlatformWindowAbi>().unwrap();
+    window.text_input(TextInputArea::Area(Rect { x: 0, y: 0, width: 1, height: 1 })).unwrap();
+    let received = Rc::new(RefCell::new(Vec::new()));
+    let sink = ShortcutSink::from_value(ShortcutSink { received: received.clone() }).query::<IInputSinkAbi>().unwrap();
+    while window.poll(sink.as_com_ref()).unwrap() == PollStatus::Event {}
+
+    exercise(canvas.unchecked_ref(), "down");
+    while window.poll(sink.as_com_ref()).unwrap() == PollStatus::Event {}
+    assert!(matches!(received.borrow().last(), Some((UiInput::Down { .. }, _))));
+    received.borrow_mut().clear();
+    exercise(canvas.unchecked_ref(), "half-wheel");
+    assert_eq!(window.poll(sink.as_com_ref()), Ok(PollStatus::Idle));
+    let dispatch = |mode| boundary_text(text.unchecked_ref(), mode, MAX_TEXT_INPUT_BYTES as u32);
+    for _ in 0..2 {
+        dispatch("preedit");
+        dispatch("commit");
+    }
+    dispatch("aggregate overflow");
+    assert_eq!(window.poll(sink.as_com_ref()), Ok(PollStatus::Event));
+    dispatch("drop until cancel");
+    exercise(text.unchecked_ref(), "compose-start");
+    assert_eq!(window.poll(sink.as_com_ref()), Ok(PollStatus::Event));
+    {
+        let events = received.borrow();
+        assert_eq!(events.len(), 2);
+        assert!(events.iter().all(|(event, text)| *event == UiInput::Text && text.len() == MAX_TEXT_INPUT_BYTES));
+    }
+
+    let cancellation = OverflowSink::from_value(OverflowSink { window: window.clone(), ordinary: sink.clone(), canvas: canvas.clone() })
+        .query::<IInputSinkAbi>().unwrap();
+    assert_eq!(window.poll(cancellation.as_com_ref()), Err(NC_E_INVALID_ARG));
+    assert_eq!(window.poll(sink.as_com_ref()), Ok(PollStatus::Event));
+    assert_eq!(window.poll(sink.as_com_ref()), Ok(PollStatus::Idle));
+    assert!(matches!(received.borrow().last(), Some((UiInput::Key(stroke), _)) if stroke.key == KeyCode::Character(u32::from('n'))));
+    received.borrow_mut().clear();
+
+    dispatch("late-composition-input");
+    text.set_value("stale composition");
+    exercise(text.unchecked_ref(), "compose-end");
+    dispatch("late-composition-input");
+    assert!(keyboard_test_event(text.unchecked_ref(), "x", true), "stale repeats must suppress DOM text insertion");
+    assert!(!keyboard_test_event(text.unchecked_ref(), "n", true), "fresh repeats must retain editable defaults");
+    exercise(canvas.unchecked_ref(), "half-wheel");
+    exercise(canvas.unchecked_ref(), "chord");
+    while window.poll(sink.as_com_ref()).unwrap() == PollStatus::Event {}
+    assert!(matches!(
+        received.borrow().as_slice(),
+        [(UiInput::Key(stroke), _), (UiInput::Pointer(_), _)] if stroke.key == KeyCode::Character(u32::from('n'))
+    ), "unexpected events after overflow recovery: {:?}", *received.borrow());
+    received.borrow_mut().clear();
+    exercise(canvas.unchecked_ref(), "down");
+    exercise(canvas.unchecked_ref(), "up");
+    dispatch("preedit");
+    dispatch("commit");
+    while window.poll(sink.as_com_ref()).unwrap() == PollStatus::Event {}
+    let events = received.borrow();
+    assert!(events.iter().any(|(event, _)| matches!(event, UiInput::Down { .. })));
+    assert!(events.iter().any(|(event, _)| matches!(event, UiInput::Up { .. })));
+    assert!(matches!(events.last(), Some((UiInput::Text, text)) if text.len() == MAX_TEXT_INPUT_BYTES));
+    dispatch("late-composition-input");
+    assert!(text.value().is_empty(), "ignored tagged input must leave no value for the next commit");
+}
+
 /// Runs WebGL target/ownership checks and DOM composition, paste, keyboard, wheel, pointer and teardown assertions.
 pub async fn run_platform_input_tests() {
     std::panic::set_hook(Box::new(|info| record_panic(&info.to_string())));
@@ -1041,6 +1143,7 @@ pub async fn run_platform_input_tests() {
     }
     browser_shortcuts_through_com();
     browser_text_commit_limit_through_com();
+    browser_text_backlog_recovers_through_com();
     canonical_browser_derivatives().await;
     browser_surface_targets();
     geometry_tests::canvas_content_coordinates_through_com();
@@ -1065,9 +1168,9 @@ pub async fn run_platform_input_tests() {
     exercise(host.text.unchecked_ref(), "compose-start");
     assert!(host.drain().is_empty(), "preedit and its Enter key must stay browser-owned");
     exercise(host.text.unchecked_ref(), "compose-end");
-    assert!(matches!(host.drain().as_slice(), [PendingInput::Event { event: UiInput::Text, text }] if text == "日本"));
+    assert!(matches!(host.drain().as_slice(), [PendingInput::Event { event: UiInput::Text, text }] if text.as_ref() == "日本"));
     exercise(host.text.unchecked_ref(), "paste");
-    assert!(matches!(host.drain().as_slice(), [PendingInput::Event { event: UiInput::Text, text }] if text == "é\n pasted"));
+    assert!(matches!(host.drain().as_slice(), [PendingInput::Event { event: UiInput::Text, text }] if text.as_ref() == "é\n pasted"));
     exercise(host.text.unchecked_ref(), "key");
     assert!(matches!(host.drain().as_slice(), [PendingInput::Event { event: UiInput::Key(event), .. }] if event.key == KeyCode::Character(u32::from('F'))));
     exercise(canvas.unchecked_ref(), "wheel");
@@ -1130,6 +1233,6 @@ pub async fn run_platform_input_tests() {
     drop(host);
     assert!(text.parent_node().is_none());
     exercise(canvas.unchecked_ref(), "key");
-    assert!(queue.borrow().events.is_empty());
+    assert!(queue.borrow_mut().events.pop().is_none());
     canvas.remove();
 }

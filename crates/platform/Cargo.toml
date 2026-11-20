@@ -58,7 +58,7 @@ web-sys = { workspace = true, features = [
     "MediaDevices", "MediaStream", "MediaStreamConstraints", "MediaStreamAudioSourceNode", "MediaStreamTrack", "MediaStreamTrackState",
     "Clipboard", "Navigator", "Document", "DomRect", "Element", "Event", "EventTarget", "FocusEvent",
     "CssStyleDeclaration", "HtmlTextAreaElement", "HtmlCanvasElement", "HtmlElement",
-    "KeyboardEvent", "PointerEvent", "WebGl2RenderingContext", "WheelEvent", "Window",
+    "InputEvent", "KeyboardEvent", "PointerEvent", "WebGl2RenderingContext", "WheelEvent", "Window",
 ] }
 
 [dev-dependencies]
