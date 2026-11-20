@@ -90,7 +90,11 @@ materials, alternate UV sets and CUBICSPLINE animation fail with a diagnostic.
 This is a sample viewer for the pinned core assets, not a complete glTF importer.
 
 Joint palettes contain `joint_world * inverse_bind`; rigid primitives use the
-mesh node's world transform. This world-space convention excludes the skinned
+mesh node's world transform. A finite negative determinant of its sampled linear
+basis selects clockwise front faces, including inherited and animated mirrors.
+Zero and nonfinite determinants use the ordinary counterclockwise winding.
+Skinned primitives use counterclockwise winding because a blended deformation
+can change orientation within a mesh. This world-space convention excludes the skinned
 mesh node transform, avoiding its double application. Vertices are serialized
 as position (12 bytes), normal (12), UV (8), u32 joints (16), f32 weights (16).
 Matrices are explicitly encoded column-major, 64 bytes each; Rust struct layout

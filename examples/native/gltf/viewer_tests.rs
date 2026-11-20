@@ -9,6 +9,11 @@ static NATIVE_SESSION: std::sync::Mutex<()> = std::sync::Mutex::new(());
 /// Writes and loads an actual tiny glTF with external mesh bytes and an optional PNG.
 /// The returned scene owns every imported byte, so temporary files can retire before atlas/GPU use.
 fn emissive_scene(factor: Option<[f32; 3]>, pixel: Option<[u8; 4]>) -> Scene {
+    triangle_scene(factor, pixel, |_, _, _| {})
+}
+
+/// Builds one localized input file and lets a fixture author its own transforms or material maps.
+fn triangle_scene(factor: Option<[f32; 3]>, pixel: Option<[u8; 4]>, customize: impl FnOnce(&std::path::Path, &mut serde_json::Value, &mut Vec<u8>)) -> Scene {
     use serde_json::json;
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path();
@@ -16,7 +21,6 @@ fn emissive_scene(factor: Option<[f32; 3]>, pixel: Option<[u8; 4]>) -> Scene {
     floats(&mut bytes, [-1., -1., 0., 1., -1., 0., 0., 1., 0.]);
     floats(&mut bytes, [0., 0., 1., 0., 0., 1., 0., 0., 1.]);
     bytes.extend([0u16, 1, 2].into_iter().flat_map(u16::to_le_bytes));
-    std::fs::write(root.join("mesh.bin"), &bytes).unwrap();
     let mut document = json!({
         "asset":{"version":"2.0"}, "scene":0, "scenes":[{"nodes":[0]}], "nodes":[{"mesh":0}],
         "meshes":[{"primitives":[{"attributes":{"POSITION":0,"NORMAL":1},"indices":2,"material":0}]}],
@@ -37,9 +41,95 @@ fn emissive_scene(factor: Option<[f32; 3]>, pixel: Option<[u8; 4]>) -> Scene {
         document["textures"] = json!([{"source":0}]);
         document["materials"][0]["emissiveTexture"] = json!({"index":0});
     }
+    customize(root, &mut document, &mut bytes);
+    document["buffers"][0]["byteLength"] = json!(bytes.len());
+    std::fs::write(root.join("mesh.bin"), &bytes).unwrap();
     let path = root.join("scene.gltf");
     std::fs::write(&path, serde_json::to_vec(&document).unwrap()).unwrap();
     Scene::load(&path).unwrap()
+}
+
+/// Positive and negative sampled world determinants must keep the authored front face visible.
+#[cfg(all(feature = "test-support", feature = "glow"))]
+#[test]
+#[ignore = "requires a native SDL GL driver; SDL_VIDEODRIVER=offscreen is sufficient"]
+fn rigid_mesh_facing_follows_sampled_world_orientation() {
+    use serde_json::json;
+    let _native = NATIVE_SESSION.lock().unwrap();
+    let _runtime = neocogi_com_host::initialize_runtime();
+    let region = environment::Region { x: 0, y: 0, width: 1, height: 1 };
+    let lighting = Lighting {
+        environment: Environment {
+            width: 1,
+            height: 1,
+            pixels: vec![128, 0, 0, 129],
+            regions: [region; environment::REGION_COUNT],
+        },
+        exposure: 1.,
+        intensity: 0.,
+        background: Background::Hidden,
+    };
+    let size = Size { width: 64, height: 64 };
+    let native = neocogi_platform_examples::sdk::platform::testing::window("rigid glTF facing", size).unwrap();
+    let target = Target::new(native.window).unwrap();
+    let normal = [1., 1., 1.];
+    let mirror = [-1., 1., 1.];
+    for (label, mesh_scale, ancestors, animated, reversed) in [
+        ("ordinary", normal, vec![], false, false),
+        ("mirrored node", mirror, vec![], false, false),
+        ("nonuniform mirror", [-0.4, 1.5, 0.7], vec![], false, false),
+        ("inherited mirror", normal, vec![mirror], false, false),
+        ("two inherited mirrors", normal, vec![mirror, mirror], false, false),
+        ("animated mirror", normal, vec![], true, false),
+        ("ordinary back", normal, vec![], false, true),
+        ("mirrored back", mirror, vec![], false, true),
+    ] {
+        let scene = triangle_scene(Some([1., 0., 0.]), None, |_, document, bytes| {
+            if reversed {
+                bytes[74..78].copy_from_slice(&[2, 0, 1, 0]);
+            }
+            let mut nodes = vec![json!({"mesh":0,"scale":mesh_scale})];
+            for scale in ancestors {
+                nodes.push(json!({"scale":scale,"children":[nodes.len()-1]}));
+            }
+            document["scenes"][0]["nodes"] = json!([nodes.len() - 1]);
+            document["nodes"] = json!(nodes);
+            if animated {
+                bytes.resize(80, 0);
+                floats(bytes, [0., 1., 2.]);
+                floats(bytes, [normal, mirror, mirror].into_iter().flatten());
+                document["bufferViews"].as_array_mut().unwrap().extend([
+                    json!({"buffer":0,"byteOffset":80,"byteLength":12}),
+                    json!({"buffer":0,"byteOffset":92,"byteLength":36}),
+                ]);
+                document["accessors"].as_array_mut().unwrap().extend([
+                    json!({"bufferView":3,"componentType":5126,"count":3,"type":"SCALAR","min":[0],"max":[2]}),
+                    json!({"bufferView":4,"componentType":5126,"count":3,"type":"VEC3"}),
+                ]);
+                document["animations"] = json!([{
+                    "samplers":[{"input":3,"output":4,"interpolation":"STEP"}],
+                    "channels":[{"sampler":0,"target":{"node":0,"path":"scale"}}]
+                }]);
+            }
+        });
+        let mut graphics = Graphics::new(&scene, prepare_materials(&scene).unwrap(), &lighting.environment, &target.resources).unwrap();
+        let (center, radius) = scene.bounds();
+        let camera = Camera::new(center, radius, size);
+        for (frame, seconds) in [0.25, 1.25].into_iter().take(if animated { 2 } else { 1 }).enumerate() {
+            target.render(&scene, &mut graphics, &camera, seconds, &lighting, frame as u64 + 1).unwrap();
+            let pixels = native.probe.pixels().unwrap();
+            let offset = ((size.height / 2 * size.width + size.width / 2) * 4) as usize;
+            let center = &pixels[offset..offset + 4];
+            if reversed {
+                assert_eq!(center, &pixels[..4], "{label} must be culled");
+            } else {
+                assert!(
+                    center[0] > 150 && u16::from(center[0]) > u16::from(center[1]) * 2,
+                    "{label} at {seconds} must be visible: {center:?}"
+                );
+            }
+        }
+    }
 }
 
 /// Actual glTF defaults and image decoding must reach the atlas without erasing an authored emissive factor.

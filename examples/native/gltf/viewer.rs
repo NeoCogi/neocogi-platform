@@ -100,8 +100,10 @@ struct GpuMaterial {
 
 /// Rendering state separate from imported scene semantics and camera interaction.
 struct Graphics {
-    /// Shared mesh shader/layout state for rigid and skinned geometry.
-    pipeline: ComBox<IGpuPipelineAbi>,
+    /// Ordinary winding for rigid and skinned geometry.
+    mesh_ccw: ComBox<IGpuPipelineAbi>,
+    /// Reverses the front-face definition for a mirrored rigid draw.
+    mesh_cw: ComBox<IGpuPipelineAbi>,
     /// Procedural full-screen triangle; never writes depth or translates the environment.
     sky_pipeline: ComBox<IGpuPipelineAbi>,
     /// Immutable buffers in the same order as Scene::primitives.
@@ -165,38 +167,43 @@ impl Graphics {
             slot,
             kind: GpuBindingKind::SampledTexture,
         }));
-        let descriptor = PipelineDesc {
-            state: GpuPipelineInfo {
-                depth_write: true,
-                depth_compare: GpuCompare::Less,
-                cull: GpuCullMode::Back,
-                ..GpuPipelineInfo::default()
-            },
-            vertex_buffers: vec![GpuVertexBufferLayout {
-                slot: 0,
-                stride: VERTEX_STRIDE,
-                step: GpuStepMode::Vertex,
-            }],
-            attributes: [
-                (GpuVertexFormat::Float32x3, 0),
-                (GpuVertexFormat::Float32x3, 12),
-                (GpuVertexFormat::Float32x2, 24),
-                (GpuVertexFormat::Uint32x4, 32),
-                (GpuVertexFormat::Float32x4, 48),
-            ]
-            .into_iter()
-            .enumerate()
-            .map(|(i, (format, offset))| GpuVertexAttribute {
-                location: i as u32,
-                slot: 0,
-                format,
-                offset,
-            })
-            .collect(),
-            bindings,
-        }
-        .source()?;
-        let pipeline = resources.create_pipeline(descriptor.as_com_ref(), vs.as_com_ref(), fs.as_com_ref())?;
+        let pipeline = |front_face| -> Result<ComBox<IGpuPipelineAbi>, RenderError> {
+            let descriptor = PipelineDesc {
+                state: GpuPipelineInfo {
+                    depth_write: true,
+                    depth_compare: GpuCompare::Less,
+                    cull: GpuCullMode::Back,
+                    front_face,
+                    ..GpuPipelineInfo::default()
+                },
+                vertex_buffers: vec![GpuVertexBufferLayout {
+                    slot: 0,
+                    stride: VERTEX_STRIDE,
+                    step: GpuStepMode::Vertex,
+                }],
+                attributes: [
+                    (GpuVertexFormat::Float32x3, 0),
+                    (GpuVertexFormat::Float32x3, 12),
+                    (GpuVertexFormat::Float32x2, 24),
+                    (GpuVertexFormat::Uint32x4, 32),
+                    (GpuVertexFormat::Float32x4, 48),
+                ]
+                .into_iter()
+                .enumerate()
+                .map(|(i, (format, offset))| GpuVertexAttribute {
+                    location: i as u32,
+                    slot: 0,
+                    format,
+                    offset,
+                })
+                .collect(),
+                bindings: bindings.clone(),
+            }
+            .source()?;
+            Ok(resources.create_pipeline(descriptor.as_com_ref(), vs.as_com_ref(), fs.as_com_ref())?)
+        };
+        let mesh_ccw = pipeline(GpuFrontFace::Ccw)?;
+        let mesh_cw = pipeline(GpuFrontFace::Cw)?;
         let mut meshes = Vec::new();
         for primitive in &scene.primitives {
             let mut vertices = Vec::with_capacity(primitive.vertices.len() * VERTEX_STRIDE as usize);
@@ -270,7 +277,8 @@ impl Graphics {
             lighting: uniform(u64::from(environment::UNIFORM_BYTES))?,
             skins,
             parameters,
-            pipeline,
+            mesh_ccw,
+            mesh_cw,
             sky_pipeline,
             meshes,
             materials: gpu_materials,
@@ -287,7 +295,6 @@ impl Graphics {
             self.lighting.upload(0, &lighting.environment.uniforms(lighting.exposure, lighting.intensity))?;
         }
         let pose = scene.pose(seconds);
-        view.bind_pipeline(self.pipeline.as_com_ref())?;
         self.bind_environment(lighting, view)?;
         let mut frame = Vec::with_capacity(64);
         matrix_bytes(&mut frame, camera.view_projection());
@@ -295,6 +302,9 @@ impl Graphics {
         view.bind_uniform_buffer(GpuShaderStage::Vertex, 0, self.camera.as_gpu_buffer(), 0, 64)?;
         for (index, (primitive, mesh)) in scene.primitives.iter().zip(&self.meshes).enumerate() {
             let palette = scene.palette(primitive, &pose);
+            let mirrored = primitive.skin.is_none() && mirrored_basis(&palette[0]);
+            let pipeline = if mirrored { &self.mesh_cw } else { &self.mesh_ccw };
+            view.bind_pipeline(pipeline.as_com_ref())?;
             let mut skin = Vec::with_capacity(MAX_JOINTS * 64);
             for index in 0..MAX_JOINTS {
                 matrix_bytes(&mut skin, palette.get(index).copied().unwrap_or_else(rs_math3d::Mat4f::identity));
@@ -328,6 +338,19 @@ impl Graphics {
         }
         Ok(())
     }
+}
+
+/// Classifies the sampled rigid world transform, including inherited mirrors.
+/// Wide arithmetic avoids underflow or overflow while classifying a finite f32 basis.
+fn mirrored_basis(world: &rs_math3d::Mat4f) -> bool {
+    let linear = rs_math3d::Mat3d {
+        col: std::array::from_fn(|column| {
+            let axis = world.col[column];
+            rs_math3d::Vec3d::new(f64::from(axis.x), f64::from(axis.y), f64::from(axis.z))
+        }),
+    };
+    let determinant = linear.determinant();
+    determinant.is_finite() && determinant < 0.0
 }
 
 impl Graphics {
