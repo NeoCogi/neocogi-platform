@@ -317,7 +317,7 @@ impl Atoms {
             self.UTF8_MIME_UPPER,
             self.PLAIN_TEXT,
             self.TEXT,
-            AtomEnum::STRING.into(),
+            Atom::from(AtomEnum::STRING),
         ]
     }
 
@@ -326,7 +326,7 @@ impl Atoms {
         if reply.format != 8 || (target != self.TEXT && target != self.PLAIN_TEXT && reply.type_ != target) {
             return failed();
         }
-        if reply.type_ == AtomEnum::STRING.into() {
+        if reply.type_ == Atom::from(AtomEnum::STRING) {
             Ok(TextEncoding::Latin1)
         } else if self.text_targets()[..4].contains(&reply.type_) {
             Ok(TextEncoding::Utf8)
@@ -657,7 +657,7 @@ impl SelectionOwner {
                 atoms
                     .text_targets()
                     .into_iter()
-                    .filter(|target| *target != AtomEnum::STRING.into() || selection.latin1.is_some()),
+                    .filter(|target| *target != Atom::from(AtomEnum::STRING) || selection.latin1.is_some()),
             );
             return self
                 .window
@@ -672,7 +672,7 @@ impl SelectionOwner {
                 .change_property32(PropMode::REPLACE, requester, property, AtomEnum::INTEGER, &[selection.time])
                 .is_ok();
         }
-        let (format, data) = if target == AtomEnum::STRING.into() {
+        let (format, data) = if target == Atom::from(AtomEnum::STRING) {
             let Some(latin1) = &selection.latin1 else { return false };
             (target, latin1.clone())
         } else if atoms.text_targets()[..5].contains(&target) {

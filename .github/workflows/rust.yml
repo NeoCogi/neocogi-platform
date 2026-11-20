@@ -72,6 +72,9 @@ jobs:
         run: |
           cargo test --locked -p neocogi-platform --test shader_targets
           cargo test --locked -p neocogi-platform --no-default-features --features ${{ matrix.backend }} --test shader_targets
+      - name: Combined Linux SDK and Contracts build-support graph
+        if: matrix.backend == 'glow'
+        run: cargo check --offline --locked --workspace --all-targets --features neocogi-platform-contracts/build-support
       - name: Backend-owned native regressions
         run: |
           xvfb-run -a cargo test --locked -p neocogi-platform --no-default-features --features ${{ matrix.backend }},test-support --lib gpu::backends::${{ matrix.backend }}:: -- --include-ignored --test-threads=1
