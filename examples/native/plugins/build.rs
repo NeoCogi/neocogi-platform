@@ -5,14 +5,25 @@ pub mod artifacts;
 
 /// Track exact named inputs and deployed outputs, so a later shim build invalidates cached staging.
 fn main() {
-    use neocogi_platform_contracts::build::layout::{mirror_library, output_root, stage_library};
+    use neocogi_platform_contracts::build::layout::{cargo_layout, mirror_library, stage_library};
     let anchor = PathBuf::from(std::env::var_os("OUT_DIR").expect("Cargo OUT_DIR"));
-    let profile_root = output_root(Some(&anchor), None).expect("Cargo profile output root");
+    println!("cargo::rerun-if-env-changed=NEOCOGI_CARGO_PROFILE_DIR");
+    println!("cargo::rerun-if-env-changed=NEOCOGI_NATIVE_OUTPUT_DIR");
+    let layout = cargo_layout(
+        &anchor,
+        std::env::var_os("NEOCOGI_CARGO_PROFILE_DIR").map(Into::into),
+        std::env::var_os("NEOCOGI_NATIVE_OUTPUT_DIR").map(Into::into),
+    )
+    .expect("resolve native layout");
+    let Some(profile_root) = layout.profile else {
+        println!("cargo::rustc-env=NEOCOGI_PLUGIN_BUILD_PROFILE=");
+        println!("cargo::warning=Native shim staging needs NEOCOGI_CARGO_PROFILE_DIR set to the absolute Cargo final profile directory");
+        return;
+    };
     let directory = profile_root.file_name().and_then(|value| value.to_str()).expect("Cargo profile name");
     let profile = if directory == "debug" { "dev" } else { directory };
     println!("cargo::rustc-env=NEOCOGI_PLUGIN_BUILD_PROFILE={profile}");
-    println!("cargo::rerun-if-env-changed=NEOCOGI_NATIVE_OUTPUT_DIR");
-    let output = output_root(Some(&anchor), std::env::var_os("NEOCOGI_NATIVE_OUTPUT_DIR").map(Into::into)).expect("native deployment output");
+    let output = layout.destination.expect("a known profile supplies the default deployment destination");
     let system = artifacts::System::from_os(&std::env::var("CARGO_CFG_TARGET_OS").expect("Cargo target OS"));
     let filename = artifacts::library_filename(system);
     // The public library target lives directly in Cargo's profile output root.

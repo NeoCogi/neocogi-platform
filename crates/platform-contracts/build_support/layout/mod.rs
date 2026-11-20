@@ -29,12 +29,48 @@ pub fn output_root(anchor: Option<&Path>, explicit: Option<PathBuf>) -> io::Resu
             Err(io::Error::other("NEOCOGI_NATIVE_OUTPUT_DIR must be absolute"))
         };
     }
+    inferred_profile(anchor).ok_or_else(|| {
+        io::Error::other("native output inference requires a consumer build.rs and Cargo OUT_DIR; set an absolute NEOCOGI_NATIVE_OUTPUT_DIR instead")
+    })
+}
+
+/// Find the Cargo final profile when Cargo's build and target roots share an ancestor.
+fn inferred_profile(anchor: Option<&Path>) -> Option<PathBuf> {
     anchor
         .and_then(|anchor| anchor.ancestors().find(|directory| directory.join(".cargo-lock").is_file()))
         .map(Path::to_path_buf)
-        .ok_or_else(|| {
-            io::Error::other("native output inference requires a consumer build.rs and Cargo OUT_DIR; set an absolute NEOCOGI_NATIVE_OUTPUT_DIR instead")
-        })
+}
+
+/// Final Cargo artifact input and deployment destination for a native example build.
+pub struct CargoLayout {
+    /// The selected final profile directory, or no proven provider source location.
+    /// Its selected basename identifies the Cargo profile even through a directory alias.
+    pub profile: Option<PathBuf>,
+    /// The explicit export or the selected profile. Artwork needs only this location.
+    pub destination: Option<PathBuf>,
+}
+
+/// Resolve final Cargo artifacts separately from deployment files.
+/// A split build directory may yield no profile. Both overrides use absolute paths.
+/// The input override names an existing final profile directory for this target.
+pub fn cargo_layout(anchor: &Path, profile: Option<PathBuf>, destination: Option<PathBuf>) -> io::Result<CargoLayout> {
+    let profile = match profile {
+        Some(path) => {
+            if !path.is_absolute() || !path.is_dir() {
+                return Err(io::Error::other(format!(
+                    "NEOCOGI_CARGO_PROFILE_DIR must name an existing absolute Cargo final profile directory: {}",
+                    path.display()
+                )));
+            }
+            Some(path)
+        }
+        None => inferred_profile(Some(anchor)),
+    };
+    let destination = match destination {
+        Some(path) => Some(output_root(None, Some(path))?),
+        None => profile.clone(),
+    };
+    Ok(CargoLayout { profile, destination })
 }
 
 /// Copies a selected library into app/lib and returns only its UTF-8 filename.
@@ -129,6 +165,51 @@ mod tests {
         assert!(output_root(Some(&anchor), Some("relative".into())).is_err());
         assert!(output_root(None, None).unwrap_err().to_string().contains("build.rs"));
         assert!(output_root(Some(temporary.path()), None).is_err());
+    }
+
+    /// A detached export always remains independent of whether a final profile is discoverable.
+    #[test]
+    fn cargo_layout_preserves_split_source_and_destination_roles() {
+        let temporary = tempfile::tempdir().unwrap();
+        let profile = temporary.path().join("target/triple/min-size");
+        fs::create_dir_all(&profile).unwrap();
+        fs::write(profile.join(".cargo-lock"), []).unwrap();
+        let profile = profile.canonicalize().unwrap();
+        let export = temporary.path().join("export");
+        let split = temporary.path().join("build/debug/consumer/out");
+        let combined = profile.join("build/consumer/out");
+        let layout = cargo_layout(&combined, None, None).unwrap();
+        assert_eq!(layout.profile.as_ref(), Some(&profile));
+        assert_eq!(layout.destination.as_ref(), Some(&profile));
+        let layout = cargo_layout(&split, None, Some(export.clone())).unwrap();
+        assert!(layout.profile.is_none());
+        assert_eq!(layout.destination.as_ref(), Some(&export));
+        let layout = cargo_layout(&split, Some(profile.clone()), Some(export.clone())).unwrap();
+        assert_eq!(layout.profile.as_ref(), Some(&profile));
+        assert_eq!(layout.destination.as_ref(), Some(&export));
+        let layout = cargo_layout(&split, Some(profile.clone()), None).unwrap();
+        assert_eq!(layout.destination.as_ref(), Some(&profile));
+        let layout = cargo_layout(&split, None, None).unwrap();
+        assert!(layout.profile.is_none() && layout.destination.is_none());
+        for invalid in [PathBuf::from("relative"), export, profile.join(".cargo-lock")] {
+            let error = cargo_layout(&combined, Some(invalid), None).err().unwrap();
+            assert!(error.to_string().contains("NEOCOGI_CARGO_PROFILE_DIR"));
+        }
+    }
+
+    /// The final profile name belongs to the selected path even if its bytes live in a cache.
+    #[cfg(unix)]
+    #[test]
+    fn cargo_layout_preserves_the_name_of_an_aliased_profile() {
+        let temporary = tempfile::tempdir().unwrap();
+        let storage = temporary.path().join("cache-storage");
+        let profile = temporary.path().join("debug");
+        fs::create_dir(&storage).unwrap();
+        std::os::unix::fs::symlink(&storage, &profile).unwrap();
+        let layout = cargo_layout(temporary.path(), Some(profile.clone()), Some(storage.clone())).unwrap();
+        assert_eq!(layout.profile.as_ref(), Some(&profile));
+        assert_eq!(layout.profile.unwrap().canonicalize().unwrap(), storage.canonicalize().unwrap());
+        assert_eq!(layout.destination, Some(storage));
     }
 }
 

@@ -31,6 +31,7 @@ impl Deployment {
             fs::copy(source, before.join(Path::new(source).file_name().unwrap())).unwrap();
         }
         let profile = std::env::var_os("NEOCOGI_NATIVE_OUTPUT_DIR")
+            .or_else(|| std::env::var_os("NEOCOGI_CARGO_PROFILE_DIR"))
             .map(PathBuf::from)
             .unwrap_or_else(|| Path::new(binaries[0]).parent().unwrap().to_path_buf());
         let requested = std::env::var("NEOCOGI_TEST_BACKEND").ok();

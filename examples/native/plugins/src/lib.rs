@@ -77,11 +77,16 @@ pub fn acquire(
 /// Standard Cargo command for the normal library, preserving this application's profile.
 /// Cross-target deployments add the same --target used for the application.
 pub fn preparation_command(backend: Backend) -> String {
-    format!(
-        "cargo build --profile {} -p neocogi-platform-dylib --no-default-features --features {}",
-        env!("NEOCOGI_PLUGIN_BUILD_PROFILE"),
-        backend.name()
-    )
+    let profile = env!("NEOCOGI_PLUGIN_BUILD_PROFILE");
+    let backend = backend.name();
+    if profile.is_empty() {
+        format!(
+            "cargo build -p neocogi-platform-dylib --no-default-features --features {backend} \
+             (use the same Cargo profile and target, then set NEOCOGI_CARGO_PROFILE_DIR to the absolute final profile directory)"
+        )
+    } else {
+        format!("cargo build --profile {profile} -p neocogi-platform-dylib --no-default-features --features {backend}")
+    }
 }
 
 #[cfg(test)]

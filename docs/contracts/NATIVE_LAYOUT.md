@@ -108,8 +108,8 @@ its provider. Missing/inaccessible files return an owned `RenderError` with
 A missing library lists a normal Cargo library preparation command. Unknown
 backend names reject before loading, and a mismatched requested backend reports
 the actual descriptor and required rebuild.
-The build-script hint records only Cargo's profile name, without embedding private
-build paths. `debug` maps to Cargo's `dev` profile. For min-size Vulkan, run
+The build-script hint records only a known Cargo profile name, without embedding
+private build paths. `debug` maps to Cargo's `dev` profile. For min-size Vulkan, run
 `cargo build --profile min-size -p neocogi-platform-dylib --no-default-features --features vulkan` before the
 matching `cargo run --profile min-size ... --features dynamic` invocation.
 Both commands default to dev and must select the same profile/target. The build
@@ -121,6 +121,14 @@ published by this profile. If the source is missing, an unowned or edited
 destination is preserved. A present or rebuilt source refreshes the staged copy.
 Missing inputs allow compilation and help, and an absent deployed library
 returns the preparation error at acquisition.
+
+When Cargo stores intermediate files separately, set `NEOCOGI_CARGO_PROFILE_DIR`
+to the existing absolute final profile directory that contains both the ordinary
+shim artifact and Cargo's application output. Include the target directory for
+explicit cross-target or host-target builds. If a final profile cannot be found,
+the build warns and skips provider staging. Help remains usable, and acquisition
+reports how to supply the profile. Artwork stages to the same destination as the
+library by default. An explicit destination alone suffices for artwork export.
 
 A distinct absolute `NEOCOGI_NATIVE_OUTPUT_DIR` stages a detached export. The
 export retains its library if the Cargo input disappears. Cargo still writes

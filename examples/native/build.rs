@@ -3,17 +3,27 @@
 fn main() {
     println!("cargo::rustc-check-cfg=cfg(example_assets_available)");
     println!("cargo::rerun-if-changed=gltf/assets");
+    println!("cargo::rerun-if-env-changed=NEOCOGI_CARGO_PROFILE_DIR");
+    println!("cargo::rerun-if-env-changed=NEOCOGI_NATIVE_OUTPUT_DIR");
     let root = std::path::Path::new("gltf/assets");
     if ["DamagedHelmet.glb", "BrainStem.glb", "Cannon_Exterior.hdr"]
         .iter()
         .all(|name| root.join(name).is_file())
     {
-        println!("cargo::rustc-cfg=example_assets_available");
-        use neocogi_platform_contracts::build::layout::{Resource, output_root, stage_resources};
+        use neocogi_platform_contracts::build::layout::{Resource, cargo_layout, stage_resources};
         let manifest = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").unwrap());
-        println!("cargo::rerun-if-env-changed=NEOCOGI_NATIVE_OUTPUT_DIR");
         let anchor = std::path::PathBuf::from(std::env::var_os("OUT_DIR").unwrap());
-        let output = output_root(Some(&anchor), std::env::var_os("NEOCOGI_NATIVE_OUTPUT_DIR").map(Into::into)).unwrap();
+        let layout = cargo_layout(
+            &anchor,
+            std::env::var_os("NEOCOGI_CARGO_PROFILE_DIR").map(Into::into),
+            std::env::var_os("NEOCOGI_NATIVE_OUTPUT_DIR").map(Into::into),
+        )
+        .expect("resolve example artwork layout");
+        let Some(output) = layout.destination else {
+            println!("cargo::warning=Artwork staging needs an absolute NEOCOGI_CARGO_PROFILE_DIR or NEOCOGI_NATIVE_OUTPUT_DIR");
+            return;
+        };
+        println!("cargo::rustc-cfg=example_assets_available");
         let names = [
             "assets/DamagedHelmet.glb",
             "assets/BrainStem.glb",

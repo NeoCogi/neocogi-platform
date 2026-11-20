@@ -149,12 +149,17 @@ fn prepare(options: &Options, output: &Path) -> Result<(PathBuf, u64)> {
     let corpus = output.join("corpus");
     let backend_features = format!("{}{}", options.backend.name(), if options.shader_python { ",shader-python" } else { "" });
     let application_features = if options.shader_python { "dynamic,shader-python" } else { "dynamic" };
+    // The static corpus reads authored sources and never uses deployed artwork.
+    let corpus_stage = tempfile::tempdir_in(output).context("create isolated corpus staging directory")?;
     run(cargo(None)
         .args(["test", "--locked", "-p", "neocogi-platform-examples", "--no-default-features", "--features"])
         .arg(format!("static,{},test-support", backend_features))
         .args(["--test", "shader_corpus"])
+        .env_remove("NEOCOGI_CARGO_PROFILE_DIR")
+        .env("NEOCOGI_NATIVE_OUTPUT_DIR", corpus_stage.path())
         .env("NEOCOGI_SHADER_ARTIFACT_DIR", &corpus)
         .env("NEOCOGI_SHADER_VALIDATORS", "1"))?;
+    corpus_stage.close().context("remove unused corpus staging files")?;
     let library = crate::packages::platform_artifact(&capture(
         cargo(None)
             .args([
@@ -190,6 +195,10 @@ fn prepare(options: &Options, output: &Path) -> Result<(PathBuf, u64)> {
             ])
             .arg(application_features)
             .args(["--bins", "--message-format=json"])
+            .env(
+                "NEOCOGI_CARGO_PROFILE_DIR",
+                library.parent().context("library is missing a Cargo profile directory")?,
+            )
             .env_remove("NEOCOGI_NATIVE_OUTPUT_DIR"),
     )?)?;
     let candidate = output.join("candidate");
