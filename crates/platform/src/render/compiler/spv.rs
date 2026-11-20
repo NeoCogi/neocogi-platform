@@ -914,6 +914,11 @@ impl Writer<'_> {
                 c = self.splat(b, c, at);
             }
         }
+        if matches!(op, ShiftLeft | ShiftRight) {
+            let mask = self.constant(&Ty::Scalar(Uint), SHIFT_COUNT_MASK);
+            let mask = if ct.lanes() == 1 { mask } else { self.splat(b, mask, ct) };
+            c = self.value(b, Op::BitwiseAnd, ct, &[c, mask]);
+        }
         let family = at.scalar().unwrap();
         let opcode = match op {
             Add => {

@@ -126,7 +126,9 @@ absent. Conditions are bool; every path of a value-returning function must retur
 
 Expressions include `(. VALUE MEMBER_OR_SWIZZLE)`, `(index VALUE INDEX)`, typed
 constructors, helper calls, unary `- ! ~`, arithmetic `+ - * / %`, comparisons,
-integer bit operations/shifts, and scalar `&& ||`. Numeric scalar/vector arithmetic
+integer bit operations/shifts, and scalar `&& ||`. Shifts use the low five bits
+of each unsigned count lane. Left shift discards high bits. Signed right shift
+extends the sign bit and unsigned right shift fills with zero. Numeric scalar/vector arithmetic
 broadcasts scalars explicitly during lowering. Matrix multiplication uses column
 semantics. Intrinsics include min/max/clamp, rounding, trigonometry, exponential
 functions, vector products, normalize/reflect, mix/select, all/any, and graphics

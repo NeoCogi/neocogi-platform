@@ -1,6 +1,10 @@
 //! Structural cost regressions complement native pixels; no GPU-specific instruction count is assumed.
 use neocogi_platform::gpu::testing::optimization;
-use neocogi_platform_contracts::render::{abi::GpuShaderStage, shader::ShaderCode};
+use neocogi_platform::render::compiler::{CompileError, Compiler};
+use neocogi_platform_contracts::render::{
+    abi::GpuShaderStage,
+    shader::{ShaderCode, ShaderTarget},
+};
 #[path = "support/compilation.rs"]
 mod compilation;
 use compilation::{compile, targets, validate};
@@ -25,6 +29,25 @@ fn aggregate_corpus_validates_for_every_enabled_output() {
             }
         }
     }
+}
+
+/// WGSL emits one helper per selected shift shape and charges that helper to the artifact quota.
+#[test]
+fn wgsl_shift_helpers_follow_the_entry_and_quota() {
+    if !targets().contains(&ShaderTarget::Wgsl) {
+        return;
+    }
+    let source = r#"(module
+      (fn nc_shift_left_u32_1 ((count u32)) (returns u32) (return (<< 1u count)))
+      (vertex vs () (returns vec4 (builtin position)) (return (vec4 (f32 (>> -8 1u)))))
+      (fragment fs () (returns vec4 (location 0)) (return (vec4 (f32 (+ (nc_shift_left_u32_1 32u) (<< 1u 33u)))))))"#;
+    let stage = GpuShaderStage::Fragment;
+    let full = compile(ShaderTarget::Wgsl, stage, source, "fs");
+    let text = full.code.wgsl().unwrap();
+    assert_eq!(text.lines().filter(|line| line.starts_with("fn nc_shift_")).count(), 1, "{text}");
+    let compiler = Compiler::new(ShaderTarget::Wgsl).unwrap();
+    assert!(compiler.compile(stage, source, "fs", full.byte_len()).is_ok());
+    assert!(matches!(compiler.compile(stage, source, "fs", full.byte_len() - 1), Err(CompileError::Limit)));
 }
 
 /// Constant failures must return zero without a runtime check or an indexed parent copy.

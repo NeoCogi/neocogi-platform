@@ -83,6 +83,8 @@ struct Writer<'a> {
     function: usize,
     /// Immutable declaration aliases retain captured paths and indices instead of aggregate copies.
     aliases: Vec<Option<ReadPath>>,
+    /// WGSL shift operators and types used by the selected functions, in deterministic order.
+    shift_helpers: BTreeSet<(Binary, Ty)>,
 }
 /// Proven bounds are shared by text reads and writes; constant cases emit no branch.
 #[cfg(any(test, feature = "wgpu", feature = "test-support", feature = "glow", feature = "webgl"))]
@@ -116,6 +118,7 @@ pub(crate) fn emit(m: &Module, index: usize, gl: bool, limit: usize) -> Result<S
         temp: 0,
         function: index,
         aliases: Vec::new(),
+        shift_helpers: BTreeSet::new(),
     };
     w.module(index);
     if let Some(error) = w.out.error { Err(error) } else { Ok(w.out.text) }
@@ -304,6 +307,43 @@ impl Writer<'_> {
         }
         if self.gl {
             self.wrapper(index);
+        }
+        for (op, value) in std::mem::take(&mut self.shift_helpers) {
+            let name = self.shift_name(op, &value);
+            let count = match value {
+                Ty::Scalar(_) => Ty::Scalar(Scalar::Uint),
+                Ty::Vector(_, lanes) => Ty::Vector(Scalar::Uint, lanes),
+                _ => unreachable!("validated integer shift type"),
+            };
+            let value = self.ty(&value);
+            let count_type = self.ty(&count);
+            let mask = self.shift_mask(&count);
+            let operator = Self::shift_operator(op);
+            self.line(format!(
+                "fn {name}(value: {value}, count: {count_type}) -> {value} {{ return value {operator} (count & {mask}); }}"
+            ));
+        }
+    }
+    /// A private helper name is keyed by direction, integer signedness and lane width.
+    fn shift_name(&self, op: Binary, value: &Ty) -> String {
+        let direction = if op == Binary::ShiftLeft { "left" } else { "right" };
+        let scalar = self.scalar(value.scalar().unwrap());
+        format!("nc_shift_{direction}_{scalar}_{}", value.lanes())
+    }
+    /// GLSL ES and WGSL use the same shift tokens.
+    fn shift_operator(op: Binary) -> &'static str {
+        match op {
+            Binary::ShiftLeft => "<<",
+            Binary::ShiftRight => ">>",
+            _ => unreachable!("shift operator"),
+        }
+    }
+    /// Each component of the unsigned count receives the same low-bit mask.
+    fn shift_mask(&self, count: &Ty) -> String {
+        if count.lanes() == 1 {
+            format!("{SHIFT_COUNT_MASK}u")
+        } else {
+            format!("{}({SHIFT_COUNT_MASK}u)", self.ty(count))
         }
     }
     /// Helper signatures have no entry-only WGSL attributes.
@@ -581,6 +621,21 @@ impl Writer<'_> {
                 self.line("}");
                 result
             }
+            ExprKind::Binary(op @ (Binary::ShiftLeft | Binary::ShiftRight), value, count) => {
+                let left = self.expr(value);
+                let right = self.expr(count);
+                if self.gl {
+                    let operator = Self::shift_operator(*op);
+                    let mask = self.shift_mask(&count.ty);
+                    format!("({left} {operator} ({right} & {mask}))")
+                } else {
+                    // WGSL function parameters are runtime expressions even for constant arguments.
+                    // This permits defined bit discard without adding caller temporaries or moving operands.
+                    let name = self.shift_name(*op, &value.ty);
+                    self.shift_helpers.insert((*op, value.ty.clone()));
+                    format!("{name}({left}, {right})")
+                }
+            }
             ExprKind::Binary(op, a, b) => {
                 let mut left = self.expr(a);
                 let mut right = self.expr(b);
@@ -642,8 +697,7 @@ impl Writer<'_> {
                             Binary::BitAnd => "&",
                             Binary::BitOr => "|",
                             Binary::Xor => "^",
-                            Binary::ShiftLeft => "<<",
-                            Binary::ShiftRight => ">>",
+                            Binary::ShiftLeft | Binary::ShiftRight => unreachable!("handled by shift lowering"),
                         }
                     )
                 }

@@ -23,6 +23,17 @@ const TYPES: &str = r#"(struct Record (matrix mat4) (color vec4))
 const COLORS: [[u8; 4]; 4] = [[255, 0, 0, 255], [0, 255, 0, 255], [0, 0, 255, 255], [255; 4]];
 /// No valid value is selected outside the four-element color bank.
 const STRIPE: [[u8; 4]; 8] = [[0; 4], COLORS[0], COLORS[1], COLORS[2], COLORS[3], [0; 4], [0; 4], [0; 4]];
+/// Red and green encode the scalar and vector controls. Blue encodes a dynamic power of two per column.
+const SHIFT_PIXELS: [[u8; 4]; 8] = [
+    [255, 255, 2, 255],
+    [255, 255, 4, 255],
+    [255, 255, 8, 255],
+    [255, 255, 16, 255],
+    [255, 255, 32, 255],
+    [255, 255, 64, 255],
+    [255, 255, 128, 255],
+    [255, 255, 255, 255],
+];
 
 /// One source module, its expected physical-pixel row, and its required binding contract.
 pub struct Case {
@@ -207,6 +218,20 @@ pub fn cases() -> Vec<Case> {
                 [0, 0, 0, 255],
                 [0, 0, 0, 255],
             ],
+            false,
+        ),
+        (
+            "integer_shifts",
+            "(fn count ((x u32)) (returns u32) (return (+ x 32u)))",
+            r#"(let wrap (&& (== (<< 1u 32u) 1u) (== (<< 1u (+ 16u 17u)) 2u)))
+              (let left (&& wrap (&& (== (<< 2u 31u) 0u) (== (<< 1 31u) -2147483648))))
+              (let right (&& (== (>> -8 33u) -4) (== (>> 2147483648u 33u) 1073741824u)))
+              (let signed (<< (ivec3 -1 2 3) (uvec3 31u 32u 33u)))
+              (let unsigned (>> (uvec3 2147483648u 4u 1u) (uvec3 33u 32u 33u)))
+              (let vectors (&& (all (== signed (ivec3 -2147483648 2 6))) (all (== unsigned (uvec3 1073741824u 4u 0u)))))
+              (return (vec4 (select 0.0 1.0 (&& left right)) (select 0.0 1.0 vectors)
+                            (/ (f32 (<< 1u (count (u32 (. p x))))) 128.0) 1.0))"#,
+            SHIFT_PIXELS,
             false,
         ),
     ];

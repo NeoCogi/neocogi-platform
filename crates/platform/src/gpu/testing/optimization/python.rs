@@ -1,5 +1,5 @@
 //! Python frontend workloads rendered by every native backend and actual WebGL2.
-use super::{Case, COLORS, STRIPE};
+use super::{Case, COLORS, SHIFT_PIXELS, STRIPE};
 
 /// Identical uniform layout to the S-expression corpus, including a large matrix palette.
 const DECLARATIONS: &str = r#"class Record:
@@ -133,6 +133,20 @@ def modify(Value: Value) -> vec4:
     return result + (value.color - vec4(0.25, 0.0, 0.0, 1.0))
 "#,
             [[128, 0, 0, 255]; 8],
+            false,
+        ),
+        (
+            "python_integer_shifts",
+            "def count(x: u32) -> u32:\n    return x + u32(32)\n",
+            r#"    wrap = (u32(1) << u32(32)) == u32(1) and (u32(1) << (u32(16) + u32(17))) == u32(2)
+    left = wrap and (u32(2) << u32(31)) == u32(0) and (1 << u32(31)) == -2147483648
+    right = (-8 >> u32(33)) == -4 and (u32(2147483648) >> u32(33)) == u32(1073741824)
+    signed = ivec3(-1, 2, 3) << uvec3(u32(31), u32(32), u32(33))
+    unsigned = uvec3(u32(2147483648), u32(4), u32(1)) >> uvec3(u32(33), u32(32), u32(33))
+    vectors = all(signed == ivec3(-2147483648, 2, 6)) and all(unsigned == uvec3(u32(1073741824), u32(4), u32(0)))
+    return vec4(select(0.0, 1.0, left and right), select(0.0, 1.0, vectors), f32(u32(1) << count(u32(p.x))) / 128.0, 1.0)
+"#,
+            SHIFT_PIXELS,
             false,
         ),
     ];

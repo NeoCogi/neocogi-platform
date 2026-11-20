@@ -140,8 +140,11 @@ pub(crate) enum Unary {
     /// Componentwise 32-bit integer complement.
     Complement,
 }
+/// Bits consumed from each unsigned shift-count lane by every 32-bit target.
+pub(crate) const SHIFT_COUNT_MASK: u32 = u32::BITS - 1;
+
 /// Binary operators with backend-independent semantics.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum Binary {
     /// Numeric addition, including compatible matrices and scalar broadcasts.
     Add,
@@ -175,9 +178,9 @@ pub(crate) enum Binary {
     BitOr,
     /// Componentwise integer exclusive bit union.
     Xor,
-    /// Integer left shift with a same-shaped unsigned count.
+    /// Integer left shift discarding high bits, with a masked same-shaped unsigned count.
     ShiftLeft,
-    /// Arithmetic signed or logical unsigned right shift.
+    /// Arithmetic signed or logical unsigned right shift with a masked count.
     ShiftRight,
 }
 /// Portable intrinsics; exhaustive writer matches prevent accidental unsupported emission.
