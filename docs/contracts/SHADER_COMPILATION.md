@@ -105,8 +105,9 @@ structures and IO attributes on helper signatures reject.
 Types are `f32`, `i32`, `u32`, `bool`, `vec2`..`vec4`, `ivec2`..`ivec4`,
 `uvec2`..`uvec4`, `bvec2`..`bvec4`, `mat2`..`mat4`, rectangular `matCxR`,
 `(array TYPE COUNT)`, and named structures. Decimal/exponent literals are finite
-f32 values; integral literals are i32 unless suffixed `u`. Explicit constructors
-perform numeric conversions. Booleans do not implicitly convert to numbers.
+f32 values, and integral literals are i32 unless suffixed `u`. Literals keep those
+types in backend expressions, including direct intrinsic arguments. Explicit
+constructors perform numeric conversions. Booleans do not implicitly convert to numbers.
 Vector constructors pack components or splat one scalar; matrix constructors
 supply columns; arrays/structures supply every element/member. No value exceeds
 64 KiB. Arrays contain 1..4096 elements; direct arrays of arrays reject for ES300

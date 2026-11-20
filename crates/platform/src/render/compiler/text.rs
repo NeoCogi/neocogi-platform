@@ -519,10 +519,20 @@ impl Writer<'_> {
         match &e.kind {
             ExprKind::Literal(l) => match l {
                 Literal::Float(v) => {
-                    let s = v.to_string();
-                    if s.contains(['.', 'e', 'E']) { s } else { format!("{s}.0") }
+                    let mut spelling = v.to_string();
+                    if !spelling.contains(['.', 'e', 'E']) {
+                        spelling.push_str(".0");
+                    }
+                    // An unsuffixed WGSL literal would reintroduce an abstract type after IR resolution.
+                    if !self.gl {
+                        spelling.push('f');
+                    }
+                    spelling
                 }
-                Literal::Sint(v) => v.to_string(),
+                Literal::Sint(v) if self.gl => v.to_string(),
+                // WGSL parses the sign separately, so the positive magnitude of MIN cannot have an `i` suffix.
+                Literal::Sint(i32::MIN) => "i32(-2147483648)".into(),
+                Literal::Sint(v) => format!("{v}i"),
                 Literal::Uint(v) => format!("{v}u"),
                 Literal::Bool(v) => v.to_string(),
             },
@@ -555,7 +565,7 @@ impl Writer<'_> {
             ExprKind::Unary(op, a) => format!(
                 "({}{})",
                 match op {
-                    Unary::Negate => "-",
+                    Unary::Negate => "- ", // Keep a signed literal from forming `--`.
                     Unary::Not => "!",
                     Unary::Complement => "~",
                 },

@@ -1,8 +1,10 @@
 //! Exercise typed frontend, independently owned reports, and actual native validators.
-use neocogi_platform::render::compiler::{Compiler, CompileError};
-#[cfg(feature = "wgpu")]
-use neocogi_platform_contracts::render::shader::ShaderTarget;
-use neocogi_platform_contracts::render::{abi::GpuShaderStage, shader::MAX_SHADER_ARTIFACT_BYTES};
+use neocogi_com_sdk::{ComPtr, ComStringExt, NcCopyFromBufferOffset, NC_OK};
+use neocogi_platform::render::compiler::{Compiler, CompileError, CompilerObject};
+use neocogi_platform_contracts::render::{
+    abi::{GpuShaderStage, ShaderCompileRequest, ShaderCompilerAbi},
+    shader::{PreparedShader, Shader, ShaderTarget, MAX_SHADER_ARTIFACT_BYTES},
+};
 
 const TRIANGLE: &str = r#"(module
   (vertex vs ((i u32 (builtin vertex_index))) (returns vec4 (builtin position))
@@ -191,6 +193,62 @@ fn operators_and_intrinsics_emit_valid_native_code() {
     }
 }
 
+/// Both frontends pass literal overloads, concrete signed wrapping and floating endpoints to the same writer.
+fn literal_sources() -> impl Iterator<Item = &'static str> {
+    let sexp = r#"(module (fragment fs () (returns vec4 (location 0))
+        (let first 0.1) (let last 0.9) (let weight 0.5)
+        (let bounds (&& (== (+ 2147483647 1) -2147483648) (> 3.4028235e38 1e-45)))
+        (return (vec4 (mix 0.1 0.9 0.5) (mix (f32 0.1) (f32 0.9) (f32 0.5))
+                      (mix first last weight) (select -0.0 (- -0.0) bounds)))))"#;
+    let python = r#"@fragment
+def fs() -> location[vec4, 0]:
+    first = 0.1
+    last = 0.9
+    weight = 0.5
+    bounds = 2147483647 + 1 == -2147483648 and 3.4028235e38 > 1e-45
+    return vec4(mix(0.1, 0.9, 0.5), mix(f32(0.1), f32(0.9), f32(0.5)),
+                mix(first, last, weight), select(-0.0, -(-0.0), bounds))
+"#;
+    [Some(sexp), cfg!(feature = "shader-python").then_some(python)].into_iter().flatten()
+}
+
+/// Compiles and imports a real generated report before handing the output to an independent validator.
+fn compile_literal_report(target: ShaderTarget, source: &str) -> Shader {
+    let compiler: ComPtr<ShaderCompilerAbi> = CompilerObject::from_value(CompilerObject::new(target).unwrap()).query().unwrap();
+    let stage = GpuShaderStage::Fragment;
+    let report = compiler
+        .compile_result(
+            ShaderCompileRequest {
+                stage,
+                max_output_bytes: MAX_SHADER_ARTIFACT_BYTES as u64,
+            },
+            NcCopyFromBufferOffset::new(0, source.as_bytes()),
+            NcCopyFromBufferOffset::new(0, b"fs"),
+        )
+        .unwrap();
+    assert_eq!(report.status().unwrap(), NC_OK.code(), "{}", report.diagnostic().unwrap().to_string().unwrap());
+    PreparedShader::new(report, stage, target, b"fs", MAX_SHADER_ARTIFACT_BYTES)
+        .unwrap()
+        .copy()
+        .unwrap()
+}
+
+#[test]
+fn concrete_literals_validate_through_generated_com() {
+    for source in literal_sources() {
+        for target in targets() {
+            let shader = compile_literal_report(target, source);
+            validate(&shader);
+            if let Some(text) = shader.code.wgsl() {
+                assert!(text.contains("mix(0.1f, 0.9f, 0.5f)"), "{text}");
+                assert!(text.contains("2147483647i + 1i"), "{text}");
+                assert!(text.contains("i32(-2147483648)"), "{text}");
+                assert!(text.contains("-0.0f"), "{text}");
+            }
+        }
+    }
+}
+
 /// Validates actual generated WGSL through WGPU's native checked module path.
 #[test]
 #[cfg(feature = "wgpu")]
@@ -199,6 +257,19 @@ fn generated_wgsl_passes_native_module_validation() {
     let instance = wgpu::Instance::default();
     let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default())).unwrap();
     let (device, _) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).unwrap();
+    let validate = |source: &str, text: &str| {
+        let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let _module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("generated compiler output"),
+            source: wgpu::ShaderSource::Wgsl(text.into()),
+        });
+        let error = pollster::block_on(scope.pop());
+        assert!(error.is_none(), "invalid WGSL for {source}:\n{text}\n{error:?}");
+    };
+    for source in literal_sources() {
+        let shader = compile_literal_report(ShaderTarget::Wgsl, source);
+        validate(source, shader.code.wgsl().unwrap());
+    }
     let mut programs = operator_sources().into_iter().map(|s| (s, GpuShaderStage::Fragment, "fs")).collect::<Vec<_>>();
     for source in [TRIANGLE, TEXTURED] {
         programs.push((source.into(), GpuShaderStage::Vertex, "vs"));
@@ -206,14 +277,7 @@ fn generated_wgsl_passes_native_module_validation() {
     }
     for (source, stage, entry) in programs {
         let shader = compile(ShaderTarget::Wgsl, stage, &source, entry);
-        let text = shader.code.wgsl().unwrap();
-        let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
-        let _module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("S-expression output"),
-            source: wgpu::ShaderSource::Wgsl(text.into()),
-        });
-        let error = pollster::block_on(scope.pop());
-        assert!(error.is_none(), "invalid WGSL for {source}:\n{text}\n{error:?}");
+        validate(&source, shader.code.wgsl().unwrap());
     }
 }
 
