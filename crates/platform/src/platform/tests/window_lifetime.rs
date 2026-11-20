@@ -73,6 +73,10 @@ fn retained_clipboard_survives_application_window_destruction() {
     clipboard.write(NcCopyFromBufferOffset::new(0, value.as_bytes()), receipt.as_com_ref()).unwrap();
     clipboard.read(receipt.as_com_ref()).unwrap();
     assert_eq!(results.borrow().as_slice(), [(0, String::new()), (0, value.to_owned())]);
+    clipboard.write(NcCopyFromBufferOffset::new(0, &[]), receipt.as_com_ref()).unwrap();
+    sdl2::set_error("unrelated earlier SDL error").unwrap();
+    clipboard.read(receipt.as_com_ref()).unwrap();
+    assert_eq!(results.borrow().as_slice()[2..], [(0, String::new()), (0, String::new())]);
     #[cfg(windows)]
     {
         drop(clipboard);
@@ -81,6 +85,79 @@ fn retained_clipboard_survives_application_window_destruction() {
         drop(second);
         assert!(unsafe { sdl2::sys::SDL_GetWindowFromID(private_id) }.is_null());
     }
+}
+
+/// The X11 test runs this in a separate process so no owner event pump can answer the query.
+#[cfg(unix)]
+#[test]
+#[ignore = "used as the unresponsive X11 clipboard owner by the receipt regression"]
+fn stalled_clipboard_owner_fixture() {
+    let Some(ready) = std::env::var_os("NEOCOGI_TEST_CLIPBOARD_OWNER_READY") else {
+        return;
+    };
+    let sdl = sdl2::init().unwrap();
+    let video = sdl.video().unwrap();
+    assert_eq!(video.current_video_driver(), "x11");
+    let _window = video.window("Clipboard test owner", 2, 2).hidden().build().unwrap();
+    let clipboard = video.clipboard();
+    clipboard.set_clipboard_text("stalled external selection").unwrap();
+    // Round-trip the ownership request to the server before becoming unresponsive.
+    assert_eq!(clipboard.clipboard_text().unwrap(), "stalled external selection");
+    std::fs::write(ready, []).unwrap();
+    std::thread::sleep(std::time::Duration::from_secs(8));
+}
+
+/// A genuine X11 selection timeout delivers one failed receipt through generated COM.
+#[cfg(unix)]
+#[test]
+#[ignore = "set NEOCOGI_TEST_ISOLATED_X11=1 on a private X11 server with the SDL2 X11 driver"]
+fn external_clipboard_timeout_returns_one_failed_receipt() {
+    use std::{
+        process::Command,
+        time::{Duration, Instant},
+    };
+
+    if std::env::var_os("NEOCOGI_TEST_ISOLATED_X11").as_deref() != Some("1".as_ref()) {
+        return;
+    }
+    /// Reaps the stalled fixture even when an assertion fails.
+    struct Owner(std::process::Child);
+    impl Drop for Owner {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+
+    let _session = native_session();
+    let platform = PlatformObject::new();
+    let native = platform.window("clipboard reader", SIZE).unwrap();
+    assert_eq!(native.device.host.video.current_video_driver(), "x11");
+    let window = WindowObject::from_value(native).query::<IPlatformWindowAbi>().unwrap();
+    let clipboard = window.clipboard().unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let ready = directory.path().join("clipboard-owner-ready");
+    let mut owner = Owner(
+        Command::new(std::env::current_exe().unwrap())
+            .args(["--ignored", "stalled_clipboard_owner_fixture"])
+            .env("NEOCOGI_TEST_CLIPBOARD_OWNER_READY", &ready)
+            .spawn()
+            .unwrap(),
+    );
+    let deadline = Instant::now() + Duration::from_secs(4);
+    while !ready.exists() {
+        assert!(
+            Instant::now() < deadline && owner.0.try_wait().unwrap().is_none(),
+            "X11 owner did not become ready"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let results = Rc::new(RefCell::new(Vec::new()));
+    let receipt = ClipboardReceipt::from_value(ClipboardReceipt { results: results.clone() })
+        .query::<IClipboardCompletionAbi>()
+        .unwrap();
+    clipboard.read(receipt.as_com_ref()).unwrap();
+    assert_eq!(results.borrow().as_slice(), [(PLATFORM_E_BACKEND.code(), String::new())]);
 }
 
 /// A retained graphics host must not keep an abandoned SDL input queue registered.

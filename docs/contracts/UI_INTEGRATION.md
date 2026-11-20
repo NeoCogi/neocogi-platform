@@ -53,7 +53,9 @@ pane's committed screen rectangle. Neither operation belongs inside painting.
 A retained clipboard keeps the host clipboard service available after the
 application window is released. SDL on Windows uses a private hidden owner for
 clipboard writes. It has no renderer or application input route. Browser access
-follows the page's clipboard permissions.
+follows the page's clipboard permissions. A successful read can contain empty
+text. When SDL reports a read failure, including a selection timeout, the
+failed receipt carries empty text.
 
 ## Asset and paint lifetime
 

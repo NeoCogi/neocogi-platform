@@ -58,11 +58,42 @@ fn complete(completion: ComRef<'_, IClipboardCompletionAbi>, result: Result<Stri
     }
 }
 
+/// One SDL-owned clipboard result. Every non-null return must be released with SDL_free.
+#[cfg(not(target_arch = "wasm32"))]
+struct SdlText(std::ptr::NonNull<std::ffi::c_char>);
+
+#[cfg(not(target_arch = "wasm32"))]
+impl Drop for SdlText {
+    fn drop(&mut self) {
+        // SAFETY: This pointer came from SDL_GetClipboardText and is still owned here.
+        unsafe { sdl2::sys::SDL_free(self.0.as_ptr().cast()) };
+    }
+}
+
+/// Read while SDL's video service is live. SDL can return an empty allocation on failure.
+#[cfg(not(target_arch = "wasm32"))]
+fn read_sdl_text(_video: &sdl2::clipboard::ClipboardUtil) -> Result<String, NcStatus> {
+    sdl2::clear_error();
+    // SAFETY: The retained ClipboardUtil keeps SDL video initialized on this thread.
+    let native = unsafe { sdl2::sys::SDL_GetClipboardText() };
+    let native = SdlText(std::ptr::NonNull::new(native).ok_or(PLATFORM_E_BACKEND)?);
+    // SAFETY: SDL returns an owned, NUL-terminated C string on every non-null path.
+    let text = unsafe { std::ffi::CStr::from_ptr(native.0.as_ptr()) };
+    // Only the ambiguous empty result consults the fresh error, before any cleanup call.
+    if text.is_empty() && !sdl2::get_error().is_empty() {
+        return Err(PLATFORM_E_BACKEND);
+    }
+    if text.count_bytes() > MAX_CLIPBOARD_BYTES {
+        return Err(neocogi_com_sdk::NC_E_OUT_OF_RANGE);
+    }
+    text.to_str().map(str::to_owned).map_err(|_| PLATFORM_E_BACKEND)
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 impl ITextClipboard for Clipboard {
     /// SDL completes synchronously, but uses the same copied receipt as asynchronous platforms.
     fn read(&self, completion: ComRef<'_, IClipboardCompletionAbi>) -> Result<(), NcStatus> {
-        let result = self.clipboard.clipboard_text().map_err(|_| PLATFORM_E_BACKEND);
+        let result = read_sdl_text(&self.clipboard);
         complete(completion, result)
     }
     /// Never acknowledge a cut until the OS accepted the entire validated selection.
