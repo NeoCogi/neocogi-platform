@@ -101,19 +101,22 @@ impl Drop for SdlText {
     }
 }
 
-/// Read while SDL's video service is live. SDL can return an empty allocation on failure.
+/// Reads while SDL's video service is live, treating a fresh SDL error as a failed transfer.
 #[cfg(not(target_arch = "wasm32"))]
 fn read_sdl_text(_video: &sdl2::clipboard::ClipboardUtil) -> Result<String, NcStatus> {
     sdl2::clear_error();
     // SAFETY: The retained ClipboardUtil keeps SDL video initialized on this thread.
     let native = unsafe { sdl2::sys::SDL_GetClipboardText() };
+    // SAFETY: SDL_GetError returns a NUL-terminated thread-local string. Read only its
+    // first byte before another SDL call can change it. Error text need not decode as UTF-8.
+    let failed = unsafe { *sdl2::sys::SDL_GetError() != 0 };
     let native = SdlText(std::ptr::NonNull::new(native).ok_or(PLATFORM_E_BACKEND)?);
-    // SAFETY: SDL returns an owned, NUL-terminated C string on every non-null path.
-    let text = unsafe { std::ffi::CStr::from_ptr(native.0.as_ptr()) };
-    // Only the ambiguous empty result consults the fresh error, before any cleanup call.
-    if text.is_empty() && !sdl2::get_error().is_empty() {
+    // SDL can retain an allocated prefix when a later transfer step fails.
+    if failed {
         return Err(PLATFORM_E_BACKEND);
     }
+    // SAFETY: SDL returns an owned, NUL-terminated C string on every non-null path.
+    let text = unsafe { std::ffi::CStr::from_ptr(native.0.as_ptr()) };
     if text.count_bytes() > MAX_CLIPBOARD_BYTES {
         return Err(neocogi_com_sdk::NC_E_OUT_OF_RANGE);
     }

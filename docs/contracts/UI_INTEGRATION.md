@@ -66,8 +66,9 @@ A retained clipboard keeps its host service available according to the active
 driver's lifetime rules. SDL on Windows uses a private hidden owner for clipboard
 writes. It has no renderer or application input route. Browser access
 follows the page's clipboard permissions. A successful read can contain empty
-text. When SDL reports a read failure, including a selection timeout, the
-failed receipt carries empty text.
+text. A fresh SDL error, including a selection timeout after bytes arrived,
+produces a failed receipt with empty text. The SDL adapter can report the
+transfer status SDL exposes.
 
 On Linux with SDL's X11 driver, a successful write confirms X11 selection
 ownership and a live responder holding the complete text on SDL's actual

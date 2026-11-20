@@ -29,19 +29,21 @@ fn wait_for(description: &str, mut ready: impl FnMut() -> bool) {
 struct Peer(Child);
 impl Peer {
     /// Starts a process with its own SDL and Wayland connection.
-    fn start(role: &str) -> Self {
-        Self(
-            Command::new(std::env::current_exe().unwrap())
-                .args([
-                    "--exact",
-                    "--ignored",
-                    "--nocapture",
-                    "platform::tests::wayland_clipboard::independent_sdl_client",
-                ])
-                .env(PEER_ROLE, role)
-                .spawn()
-                .unwrap(),
-        )
+    fn start(role: &str, directory: &Path) -> Self {
+        let mut client = Command::new(std::env::current_exe().unwrap());
+        client
+            .args([
+                "--exact",
+                "--ignored",
+                "--nocapture",
+                "platform::tests::wayland_clipboard::independent_sdl_client",
+            ])
+            .current_dir(directory)
+            .env(PEER_ROLE, role);
+        if role == "owner" {
+            client.env("LD_PRELOAD", directory.join("wayland-stall.so"));
+        }
+        Self(client.spawn().unwrap())
     }
 
     /// Confirms a writer still owns its source or a reader has succeeded.
@@ -82,6 +84,22 @@ impl IClipboardCompletion for Receipt {
     }
 }
 
+/// Reenters the same public clipboard using a separate completion.
+#[com_object(interfaces(IClipboardCompletion))]
+struct ReenterRead {
+    /// The focused route remains available throughout both reads.
+    clipboard: ComPtr<ITextClipboardAbi>,
+    /// Observes the nested detached result independently.
+    nested: ComPtr<IClipboardCompletionAbi>,
+}
+impl IClipboardCompletion for ReenterRead {
+    /// Validates the original result before synchronously repeating the native operation.
+    fn complete(&self, status: i32, text: NcCopyFromBufferOffset<'_, u8>) -> Result<(), NcStatus> {
+        assert_eq!((status, text.offset(), text.as_slice()), (0, 0, SELECTION.as_bytes()));
+        self.clipboard.read(self.nested.as_com_ref())
+    }
+}
+
 /// Observes a real compositor key through the public input route.
 #[com_object(interfaces(IInputSink))]
 struct InputProbe {
@@ -108,6 +126,38 @@ impl IInputSink for InputProbe {
 /// Pumps the public route until SDL has dispatched all currently available input.
 fn poll(window: &ComPtr<IPlatformWindowAbi>, sink: &ComPtr<IInputSinkAbi>) {
     while window.poll(sink.as_com_ref()).unwrap() == PollStatus::Event {}
+}
+
+/// Maps the native toplevel by presenting its first buffer so it can receive keyboard focus.
+fn map_window(window: &ComPtr<IPlatformWindowAbi>) {
+    let renderer = window.query::<IRendererAbi>().unwrap();
+    let empty = Empty::from_value(Empty).query::<IRenderStreamAbi>().unwrap();
+    renderer
+        .render(
+            RenderInfo {
+                size: window.size().unwrap(),
+                block_count: 0,
+                ..info()
+            },
+            empty.as_com_ref(),
+        )
+        .unwrap();
+}
+
+/// Builds the pipe-pacing fixture for the independent SDL writer only.
+fn build_stall_fixture(directory: &Path) {
+    let source = directory.join("wayland-stall.c");
+    fs::write(&source, include_str!("../../../tests/support/wayland_stall.c")).unwrap();
+    assert!(
+        Command::new("cc")
+            .args(["-Wall", "-Wextra", "-Werror", "-fPIC", "-shared", "-o"])
+            .arg(directory.join("wayland-stall.so"))
+            .arg(source)
+            .status()
+            .unwrap()
+            .success(),
+        "compile the independent selection source fixture"
+    );
 }
 
 /// Publishes or observes actual compositor selection through an independent SDL2 connection.
@@ -175,10 +225,12 @@ fn independent_sdl_client() {
 #[ignore = "requires a fresh private Wayland server and the compositor input handshake"]
 fn wayland_receipts_follow_the_focused_public_route() {
     let Some(directory) = std::env::var_os(COORDINATION) else { return };
-    let directory = PathBuf::from(directory);
+    let directory = PathBuf::from(directory).canonicalize().unwrap();
     assert!(fs::read_dir(&directory).unwrap().next().is_none(), "use a new private coordination directory");
     let _session = native_session();
-    let mut owner = Peer::start("owner");
+    build_stall_fixture(&directory);
+    exercise_empty_route();
+    let mut owner = Peer::start("owner", &directory);
     wait_for("independent selection publication", || directory.join("owner-wrote").is_file());
     assert!(owner.status().is_none());
     exercise_platform(&directory);
@@ -189,6 +241,35 @@ fn wayland_receipts_follow_the_focused_public_route() {
             true
         })
     });
+}
+
+/// A fresh compositor has no selection, even when SDL's previous operation left an error.
+fn exercise_empty_route() {
+    let platform = PlatformObject::new();
+    let native = platform.window("NeoCogi empty clipboard", SIZE).unwrap();
+    let id = native.device.window.id();
+    let keyboard = native.device.host.video.sdl().keyboard();
+    let received = Rc::new(RefCell::new(Vec::new()));
+    let receipt = Receipt::from_value(Receipt {
+        host: Rc::downgrade(&native.device.host),
+        cut: Rc::new(RefCell::new(None)),
+        received: received.clone(),
+    })
+    .query::<IClipboardCompletionAbi>()
+    .unwrap();
+    let window = WindowObject::from_value(native).query::<IPlatformWindowAbi>().unwrap();
+    let clipboard = window.clipboard().unwrap();
+    let sink = InputProbe::from_value(InputProbe { pressed: Rc::new(Cell::new(false)) })
+        .query::<IInputSinkAbi>()
+        .unwrap();
+    map_window(&window);
+    wait_for("focus with no existing selection", || {
+        poll(&window, &sink);
+        keyboard.focused_window_id() == Some(id)
+    });
+    sdl2::set_error("unrelated earlier SDL error").unwrap();
+    clipboard.read(receipt.as_com_ref()).unwrap();
+    assert_eq!(received.borrow().as_slice(), [(0, String::new())]);
 }
 
 /// Verifies the application can read and cannot claim write success or outlive the public route.
@@ -203,21 +284,7 @@ fn exercise_platform(directory: &Path) {
     let window = WindowObject::from_value(native).query::<IPlatformWindowAbi>().unwrap();
     let clipboard = window.clipboard().unwrap();
     let graphics = window.graphics_host().unwrap();
-    {
-        // The first presented buffer maps the native xdg_toplevel for keyboard focus.
-        let renderer = window.query::<IRendererAbi>().unwrap();
-        let empty = Empty::from_value(Empty).query::<IRenderStreamAbi>().unwrap();
-        renderer
-            .render(
-                RenderInfo {
-                    size: window.size().unwrap(),
-                    block_count: 0,
-                    ..info()
-                },
-                empty.as_com_ref(),
-            )
-            .unwrap();
-    }
+    map_window(&window);
     let key = Rc::new(Cell::new(false));
     let sink = InputProbe::from_value(InputProbe { pressed: key.clone() }).query::<IInputSinkAbi>().unwrap();
     let cut = Rc::new(RefCell::new(None));
@@ -230,16 +297,39 @@ fn exercise_platform(directory: &Path) {
     .query::<IClipboardCompletionAbi>()
     .unwrap();
 
-    wait_for("focused routed read of external Unicode", || {
-        poll(&window, &sink);
-        if keyboard.focused_window_id() != Some(id) {
-            return false;
-        }
+    let wait_for_selection = || {
+        wait_for("focused routed read of external Unicode", || {
+            poll(&window, &sink);
+            if keyboard.focused_window_id() != Some(id) {
+                return false;
+            }
+            clipboard.read(receipt.as_com_ref()).unwrap();
+            let mut results = received.borrow_mut();
+            assert_eq!(results.len(), 1);
+            results.pop().unwrap() == (0, SELECTION.into())
+        })
+    };
+    wait_for_selection();
+    let reenter = ReenterRead::from_value(ReenterRead {
+        clipboard: clipboard.clone(),
+        nested: receipt.clone(),
+    })
+    .query::<IClipboardCompletionAbi>()
+    .unwrap();
+    clipboard.read(reenter.as_com_ref()).unwrap();
+    assert_eq!(std::mem::take(&mut *received.borrow_mut()), [(0, SELECTION.into())]);
+    for mode in ["stall-before-data", "stall-after-prefix"] {
+        let marker = directory.join(mode);
+        fs::write(&marker, []).unwrap();
         clipboard.read(receipt.as_com_ref()).unwrap();
-        let mut results = received.borrow_mut();
-        assert_eq!(results.len(), 1);
-        results.pop().unwrap() == (0, SELECTION.into())
-    });
+        fs::remove_file(marker).unwrap();
+        assert_eq!(
+            std::mem::take(&mut *received.borrow_mut()),
+            [(PLATFORM_E_BACKEND.code(), String::new())],
+            "{mode}"
+        );
+        wait_for_selection();
+    }
     *cut.borrow_mut() = Some(CUT.into());
     for input in [NcCopyFromBufferOffset::new(1, b"bad"), NcCopyFromBufferOffset::new(0, b"\0")] {
         assert_eq!(clipboard.write(input, receipt.as_com_ref()), Err(NC_E_INVALID_ARG));
@@ -270,7 +360,7 @@ fn exercise_platform(directory: &Path) {
     assert_eq!(cut.borrow().as_deref(), Some(CUT));
     // Probe the compositor before releasing the application's native window and clipboard.
     // A late publication after the real key would still be visible to this independent client.
-    let mut reader = Peer::start("reader");
+    let mut reader = Peer::start("reader", directory);
     wait_for("independent reader success", || {
         reader.status().is_some_and(|status| {
             assert!(status.success(), "independent Wayland reader failed: {status}");
