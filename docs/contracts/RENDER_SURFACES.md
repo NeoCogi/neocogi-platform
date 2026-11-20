@@ -174,6 +174,13 @@ renderer destruction and device destruction cannot change it. Raw COM callers
 call `render_result` and read that operation's `IRenderOutcome`. There is no
 separate renderer diagnostic lookup. For image rendering, publication also waits
 for native retirement to succeed, preserving the previous image on failure.
+Glow and WebGL observe retirement during explicit frame finish after releasing
+the frame's target reference. A pending fence retains its submitted owners and
+allows finish to succeed. A failed observation reaches the caller, with any
+earlier rendering error taking precedence. Context loss still ends that WebGL
+driver generation. COM also retires the detached state after dropping its
+prepared snapshots. Abandonment services already issued work without publishing
+an image.
 
 ## Acceptance checks
 

@@ -248,7 +248,6 @@ impl Gpu {
         let completed = frame.finish()?;
         #[cfg(any(feature = "glow", feature = "webgl"))]
         {
-            self.renderer.core().check_error("OpenGL frame").map_err(FrameError::new)?;
             #[cfg(all(any(test, feature = "test-support"), feature = "glow"))]
             if !offscreen {
                 use glow::HasContext;

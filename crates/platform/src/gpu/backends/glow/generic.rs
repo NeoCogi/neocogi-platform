@@ -418,11 +418,23 @@ impl Executor {
     fn poll(&mut self) -> Result<(), String> {
         self.core.current()?;
         self.check()?;
-        self.complete()?;
+        let completion = self.complete().and_then(|()| self.poll_submitted());
+        // A failed fence operation can also set the API error channel or lose the context.
+        // Observe that channel even when a prior frame or wait failure takes precedence.
+        let diagnostic = self.check();
+        #[cfg(target_arch = "wasm32")]
+        let diagnostic = diagnostic.and(self.core.current());
+        completion.and(diagnostic)
+    }
+    /// Keeps pending and uncertain batches owned through later collection or teardown.
+    fn poll_submitted(&mut self) -> Result<(), String> {
         let mut failure = false;
         self.submitted.retain(|batch| {
             // SAFETY: The matching live context owns every fence; a zero timeout only observes.
-            match unsafe { self.gl.client_wait_sync(batch.fence, 0, 0) } {
+            let status = unsafe { self.gl.client_wait_sync(batch.fence, 0, 0) };
+            #[cfg(all(test, not(target_arch = "wasm32")))]
+            let status = super::tests::wait_result(status);
+            match status {
                 glow::ALREADY_SIGNALED | glow::CONDITION_SATISFIED => {
                     unsafe { self.gl.delete_sync(batch.fence) };
                     false

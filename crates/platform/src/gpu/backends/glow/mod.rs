@@ -44,6 +44,8 @@ use crate::gpu::resource::BackingCharge;
 use crate::gpu::resource_guard::ResourceGuard;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+pub(crate) use tests::{WaitOverride, read_image};
 
 /// One bounded read-only chunk shared by allocation-only storage initialization.
 static ZERO_BYTES: [u8; 64 * 1024] = [0; 64 * 1024];
@@ -292,8 +294,8 @@ impl GLRenderer {
 /// Exclusively borrowed immediate frame. Drop abandons publication and services already-issued work.
 #[must_use = "call finish to observe rendering errors and obtain a completed image"]
 pub struct GlFrame<'a> {
-    /// Context, selected target and completion tracker remain owned by this execution transaction.
-    backend: &'a mut GLRenderer,
+    /// Keeps abandonment cleanup armed until explicit retirement returns.
+    backend: Option<&'a mut GLRenderer>,
     /// Preserve the first native failure even if safe final maintenance also reports a failure.
     error: Option<FrameError>,
 }
@@ -303,40 +305,45 @@ impl GlFrame<'_> {
         if self.error.is_some() {
             return;
         }
-        if let Err(error) = self.backend.core.current() {
+        let backend = self.backend.as_deref_mut().expect("an active Glow frame owns its backend");
+        if let Err(error) = backend.core.current() {
             self.error = Some(FrameError::new(error));
             return;
         }
-        self.backend.bind_target(self.backend.full_clip());
+        backend.bind_target(backend.full_clip());
         let size = Size {
-            width: self.backend.width as i32,
-            height: self.backend.height as i32,
+            width: backend.width as i32,
+            height: backend.height as i32,
         };
-        let offscreen = matches!(&self.backend.target, DrawTarget::Texture(_));
-        if let Err(error) = self.backend.generic.execute(block, size, size, offscreen) {
+        let offscreen = matches!(&backend.target, DrawTarget::Texture(_));
+        if let Err(error) = backend.generic.execute(block, size, size, offscreen) {
             self.error = Some(FrameError::new(error));
         }
     }
 }
 impl RendererFrame for GlFrame<'_> {
     type Image = Rc<Image>;
+    /// Releases the frame's attachment reference before observing completion.
+    /// Issued work retains its own attachment and draw snapshots through its fence.
     fn finish(mut self) -> Result<Option<Rc<Image>>, FrameError> {
-        let completion = self.backend.generic.complete().map_err(FrameError::new);
-        if let Some(error) = self.error.take() {
-            let _ = completion;
-            return Err(error);
-        }
-        completion?;
-        Ok(match &self.backend.target {
-            DrawTarget::Window => None,
-            DrawTarget::Texture(output) => Some(output.image.clone()),
-        })
+        let backend = self.backend.as_deref_mut().expect("an active Glow frame owns its backend");
+        let result = match (self.error.take(), std::mem::replace(&mut backend.target, DrawTarget::Window)) {
+            (Some(error), _) => Err(error),
+            (None, DrawTarget::Window) => Ok(None),
+            (None, DrawTarget::Texture(output)) => Ok(Some(output.image.clone())),
+        };
+        // Always service issued work and observe context loss, even with a primary draw error.
+        let retirement = backend.generic.maintain().map_err(FrameError::new);
+        self.backend = None;
+        result.and_then(|image| retirement.map(|()| image))
     }
 }
 impl Drop for GlFrame<'_> {
+    /// Services issued work if the caller abandons the frame or finish unwinds.
     fn drop(&mut self) {
-        self.backend.target = DrawTarget::Window;
-        let _ = self.backend.generic.maintain();
+        let Some(backend) = self.backend.take() else { return };
+        backend.target = DrawTarget::Window;
+        let _ = backend.generic.maintain();
     }
 }
 impl RendererBackend for GLRenderer {
@@ -351,7 +358,7 @@ impl RendererBackend for GLRenderer {
             let _ = self.generic.maintain();
             return Err(error);
         }
-        Ok(GlFrame { backend: self, error: None })
+        Ok(GlFrame { backend: Some(self), error: None })
     }
     fn create_render_texture(&mut self, size: Size) -> Result<Output, TextureError> {
         neocogi_platform::render::checked_rgba_len(size.width, size.height)?;
@@ -414,7 +421,7 @@ impl RendererBackend for GLRenderer {
             let _ = self.generic.maintain();
             return Err(error);
         }
-        Ok(GlFrame { backend: self, error: None })
+        Ok(GlFrame { backend: Some(self), error: None })
     }
     fn maintain(&mut self) -> Result<(), FrameError> {
         self.generic.maintain().map_err(FrameError::new)

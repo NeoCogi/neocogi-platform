@@ -7,6 +7,51 @@ use glow::{Framebuffer, VertexArray, Texture, Sampler, Buffer};
 /// SDL initialization is process-wide and rejects concurrent owners on different test threads.
 pub(super) static NATIVE_SESSION: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+/// Test-only one-shot replacement of the result of a real zero-time sync observation.
+pub(crate) struct WaitOverride;
+
+/// Records calls within one override's lifetime on the current context thread.
+#[derive(Clone, Copy)]
+struct WaitObservation {
+    /// Replaces exactly the first result and leaves the GL error channel untouched.
+    first: u32,
+    /// Counts both the substituted observation and any subsequent genuine polls.
+    count: usize,
+}
+
+thread_local! {
+    /// Only a scoped native fixture may replace a wait result, never the submitted work.
+    static WAIT_OBSERVATION: std::cell::Cell<Option<WaitObservation>> = const { std::cell::Cell::new(None) };
+}
+
+impl WaitOverride {
+    /// Arms replacement only for the following wait, after any earlier maintenance.
+    pub(crate) fn first(status: u32) -> Self {
+        assert!(WAIT_OBSERVATION.replace(Some(WaitObservation { first: status, count: 0 })).is_none());
+        Self
+    }
+
+    /// Confirms how many observations actually ran while the scope was active.
+    pub(crate) fn calls(&self) -> usize {
+        WAIT_OBSERVATION.get().unwrap().count
+    }
+}
+
+impl Drop for WaitOverride {
+    /// Prevents an unused replacement from escaping an early return or unwind.
+    fn drop(&mut self) {
+        WAIT_OBSERVATION.set(None);
+    }
+}
+
+/// Reports a controlled result after the native call has observed its real fence.
+pub(super) fn wait_result(actual: u32) -> u32 {
+    let Some(mut observation) = WAIT_OBSERVATION.get() else { return actual };
+    observation.count += 1;
+    WAIT_OBSERVATION.set(Some(observation));
+    if observation.count == 1 { observation.first } else { actual }
+}
+
 /// Owns application-side objects used to leave deliberately hostile persistent GL state.
 pub(super) struct ForeignState {
     /// The live test context used for setup and deterministic cleanup.
@@ -697,7 +742,7 @@ fn owned_outputs_retire_attachments_without_rewriting_shared_images() {
 }
 
 /// Reads immutable pixels using a temporary host-owned read attachment.
-pub(super) fn read_image(gl: &glow::Context, image: &Image, width: i32, height: i32) -> Vec<u8> {
+pub(crate) fn read_image(gl: &glow::Context, image: &Image, width: i32, height: i32) -> Vec<u8> {
     let mut pixels = vec![19; (width * height * 4) as usize];
     // SAFETY: image belongs to this selected live context and output covers its exact RGBA extent.
     unsafe {
@@ -711,6 +756,94 @@ pub(super) fn read_image(gl: &glow::Context, image: &Image, width: i32, height: 
         assert_eq!(gl.get_error(), glow::NO_ERROR);
     }
     pixels
+}
+
+/// Explicit finish observes retirement exactly once and abandonment still services issued clears.
+#[test]
+#[ignore = "requires native GL ES3; run with SDL_VIDEODRIVER=offscreen"]
+fn explicit_finish_reports_retirement_and_preserves_primary_errors() {
+    use neocogi_platform::render::abi::RENDER_E_BACKEND;
+
+    let _session = NATIVE_SESSION.lock().unwrap_or_else(|error| error.into_inner());
+    let sdl = sdl2::init().unwrap();
+    let video = sdl.video().unwrap();
+    video.gl_attr().set_context_profile(sdl2::video::GLProfile::GLES);
+    video.gl_attr().set_context_version(3, 0);
+    let window = video.window("explicit GL retirement", 4, 4).opengl().hidden().build().unwrap();
+    let context = window.gl_create_context().unwrap();
+    // SAFETY: This is the live, current context being transferred to its unique physical owner.
+    let gl = Rc::new(unsafe { glow::Context::from_loader_function(|name| video.gl_get_proc_address(name).cast()) });
+    let core = unsafe { Core::from_sdl(gl.clone(), window, context) }.unwrap();
+    let mut renderer = GLRenderer::new(core, 4, 4).unwrap();
+    let size = Size { width: 2, height: 2 };
+    let info = FrameInfo::try_new(Dimensioni::new(2, 2), color(7, 31, 63, 255)).unwrap();
+    let next_info = FrameInfo::try_new(Dimensioni::new(2, 2), color(19, 47, 91, 255)).unwrap();
+    let output = renderer.create_render_texture(size).unwrap();
+    let previous = renderer.texture_frame(info, output).unwrap().finish().unwrap().unwrap();
+
+    // SAFETY: The context remains current and every frame below uses its exact live objects.
+    let quiesce = |renderer: &mut GLRenderer| {
+        unsafe { gl.finish() };
+        renderer.maintain().unwrap();
+    };
+    quiesce(&mut renderer);
+
+    let output = renderer.create_render_texture(size).unwrap();
+    let frame = renderer.texture_frame(next_info, output).unwrap();
+    let first_wait = WaitOverride::first(glow::WAIT_FAILED);
+    let failure = frame.finish().err().unwrap();
+    assert_eq!(failure.status(), RENDER_E_BACKEND);
+    assert_eq!(failure.to_string(), "failed to observe graphics completion");
+    assert_eq!(first_wait.calls(), 1, "explicit finish must disarm abandonment cleanup");
+    drop(first_wait);
+    quiesce(&mut renderer);
+    assert_eq!(read_image(&gl, &previous, 2, 2), [7, 31, 63, 255].repeat(4));
+
+    let output = renderer.create_render_texture(size).unwrap();
+    let mut frame = renderer.texture_frame(next_info, output).unwrap();
+    frame.error = Some(FrameError::new("earlier draw error"));
+    let first_wait = WaitOverride::first(glow::WAIT_FAILED);
+    assert_eq!(frame.finish().err().unwrap().to_string(), "earlier draw error");
+    assert_eq!(first_wait.calls(), 1);
+    drop(first_wait);
+    quiesce(&mut renderer);
+
+    let output = renderer.create_render_texture(size).unwrap();
+    let fbo = output.state.framebuffer();
+    let frame = renderer.texture_frame(next_info, output).unwrap();
+    let first_wait = WaitOverride::first(glow::TIMEOUT_EXPIRED);
+    let completed = frame.finish().unwrap().unwrap();
+    assert_eq!(first_wait.calls(), 1);
+    drop(first_wait);
+    // SAFETY: The live context owns this FBO. A pending wait must retain its attachment owner.
+    assert!(unsafe { gl.is_framebuffer(fbo) });
+    quiesce(&mut renderer);
+    // SAFETY: Testing deletion by name is valid even after this framebuffer is destroyed.
+    assert!(!unsafe { gl.is_framebuffer(fbo) });
+    assert_eq!(read_image(&gl, &completed, 2, 2), [19, 47, 91, 255].repeat(4));
+
+    let output = renderer.create_render_texture(size).unwrap();
+    let fbo = output.state.framebuffer();
+    let frame = renderer.texture_frame(next_info, output).unwrap();
+    let first_wait = WaitOverride::first(glow::WAIT_FAILED);
+    drop(frame);
+    assert_eq!(first_wait.calls(), 1, "abandonment must still observe its issued clear");
+    drop(first_wait);
+    // SAFETY: Failed observation leaves the real work and attachment alive.
+    assert!(unsafe { gl.is_framebuffer(fbo) });
+    quiesce(&mut renderer);
+    // SAFETY: Maintenance has reclaimed the framebuffer, and the name can be queried safely.
+    assert!(!unsafe { gl.is_framebuffer(fbo) });
+
+    let output = renderer.create_render_texture(size).unwrap();
+    let frame = renderer.texture_frame(next_info, output).unwrap();
+    // SAFETY: Passing an invalid enum exercises the real GL error channel without memory access.
+    unsafe { gl.enable(u32::MAX) };
+    assert!(frame.finish().err().unwrap().to_string().contains("0x0500"));
+    quiesce(&mut renderer);
+    let output = renderer.create_render_texture(size).unwrap();
+    let retry = renderer.texture_frame(next_info, output).unwrap().finish().unwrap().unwrap();
+    assert_eq!(read_image(&gl, &retry, 2, 2), [19, 47, 91, 255].repeat(4));
 }
 
 /// Actual texture sampling and ordinary-image readback observe defined zero RGBA contents.

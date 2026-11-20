@@ -440,3 +440,56 @@ fn image_submission_rechecks_group_closure_after_the_final_stream_callback() {
     renderer.render(info(), valid.as_com_ref()).map_err(|error| error.status).unwrap();
     assert_ne!(identity(&completed).unwrap(), identity(&image.completed_image().unwrap()).unwrap());
 }
+
+/// The generated COM result returns the first Glow retirement error before replacing any completed pixels.
+#[cfg(feature = "glow")]
+#[test]
+#[ignore = "requires native GL ES3; run with SDL_VIDEODRIVER=offscreen"]
+fn glow_image_publication_requires_successful_finish_retirement() {
+    use crate::gpu::backends::glow::{WaitOverride, read_image};
+    use glow::HasContext;
+
+    let _session = native_session();
+    let object = PlatformObject::new().window("COM GL retirement", SIZE).unwrap();
+    let device = object.device.clone();
+    let core = device.access().unwrap().state().gpu.core();
+    let window = WindowObject::from_value(object);
+    let surfaces: ComPtr<IRenderSurfaceFactoryAbi> = window.query().unwrap();
+    let size = Size { width: 4, height: 4 };
+    let image = surfaces.create_surface(RenderSurfaceDesc::Image(size)).unwrap();
+    let renderer: ComPtr<IRendererAbi> = image.query().unwrap();
+    let empty = stream(Vec::new());
+    let before = RenderInfo {
+        size,
+        clear: 0xff332211,
+        invocation: 1,
+        block_count: 0,
+    };
+    renderer.render(before, empty.as_com_ref()).unwrap();
+    let previous = image.completed_image().unwrap();
+    let old_pixels = device.texture(previous.clone()).unwrap();
+    core.current().unwrap();
+    // SAFETY: The selected context owns the just-submitted image and is still live.
+    unsafe { core.dispatch().finish() };
+    let platform_window: ComPtr<IPlatformWindowAbi> = window.query().unwrap();
+    platform_window.graphics_host().unwrap().maintain().unwrap();
+
+    let after = RenderInfo { clear: 0xff776655, invocation: 2, ..before };
+    let first_wait = WaitOverride::first(glow::WAIT_FAILED);
+    let error = renderer.render(after, empty.as_com_ref()).unwrap_err();
+    assert_eq!(error.status, RENDER_E_BACKEND);
+    assert!(error.message.contains("failed to observe graphics completion"));
+    assert_eq!(first_wait.calls(), 2, "COM must retire detached state after explicit finish fails");
+    drop(first_wait);
+
+    let published = image.completed_image().unwrap();
+    assert_eq!(identity(&published).unwrap(), identity(&previous).unwrap());
+    assert_eq!(read_image(core.dispatch(), &old_pixels.image, 4, 4), [17, 34, 51, 255].repeat(16));
+
+    renderer.render(after, empty.as_com_ref()).unwrap();
+    let published = image.completed_image().unwrap();
+    assert_ne!(identity(&published).unwrap(), identity(&previous).unwrap());
+    let pixels = device.texture(published).unwrap();
+    assert_eq!(read_image(core.dispatch(), &pixels.image, 4, 4), [85, 102, 119, 255].repeat(16));
+    assert_eq!(read_image(core.dispatch(), &old_pixels.image, 4, 4), [17, 34, 51, 255].repeat(16));
+}

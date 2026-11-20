@@ -334,7 +334,7 @@ async fn restoration_requires_a_fresh_driver() {
     renderer.render(info, stream.as_com_ref()).unwrap();
 
     // The page opts into restoration. No Platform method can observe the intermediate loss.
-    wasm_bindgen_futures::JsFuture::from(restore_test_context(&canvas)).await.unwrap();
+    wasm_bindgen_futures::JsFuture::from(restore_test_context(&canvas, false)).await.unwrap();
     let attributes = (canvas.width(), canvas.height());
     canvas.style().set_css_text("width:11px;height:13px");
     let failure = renderer.render(RenderInfo { invocation: 2, ..info }, stream.as_com_ref()).unwrap_err();
@@ -352,6 +352,51 @@ async fn restoration_requires_a_fresh_driver() {
     assert_eq!(core.drawable_size().unwrap(), info.size);
     replacement.render(info, &crate::platform::Prepared::default()).unwrap();
     assert_eq!(window.size(), Err(PLATFORM_E_BACKEND));
+}
+
+/// Explicit finish preserves a primary error while latching loss during a real sync observation.
+async fn explicit_finish_latches_webgl_loss() {
+    use crate::gpu::backends::webgl::{Core, WebGlCanvasRenderer};
+    use crate::render::{FrameInfo, RendererBackend, RendererFrame, prelude::{Dimensioni, color}};
+
+    let document = web_sys::window().unwrap().document().unwrap();
+    let canvas = document.create_element("canvas").unwrap().dyn_into::<HtmlCanvasElement>().unwrap();
+    canvas.set_width(8);
+    canvas.set_height(8);
+    let native = canvas.get_context("webgl2").unwrap().unwrap().dyn_into::<web_sys::WebGl2RenderingContext>().unwrap();
+    let original = Core::from_canvas(canvas.clone(), native.clone()).unwrap();
+    let mut renderer = WebGlCanvasRenderer::new(original.clone(), 8, 8).unwrap();
+    let gpu = crate::gpu::GpuDevice::new(original.clone()).unwrap();
+    let group = gpu
+        .create_group(
+            Default::default(),
+            gpu.surface_target(RenderSurfaceKind::Framebuffer).unwrap(),
+            RenderGroupPermissions {
+                write_color: true,
+                ..RenderGroupPermissions::none()
+            },
+        )
+        .unwrap();
+    let case = derivatives::cases().into_iter().next().unwrap();
+    let owner = derivatives::block(&gpu, &group.resources().unwrap(), &case.source);
+    let prepared = renderer.prepare_block(&gpu.block_snapshot(owner.as_com_ref()).unwrap(), false).unwrap();
+    let size = Size { width: 8, height: 8 };
+    let info = FrameInfo::try_new(Dimensioni::new(8, 8), color(0, 0, 0, 255)).unwrap();
+    let output = renderer.create_render_texture(size).unwrap();
+    let mut frame = renderer.texture_frame(info, output).unwrap();
+    frame.execute_block(&prepared);
+    let restored = restore_test_context(&canvas, true);
+    assert_eq!(frame.finish().err().unwrap().to_string(), "prepared GL block belongs to another driver or target");
+    assert!(native.is_context_lost(), "explicit finish must have reached the sync wait");
+    wasm_bindgen_futures::JsFuture::from(restored).await.unwrap();
+    let loss = original.current().unwrap_err();
+    assert!(loss.contains("0x9242"), "finish must preserve the native loss diagnostic before the event: {loss}");
+
+    let replacement = Core::from_canvas(canvas, native).unwrap();
+    assert_ne!(identity(original.identity()).unwrap(), identity(replacement.identity()).unwrap());
+    let mut renderer = WebGlCanvasRenderer::new(replacement, 8, 8).unwrap();
+    let output = renderer.create_render_texture(size).unwrap();
+    assert!(renderer.texture_frame(info, output).unwrap().finish().unwrap().is_some());
 }
 
 #[com_object(interfaces(IGpuDataSource))]
@@ -773,7 +818,7 @@ export function lose_test_context(context) {
     if (!extension) throw new Error("WebGL loss extension unavailable");
     extension.loseContext();
 }
-export function restore_test_context(canvas) {
+export function restore_test_context(canvas, atWait) {
     const context = canvas.getContext("webgl2");
     const extension = context.getExtension("WEBGL_lose_context");
     return new Promise((resolve, reject) => {
@@ -794,7 +839,16 @@ export function restore_test_context(canvas) {
                 reject(new Error("WebGL lost context was not restored"));
             }
         }, {once: true});
-        extension.loseContext();
+        if (atWait) {
+            const wait = context.clientWaitSync;
+            context.clientWaitSync = function(...args) {
+                delete context.clientWaitSync;
+                extension.loseContext();
+                return wait.apply(this, args);
+            };
+        } else {
+            extension.loseContext();
+        }
     });
 }
 export function record_panic(text) {
@@ -869,7 +923,7 @@ extern "C" {
     /// Triggers actual WebGL context loss after an image has reached its prepared state.
     fn lose_test_context(context: &web_sys::WebGl2RenderingContext);
     /// Completes native loss and restoration on separate browser tasks.
-    fn restore_test_context(canvas: &HtmlCanvasElement) -> js_sys::Promise;
+    fn restore_test_context(canvas: &HtmlCanvasElement, at_wait: bool) -> js_sys::Promise;
     /// Dispatches one deterministic DOM sequence against the actual installed Rust listeners.
     fn exercise(target: &EventTarget, name: &str);
     /// Dispatches press/repeat/release with an explicit logical key, physical location and modifiers.
@@ -993,6 +1047,7 @@ pub async fn run_platform_input_tests() {
     clamped_drawing_buffer_uses_physical_coordinates();
     drawable_loss_keeps_render_diagnostics();
     restoration_requires_a_fresh_driver().await;
+    explicit_finish_latches_webgl_loss().await;
     buffer_publication_requires_live_storage();
     crate::platform::extent_tests::run();
     crate::platform::extent_tests::run_window_depth();
