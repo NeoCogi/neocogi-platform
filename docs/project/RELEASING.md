@@ -62,7 +62,11 @@ cargo tools check-packages --offline --stable-toolchain stable --allow-dirty
 Omit `--allow-dirty` for release qualification. The checker constructs all three real
 archives together, rejects unexpected release packages and duplicate schema
 ownership, extracts them outside this checkout and uses only extracted contents
-for internal registry patches. It builds the extracted workspace targets in a
+for internal registry patches. It checks the effective Cargo resolution under
+each qualification toolchain before compiling the extracted workspace and
+rejects any internal package selected from another manifest, including
+same-version developer overlays. The resolved lockfile is used for every build.
+It builds the extracted workspace targets in a
 disposable target and intermediate directory owned by the qualification run,
 runs the contracts and focused SDK tests, and executes independent generated COM
 consumers. The mixed-projection fixture tests retained shader exports and
@@ -70,7 +74,9 @@ real build-script resource staging, including restoration of deleted outputs and
 propagation of changed authored bytes through Cargo rebuilds. It also builds the
 shim as a nonmember registry-style dependency with ordinary `cargo build --lib`,
 reads Cargo's artifact receipt, and inspects the actual library's descriptor
-and root signature against the independently generated COM bindings. The
+and root signature against the independently generated COM bindings. The receipt
+must match the selected shim package ID, its extracted manifest and the private
+output directory. The
 consumer then loads the library and uses a second handle to the linked host
 to acquire its root and call the built-in compiler. Both consumers also call the
 packaged Platform audio service. The mixed caller uses canonical audio types and

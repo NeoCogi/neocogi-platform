@@ -170,7 +170,8 @@ fn prepare(options: &Options, output: &Path) -> Result<(PathBuf, u64)> {
             .arg(&backend_features)
             .args(["--lib", "--message-format=json"])
             .env_remove("NEOCOGI_NATIVE_OUTPUT_DIR"),
-    )?)?;
+    )?)?
+    .path;
     let bytes = fs::metadata(&library)?.len();
     if matches!(options.backend, Backend::Vulkan) {
         ensure!(bytes < 524288, "complete Vulkan platform exceeds its byte cap: {bytes}");

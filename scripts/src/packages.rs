@@ -11,10 +11,12 @@ use std::{
 
 /// Canonical source owner must be published before its implementation consumers.
 const CONTRACTS: &str = "neocogi-platform-contracts";
+/// The normal native provider selected by the extracted consumers.
+const SHIM: &str = "neocogi-platform-dylib";
 /// Complete authored declarations, including platform PCM services.
 const SCHEMA_COUNT: usize = 10;
 /// The complete release set; adding a workspace tool must not add a published crate.
-const RELEASE_ORDER: &[&str] = &[CONTRACTS, "neocogi-platform", "neocogi-platform-dylib"];
+const RELEASE_ORDER: &[&str] = &[CONTRACTS, "neocogi-platform", SHIM];
 /// Files needed by each implementation package's self-contained README.
 /// The SDK owns the canonical screenshots/report; the final shim packages matching copies.
 const DOCUMENTATION_FILES: &[&str] = &[
@@ -56,6 +58,8 @@ struct Package {
     name: String,
     /// Exact release version; all release members must agree.
     version: String,
+    /// Manifest for this concrete package source, after Cargo applies configuration patches.
+    manifest_path: PathBuf,
     /// None permits all registries; release members must explicitly select crates-io.
     publish: Option<Vec<String>>,
 }
@@ -196,9 +200,20 @@ fn copy_tree(source: &Path, destination: &Path) -> Result<()> {
     Ok(())
 }
 
+/// A normal platform cdylib receipt tying a final library to Cargo's selected package source.
+#[derive(Debug)]
+pub(crate) struct PlatformArtifact {
+    /// Cargo package identity from the producing toolchain's build.
+    package_id: String,
+    /// Manifest of the package that produced the library.
+    manifest_path: PathBuf,
+    /// Final library path reported by Cargo for this profile and target.
+    pub(crate) path: PathBuf,
+}
+
 /// Read Cargo's artifact receipt for the one normal platform cdylib, without assuming a profile path.
 /// Library-example targets and intermediate metadata cannot satisfy the packaged-library check.
-pub(crate) fn platform_artifact(output: &[u8]) -> Result<PathBuf> {
+pub(crate) fn platform_artifact(output: &[u8]) -> Result<PlatformArtifact> {
     let mut artifact = None;
     for line in output.split(|byte| *byte == b'\n').filter(|line| !line.is_empty()) {
         let message: serde_json::Value = serde_json::from_slice(line).context("invalid Cargo JSON message")?;
@@ -209,7 +224,12 @@ pub(crate) fn platform_artifact(output: &[u8]) -> Result<PathBuf> {
         for filename in message["filenames"].as_array().context("missing Cargo artifact filenames")? {
             let filename = PathBuf::from(filename.as_str().context("artifact filename is not a string")?);
             if filename.extension().and_then(|value| value.to_str()) == Some(std::env::consts::DLL_EXTENSION) {
-                ensure!(artifact.replace(filename).is_none(), "multiple normal platform libraries in Cargo output");
+                let receipt = PlatformArtifact {
+                    package_id: message["package_id"].as_str().context("missing platform artifact package ID")?.into(),
+                    manifest_path: message["manifest_path"].as_str().context("missing platform artifact manifest path")?.into(),
+                    path: filename,
+                };
+                ensure!(artifact.replace(receipt).is_none(), "multiple normal platform libraries in Cargo output");
             }
         }
     }
@@ -229,9 +249,43 @@ fn extracted_cargo(toolchain: &str, workspace: &Path, target: &Path) -> std::pro
     command
 }
 
-/// Verifies a reported native artifact is part of this run's build products.
-fn qualified_library(output: &[u8], target: &Path) -> Result<PathBuf> {
-    let artifact = platform_artifact(output)?.canonicalize()?;
+/// Verify the effective source of every internal package before any extracted build.
+/// Metadata without `--no-deps` includes the dependencies selected by Cargo's resolver.
+fn extracted_shim_id(metadata: &Metadata, expected: &BTreeMap<&str, PathBuf>) -> Result<String> {
+    let mut checked = BTreeMap::new();
+    for package in &metadata.packages {
+        let name = package.name.as_str();
+        let Some(manifest) = expected.get(name) else { continue };
+        let resolved = package
+            .manifest_path
+            .canonicalize()
+            .with_context(|| format!("resolve Cargo manifest for {name}"))?;
+        ensure!(
+            resolved == *manifest,
+            "qualification resolved {name} from {}, expected {}",
+            resolved.display(),
+            manifest.display()
+        );
+        ensure!(
+            checked.insert(name, &package.id).is_none(),
+            "qualification resolved multiple packages named {name}"
+        );
+    }
+    for name in expected.keys() {
+        ensure!(checked.contains_key(name), "qualification did not resolve packaged {name}");
+    }
+    let shim = checked[SHIM];
+    ensure!(!metadata.workspace_members.contains(shim), "qualification shim must be a nonmember dependency");
+    Ok(shim.clone())
+}
+
+/// Verify both ends of the receipt against this resolution and this run's output directory.
+fn qualified_library(output: &[u8], target: &Path, shim_id: &str, shim_manifest: &Path) -> Result<PathBuf> {
+    let receipt = platform_artifact(output)?;
+    ensure!(receipt.package_id == shim_id, "unexpected platform artifact package ID: {}", receipt.package_id);
+    let manifest = receipt.manifest_path.canonicalize()?;
+    ensure!(manifest == shim_manifest, "unexpected platform artifact manifest: {}", manifest.display());
+    let artifact = receipt.path.canonicalize()?;
     ensure!(
         artifact.starts_with(target.canonicalize()?),
         "platform library is outside the qualification target"
@@ -268,14 +322,16 @@ pub(crate) fn qualify(allow_dirty: bool, offline: bool, stable: Option<&str>) ->
     let mut excluded = Vec::new();
     let mut manifest = toml::toml! { workspace = { resolver = "3" } };
     let mut patches = toml::map::Map::new();
+    let mut expected = BTreeMap::new();
     for (name, package) in &selected {
         let archive = metadata.target_directory.join("package").join(format!("{name}-{}.crate", package.version));
         let prefix = inspect_archive(&archive, package)?;
         // The destination is newly created, and inspection rejects symlinks, links,
         // duplicate members and parent traversal before any archive bytes are unpacked.
         tar::Archive::new(GzDecoder::new(fs::File::open(&archive)?)).unpack(&packages)?;
+        expected.insert(*name, packages.join(&prefix).join("Cargo.toml").canonicalize()?);
         let path = format!("packages/{prefix}");
-        if *name == "neocogi-platform-dylib" {
+        if *name == SHIM {
             // The shim must also work as a consumer's registry dependency, rather
             // than relying on being a member of this repository's workspace.
             excluded.push(toml::Value::String(path.clone()));
@@ -303,12 +359,26 @@ pub(crate) fn qualify(allow_dirty: bool, offline: bool, stable: Option<&str>) ->
     copy_tree(&crate::root().join("scripts/package-consumer"), &outside.path().join("consumer"))?;
     copy_tree(&crate::root().join("scripts/package-local-consumer"), &outside.path().join("local-consumer"))?;
     fs::copy(crate::root().join("Cargo.lock"), outside.path().join("Cargo.lock"))?;
+    let resolve = |toolchain: &str, lock: &[&str]| -> Result<String> {
+        let metadata: Metadata = serde_json::from_slice(&capture(
+            extracted_cargo(toolchain, outside.path(), target.path())
+                .args(["metadata", "--format-version=1"])
+                .args(&flags)
+                .args(lock),
+        )?)?;
+        extracted_shim_id(&metadata, &expected).with_context(|| format!("verify extracted sources under {toolchain}"))
+    };
+    // The copied development lock must first be resolved in the new workspace.
+    // Lock every later build to this graph and validate it on both toolchains.
+    let shim = resolve(toolchain, &[])?;
+    let stable_shim = stable.map(|stable| resolve(stable, &["--locked"])).transpose()?;
     let execute = |toolchain: &str, arguments: &[&str]| -> Result<()> {
         // Cargo options must precede the executable's argument separator.
         let (cargo_arguments, executable_arguments) = arguments.split_at(arguments.iter().position(|argument| *argument == "--").unwrap_or(arguments.len()));
         run(extracted_cargo(toolchain, outside.path(), target.path())
             .args(cargo_arguments)
             .args(&flags)
+            .arg("--locked")
             .args(executable_arguments))
     };
     execute(toolchain, &["build", "--workspace", "--all-targets"])?;
@@ -352,17 +422,19 @@ pub(crate) fn qualify(allow_dirty: bool, offline: bool, stable: Option<&str>) ->
     )?;
     // Build the shim as an ordinary library from extracted registry-style inputs.
     // Read the final path from Cargo rather than accepting a library-example artifact.
-    let library = |toolchain: &str| -> Result<PathBuf> {
+    let library = |toolchain: &str, shim_id: &str| -> Result<PathBuf> {
         qualified_library(
             &capture(
                 extracted_cargo(toolchain, outside.path(), target.path())
-                    .args(["build", "--lib", "-p", "neocogi-platform-dylib", "--message-format=json"])
+                    .args(["build", "--locked", "--lib", "-p", SHIM, "--message-format=json"])
                     .args(&flags),
             )?,
             target.path(),
+            shim_id,
+            &expected[SHIM],
         )
     };
-    let platform = library(toolchain)?;
+    let platform = library(toolchain, &shim)?;
     let consumer = [
         "run",
         "-p",
@@ -388,9 +460,9 @@ pub(crate) fn qualify(allow_dirty: bool, offline: bool, stable: Option<&str>) ->
     execute(toolchain, &consumer)?;
     fs::write(outside.path().join("consumer/asset.txt"), b"changed packaged staging input\n")?;
     execute(toolchain, &consumer)?;
-    if let Some(stable) = stable {
+    if let Some((stable, shim_id)) = stable.zip(stable_shim) {
         // Qualify the actual stable-built plugin as well as the stable-built caller.
-        let platform = library(stable)?;
+        let platform = library(stable, &shim_id)?;
         execute(
             stable,
             &[

@@ -8,11 +8,13 @@ fn normal_platform_artifact_is_required() {
     let path = format!("/output/{}nc_platform.{}", std::env::consts::DLL_PREFIX, std::env::consts::DLL_EXTENSION);
     let receipt = serde_json::json!({
         "reason": "compiler-artifact",
+        "package_id": "platform-shim 0.3.0-alpha.2",
+        "manifest_path": "/extract/shim/Cargo.toml",
         "target": { "name": "nc_platform", "kind": ["cdylib"] },
         "filenames": ["/output/libnc_platform.rmeta", path]
     });
     let output = format!("{{\"reason\":\"build-finished\",\"success\":true}}\n{receipt}\n");
-    assert_eq!(platform_artifact(output.as_bytes()).unwrap(), PathBuf::from(&path));
+    assert_eq!(platform_artifact(output.as_bytes()).unwrap().path, PathBuf::from(&path));
     assert!(platform_artifact(format!("{receipt}\n{receipt}\n").as_bytes()).is_err());
     let mut example = receipt.clone();
     example["target"]["kind"] = serde_json::json!(["example"]);
@@ -33,25 +35,70 @@ fn extracted_build_directories_are_explicit_overrides() {
     assert_eq!(env[std::ffi::OsStr::new("CARGO_BUILD_BUILD_DIR")], Some(target.join("build").as_os_str()));
 }
 
-/// A receipt cannot accidentally point at a different target's prebuilt provider.
+/// The shim receipt binds the private output to the exact package source selected by this Cargo.
 #[test]
 fn qualification_accepts_only_its_own_reported_library() {
     let directory = tempfile::tempdir().unwrap();
     let target = directory.path().join("qualification");
     fs::create_dir(&target).unwrap();
     let filename = format!("{}nc_platform.{}", std::env::consts::DLL_PREFIX, std::env::consts::DLL_EXTENSION);
-    let receipt = |path: &Path| {
+    let manifest = directory.path().join("Cargo.toml");
+    let alternate = directory.path().join("alternate.toml");
+    fs::write(&manifest, []).unwrap();
+    fs::write(&alternate, []).unwrap();
+    let manifest = manifest.canonicalize().unwrap();
+    let receipt = |path: &Path, package_id: &str, manifest: &Path| {
         fs::write(path, []).unwrap();
         serde_json::json!({
             "reason": "compiler-artifact",
+            "package_id": package_id,
+            "manifest_path": manifest,
             "target": { "name": "nc_platform", "kind": ["cdylib"] },
             "filenames": [path],
         })
         .to_string()
     };
     let own = target.join(&filename);
-    assert_eq!(qualified_library(receipt(&own).as_bytes(), &target).unwrap(), own.canonicalize().unwrap());
-    assert!(qualified_library(receipt(&directory.path().join(filename)).as_bytes(), &target).is_err());
+    let qualify = |json: String| qualified_library(json.as_bytes(), &target, "resolved-shim", &manifest);
+    assert_eq!(qualify(receipt(&own, "resolved-shim", &manifest)).unwrap(), own.canonicalize().unwrap());
+    assert!(qualify(receipt(&directory.path().join(filename), "resolved-shim", &manifest)).is_err());
+    assert!(qualify(receipt(&own, "alternate-id", &manifest)).is_err());
+    assert!(qualify(receipt(&own, "resolved-shim", &alternate)).is_err());
+}
+
+/// The whole resolved release set must come from the archives even when names and versions match.
+#[test]
+fn extracted_resolution_rejects_foreign_and_missing_package_sources() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut metadata = metadata();
+    metadata.workspace_members.remove(SHIM);
+    let mut expected = BTreeMap::new();
+    for (name, package) in RELEASE_ORDER.iter().zip(&mut metadata.packages) {
+        let manifest = directory.path().join(format!("{name}.toml"));
+        fs::write(&manifest, []).unwrap();
+        package.manifest_path = manifest.clone();
+        expected.insert(*name, manifest.canonicalize().unwrap());
+    }
+    assert_eq!(extracted_shim_id(&metadata, &expected).unwrap(), SHIM);
+    let alternate = directory.path().join("alternate.toml");
+    fs::write(&alternate, []).unwrap();
+    for index in 0..RELEASE_ORDER.len() {
+        let original = std::mem::replace(&mut metadata.packages[index].manifest_path, alternate.clone());
+        let error = extracted_shim_id(&metadata, &expected).unwrap_err().to_string();
+        assert!(error.contains(RELEASE_ORDER[index]) && error.contains("alternate.toml"), "{error}");
+        metadata.packages[index].manifest_path = original;
+    }
+    let mut duplicate = package(SHIM);
+    duplicate.id = "duplicate".into();
+    duplicate.manifest_path = expected[SHIM].clone();
+    metadata.packages.push(duplicate);
+    assert!(extracted_shim_id(&metadata, &expected).unwrap_err().to_string().contains("multiple"));
+    metadata.packages.pop();
+    let shim = metadata.packages.remove(RELEASE_ORDER.len() - 1);
+    assert!(extracted_shim_id(&metadata, &expected).unwrap_err().to_string().contains("did not resolve"));
+    metadata.workspace_members.insert(shim.id.clone());
+    metadata.packages.push(shim);
+    assert!(extracted_shim_id(&metadata, &expected).unwrap_err().to_string().contains("nonmember"));
 }
 
 /// Fixture registry identity, independently checked against the archived manifest.
@@ -60,6 +107,7 @@ fn package(name: &str) -> Package {
         id: name.into(),
         name: name.into(),
         version: "0.1.0-alpha.2".into(),
+        manifest_path: PathBuf::new(),
         publish: Some(vec!["crates-io".into()]),
     }
 }
