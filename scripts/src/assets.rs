@@ -1,7 +1,11 @@
 //! Explicit, pinned sample downloads; build scripts never perform network I/O.
 use anyhow::{Context, Result, ensure};
 use sha2::{Digest, Sha256};
-use std::{fs, io, path::Path, time::Duration};
+use std::{
+    fs, io,
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 /// One upstream object with an immutable revision URL and SHA-256 digest.
 struct Asset<'a> {
@@ -16,21 +20,39 @@ struct Asset<'a> {
 /// Model and environment revisions are independently pinned; licenses remain checked in beside assets.
 const ASSETS: &[Asset<'static>] = &[
     Asset {
-        name: "DamagedHelmet.glb",
+        name: crate::artwork::DAMAGED_HELMET,
         url: "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/8f492390ddc7a2ae221a1369ef560589cf8c70fb/Models/DamagedHelmet/glTF-Binary/DamagedHelmet.glb",
         digest: "a1e3b04de97b11de564ce6e53b95f02954a297f0008183ac63a4f5974f6b32d8",
     },
     Asset {
-        name: "BrainStem.glb",
+        name: crate::artwork::BRAINSTEM,
         url: "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/8f492390ddc7a2ae221a1369ef560589cf8c70fb/Models/BrainStem/glTF-Binary/BrainStem.glb",
         digest: "ddda3a53b5c9771f992463034a430340ba2bac571e5869c723f7cba4976e9174",
     },
     Asset {
-        name: "Cannon_Exterior.hdr",
+        name: crate::artwork::CANNON_EXTERIOR,
         url: "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Environments/3a030b54c2e4f0f4d469eec2f98f47398c9a2a30/Cannon_Exterior.hdr",
         digest: "7d65926ed2fa41c121738af2addf1fd5f1ae42d12ff77255e2679777f06c984b",
     },
 ];
+
+/// Local source directory used by both native staging and the default fetch command.
+pub(crate) fn gltf_download_directory() -> PathBuf {
+    crate::root().join("examples/native/gltf/assets")
+}
+
+/// Require the authored downloads needed by native staging before starting qualification.
+pub(crate) fn require_gltf_downloads(directory: &Path) -> Result<()> {
+    for asset in ASSETS {
+        let path = directory.join(asset.name);
+        ensure!(
+            path.symlink_metadata().is_ok_and(|metadata| metadata.is_file()),
+            "required glTF input is missing or not a regular file: {}; run cargo tools fetch-gltf-examples first",
+            path.display()
+        );
+    }
+    Ok(())
+}
 
 /// Hash a stream without retaining another full model/HDR allocation.
 fn digest(reader: impl io::Read) -> Result<String> {
@@ -118,10 +140,31 @@ mod tests {
         assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 1);
     }
 
+    /// A retained staged HDR cannot satisfy the authored download prerequisite.
+    #[test]
+    fn requires_authored_gltf_downloads() {
+        let directory = tempfile::tempdir().unwrap();
+        let authored = directory.path().join("authored");
+        let staged = directory.path().join("profile/assets/gltf");
+        fs::create_dir(&authored).unwrap();
+        fs::create_dir_all(&staged).unwrap();
+        for asset in ASSETS {
+            fs::write(staged.join(asset.name), b"old").unwrap();
+            fs::write(authored.join(asset.name), b"current").unwrap();
+        }
+        require_gltf_downloads(&authored).unwrap();
+        let hdr = authored.join(crate::artwork::CANNON_EXTERIOR);
+        fs::remove_file(&hdr).unwrap();
+        let error = require_gltf_downloads(&authored).unwrap_err().to_string();
+        assert!(error.contains(&hdr.display().to_string()), "{error}");
+        assert!(error.contains("cargo tools fetch-gltf-examples"), "{error}");
+        assert!(staged.join(crate::artwork::CANNON_EXTERIOR).is_file());
+    }
+
     /// The environment keeps its own upstream revision and integrity pin.
     #[test]
     fn pins_models_and_environment_separately() {
-        assert_eq!(ASSETS.len(), 3);
+        assert_eq!(ASSETS.iter().map(|asset| asset.name).collect::<Vec<_>>(), crate::artwork::DOWNLOADS);
         assert!(ASSETS[0].url.contains("8f492390ddc7a2ae221a1369ef560589cf8c70fb"));
         assert!(ASSETS[1].url.contains("8f492390ddc7a2ae221a1369ef560589cf8c70fb"));
         assert!(ASSETS[2].url.contains("glTF-Sample-Environments/3a030b54c2e4f0f4d469eec2f98f47398c9a2a30"));

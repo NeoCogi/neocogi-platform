@@ -3,6 +3,8 @@
 // Assign Windows children to their owned job atomically during process creation.
 #![cfg_attr(windows, feature(windows_process_extensions_raw_attribute))]
 
+#[path = "../../examples/native/gltf/artwork.rs"]
+mod artwork;
 mod assets;
 mod browser;
 mod local_sources;
@@ -140,7 +142,7 @@ fn main() -> Result<()> {
             perf,
             intel_stats,
         }),
-        Operation::FetchGltfExamples { output } => assets::fetch(&output.unwrap_or_else(|| root().join("examples/native/gltf/assets"))),
+        Operation::FetchGltfExamples { output } => assets::fetch(&output.unwrap_or_else(assets::gltf_download_directory)),
         Operation::CheckPackages { allow_dirty, offline, stable_toolchain } => packages::qualify(allow_dirty, offline, stable_toolchain.as_deref()),
         Operation::TestBrowser { browser, wasm_bindgen } => browser::run(browser, wasm_bindgen),
         Operation::InstallWasmBindgen => process::run(process::cargo(None).args(["install", "wasm-bindgen-cli", "--version", &bindgen_version()?, "--locked"])),

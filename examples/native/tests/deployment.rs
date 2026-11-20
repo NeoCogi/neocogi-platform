@@ -1,5 +1,8 @@
 //! Actual final libraries, dependency failures and executable-relative relocation.
 #![cfg(not(target_arch = "wasm32"))]
+#[path = "../gltf/artwork.rs"]
+mod artwork;
+use artwork::{DOWNLOADS, LICENSES, STAGED_DIR};
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -39,25 +42,17 @@ impl Deployment {
         let filename = neocogi_example_plugins::library_filename();
         fs::copy(profile.join("lib").join(filename), before.join("lib").join(filename)).unwrap();
         if assets {
-            let source = profile.join("assets/gltf");
-            fs::create_dir_all(before.join("assets/gltf")).unwrap();
-            for filename in [
-                "DamagedHelmet.glb",
-                "BrainStem.glb",
-                "Cannon_Exterior.hdr",
-                "DamagedHelmet-LICENSE.md",
-                "BrainStem-LICENSE.md",
-                "LicenseRef-Poser-EULA.txt",
-                "Cannon_Exterior-LICENSE.md",
-                "Cannon_Exterior-CC0.txt",
-            ] {
-                fs::copy(source.join(filename), before.join("assets/gltf").join(filename)).expect("fetch example assets before native deployment acceptance");
+            let source = profile.join(STAGED_DIR);
+            let destination = before.join(STAGED_DIR);
+            fs::create_dir_all(&destination).unwrap();
+            for filename in DOWNLOADS.into_iter().chain(LICENSES) {
+                fs::copy(source.join(filename), destination.join(filename)).expect("fetch example assets before native deployment acceptance");
             }
             // Reuse only a source-keyed validated cache; the renderer validates it
             // normally. This keeps adapter qualification from repeating CPU baking.
             let cache = Path::new(env!("CARGO_MANIFEST_DIR")).join("gltf/assets/Cannon_Exterior.ibl");
             if cache.is_file() {
-                fs::copy(cache, before.join("assets/gltf/Cannon_Exterior.ibl")).unwrap();
+                fs::copy(cache, destination.join("Cannon_Exterior.ibl")).unwrap();
             }
         }
         let root = directory.path().join("relocated");

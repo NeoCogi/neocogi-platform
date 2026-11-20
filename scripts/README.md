@@ -45,10 +45,13 @@ The optional reference must be a trusted deployment of the same three programs,
 including its matching `lib/libnc_platform.so` and assets. Runs alternate reference
 and candidate. A candidate/reference median elapsed-time ratio above 1.2 fails;
 `--max-slowdown`, `--frames` and `--runs` set explicit qualification conditions.
-The report directory must be new or empty and outside Cargo targets. Copy its
-`candidate/` deployment before cleaning if it will be the next reference. Logs,
-all emitted corpus artifacts, library byte count and individual samples survive
-`cargo clean`.
+The report directory must be new or empty and outside Cargo targets. Qualification
+checks the three authored downloads before preparing shaders or building the
+candidate. The native build scripts stage the provider and artwork directly into
+a fresh `candidate/` directory under the report, using the final Cargo library
+receipt to find the provider with either combined or split Cargo directories.
+The report measures that staged library. The deployment, logs, emitted shader
+artifacts and individual samples survive `cargo clean`.
 
 `--perf` requires Linux perf permissions and records task-clock/context switches
 for each timed run. `--intel-stats` requires an Intel Mesa driver providing

@@ -1,7 +1,9 @@
 //! Reproducible native shader qualification, outside product startup and build scripts.
+use crate::artwork::{DOWNLOADS, LICENSES, STAGED_DIR};
 use anyhow::{Context, Result, ensure};
 use serde::Serialize;
 use std::{
+    ffi::OsStr,
     fs,
     path::{Path, PathBuf},
     process::Command,
@@ -127,25 +129,30 @@ fn executables(bytes: &[u8]) -> Result<std::collections::BTreeMap<String, PathBu
     }
     Ok(result)
 }
-/// Copy regular owned staging inputs; ordinary resource staging already established their layout.
-fn copy_tree(source: &Path, target: &Path) -> Result<()> {
-    fs::create_dir_all(target)?;
-    for entry in fs::read_dir(source).with_context(|| format!("missing assets at {}; run cargo tools fetch-gltf-examples first", source.display()))? {
-        let entry = entry?;
-        let kind = entry.file_type()?;
-        let to = target.join(entry.file_name());
-        if kind.is_dir() {
-            copy_tree(&entry.path(), &to)?;
-        } else {
-            ensure!(kind.is_file(), "staging input is not regular: {}", entry.path().display());
-            fs::copy(entry.path(), to)?;
-        }
+/// Verify that native build scripts supplied the full deployment and measure its staged library.
+fn staged_library_bytes(candidate: &Path, library_name: &OsStr) -> Result<u64> {
+    let artwork = candidate.join(STAGED_DIR);
+    for name in DOWNLOADS.into_iter().chain(LICENSES) {
+        let file = artwork.join(name);
+        ensure!(file.is_file(), "staged artwork file is missing or not regular: {}", file.display());
     }
-    Ok(())
+    let library = candidate.join("lib").join(library_name);
+    let metadata = fs::metadata(&library).with_context(|| format!("inspect staged library {}", library.display()))?;
+    ensure!(
+        metadata.is_file() && metadata.len() > 0,
+        "staged library is not a nonempty regular file: {}",
+        library.display()
+    );
+    Ok(metadata.len())
 }
 /// Build/validate before timing, using the same normal library assembly as end users.
 fn prepare(options: &Options, output: &Path) -> Result<(PathBuf, u64)> {
     use crate::process::{cargo, capture, run};
+    let authored = crate::assets::gltf_download_directory();
+    crate::assets::require_gltf_downloads(&authored)?;
+    let candidate = output.join("candidate");
+    fs::create_dir(&candidate).with_context(|| format!("create fresh candidate at {}", candidate.display()))?;
+
     let corpus = output.join("corpus");
     let backend_features = format!("{}{}", options.backend.name(), if options.shader_python { ",shader-python" } else { "" });
     let application_features = if options.shader_python { "dynamic,shader-python" } else { "dynamic" };
@@ -177,10 +184,6 @@ fn prepare(options: &Options, output: &Path) -> Result<(PathBuf, u64)> {
             .env_remove("NEOCOGI_NATIVE_OUTPUT_DIR"),
     )?)?
     .path;
-    let bytes = fs::metadata(&library)?.len();
-    if matches!(options.backend, Backend::Vulkan) {
-        ensure!(bytes < 524288, "complete Vulkan platform exceeds its byte cap: {bytes}");
-    }
     let built = executables(&capture(
         cargo(None)
             .args([
@@ -199,22 +202,21 @@ fn prepare(options: &Options, output: &Path) -> Result<(PathBuf, u64)> {
                 "NEOCOGI_CARGO_PROFILE_DIR",
                 library.parent().context("library is missing a Cargo profile directory")?,
             )
-            .env_remove("NEOCOGI_NATIVE_OUTPUT_DIR"),
+            .env("NEOCOGI_NATIVE_OUTPUT_DIR", &candidate),
     )?)?;
-    let candidate = output.join("candidate");
-    fs::create_dir_all(candidate.join("lib"))?;
-    fs::copy(&library, candidate.join("lib").join(library.file_name().context("library filename")?))?;
+    let bytes = staged_library_bytes(&candidate, library.file_name().context("library filename")?)?;
+    if matches!(options.backend, Backend::Vulkan) {
+        ensure!(bytes < 524_288, "complete Vulkan platform exceeds its byte cap: {bytes}");
+    }
     for name in APPLICATIONS {
         let binary = built.get(name).with_context(|| format!("Cargo did not build {name}"))?;
         fs::copy(binary, candidate.join(binary.file_name().context("executable filename")?))?;
     }
-    let binary = built.get("gltf_brainstem").context("missing BrainStem")?;
-    copy_tree(&binary.parent().context("binary directory")?.join("assets"), &candidate.join("assets"))?;
     // A checked source-keyed cache avoids rebaking after each clean output tree;
     // the viewer still validates it normally before reuse.
-    let cache = crate::root().join("examples/native/gltf/assets/Cannon_Exterior.ibl");
+    let cache = authored.join("Cannon_Exterior.ibl");
     if cache.is_file() {
-        fs::copy(cache, candidate.join("assets/gltf/Cannon_Exterior.ibl"))?;
+        fs::copy(cache, candidate.join(STAGED_DIR).join("Cannon_Exterior.ibl"))?;
     }
     Ok((candidate, bytes))
 }
@@ -440,6 +442,32 @@ pub(crate) fn run(options: Options) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    /// Qualification requires each staged file and reports the bytes of the deployed library.
+    #[test]
+    fn measures_complete_candidate_staging() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        let artwork = root.join(STAGED_DIR);
+        let library_name = OsStr::new("libnc_platform.so");
+        let library = root.join("lib").join(library_name);
+        fs::create_dir_all(&artwork).unwrap();
+        fs::create_dir_all(library.parent().unwrap()).unwrap();
+        for name in DOWNLOADS.into_iter().chain(LICENSES) {
+            fs::write(artwork.join(name), b"fixture").unwrap();
+        }
+        let error = staged_library_bytes(root, library_name).unwrap_err().to_string();
+        assert!(error.contains(&library.display().to_string()), "{error}");
+        fs::write(&library, b"library bytes").unwrap();
+        assert_eq!(staged_library_bytes(root, library_name).unwrap(), 13);
+        for name in DOWNLOADS.into_iter().chain(LICENSES) {
+            let path = artwork.join(name);
+            fs::remove_file(&path).unwrap();
+            let error = staged_library_bytes(root, library_name).unwrap_err().to_string();
+            assert!(error.contains(&path.display().to_string()), "{error}");
+            fs::write(path, b"fixture").unwrap();
+        }
+    }
+
     /// Missing/partial diagnostics cannot accidentally become zero-cost successful shaders.
     #[test]
     fn intel_costs_keep_spills_and_every_simd_variant() {
