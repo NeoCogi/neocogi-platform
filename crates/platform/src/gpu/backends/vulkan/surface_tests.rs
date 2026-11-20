@@ -15,6 +15,14 @@ pub(crate) struct WindowProbe {
     pub(crate) exclude_format: Option<vk::Format>,
     /// Reports rejection after a real successful present has queued its wait.
     pub(crate) reject_present: bool,
+    /// Reports a terminal presentation error after a real accepted submission.
+    pub(crate) fail_present: bool,
+    /// Arms one retirement poll error after the next real accepted presentation call.
+    pub(crate) fail_retirement: bool,
+    /// A present call queued work, so the next fence observation may be replaced.
+    retirement_pending: bool,
+    /// Number of completed substitutions at the actual fence observation boundary.
+    pub(crate) retirement_errors: usize,
 }
 
 /// Clears test observations even after panic or an early assertion failure.
@@ -65,12 +73,89 @@ pub(super) fn record_acquire() {
 /// Vulkan queues the wait on actual out-of-date errors. Substituting rejection
 /// only after real accepted presentation preserves this semaphore obligation.
 pub(super) fn present_result(actual: std::result::Result<bool, vk::Result>) -> std::result::Result<bool, vk::Result> {
-    let rejected = WINDOW_PROBE.with_borrow_mut(|slot| slot.as_mut().is_some_and(|probe| std::mem::take(&mut probe.reject_present)));
-    if rejected && actual.is_ok() {
-        Err(vk::Result::ERROR_OUT_OF_DATE_KHR)
-    } else {
-        actual
-    }
+    WINDOW_PROBE.with_borrow_mut(|slot| match slot.as_mut() {
+        Some(probe) if actual.is_ok() => {
+            probe.retirement_pending = std::mem::take(&mut probe.fail_retirement);
+            if std::mem::take(&mut probe.fail_present) {
+                Err(vk::Result::ERROR_SURFACE_LOST_KHR)
+            } else if std::mem::take(&mut probe.reject_present) {
+                Err(vk::Result::ERROR_OUT_OF_DATE_KHR)
+            } else {
+                actual
+            }
+        }
+        _ => actual,
+    })
+}
+
+/// Reports one transient host allocation failure after observing a real submitted fence.
+pub(super) fn fence_result(actual: std::result::Result<bool, vk::Result>) -> std::result::Result<bool, vk::Result> {
+    WINDOW_PROBE.with_borrow_mut(|slot| {
+        if let Some(probe) = slot
+            && actual.is_ok()
+            && std::mem::take(&mut probe.retirement_pending)
+        {
+            probe.retirement_errors += 1;
+            Err(vk::Result::ERROR_OUT_OF_HOST_MEMORY)
+        } else {
+            actual
+        }
+    })
+}
+
+/// The public Rust frame returns the first post-submit failure and can submit the next frame.
+#[test]
+#[ignore = "requires an SDL native display and Vulkan surface"]
+fn rust_frame_reports_first_fence_observation_and_keeps_primary_failure() {
+    use neocogi_platform::render::abi::{Rect, RenderGroupPermissions, RenderSurfaceKind};
+
+    let _session = NATIVE_SESSION.lock().unwrap_or_else(|error| error.into_inner());
+    let _scope = WindowScope::start();
+    let sdl = sdl2::init().unwrap();
+    let video = sdl.video().unwrap();
+    let window = video.window("Vulkan explicit retirement", 64, 64).vulkan().hidden().build().unwrap();
+    let mut renderer = VulkanRenderer::new(&window, 64, 64).unwrap();
+    let size = renderer.drawable_size().unwrap();
+    let info = FrameInfo::try_new(Dimensioni::new(size.width, size.height), color(0, 0, 0, 255)).unwrap();
+    let gpu = crate::gpu::GpuDevice::new(renderer.core()).unwrap();
+    let group = gpu
+        .create_group(
+            Default::default(),
+            gpu.surface_target(RenderSurfaceKind::Framebuffer).unwrap(),
+            RenderGroupPermissions::default(),
+        )
+        .unwrap();
+    let resources = group.resources().unwrap();
+    let bounds = Rect {
+        x: 0,
+        y: 0,
+        width: size.width,
+        height: size.height,
+    };
+    let block = sampled::block(&gpu, &resources, bounds, Size { width: 1, height: 1 }, &[255; 4]);
+    let snapshot = gpu.block_snapshot(block.as_com_ref()).unwrap();
+    let finish = |renderer: &mut VulkanRenderer| {
+        let commands = renderer.prepare_block(&snapshot, false).unwrap();
+        let mut frame = renderer.frame(info).unwrap();
+        frame.execute_block(&commands);
+        frame.finish()
+    };
+    WINDOW_PROBE.with_borrow_mut(|slot| slot.as_mut().unwrap().fail_retirement = true);
+    let retirement = finish(&mut renderer).err().expect("first collection must fail");
+    assert!(retirement.to_string().contains("observe graphics completion"));
+    assert!(retirement.to_string().contains("ERROR_OUT_OF_HOST_MEMORY"));
+    renderer.maintain().unwrap();
+    finish(&mut renderer).unwrap();
+
+    WINDOW_PROBE.with_borrow_mut(|slot| {
+        let probe = slot.as_mut().unwrap();
+        probe.fail_retirement = true;
+        probe.fail_present = true;
+    });
+    let primary = finish(&mut renderer).err().expect("primary presentation error must win");
+    assert!(primary.to_string().contains("queue_present"));
+    assert!(primary.to_string().contains("ERROR_SURFACE_LOST_KHR"));
+    WINDOW_PROBE.with_borrow(|slot| assert_eq!(slot.as_ref().unwrap().retirement_errors, 2));
 }
 
 /// A one-shot query override and observation of the actual native dispatch boundary.

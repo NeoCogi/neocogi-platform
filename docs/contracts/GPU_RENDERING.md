@@ -597,3 +597,9 @@ state before its COM outcome is published. An operation failure other than
 precedence over a success or retry outcome. Image submissions publish a new completed image only
 after both steps succeed; failure preserves the previous completed image.
 Destructor-only cleanup attempts retirement without emitting a new error.
+
+Explicit Vulkan frame finish observes submitted fences after releasing frame-local
+references and returns the first retirement failure using the same precedence.
+Direct Rust finish and generated COM both report that observation. COM also
+performs its own retirement after releasing prepared CPU snapshots. Dropping
+or unwinding a frame still attempts cleanup without producing a new result.

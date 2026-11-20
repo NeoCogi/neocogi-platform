@@ -206,5 +206,19 @@ fn vulkan_com_window_prepares_the_selected_generation_and_retries_rejected_prese
         assert_eq!(probe.acquires, acquires + 3);
     });
     assert!(rejected.message.contains("Vulkan presentation rejected an out-of-date swapchain"));
+    WINDOW_PROBE.with_borrow_mut(|slot| {
+        let probe = slot.as_mut().unwrap();
+        probe.reject_present = true;
+        probe.fail_retirement = true;
+    });
+    let retired = renderer
+        .render(RenderInfo { size: current, invocation: 7, ..info }, retry.as_com_ref())
+        .unwrap_err();
+    assert_eq!(retired.status, RENDER_E_BACKEND);
+    assert!(retired.message.contains("observe graphics completion") && retired.message.contains("ERROR_OUT_OF_HOST_MEMORY"));
+    WINDOW_PROBE.with_borrow(|slot| assert_eq!(slot.as_ref().unwrap().retirement_errors, 1));
+    renderer
+        .render(RenderInfo { size: current, invocation: 8, ..info }, retry.as_com_ref())
+        .unwrap();
     check_surface_loss_input(&device, &window);
 }

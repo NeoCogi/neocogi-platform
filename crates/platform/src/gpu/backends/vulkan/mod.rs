@@ -344,7 +344,7 @@ impl VulkanRenderer {
         let dimensions = info.dimensions();
         self.begin(dimensions.width, dimensions.height, info.clear()).map_err(FrameError::new)?;
         Ok(VulkanFrame {
-            backend: self,
+            backend: Some(self),
             target: Some(FrameTarget::Window),
         })
     }
@@ -473,8 +473,8 @@ impl Drop for VulkanRenderer {
 #[must_use = "call finish to submit the Vulkan frame and observe errors"]
 /// Vulkan frame owns pending work. Only finish acquires, submits and presents a window image.
 pub struct VulkanFrame<'a> {
-    /// Backend is borrowed from block assembly through the complete native transaction.
-    backend: &'a mut VulkanRenderer,
+    /// Keeps abandonment cleanup armed until explicit finish and retirement both return.
+    backend: Option<&'a mut VulkanRenderer>,
     /// Explicit target is consumed exactly once; texture frames own no native acquisition.
     target: Option<FrameTarget>,
 }
@@ -482,27 +482,41 @@ pub struct VulkanFrame<'a> {
 impl VulkanFrame<'_> {
     /// Preserves the painter position of a block prepared before target acquisition.
     pub fn execute_block(&mut self, block: &PreparedBlock) {
-        self.backend.commands.push(block.clone());
+        self.backend
+            .as_mut()
+            .expect("an active Vulkan frame owns its backend")
+            .commands
+            .push(block.clone());
     }
 }
 
 impl RendererFrame for VulkanFrame<'_> {
     type Image = Rc<Image>;
-    /// Acquires after admission. Drop still guards against an acquired transaction unwinding.
+    /// Finalizes native work and returns its first retirement failure on success or retry.
+    /// Drop remains armed until both steps return, including after the target is consumed.
     fn finish(mut self) -> std::result::Result<Option<Rc<Image>>, FrameError> {
         let target = self.target.take().expect("an active Vulkan frame owns its explicit target");
-        self.backend.finish(target)
+        let backend = self.backend.as_deref_mut().expect("an active Vulkan frame owns its backend");
+        let result = backend.finish(target);
+        backend.commands.clear();
+        let retirement = backend.generic.collect().map_err(FrameError::new);
+        self.backend = None;
+        match result {
+            Err(error) if error.status() == neocogi_platform::render::abi::RENDER_E_WINDOW_RETRY => retirement.and(Err(error)),
+            result => result.and_then(|value| retirement.map(|()| value)),
+        }
     }
 }
 
 impl Drop for VulkanFrame<'_> {
     fn drop(&mut self) {
+        let Some(backend) = self.backend.take() else { return };
         // Dropping a never-finished frame leaves Ready. A panic after actual
         // acquisition forbids reuse of the potentially signaled semaphore.
-        self.backend.context.abandon_acquired_frame();
+        backend.context.abandon_acquired_frame();
         self.target.take();
-        self.backend.commands.clear();
-        let _ = self.backend.generic.collect();
+        backend.commands.clear();
+        let _ = backend.generic.collect();
     }
 }
 
@@ -576,7 +590,7 @@ impl RendererBackend for VulkanRenderer {
         }
         self.begin(size.width, size.height, info.clear()).map_err(FrameError::new)?;
         Ok(VulkanFrame {
-            backend: self,
+            backend: Some(self),
             target: Some(FrameTarget::Texture(output.state)),
         })
     }

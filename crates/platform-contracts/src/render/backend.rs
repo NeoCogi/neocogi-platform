@@ -151,6 +151,11 @@ impl FrameError {
             message: message.into(),
         }
     }
+
+    /// Returns the operation category without consuming its owned diagnostic.
+    pub fn status(&self) -> NcStatus {
+        self.status
+    }
 }
 
 impl fmt::Display for FrameError {

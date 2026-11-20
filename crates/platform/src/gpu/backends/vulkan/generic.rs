@@ -888,12 +888,18 @@ impl Executor {
     /// Polls context-owned fences, releases completed native owners and drains owned retirement packets.
     pub(in crate::gpu::backends::vulkan) fn collect(&mut self) -> Result<(), String> {
         let mut failure = None;
-        self.submitted.retain(|entry| match unsafe { self.core.device.get_fence_status(entry.fence) } {
-            Ok(true) => false,
-            Ok(false) => true,
-            Err(error) => {
-                failure.get_or_insert(error);
-                true
+        self.submitted.retain(|entry| {
+            // SAFETY: Each submitted record refers to this context's live slot fence.
+            let status = unsafe { self.core.device.get_fence_status(entry.fence) };
+            #[cfg(test)]
+            let status = super::surface_tests::fence_result(status);
+            match status {
+                Ok(true) => false,
+                Ok(false) => true,
+                Err(error) => {
+                    failure.get_or_insert(error);
+                    true
+                }
             }
         });
         self.drain();
