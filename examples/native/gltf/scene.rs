@@ -54,6 +54,8 @@ pub struct Primitive {
 
 /// Linear material values and image references; sampled color images are decoded in the shader.
 pub struct Material {
+    /// Opaque material needs both raster orientations and reversed lighting normals on back faces.
+    pub double_sided: bool,
     /// Linear RGBA base color multiplier.
     pub base: [f32; 4],
     /// Linear emissive RGB multiplier.
@@ -247,6 +249,7 @@ impl Scene {
                     return Err("only TEXCOORD_0 is supported".into());
                 }
                 Ok(Material {
+                    double_sided: material.double_sided(),
                     base: pbr.base_color_factor(),
                     emissive: material.emissive_factor(),
                     metal_rough: [pbr.metallic_factor(), pbr.roughness_factor()],
@@ -263,6 +266,7 @@ impl Scene {
             })
             .collect::<Result<Vec<_>>>()?;
         materials.push(Material {
+            double_sided: false,
             base: [1.0; 4],
             emissive: [0.0; 3],
             metal_rough: [1.0; 2],

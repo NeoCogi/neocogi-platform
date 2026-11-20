@@ -104,6 +104,10 @@ struct Graphics {
     mesh_ccw: ComBox<IGpuPipelineAbi>,
     /// Reverses the front-face definition for a mirrored rigid draw.
     mesh_cw: ComBox<IGpuPipelineAbi>,
+    /// Keeps both faces with ordinary winding.
+    mesh_two_sided_ccw: ComBox<IGpuPipelineAbi>,
+    /// Keeps both faces while preserving a mirrored mesh's authored front face.
+    mesh_two_sided_cw: ComBox<IGpuPipelineAbi>,
     /// Procedural full-screen triangle; never writes depth or translates the environment.
     sky_pipeline: ComBox<IGpuPipelineAbi>,
     /// Immutable buffers in the same order as Scene::primitives.
@@ -167,12 +171,12 @@ impl Graphics {
             slot,
             kind: GpuBindingKind::SampledTexture,
         }));
-        let pipeline = |front_face| -> Result<ComBox<IGpuPipelineAbi>, RenderError> {
+        let pipeline = |front_face, cull| -> Result<ComBox<IGpuPipelineAbi>, RenderError> {
             let descriptor = PipelineDesc {
                 state: GpuPipelineInfo {
                     depth_write: true,
                     depth_compare: GpuCompare::Less,
-                    cull: GpuCullMode::Back,
+                    cull,
                     front_face,
                     ..GpuPipelineInfo::default()
                 },
@@ -202,8 +206,10 @@ impl Graphics {
             .source()?;
             Ok(resources.create_pipeline(descriptor.as_com_ref(), vs.as_com_ref(), fs.as_com_ref())?)
         };
-        let mesh_ccw = pipeline(GpuFrontFace::Ccw)?;
-        let mesh_cw = pipeline(GpuFrontFace::Cw)?;
+        let mesh_ccw = pipeline(GpuFrontFace::Ccw, GpuCullMode::Back)?;
+        let mesh_cw = pipeline(GpuFrontFace::Cw, GpuCullMode::Back)?;
+        let mesh_two_sided_ccw = pipeline(GpuFrontFace::Ccw, GpuCullMode::None)?;
+        let mesh_two_sided_cw = pipeline(GpuFrontFace::Cw, GpuCullMode::None)?;
         let mut meshes = Vec::new();
         for primitive in &scene.primitives {
             let mut vertices = Vec::with_capacity(primitive.vertices.len() * VERTEX_STRIDE as usize);
@@ -279,6 +285,8 @@ impl Graphics {
             parameters,
             mesh_ccw,
             mesh_cw,
+            mesh_two_sided_ccw,
+            mesh_two_sided_cw,
             sky_pipeline,
             meshes,
             materials: gpu_materials,
@@ -303,7 +311,13 @@ impl Graphics {
         for (index, (primitive, mesh)) in scene.primitives.iter().zip(&self.meshes).enumerate() {
             let palette = scene.palette(primitive, &pose);
             let mirrored = primitive.skin.is_none() && mirrored_basis(&palette[0]);
-            let pipeline = if mirrored { &self.mesh_cw } else { &self.mesh_ccw };
+            let material = &scene.materials[primitive.material];
+            let pipeline = match (mirrored, material.double_sided) {
+                (false, false) => &self.mesh_ccw,
+                (true, false) => &self.mesh_cw,
+                (false, true) => &self.mesh_two_sided_ccw,
+                (true, true) => &self.mesh_two_sided_cw,
+            };
             view.bind_pipeline(pipeline.as_com_ref())?;
             let mut skin = Vec::with_capacity(MAX_JOINTS * 64);
             for index in 0..MAX_JOINTS {
@@ -311,7 +325,6 @@ impl Graphics {
             }
             self.skins[index].upload(0, &skin)?;
             view.bind_uniform_buffer(GpuShaderStage::Vertex, 1, self.skins[index].as_gpu_buffer(), 0, skin.len() as u64)?;
-            let material = &scene.materials[primitive.material];
             let mut parameters = Vec::with_capacity(material::UNIFORM_BYTES as usize);
             floats(&mut parameters, material.base);
             floats(&mut parameters, material.emissive.into_iter().chain([0.]));
@@ -321,7 +334,7 @@ impl Graphics {
                     material.metal_rough[0],
                     material.metal_rough[1],
                     if material.images[2].is_some() { material.normal_scale } else { 0. },
-                    0.,
+                    if material.double_sided { 1.0 } else { 0.0 },
                 ],
             );
             floats(&mut parameters, camera.eye().into_iter().chain([0.]));

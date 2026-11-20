@@ -116,7 +116,7 @@
   (let d (material_texel tile (+ first (vec2 1.0 1.0)) color))
   (return (mix (mix a b (vec3 (. weight x))) (mix c d (vec3 (. weight x))) (vec3 (. weight y)))))
 
-(fragment fs ((surface Surface)) (returns vec4 (location 0))
+(fragment fs ((surface Surface) (front bool (builtin front_facing))) (returns vec4 (location 0))
   (let base (* (material_sample 0u (. surface uv) true) (. (. material base) rgb)))
   (let mr (material_sample 1u (. surface uv) false))
   (let metallic (clamp (* (. mr b) (. (. material parameters) x)) 0.0 1.0))
@@ -141,6 +141,9 @@
               (* (* t (. sample_normal x)) (. (. material parameters) z))
               (* (* b (. sample_normal y)) (. (. material parameters) z)))
             (* n (. sample_normal z)))))))
+  ; parameters.w denotes an opaque two-sided material. Reverse the full mapped normal
+  ; after the unconditional derivatives, preserving both tangent-space contributions.
+  (if (&& (> (. (. material parameters) w) 0.0) (! front)) (then (set n (- n))))
   (let v (normalize (- (. (. material eye) xyz) (. surface position))))
   (let nv (max (dot n v) 0.001))
   (let response (brdf_response nv roughness))

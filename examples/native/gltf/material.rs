@@ -142,6 +142,7 @@ mod tests {
     /// Default opaque material with no image dependencies.
     fn material() -> Material {
         Material {
+            double_sided: false,
             base: [1.; 4],
             emissive: [0.; 3],
             metal_rough: [1.; 2],

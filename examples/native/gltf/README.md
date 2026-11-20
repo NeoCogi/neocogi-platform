@@ -94,7 +94,9 @@ mesh node's world transform. A finite negative determinant of its sampled linear
 basis selects clockwise front faces, including inherited and animated mirrors.
 Zero and nonfinite determinants use the ordinary counterclockwise winding.
 Skinned primitives use counterclockwise winding because a blended deformation
-can change orientation within a mesh. This world-space convention excludes the skinned
+can change orientation within a mesh. Opaque double-sided materials keep both
+rasterized faces and reverse the final mapped normal for back faces before lighting.
+This world-space convention excludes the skinned
 mesh node transform, avoiding its double application. Vertices are serialized
 as position (12 bytes), normal (12), UV (8), u32 joints (16), f32 weights (16).
 Matrices are explicitly encoded column-major, 64 bytes each; Rust struct layout

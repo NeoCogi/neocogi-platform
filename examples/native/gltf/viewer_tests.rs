@@ -132,6 +132,90 @@ fn rigid_mesh_facing_follows_sampled_world_orientation() {
     }
 }
 
+/// Directional diffuse texels distinguish correct mapped-normal reversal from either missing culling change or flipping only geometric Z.
+#[cfg(all(feature = "test-support", feature = "glow"))]
+#[test]
+#[ignore = "requires a native SDL GL driver; SDL_VIDEODRIVER=offscreen is sufficient"]
+fn double_sided_materials_reverse_the_mapped_back_face_normal() {
+    use serde_json::json;
+    let _native = NATIVE_SESSION.lock().unwrap();
+    let _runtime = neocogi_com_host::initialize_runtime();
+    let dark = environment::Region { x: 0, y: 1, width: 1, height: 1 };
+    let mut regions = [dark; environment::REGION_COUNT];
+    regions[environment::DIFFUSE_REGION] = environment::Region { x: 0, y: 0, width: 4, height: 1 };
+    let lighting = Lighting {
+        environment: Environment {
+            width: 4,
+            height: 2,
+            // Longitude centers from left to right are green, red, white and blue.
+            pixels: vec![
+                0, 128, 0, 129, 128, 0, 0, 129, 128, 128, 128, 129, 0, 0, 128, 129, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            ],
+            regions,
+        },
+        exposure: 1.,
+        intensity: 1.,
+        background: Background::Hidden,
+    };
+    let size = Size { width: 64, height: 64 };
+    let native = neocogi_platform_examples::sdk::platform::testing::window("two-sided glTF material", size).unwrap();
+    let target = Target::new(native.window).unwrap();
+    for (mirror, reverse, two_sided, dominant) in [
+        (false, false, true, Some(0)),
+        (false, true, true, Some(2)),
+        (true, true, true, Some(1)),
+        (false, true, false, None),
+    ] {
+        let scene = triangle_scene(None, None, |root, document, bytes| {
+            if reverse {
+                bytes[74..78].copy_from_slice(&[2, 0, 1, 0]);
+            }
+            let x = if mirror { -1.0 } else { 1.0 };
+            document["nodes"][0]["scale"] = json!([x, 1.0, 1.0]);
+            bytes.resize(80, 0);
+            floats(bytes, [0., 0., 1., 0., 0.5, 1.]);
+            document["bufferViews"]
+                .as_array_mut()
+                .unwrap()
+                .push(json!({"buffer":0,"byteOffset":80,"byteLength":24}));
+            document["accessors"]
+                .as_array_mut()
+                .unwrap()
+                .push(json!({"bufferView":3,"componentType":5126,"count":3,"type":"VEC2"}));
+            document["meshes"][0]["primitives"][0]["attributes"]["TEXCOORD_0"] = json!(3);
+            image::RgbaImage::from_pixel(1, 1, image::Rgba([255, 128, 255, 255]))
+                .save(root.join("normal.png"))
+                .unwrap();
+            document["images"] = json!([{"uri":"normal.png"}]);
+            document["textures"] = json!([{"source":0}]);
+            document["materials"][0] = json!({
+                "doubleSided":two_sided, "normalTexture":{"index":0},
+                "pbrMetallicRoughness":{"metallicFactor":0.0}
+            });
+        });
+        assert_eq!(scene.materials[0].double_sided, two_sided);
+        let (center, radius) = scene.bounds();
+        let camera = Camera::new(center, radius, size);
+        let mut graphics = Graphics::new(&scene, prepare_materials(&scene).unwrap(), &lighting.environment, &target.resources).unwrap();
+        target.render(&scene, &mut graphics, &camera, 0., &lighting, 1).unwrap();
+        let pixels = native.probe.pixels().unwrap();
+        let offset = ((size.height / 2 * size.width + size.width / 2) * 4) as usize;
+        let center = &pixels[offset..offset + 4];
+        if let Some(dominant) = dominant {
+            assert!(
+                center[dominant] > 150
+                    && center[..3]
+                        .iter()
+                        .enumerate()
+                        .all(|(c, value)| c == dominant || u16::from(*value) * 4 < u16::from(center[dominant])),
+                "mirror={mirror}, reverse={reverse} expected color channel {dominant}: {center:?}",
+            );
+        } else {
+            assert_eq!(center, &pixels[..4], "reversed one-sided mesh must remain culled");
+        }
+    }
+}
+
 /// Actual glTF defaults and image decoding must reach the atlas without erasing an authored emissive factor.
 #[test]
 fn emissive_factors_and_optional_images_survive_loading_and_atlas_preparation() {
