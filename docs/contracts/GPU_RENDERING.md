@@ -75,6 +75,12 @@ initial contents and forbids uploads. `create_dynamic_buffer(desc)` and
 to zero. The replaced optional buffer data, update methods, separate GPU texture
 interface and copied per-draw uniform methods are removed.
 
+Buffer creation and image import require available physical storage before
+reserving quota. Static creation checks storage and group closure again after the
+final source callback. Terminal loss returns `RENDER_E_BACKEND` before publishing
+a buffer and releases the candidate's reservations. Native allocation stays lazy
+for healthy buffers.
+
 Dynamic buffers reserve one preserving slot. Streamed buffers reserve three
 replacement slots, covering two queued frames plus a CPU writer. Slot count is
 an explicit bounded baseline policy, not an idle pool of arbitrary objects. A
@@ -408,8 +414,13 @@ complete pipeline/binding state per draw. Every native allocation retains the
 actual physical context, including SDL ownership or the browser context. A GL
 handle's destruction first selects its own context. Selection failure or observed
 WebGL loss tears down that physical owner terminally; restoration requires a new
-core and identity. Supported operations reselect their context after late cleanup
-on another context. A bare GL dispatch table is not a lifetime guard.
+core and identity. The physical owner observes the actual canvas's loss event
+even when loss and restoration happen between Platform calls. A failed owner
+cannot resize the restored canvas. The page controls whether the browser
+restores the canvas. Immediate health and native error
+checks also detect loss and preserve the first reported terminal cause. Supported
+operations reselect their context after late cleanup on another context.
+A bare GL dispatch table is not a lifetime guard.
 
 WGPU prepares explicit layouts, pipelines and immutable bindings before acquiring
 the target. Regional replacement uses private scissored clear pipelines, and
@@ -496,7 +507,7 @@ Every source, imported image, prepared block and consumed output checks its actu
 retained core against the selected driver. Two logical producers may share one
 explicit compatible core without sharing resource/domain provenance. A matching
 backend type or metadata token alone does not establish compatibility. Terminal
-native loss invalidates previously Ready slots as well as future creation.
+native loss invalidates previously Ready slots and rejects future native realization.
 
 A last native backing owner transfers a sender-free owned packet through mpsc to
 the existing driver. Packets contain native handles, narrow physical lifetime and

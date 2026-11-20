@@ -771,17 +771,7 @@ impl Executor {
     }
     /// Reports native errors before publication; terminal context loss invalidates all old handles.
     pub(in crate::gpu::backends::glow) fn check(&self) -> Result<(), String> {
-        // SAFETY: Called only in a selected live native execution phase.
-        let error = unsafe { self.gl.get_error() };
-        if error == glow::NO_ERROR {
-            Ok(())
-        } else {
-            let reason = format!("OpenGL operation failed with error 0x{error:04x}");
-            if error == glow::CONTEXT_LOST {
-                self.core.lose(reason.clone());
-            }
-            Err(reason)
-        }
+        self.core.check_error("OpenGL operation")
     }
     /// Replays only prepared native objects; the caller has already bound its authorized target.
     pub(in crate::gpu::backends::glow) fn execute(&mut self, block: &PreparedBlock, logical: Size, physical: Size, offscreen: bool) -> Result<(), String> {

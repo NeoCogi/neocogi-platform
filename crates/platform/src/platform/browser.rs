@@ -82,8 +82,7 @@ impl IPlatformWindow for WindowObject {
 
     /// Synchronizes CSS/device scaling before returning the physical drawable allocation.
     fn size(&self) -> Result<Size, NcStatus> {
-        resize(&self.device.window);
-        self.device.drawable_size_status()
+        self.device.synchronized_drawable_size().map_err(|_| PLATFORM_E_BACKEND)
     }
     /// Borrows one destination during delivery and rejects callback-driven recursive polling.
     fn poll(&self, destination: ComRef<'_, IInputSinkAbi>) -> Result<PollStatus, NcStatus> {

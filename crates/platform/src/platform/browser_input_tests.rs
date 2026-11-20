@@ -8,6 +8,7 @@ use super::*;
 use crate::platform::{PlatformObject, WindowObject, identity};
 use neocogi_com_sdk::{ComPtr, NC_E_INVALID_ARG, com_object};
 use neocogi_platform::render::abi::*;
+use std::cell::Cell;
 use wasm_bindgen::prelude::*;
 
 use neocogi_platform::gpu::testing::{derivatives, sampled};
@@ -301,6 +302,130 @@ fn drawable_loss_keeps_render_diagnostics() {
     assert_eq!(preflight.status, RENDER_E_BACKEND);
     assert!(post_callback.message.contains("WebGL context was lost; recreate the driver and its resources"));
     assert_eq!(post_callback.message, preflight.message);
+}
+
+/// A native restoration between SDK calls ends the old COM driver's authority.
+async fn restoration_requires_a_fresh_driver() {
+    let object = PlatformObject::new().window("WebGL generation", Size { width: 8, height: 8 }).unwrap();
+    let canvas = object.device.window.clone();
+    canvas.style().set_css_text("width:8px;height:8px");
+    let window: ComPtr<IPlatformWindowAbi> = WindowObject::from_value(object).query().unwrap();
+    let renderer: ComPtr<IRendererAbi> = window.query().unwrap();
+    let surfaces: ComPtr<IRenderSurfaceFactoryAbi> = window.query().unwrap();
+    let framebuffer = surfaces.create_surface(RenderSurfaceDesc::Framebuffer).unwrap();
+    let bound: ComPtr<IRenderDriverBoundAbi> = renderer.query().unwrap();
+    let original = bound.driver_identity().unwrap();
+    let stream: ComPtr<IRenderStreamAbi> = SurfaceBlocks::from_value(SurfaceBlocks { blocks: Vec::new() }).query().unwrap();
+    let info = RenderInfo {
+        invocation: 1,
+        size: window.size().unwrap(),
+        clear: 0xff123456,
+        block_count: 0,
+    };
+    renderer.render(info, stream.as_com_ref()).unwrap();
+
+    // The page opts into restoration. No Platform method can observe the intermediate loss.
+    wasm_bindgen_futures::JsFuture::from(restore_test_context(&canvas)).await.unwrap();
+    let attributes = (canvas.width(), canvas.height());
+    canvas.style().set_css_text("width:11px;height:13px");
+    let failure = renderer.render(RenderInfo { invocation: 2, ..info }, stream.as_com_ref()).unwrap_err();
+    assert_eq!(failure.status, RENDER_E_BACKEND);
+    assert!(failure.message.contains("WebGL context was lost"));
+    assert_eq!((canvas.width(), canvas.height()), attributes, "the stale renderer must not reset the canvas");
+    assert_eq!(window.size(), Err(PLATFORM_E_BACKEND));
+    assert_eq!(framebuffer.size(), Err(PLATFORM_E_BACKEND));
+    assert_eq!(identity(&original).unwrap(), identity(&bound.driver_identity().unwrap()).unwrap());
+    assert_eq!((canvas.width(), canvas.height()), attributes, "the stale window must not resize the canvas");
+
+    let mut replacement = gpu::Gpu::from_canvas(canvas).unwrap();
+    let core = replacement.core();
+    assert_ne!(identity(&original).unwrap(), identity(core.identity()).unwrap());
+    assert_eq!(core.drawable_size().unwrap(), info.size);
+    replacement.render(info, &crate::platform::Prepared::default()).unwrap();
+    assert_eq!(window.size(), Err(PLATFORM_E_BACKEND));
+}
+
+#[com_object(interfaces(IGpuDataSource))]
+/// Supplies valid static contents and loses the browser context in the final header callback.
+struct LosingBufferSource {
+    /// Only this exact test window's browser context is changed.
+    context: web_sys::WebGl2RenderingContext,
+    /// Counts the initial header and the consistency check at the end of the bulk read.
+    headers: Rc<Cell<u32>>,
+}
+impl IGpuDataSource for LosingBufferSource {
+    fn byte_count(&self) -> Result<u64, NcStatus> {
+        let previous = self.headers.replace(self.headers.get() + 1);
+        if previous == 1 {
+            lose_test_context(&self.context);
+            assert!(self.context.is_context_lost());
+        }
+        Ok(4)
+    }
+    fn read(&self, mut output: neocogi_com_sdk::NcOutputWriter<'_, u8>) -> Result<(), NcStatus> {
+        assert_eq!(output.offset(), 0);
+        output.extend_from_slice(&[1, 2, 3, 4])
+    }
+}
+
+/// Public buffer creation/import rejects observed loss before publication and refunds failed reservations.
+fn buffer_publication_requires_live_storage() {
+    let size = Size { width: 1, height: 1 };
+    let object = PlatformObject::new().window("WebGL buffer publication", size).unwrap();
+    let device = object.device.clone();
+    let context = device
+        .window
+        .get_context("webgl2")
+        .unwrap()
+        .unwrap()
+        .dyn_into::<web_sys::WebGl2RenderingContext>()
+        .unwrap();
+    let window: ComPtr<IPlatformWindowAbi> = WindowObject::from_value(object).query().unwrap();
+    let images: ComPtr<ITextureFactoryAbi> = window.query().unwrap();
+    let image = images
+        .create_texture(size, neocogi_platform::render::source::initial(None).borrow().unwrap())
+        .unwrap();
+    let host = window.graphics_host().unwrap();
+    let groups: ComPtr<IRenderResourceGroupFactoryAbi> = host.query().unwrap();
+    let surfaces: ComPtr<IRenderSurfaceFactoryAbi> = host.query().unwrap();
+    let framebuffer = surfaces.create_surface(RenderSurfaceDesc::Framebuffer).unwrap();
+    let limits = RenderGroupLimits { resources: 1, ..Default::default() };
+    let owner = groups
+        .create_group(
+            limits,
+            framebuffer.as_com_ref(),
+            RenderGroupPermissions {
+                import_images: true,
+                ..RenderGroupPermissions::none()
+            },
+        )
+        .unwrap();
+    let denied = groups.create_group(limits, framebuffer.as_com_ref(), RenderGroupPermissions::none()).unwrap();
+    let resources = owner.resources().unwrap();
+    let denied_resources = denied.resources().unwrap();
+    let account = device.logical.domain(resources.as_com_ref()).unwrap().account.clone();
+    let headers = Rc::new(Cell::new(0));
+    let source: ComPtr<IGpuDataSourceAbi> = LosingBufferSource::from_value(LosingBufferSource { context, headers: headers.clone() })
+        .query()
+        .unwrap();
+    let desc = GpuBufferDesc::Vertex { byte_len: 4 };
+    assert!(matches!(resources.create_static_buffer(desc, source.as_com_ref()), Err(RENDER_E_BACKEND)));
+    assert_eq!(headers.get(), 2, "the final header caused context loss");
+    assert!(matches!(resources.create_static_buffer(desc, source.as_com_ref()), Err(RENDER_E_BACKEND)));
+    assert_eq!(headers.get(), 2, "known loss stops before calling the source");
+    assert!(matches!(resources.create_dynamic_buffer(desc), Err(RENDER_E_BACKEND)));
+    assert!(matches!(resources.create_streamed_buffer(desc), Err(RENDER_E_BACKEND)));
+    assert!(matches!(
+        resources.create_dynamic_buffer(GpuBufferDesc::Vertex { byte_len: 0 }),
+        Err(neocogi_com_sdk::NC_E_OUT_OF_RANGE)
+    ));
+    let failure = host.import_texture(resources.as_com_ref(), image.as_com_ref()).err().unwrap();
+    assert_eq!(failure.status, RENDER_E_BACKEND);
+    assert!(failure.message.contains("WebGL context was lost"));
+    let permission = host.import_texture(denied_resources.as_com_ref(), image.as_com_ref()).err().unwrap();
+    assert_eq!(permission.status, RENDER_E_PERMISSION);
+    assert_eq!(account.live_bytes(), 0);
+    assert!(account.resource().is_ok(), "the only owner slot was refunded");
 }
 
 /// Mutable native slots must ignore application unpack addressing on every reuse.
@@ -620,7 +745,9 @@ async fn canonical_browser_derivatives() {
     let version = gpu.imported_texture_snapshot(resources.as_com_ref(), image.as_com_ref()).unwrap();
     renderer.prepare_texture(version.clone()).unwrap();
     lose_test_context(&native);
-    assert!(renderer.make_current().is_err(), "actual WebGL loss invalidates the physical owner");
+    let late = renderer.core().check_error("WebGL diagnostic").unwrap_err();
+    assert!(late.contains("0x9242"), "{late}");
+    assert_eq!(renderer.make_current(), Err(late), "the first diagnosis survives later health checks");
     assert!(renderer.prepare_texture(version).is_err(), "a Ready image cannot bypass terminal context loss");
     assert_eq!(
         image.upload(neocogi_com_sdk::NcCopyFromBufferOffset::new(0, &[0; 4])),
@@ -636,6 +763,30 @@ export function lose_test_context(context) {
     const extension = context.getExtension("WEBGL_lose_context");
     if (!extension) throw new Error("WebGL loss extension unavailable");
     extension.loseContext();
+}
+export function restore_test_context(canvas) {
+    const context = canvas.getContext("webgl2");
+    const extension = context.getExtension("WEBGL_lose_context");
+    return new Promise((resolve, reject) => {
+        if (!extension) {
+            reject(new Error("WebGL loss extension unavailable"));
+            return;
+        }
+        const timeout = setTimeout(() => reject(new Error("WebGL restoration timed out")), 5000);
+        canvas.addEventListener("webglcontextlost", event => {
+            event.preventDefault();
+            setTimeout(() => extension.restoreContext(), 100);
+        }, {once: true});
+        canvas.addEventListener("webglcontextrestored", () => {
+            clearTimeout(timeout);
+            if (canvas.getContext("webgl2") === context && !context.isContextLost()) {
+                resolve();
+            } else {
+                reject(new Error("WebGL lost context was not restored"));
+            }
+        }, {once: true});
+        extension.loseContext();
+    });
 }
 export function record_panic(text) {
     document.getElementById('result').dataset.panic = text;
@@ -708,6 +859,8 @@ extern "C" {
     fn record_panic(text: &str);
     /// Triggers actual WebGL context loss after an image has reached its prepared state.
     fn lose_test_context(context: &web_sys::WebGl2RenderingContext);
+    /// Completes native loss and restoration on separate browser tasks.
+    fn restore_test_context(canvas: &HtmlCanvasElement) -> js_sys::Promise;
     /// Dispatches one deterministic DOM sequence against the actual installed Rust listeners.
     fn exercise(target: &EventTarget, name: &str);
     /// Dispatches press/repeat/release with an explicit logical key, physical location and modifiers.
@@ -829,6 +982,8 @@ pub async fn run_platform_input_tests() {
     browser_surface_targets();
     clamped_drawing_buffer_uses_physical_coordinates();
     drawable_loss_keeps_render_diagnostics();
+    restoration_requires_a_fresh_driver().await;
+    buffer_publication_requires_live_storage();
     crate::platform::extent_tests::run();
     crate::platform::extent_tests::run_window_depth();
     let document = web_sys::window().unwrap().document().unwrap();

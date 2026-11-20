@@ -95,6 +95,7 @@ impl<B: NativeResources> BufferObject<B> {
     ) -> Result<ComBox<IGpuBufferAbi>, NcStatus> {
         domain.open()?;
         let len = desc.byte_len()?;
+        domain.check_storage().map_err(|error| error.status)?;
         let owner = domain.account.resource()?;
         let count = if usage == GpuBufferUsage::Streamed { STREAM_SLOTS } else { 1 };
         let mut slots = Vec::new();
@@ -135,7 +136,11 @@ impl<B: NativeResources> BufferObject<B> {
                 })),
             });
         }
-        domain.open()?;
+        // A static source can close the group or lose the context during its last callback.
+        if source.is_some() {
+            domain.open()?;
+            domain.check_storage().map_err(|error| error.status)?;
+        }
         publish(
             &domain.device.inner.buffers,
             Self::into_local_box(Self {
@@ -171,7 +176,7 @@ impl<B: NativeResources> BufferObject<B> {
     /// Physical availability is checked independently of public domain authority.
     fn open(&self) -> Result<(), NcStatus> {
         self.domain.open()?;
-        B::storage_available(self.domain.device.inner.core.as_ref()).map_err(|_| RENDER_E_BACKEND)
+        self.domain.check_storage().map_err(|error| error.status)
     }
     /// Captures only published linear storage; image roles reject.
     pub(crate) fn linear(&self) -> Result<&Rc<BufferVersion<B>>, NcStatus> {

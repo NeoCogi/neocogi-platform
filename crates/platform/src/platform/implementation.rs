@@ -148,6 +148,16 @@ impl Device {
         self.drawable_size().map_err(|_| PLATFORM_E_BACKEND)
     }
 
+    /// Applies the browser's requested canvas size only while this core still owns the drawable.
+    fn synchronized_drawable_size(&self) -> Result<Size, RenderError> {
+        #[cfg(target_arch = "wasm32")]
+        {
+            self.drawable.current().map_err(|error| self.failure(error))?;
+            browser::resize(&self.window);
+        }
+        self.drawable_size()
+    }
+
     /// Takes the complete native state; nested render/upload attempts cannot borrow its internals.
     fn access(&self) -> Result<RenderAccess<'_>, NcStatus> {
         let state = self.render.try_borrow_mut().map_err(|_| RENDER_E_BUSY)?.take().ok_or(RENDER_E_BUSY)?;
@@ -296,7 +306,7 @@ impl IRenderHost for GraphicsHost {
                 let image = image.try_add_ref()?;
                 self.device.texture(image)?
             };
-            Ok(self.device.logical.import_texture(resources, record.image.clone())?)
+            self.device.logical.import_texture_with_error(resources, record.image.clone())
         });
         Ok(texture_import_result(result.map_err(|error| error.context("import texture"))))
     }
@@ -323,9 +333,7 @@ impl IRenderer for WindowObject {
     /// Prepares the complete frame without borrowing native state, then executes and explicitly finishes it.
     fn render_result(&self, info: RenderInfo, stream: ComRef<'_, IRenderStreamAbi>) -> Result<ComPtr<IRenderOutcomeAbi>, NcStatus> {
         let result = (|| -> Result<(), RenderError> {
-            #[cfg(target_arch = "wasm32")]
-            browser::resize(&self.device.window);
-            if info.size != self.device.drawable_size()? {
+            if info.size != self.device.synchronized_drawable_size()? {
                 return Err(RenderError::new(NC_E_INVALID_ARG, "submitted frame size differs from the window drawable size"));
             }
             self.device.execute(|state| {

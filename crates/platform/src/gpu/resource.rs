@@ -94,6 +94,11 @@ impl<B: crate::gpu::native::NativeResources> Domain<B> {
         if self.closed.get() { Err(NC_E_DROPPED) } else { Ok(()) }
     }
 
+    /// Checks the physical storage owner separately from group closure and permissions.
+    fn check_storage(&self) -> Result<(), RenderError> {
+        B::storage_available(self.device.inner.core.as_ref()).map_err(|reason| RenderError::new(RENDER_E_BACKEND, reason))
+    }
+
     /// Close first, then drain pending payloads outside the registry borrow.
     pub(crate) fn close(&self) {
         self.closed.set(true);
@@ -244,13 +249,22 @@ impl<B: crate::gpu::native::NativeResources> GpuDevice<B> {
     /// Missing permission returns `RENDER_E_PERMISSION`; incompatible image cores return `RENDER_E_OWNER`.
     /// The imported version retains the native image and its own quota receipt, never its public COM owner.
     pub fn import_texture(&self, factory: ComRef<'_, IRenderResourcesAbi>, image: Rc<B::Image>) -> Result<ComBox<IGpuBufferAbi>, NcStatus> {
+        self.import_texture_with_error(factory, image).map_err(|error| error.status)
+    }
+
+    /// Keeps physical storage diagnostics for the host's owned import outcome.
+    pub(crate) fn import_texture_with_error(
+        &self,
+        factory: ComRef<'_, IRenderResourcesAbi>,
+        image: Rc<B::Image>,
+    ) -> Result<ComBox<IGpuBufferAbi>, RenderError> {
         let _operation = self.operation()?;
         let domain = self.domain(factory)?;
         if !domain.permissions.import_images {
-            return Err(RENDER_E_PERMISSION);
+            return Err(RENDER_E_PERMISSION.into());
         }
         if !Rc::ptr_eq(&self.inner.core, B::image_core(image.as_ref())) {
-            return Err(RENDER_E_OWNER);
+            return Err(RENDER_E_OWNER.into());
         }
         let desc = GpuTextureInfo {
             size: B::image_size(image.as_ref()),
@@ -258,6 +272,7 @@ impl<B: crate::gpu::native::NativeResources> GpuDevice<B> {
             mip_count: 1,
         };
         let len = texture_desc(desc)?;
+        domain.check_storage()?;
         let owner = domain.account.resource()?;
         let current = Rc::new(TextureVersion::<B> {
             core: self.inner.core.clone(),
@@ -268,7 +283,7 @@ impl<B: crate::gpu::native::NativeResources> GpuDevice<B> {
             dirty: Cell::new(false),
             usage: GpuBufferUsage::Static,
         });
-        BufferObject::imported(domain, current, owner)
+        Ok(BufferObject::imported(domain, current, owner)?)
     }
 
     /// Resolves a texture for the trusted host's eager preparation path.

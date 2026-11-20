@@ -1,6 +1,20 @@
 //! Narrow physical GL lifetime shared by native allocations, never by submission queues.
+use glow::HasContext;
 use neocogi_platform::render::source::{DriverIdentity, new_driver_identity};
 use std::{cell::RefCell, rc::Rc};
+#[cfg(target_arch = "wasm32")]
+use std::cell::Cell;
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen::{JsCast, closure::Closure};
+#[cfg(target_arch = "wasm32")]
+use web_sys::{Event, HtmlCanvasElement, WebGl2RenderingContext};
+
+#[cfg(target_arch = "wasm32")]
+const CONTEXT_LOST: u32 = WebGl2RenderingContext::CONTEXT_LOST_WEBGL;
+#[cfg(not(target_arch = "wasm32"))]
+const CONTEXT_LOST: u32 = glow::CONTEXT_LOST;
+#[cfg(target_arch = "wasm32")]
+const WEBGL_LOSS_REASON: &str = "WebGL context was lost; recreate the driver and its resources";
 
 /// Actual context/device lifetime, independent of renderer state, input routing and cleanup transport.
 /// Allocations may retain this core after every renderer facade has been released.
@@ -29,14 +43,57 @@ struct Physical {
     context: sdl2::video::GLContext,
     /// The browser owns context loss/restoration; the core treats first loss as terminal.
     #[cfg(target_arch = "wasm32")]
-    context: web_sys::WebGl2RenderingContext,
+    context: WebGl2RenderingContext,
     /// SDL window clones retain their video subsystem independently of the event pump.
     #[cfg(not(target_arch = "wasm32"))]
     window: sdl2::video::Window,
-    /// Keeping native rendering alive does not keep DOM listeners or polling capabilities alive.
+    /// Only the physical generation's loss registration survives the window's input teardown.
     #[cfg(target_arch = "wasm32")]
-    _canvas: web_sys::HtmlCanvasElement,
+    loss: CanvasLoss,
 }
+
+/// Removable registration on the context's actual canvas. The callback owns only its latch.
+#[cfg(target_arch = "wasm32")]
+struct CanvasLoss {
+    /// Retains the actual canvas for the physical generation and unregistration.
+    canvas: HtmlCanvasElement,
+    /// Shared with the DOM callback so a loss remains visible after the browser clears its flag.
+    observed: Rc<Cell<bool>>,
+    /// Browser callback retained for exactly the lifetime of the registration.
+    callback: Closure<dyn FnMut(Event)>,
+}
+
+#[cfg(target_arch = "wasm32")]
+impl CanvasLoss {
+    const EVENT: &str = "webglcontextlost";
+
+    /// Latches real loss without changing the page's restoration policy or borrowing Core.
+    fn register(canvas: HtmlCanvasElement) -> Result<Self, String> {
+        let observed = Rc::new(Cell::new(false));
+        let signal = observed.clone();
+        // The callback only sets a boolean, so no partial state can escape unwinding.
+        let callback = Closure::<dyn FnMut(Event)>::own_assert_unwind_safe(move |event: Event| {
+            if event.is_trusted() {
+                signal.set(true);
+            }
+        });
+        canvas
+            .add_event_listener_with_callback_and_bool(Self::EVENT, callback.as_ref().unchecked_ref(), true)
+            .map_err(|error| format!("register WebGL context loss: {error:?}"))?;
+        Ok(Self { canvas, observed, callback })
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+impl Drop for CanvasLoss {
+    /// Unregister before freeing the callback, including on terminal failure and partial assembly.
+    fn drop(&mut self) {
+        let _ = self
+            .canvas
+            .remove_event_listener_with_callback_and_bool(Self::EVENT, self.callback.as_ref().unchecked_ref(), true);
+    }
+}
+
 impl Core {
     /// Transfers the real SDL lifetime beside dispatch resolved for that context.
     ///
@@ -55,12 +112,19 @@ impl Core {
         Ok(core)
     }
 
-    /// Constructs dispatch from the owned browser context, keeping its canvas but no listeners.
+    /// Constructs dispatch and observes terminal loss on the exact canvas owned by the context.
     #[cfg(target_arch = "wasm32")]
-    pub fn from_canvas(canvas: web_sys::HtmlCanvasElement, context: web_sys::WebGl2RenderingContext) -> Result<Rc<Self>, String> {
+    pub fn from_canvas(canvas: HtmlCanvasElement, context: WebGl2RenderingContext) -> Result<Rc<Self>, String> {
+        if !context.canvas().is_some_and(|owner| js_sys::Object::is(owner.as_ref(), canvas.as_ref())) {
+            return Err("WebGL context does not belong to the selected canvas".into());
+        }
+        if context.is_context_lost() {
+            return Err(WEBGL_LOSS_REASON.into());
+        }
+        let loss = CanvasLoss::register(canvas)?;
         let core = Rc::new(Self {
             gl: Rc::new(glow::Context::from_webgl2_context(context.clone())),
-            state: RefCell::new(State::Live(Physical { context, _canvas: canvas })),
+            state: RefCell::new(State::Live(Physical { context, loss })),
             identity: new_driver_identity(),
         });
         core.current()?;
@@ -105,8 +169,8 @@ impl Core {
                     }
                     #[cfg(target_arch = "wasm32")]
                     {
-                        if physical.context.is_context_lost() {
-                            Err("WebGL context was lost; recreate the driver and its resources".into())
+                        if physical.loss.observed.get() || physical.context.is_context_lost() {
+                            Err(WEBGL_LOSS_REASON.into())
                         } else {
                             Ok(())
                         }
@@ -114,19 +178,31 @@ impl Core {
                 }
             }
         };
-        if let Err(reason) = &result {
-            // No native resource may survive by borrowing an unrelated current context. Removing
-            // the physical owner terminates this context's storage; GL allocations then skip deletes.
-            let previous = self.state.replace(State::Failed(reason.clone()));
-            drop(previous);
-        }
-        result
+        result.map_err(|reason| self.lose(reason))
     }
 
-    /// Actual context loss is terminal; no Ready backing may silently reuse a recreated context.
-    pub(in crate::gpu::backends::glow) fn lose(&self, reason: String) {
-        let previous = self.state.replace(State::Failed(reason));
+    /// Reads a native diagnostic after operations on this selected context and latches actual loss.
+    pub(crate) fn check_error(&self, operation: &str) -> Result<(), String> {
+        if let State::Failed(reason) = &*self.state.borrow() {
+            return Err(reason.clone());
+        }
+        // SAFETY: Only the owner of this context's active execution phase calls this method.
+        let error = unsafe { self.gl.get_error() };
+        match error {
+            glow::NO_ERROR => Ok(()),
+            CONTEXT_LOST => Err(self.lose(format!("{operation} failed with context loss (0x{error:04x})"))),
+            _ => Err(format!("{operation} failed with error 0x{error:04x}")),
+        }
+    }
+
+    /// Preserves the first terminal cause and releases the old physical owner outside the state borrow.
+    fn lose(&self, reason: String) -> String {
+        if let State::Failed(first) = &*self.state.borrow() {
+            return first.clone();
+        }
+        let previous = self.state.replace(State::Failed(reason.clone()));
         drop(previous);
+        reason
     }
 
     /// Late allocation destruction uses the same physical selection and terminal-loss policy.

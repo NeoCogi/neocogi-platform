@@ -30,8 +30,8 @@ pub(super) type Window = web_sys::HtmlCanvasElement;
 pub(super) struct Gpu {
     /// UI and generic application graphics execute on this single concrete backend.
     renderer: Renderer,
-    /// Shared loader is used only to check GL execution errors before presentation.
-    #[cfg(any(feature = "glow", feature = "webgl"))]
+    /// Uses the selected GL context for test-only readback and measurements.
+    #[cfg(all(any(test, feature = "test-support"), feature = "glow"))]
     gl: std::rc::Rc<glow::Context>,
     /// Test-only readback captures completed GPU output before the window swap.
     #[cfg(all(any(test, feature = "test-support"), feature = "glow"))]
@@ -143,6 +143,7 @@ impl Gpu {
             let renderer = Renderer::new(core, actual.width as u32, actual.height as u32)?;
             Ok(Self {
                 renderer,
+                #[cfg(any(test, feature = "test-support"))]
                 gl,
                 window,
                 #[cfg(any(test, feature = "test-support"))]
@@ -167,9 +168,8 @@ impl Gpu {
             .map_err(|_| "canvas context is not WebGL 2")?;
         let core = Core::from_canvas(window.clone(), webgl)?;
         let actual = core.drawable_size()?;
-        let gl = core.dispatch().clone();
         let renderer = Renderer::new(core, actual.width as u32, actual.height as u32)?;
-        Ok(Self { renderer, gl, window })
+        Ok(Self { renderer, window })
     }
     /// SDL's cheap owned clone keeps polling available while render state is temporarily detached.
     pub(super) fn window(&self) -> Window {
@@ -248,14 +248,10 @@ impl Gpu {
         let completed = frame.finish()?;
         #[cfg(any(feature = "glow", feature = "webgl"))]
         {
-            use glow::HasContext;
-            // SAFETY: The same live GL context remains current throughout the foreign-call-free execution phase.
-            let error = unsafe { self.gl.get_error() };
-            if error != glow::NO_ERROR {
-                return Err(FrameError::new(format!("OpenGL frame failed with error 0x{error:04x}")).into());
-            }
+            self.renderer.core().check_error("OpenGL frame").map_err(FrameError::new)?;
             #[cfg(all(any(test, feature = "test-support"), feature = "glow"))]
             if !offscreen {
+                use glow::HasContext;
                 self.last_pixels.resize(info.size.width as usize * info.size.height as usize * 4, 0);
                 // SAFETY: The complete RGBA output is allocated, and the live native context remains current.
                 unsafe {
