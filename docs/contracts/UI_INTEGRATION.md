@@ -62,9 +62,9 @@ installation, input delivery, and offscreen rendering belong at that boundary.
 UIs have updated; an embedded host translates preview coordinates into its
 pane's committed screen rectangle. Neither operation belongs inside painting.
 
-A retained clipboard keeps the host clipboard service available after the
-application window is released. SDL on Windows uses a private hidden owner for
-clipboard writes. It has no renderer or application input route. Browser access
+A retained clipboard keeps its host service available according to the active
+driver's lifetime rules. SDL on Windows uses a private hidden owner for clipboard
+writes. It has no renderer or application input route. Browser access
 follows the page's clipboard permissions. A successful read can contain empty
 text. When SDL reports a read failure, including a selection timeout, the
 failed receipt carries empty text.
@@ -81,8 +81,16 @@ incremental transfers up to 1 MiB. A read with a stalled owner or a failed
 text conversion delivers a failed receipt. Socket and protocol waits are
 bounded. The configured display's non-loopback name resolution and ordinary
 Xauthority file reads use the operating system. An expired setup cannot publish
-a selection. X11 loads the system `libxcb.so.1` on demand. The Wayland driver
-uses its SDL clipboard service.
+a selection. X11 loads the system `libxcb.so.1` on demand.
+
+With SDL2's Wayland driver, reads use the SDL clipboard while its currently
+focused window has a live public Platform input route. The application must
+continue polling that route. When the route is unavailable, including after
+release of the last public window while graphics retain its native surface,
+the read completes with `PLATFORM_E_BACKEND`. SDL2 provides no compositor
+ownership acknowledgement for writes. A valid write completes once with
+`PLATFORM_E_BACKEND` and empty text, leaving the selection untouched.
+An editor keeps the source text when a cut receives that failure.
 
 ## Asset and paint lifetime
 

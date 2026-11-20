@@ -9,6 +9,8 @@ mod owned_errors;
 mod surface_targets;
 #[cfg(feature = "glow")]
 mod view_geometry;
+#[cfg(target_os = "linux")]
+mod wayland_clipboard;
 mod window_lifetime;
 
 /// SDL permits one process-wide video owner and event pump. Each fixture keeps

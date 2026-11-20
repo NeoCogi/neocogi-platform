@@ -6,11 +6,18 @@ mod x11;
 #[cfg(target_os = "linux")]
 pub(super) use x11::X11Clipboard;
 
-/// Native text service retained independently of the app's visible window and event route.
+/// The driver selects clipboard capabilities independently of the renderer backend.
 #[cfg(not(target_arch = "wasm32"))]
 enum Backend {
-    /// SDL video lifetime for the active non-X11 driver.
+    /// SDL video lifetime for desktop drivers using SDL's native clipboard receipts.
     Sdl(sdl2::clipboard::ClipboardUtil),
+    /// SDL2 Wayland reads depend on a focused public input route. Writes are unavailable.
+    Wayland {
+        /// Keeps SDL video live independently of the public window.
+        service: sdl2::clipboard::ClipboardUtil,
+        /// Observes the current public route without keeping the host or window alive.
+        host: Weak<NativeHost>,
+    },
     /// Independent X11 responder and requestor connections shared by the host's projections.
     #[cfg(target_os = "linux")]
     X11(Rc<X11Clipboard>),
@@ -30,16 +37,18 @@ pub(super) struct Clipboard {
 impl Clipboard {
     /// Retains clipboard services independently of the application window and graphics objects.
     #[cfg(not(target_arch = "wasm32"))]
-    pub(super) fn for_host(host: &NativeHost, _window: &gpu::Window) -> Result<ComPtr<ITextClipboardAbi>, NcStatus> {
-        #[cfg(target_os = "linux")]
-        if host.video.current_video_driver() == "x11" {
-            return Self::from_value(Self {
-                backend: Backend::X11(host.x11_clipboard(_window)?),
-            })
-            .query();
-        }
+    pub(super) fn for_host(host: &Rc<NativeHost>, _window: &gpu::Window) -> Result<ComPtr<ITextClipboardAbi>, NcStatus> {
+        let backend = match host.video.current_video_driver() {
+            #[cfg(target_os = "linux")]
+            "x11" => Backend::X11(host.x11_clipboard(_window)?),
+            "wayland" => Backend::Wayland {
+                service: host.video.clipboard(),
+                host: Rc::downgrade(host),
+            },
+            _ => Backend::Sdl(host.video.clipboard()),
+        };
         Self::from_value(Self {
-            backend: Backend::Sdl(host.video.clipboard()),
+            backend,
             #[cfg(windows)]
             _owner: host.clipboard_window()?,
         })
@@ -111,12 +120,27 @@ fn read_sdl_text(_video: &sdl2::clipboard::ClipboardUtil) -> Result<String, NcSt
     text.to_str().map(str::to_owned).map_err(|_| PLATFORM_E_BACKEND)
 }
 
+/// Reads through SDL only while its focused window still belongs to a live public input route.
+#[cfg(not(target_arch = "wasm32"))]
+fn read_wayland_text(service: &sdl2::clipboard::ClipboardUtil, host: &Weak<NativeHost>) -> Result<String, NcStatus> {
+    let host = host.upgrade().ok_or(PLATFORM_E_BACKEND)?;
+    let focused = host.video.sdl().keyboard().focused_window_id().ok_or(PLATFORM_E_BACKEND)?;
+    let live_route = host.queues.try_borrow().map_err(|_| PLATFORM_E_BACKEND)?.contains_key(&focused);
+    if !live_route {
+        return Err(PLATFORM_E_BACKEND);
+    }
+    // SDL can service the current selection with a live focused route. No route borrow spans
+    // the native read, and this function releases the host before invoking the completion.
+    read_sdl_text(service)
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 impl ITextClipboard for Clipboard {
     /// SDL completes synchronously, but uses the same copied receipt as asynchronous platforms.
     fn read(&self, completion: ComRef<'_, IClipboardCompletionAbi>) -> Result<(), NcStatus> {
         let result = match &self.backend {
             Backend::Sdl(service) => read_sdl_text(service),
+            Backend::Wayland { service, host } => read_wayland_text(service, host),
             #[cfg(target_os = "linux")]
             Backend::X11(service) => service.read(),
         };
@@ -127,6 +151,8 @@ impl ITextClipboard for Clipboard {
         let text = text(input)?;
         let result = match &self.backend {
             Backend::Sdl(service) => service.set_clipboard_text(text).map_err(|_| PLATFORM_E_BACKEND),
+            // SDL2 cannot acknowledge compositor ownership. Avoid even a deferred SDL offer.
+            Backend::Wayland { .. } => Err(PLATFORM_E_BACKEND),
             #[cfg(target_os = "linux")]
             Backend::X11(service) => service.write(text),
         };
