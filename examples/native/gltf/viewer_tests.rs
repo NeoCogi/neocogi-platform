@@ -120,6 +120,238 @@ fn emissive_materials_render_their_factor_and_texture_independently_of_environme
     );
 }
 
+/// Imports a real rigid or skinned triangle whose normal is tilted off the rotation axis.
+#[cfg(all(feature = "test-support", feature = "glow"))]
+fn normal_scene(linear_transforms: &[[[f32; 3]; 3]], skin_weights: Option<[[f32; 2]; 3]>) -> Scene {
+    use serde_json::json;
+
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    let mut bytes = Vec::new();
+    floats(&mut bytes, [-0.75, -0.75, 0.5, 0.75, -0.75, 0.5, 0., 0.75, 0.5]);
+    floats(&mut bytes, [0.6, 0., 0.8, 0.6, 0., 0.8, 0.6, 0., 0.8]);
+    bytes.extend([0u16, 1, 2, 0].into_iter().flat_map(u16::to_le_bytes));
+    let mut views = vec![
+        json!({"buffer":0,"byteOffset":0,"byteLength":36}),
+        json!({"buffer":0,"byteOffset":36,"byteLength":36}),
+        json!({"buffer":0,"byteOffset":72,"byteLength":6}),
+    ];
+    let mut accessors = vec![
+        json!({"bufferView":0,"componentType":5126,"count":3,"type":"VEC3","min":[-0.75,-0.75,0.5],"max":[0.75,0.75,0.5]}),
+        json!({"bufferView":1,"componentType":5126,"count":3,"type":"VEC3"}),
+        json!({"bufferView":2,"componentType":5123,"count":3,"type":"SCALAR"}),
+    ];
+    let nodes: Vec<_> = linear_transforms
+        .iter()
+        .map(|[a, b, c]| json!({"matrix":[a[0],a[1],a[2],0,b[0],b[1],b[2],0,c[0],c[1],c[2],0,0,0,0,1]}))
+        .collect();
+    let mut primitive = json!({"attributes":{"POSITION":0,"NORMAL":1},"indices":2});
+    let mut document = json!({"asset":{"version":"2.0"},"scene":0,"scenes":[{"nodes":[0]}]});
+    if let Some(weights) = skin_weights {
+        views.push(json!({"buffer":0,"byteOffset":bytes.len(),"byteLength":24}));
+        bytes.extend([0u16, 1, 0, 0].repeat(3).into_iter().flat_map(u16::to_le_bytes));
+        views.push(json!({"buffer":0,"byteOffset":bytes.len(),"byteLength":48}));
+        floats(&mut bytes, weights.into_iter().flat_map(|[first, second]| [first, second, 0., 0.]));
+        accessors.push(json!({"bufferView":3,"componentType":5123,"count":3,"type":"VEC4"}));
+        accessors.push(json!({"bufferView":4,"componentType":5126,"count":3,"type":"VEC4"}));
+        primitive["attributes"]["JOINTS_0"] = json!(3);
+        primitive["attributes"]["WEIGHTS_0"] = json!(4);
+        document["nodes"] = json!([{"mesh":0,"skin":0}, nodes[0], nodes[1]]);
+        document["scenes"][0]["nodes"] = json!([0, 1, 2]);
+        document["skins"] = json!([{"joints":[1,2]}]);
+    } else {
+        document["nodes"] = json!(nodes);
+        document["nodes"][0]["mesh"] = json!(0);
+    }
+    document["meshes"] = json!([{"primitives":[primitive]}]);
+    document["buffers"] = json!([{"uri":"triangle.bin","byteLength":bytes.len()}]);
+    document["bufferViews"] = json!(views);
+    document["accessors"] = json!(accessors);
+    std::fs::write(root.join("triangle.bin"), bytes).unwrap();
+    let path = root.join("normals.gltf");
+    std::fs::write(&path, serde_json::to_vec(&document).unwrap()).unwrap();
+    Scene::load(&path).unwrap()
+}
+
+/// The reference uses a double-precision row-based inverse and affine pixel barycentrics.
+#[cfg(all(feature = "test-support", feature = "glow"))]
+fn reference_normal_pixel(primitive: &scene::Primitive, palette: &[rs_math3d::Mat4f], projection_scale: f32, clip_xy: f64, fallback: bool) -> [u8; 4] {
+    use rs_math3d::{Mat3d, Mat4d, RealVector, Vec3d, Vec4d};
+
+    let palette: Vec<_> = palette
+        .iter()
+        .map(|matrix| Mat4d {
+            col: matrix.col.map(|column| Vec4d::from_array(column.to_array().map(f64::from))),
+        })
+        .collect();
+    let deformed = |vertex: &scene::Vertex| {
+        let transform = Mat4d {
+            col: std::array::from_fn(|axis| {
+                let joint = |index: usize| palette[vertex.joints[index] as usize].col[axis] * f64::from(vertex.weights[index]);
+                joint(0) + joint(1) + joint(2) + joint(3)
+            }),
+        };
+        let [x, y, z] = vertex.position.map(f64::from);
+        let clip = transform * Vec4d::new(x, y, z, 1.0) * f64::from(projection_scale);
+        let normal = Vec3d::from_array(vertex.normal.map(f64::from));
+        let linear = Mat3d {
+            col: std::array::from_fn(|i| {
+                let axis = transform.col[i];
+                Vec3d::new(axis.x, axis.y, axis.z)
+            }),
+        };
+        let normal = if fallback { normal } else { linear.inverse_rows().transpose() * normal };
+        ([clip.x, clip.y], normal)
+    };
+    let (a, na) = deformed(&primitive.vertices[0]);
+    let (b, nb) = deformed(&primitive.vertices[1]);
+    let (c, nc) = deformed(&primitive.vertices[2]);
+    // All fixture clip-space w values are 1, so perspective interpolation is affine.
+    let cross = |p: [f64; 2], q: [f64; 2], r: [f64; 2]| (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0]);
+    let p = [clip_xy; 2];
+    let area = cross(a, b, c);
+    let weights = [cross(p, b, c) / area, cross(p, c, a) / area, cross(p, a, b) / area];
+    assert!(weights.iter().all(|w| *w > 0.03), "reference pixel must be inside the triangle: {weights:?}");
+    let rgb = (na * weights[0] + nb * weights[1] + nc * weights[2])
+        .normalize()
+        .to_array()
+        .map(|n| ((n * 0.5 + 0.5) * 255.0).round() as u8);
+    [rgb[0], rgb[1], rgb[2], 255]
+}
+
+/// Runs the production vertex shader and normal normalization on imported geometry through native COM.
+#[cfg(all(feature = "test-support", feature = "glow"))]
+#[test]
+#[ignore = "requires a native SDL GL driver; SDL_VIDEODRIVER=offscreen is sufficient"]
+fn normals_preserve_rotation_mirroring_and_skin_interpolation() {
+    let _native = NATIVE_SESSION.lock().expect("previous native viewer case panicked");
+    let _runtime = neocogi_com_host::initialize_runtime();
+    let size = Size { width: 64, height: 64 };
+    let native = neocogi_platform_examples::sdk::platform::testing::window("glTF normal transforms", size).unwrap();
+    let target = Target::new(native.window).unwrap();
+    let vertex = include_str!("viewer.sexp").split_once("(struct Material").unwrap().0;
+    let source = Bytes::source(
+        format!(
+            "(module {vertex}
+         (fragment fs ((surface Surface)) (returns vec4 (location 0))
+           (return (vec4 (+ (* (surface_normal (. surface normal)) 0.5) (vec3 0.5)) 1.0))))"
+        )
+        .into_bytes(),
+    );
+    let resources = &target.resources;
+    let vs = resources
+        .create_shader(GpuShaderStage::Vertex, source.as_com_ref(), NcCopyFromBufferOffset::new(0, b"vs"))
+        .unwrap();
+    let fs = resources
+        .create_shader(GpuShaderStage::Fragment, source.as_com_ref(), NcCopyFromBufferOffset::new(0, b"fs"))
+        .unwrap();
+    let descriptor = PipelineDesc {
+        // Keep reflected geometry visible to compare the sign of its normal as well as its magnitude.
+        state: GpuPipelineInfo {
+            cull: GpuCullMode::None,
+            ..Default::default()
+        },
+        vertex_buffers: vec![GpuVertexBufferLayout {
+            slot: 0,
+            stride: VERTEX_STRIDE,
+            step: GpuStepMode::Vertex,
+        }],
+        attributes: [
+            (GpuVertexFormat::Float32x3, 0),
+            (GpuVertexFormat::Float32x3, 12),
+            (GpuVertexFormat::Float32x2, 24),
+            (GpuVertexFormat::Uint32x4, 32),
+            (GpuVertexFormat::Float32x4, 48),
+        ]
+        .into_iter()
+        .enumerate()
+        .map(|(index, (format, offset))| GpuVertexAttribute {
+            location: index as u32,
+            slot: 0,
+            format,
+            offset,
+        })
+        .collect(),
+        bindings: [64, (MAX_JOINTS * 64) as u32]
+            .into_iter()
+            .enumerate()
+            .map(|(index, bytes)| GpuShaderBinding {
+                stage: GpuShaderStage::Vertex,
+                slot: index as u32,
+                kind: GpuBindingKind::Uniform(bytes),
+            })
+            .collect(),
+    }
+    .source()
+    .unwrap();
+    let pipeline = resources.create_pipeline(descriptor.as_com_ref(), vs.as_com_ref(), fs.as_com_ref()).unwrap();
+    let rotate = |xy, z| [[0., xy, 0.], [-xy, 0., 0.], [0., 0., z]];
+    let cases = [
+        ("unit", vec![rotate(1., 1.)], None, 1., false),
+        ("centi", vec![rotate(0.01, 0.01)], None, 100., false),
+        ("milli", vec![rotate(0.001, 0.001)], None, 1000., false),
+        ("tiny", vec![rotate(1e-20, 1e-20)], None, 1e20, false),
+        ("large", vec![rotate(1e20, 1e20)], None, 1e-20, false),
+        ("subnormal inverse", vec![rotate(8e37, 8e37)], None, 1.25e-38, true),
+        ("mirrored nonuniform", vec![[[0., -0.8, 0.], [-0.55, 0., 0.], [0., 0., 0.4]]], None, 1., false),
+        ("near singular", vec![rotate(1., 1e-9)], None, 1., true),
+        ("singular", vec![rotate(1., 0.)], None, 1., true),
+        (
+            "unrepresentable inverse",
+            vec![[[4e-38, 0., 4e-38], [0., 2e-38, 0.], [2e-38, 0., 2.00002e-38]]],
+            None,
+            2.5e37,
+            true,
+        ),
+        (
+            "varying skin magnitudes",
+            vec![
+                [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]],
+                [[0.125, 0.21650635, 0.], [-0.21650635, 0.125, 0.], [0., 0., 0.25]],
+            ],
+            Some([[1., 0.], [0., 1.], [0.5, 0.5]]),
+            1.,
+            false,
+        ),
+    ];
+    let offset = ((size.height / 2 * size.width + size.width / 2) * 4) as usize;
+    let clip_xy = 1.0 / f64::from(size.width);
+    for (index, (label, transforms, weights, projection, fallback)) in cases.into_iter().enumerate() {
+        let scene = normal_scene(&transforms, weights);
+        let primitive = &scene.primitives[0];
+        let palette = scene.palette(primitive, &scene.pose(0.));
+        let expected = reference_normal_pixel(primitive, &palette, projection, clip_xy, fallback);
+        let mut vertices = Vec::new();
+        primitive.vertices.iter().for_each(|vertex| vertex.encode(&mut vertices));
+        let vertices = buffer(resources, GpuBufferRole::Vertex, vertices).unwrap();
+        let mut skin = Vec::new();
+        palette.into_iter().for_each(|matrix| matrix_bytes(&mut skin, matrix));
+        skin.resize(MAX_JOINTS * 64, 0);
+        let skin = buffer(resources, GpuBufferRole::Uniform, skin).unwrap();
+        let mut frame = Vec::new();
+        floats(
+            &mut frame,
+            [projection, 0., 0., 0., 0., projection, 0., 0., 0., 0., projection, 0., 0., 0., 0., 1.],
+        );
+        let frame = buffer(resources, GpuBufferRole::Uniform, frame).unwrap();
+        target
+            .submit(size, (index + 1) as u64, |view| {
+                view.bind_pipeline(pipeline.as_com_ref())?;
+                view.bind_uniform_buffer(GpuShaderStage::Vertex, 0, frame.as_com_ref(), 0, 64)?;
+                view.bind_uniform_buffer(GpuShaderStage::Vertex, 1, skin.as_com_ref(), 0, (MAX_JOINTS * 64) as u64)?;
+                view.bind_vertex_buffer(0, vertices.as_com_ref(), 0)?;
+                view.draw(3, 1, 0)
+            })
+            .unwrap();
+        let pixels = native.probe.pixels().unwrap();
+        let actual = &pixels[offset..offset + 4];
+        assert!(
+            actual.iter().zip(expected).all(|(&actual, expected)| actual.abs_diff(expected) <= 1),
+            "{label}: GPU {actual:?}, inverse-transpose reference {expected:?}"
+        );
+    }
+}
+
 /// Options reject malformed values before any display/host interaction.
 #[test]
 fn command_line_is_checked_before_window_creation() {

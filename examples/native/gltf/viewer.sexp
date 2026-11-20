@@ -20,6 +20,53 @@
   (normal vec3 (location 1))
   (uv vec2 (location 2)))
 
+; Component scale avoids squaring small or large values to measure their magnitude.
+(fn normal_component_max ((value vec3)) (returns f32)
+  (let magnitude (abs value))
+  (return (max (. magnitude x) (max (. magnitude y) (. magnitude z)))))
+
+; Apply the inverse transpose of the blended linear transform to an authored normal.
+(fn skin_normal ((transform mat4) (normal vec3)) (returns vec3)
+  (let first (. (index transform 0) xyz))
+  (let second (. (index transform 1) xyz))
+  (let third (. (index transform 2) xyz))
+  (let scale (max (normal_component_max first) (max (normal_component_max second) (normal_component_max third))))
+  ; Portable f32 arithmetic may flush subnormal inputs. Keep an object-space fallback.
+  (if
+    (&& (>= scale 1.17549435e-38) (<= scale 3.4028235e38))
+    (then
+      (let a (/ first scale))
+      (let b (/ second scale))
+      (let c (/ third scale))
+      (let cofactor_a (cross b c))
+      (let cofactor_b (cross c a))
+      (let cofactor_c (cross a b))
+      (let determinant (dot a cofactor_a))
+      (let cofactor_scale
+        (max (normal_component_max cofactor_a) (max (normal_component_max cofactor_b) (normal_component_max cofactor_c))))
+      ; DET/COFACTOR_SCALE estimates reciprocal conditioning for a matrix with max element 1.
+      (if
+        (> (abs determinant) (* 1e-7 cofactor_scale))
+        (then
+          (let numerator (* (mat3x3 cofactor_a cofactor_b cofactor_c) normal))
+          ; Bound both divisions before evaluating them. The limit leaves room for f32 rounding.
+          (let limit (* (* 3.40282e38 (min (abs determinant) 1.0)) (min scale 1.0)))
+          (if
+            (<= (normal_component_max numerator) limit)
+            ; Keep the signed determinant and the full inverse-transpose magnitude for interpolation.
+            (then
+              (let transformed (/ (/ numerator determinant) scale))
+              (if
+                (>= (normal_component_max transformed) 1.17549435e-38)
+                (then (return transformed)))))))))
+  (return normal))
+
+; Normalize only after interpolation, with scaling to avoid overflow or underflow in the dot product.
+(fn surface_normal ((normal vec3)) (returns vec3)
+  (let scale (normal_component_max normal))
+  (if (>= scale 1.17549435e-38) (then (return (normalize (/ normal scale)))))
+  (return (vec3 0.0 0.0 1.0)))
+
 (vertex vs ((vertex Vertex)) (returns Surface)
   (let
     transform
@@ -31,19 +78,10 @@
         (* (index (. skin joints) (. (. vertex joints) z)) (. (. vertex weights) z)))
       (* (index (. skin joints) (. (. vertex joints) w)) (. (. vertex weights) w))))
   (let position (* transform (vec4 (. vertex position) 1.0)))
-  ; Cofactors apply inverse-transpose normals without a native matrix inverse.
-  (let a (. (index transform 0) xyz))
-  (let b (. (index transform 1) xyz))
-  (let c (. (index transform 2) xyz))
-  (let determinant (dot a (cross b c)))
-  (var normal (. vertex normal))
-  (if
-    (> (abs determinant) 0.0000001)
-    (then (set normal (/ (* (mat3x3 (cross b c) (cross c a) (cross a b)) normal) determinant))))
   (var output Surface)
   (set (. output clip) (* (. frame view_projection) position))
   (set (. output position) (. position xyz))
-  (set (. output normal) normal)
+  (set (. output normal) (skin_normal transform (. vertex normal)))
   (set (. output uv) (. vertex uv))
   (return output))
 
@@ -84,7 +122,7 @@
   (let metallic (clamp (* (. mr b) (. (. material parameters) x)) 0.0 1.0))
   (let roughness (clamp (* (. mr g) (. (. material parameters) y)) 0.045 1.0))
   (let sample_normal (- (* (material_sample 2u (. surface uv) false) 2.0) (vec3 1.0)))
-  (var n (normalize (. surface normal)))
+  (var n (surface_normal (. surface normal)))
   (let px (dpdx (. surface position)))
   (let py (dpdy (. surface position)))
   (let ux (dpdx (. surface uv)))

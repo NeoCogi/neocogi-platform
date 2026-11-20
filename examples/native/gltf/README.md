@@ -99,7 +99,13 @@ never defines a GPU payload.
 The viewer owns the domain controller and immutable GPU buffers/textures for the
 entire loop. Per-frame draws copy only camera, material and palette uniforms.
 The shader applies inverse-transpose normals, base color, metallic/roughness,
-derivative-based normal maps, occlusion and emissive maps. Materials retain full
+derivative-based normal maps, occlusion and emissive maps. It conditions the
+blended linear transform so the singularity test is independent of uniform model
+scale. The signed inverse transpose preserves mirrored directions and per-vertex
+magnitude until fragment normalization. Singular or ill-conditioned transforms
+fall back to the authored object-space normal. The same fallback applies if the
+transformed vector would overflow or have no normal-range `f32` component.
+Materials retain full
 image resolution. A missing emissive image contributes white, preserving an
 authored emissive factor; an absent factor remains black and produces no emission.
 An authored emissive image is decoded from sRGB and multiplied by its linear factor.
