@@ -100,7 +100,9 @@ fn materialize(output: &Path) -> Result<PathBuf, BuildError> {
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
             // The caller selects the outer path. Only a real directory at its reserved
             // child grants pruning authority, so inspect that entry without following it.
-            let kind = fs::symlink_metadata(&root).map_err(|error| io_error("inspect generated sources", &root, error))?.file_type();
+            let kind = fs::symlink_metadata(&root)
+                .map_err(|error| io_error("inspect generated sources", &root, error))?
+                .file_type();
             if !kind.is_dir() {
                 return Err(io_error("admit generated sources directory", &root, error));
             }
