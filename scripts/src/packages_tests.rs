@@ -2,6 +2,53 @@
 use super::*;
 use flate2::{Compression, write::GzEncoder};
 
+/// The checkout itself and its descendants fail before creating a workspace. A sibling can share its name prefix.
+#[test]
+fn qualification_requires_an_external_temporary_parent() {
+    let directories = tempfile::tempdir().unwrap();
+    let checkout = directories.path().join("checkout");
+    let inside = checkout.join("inside");
+    let sibling = directories.path().join("checkout-sibling");
+    fs::create_dir_all(&inside).unwrap();
+    fs::create_dir(&sibling).unwrap();
+    for parent in [&checkout, &inside] {
+        let error = external_workspace(&checkout, parent).unwrap_err().to_string();
+        assert!(error.contains(parent.to_str().unwrap()), "{error}");
+        assert!(error.contains(TEMP_DIRECTORY_SETTING), "{error}");
+    }
+    assert_eq!(fs::read_dir(&inside).unwrap().count(), 0);
+    let (owner, workspace) = external_workspace(&checkout, &sibling).unwrap();
+    assert_eq!(workspace.parent(), Some(sibling.canonicalize().unwrap().as_path()));
+    drop(owner);
+    assert!(!workspace.exists());
+}
+
+/// Alias spellings cannot admit an internal location, and an outside alias uses its real parent.
+#[cfg(unix)]
+#[test]
+fn qualification_checks_the_targets_of_temporary_directory_aliases() {
+    use std::os::unix::fs::symlink;
+
+    let directories = tempfile::tempdir().unwrap();
+    let checkout = directories.path().join("checkout");
+    let inside = checkout.join("inside");
+    let outside = directories.path().join("outside");
+    let checkout_alias = directories.path().join("checkout-alias");
+    let inside_alias = directories.path().join("inside-alias");
+    let outside_alias = directories.path().join("outside-alias");
+    fs::create_dir_all(&inside).unwrap();
+    fs::create_dir(&outside).unwrap();
+    symlink(&checkout, &checkout_alias).unwrap();
+    symlink(&inside, &inside_alias).unwrap();
+    symlink(&outside, &outside_alias).unwrap();
+    let error = external_workspace(&checkout_alias, &inside_alias).unwrap_err().to_string();
+    assert!(error.contains(inside_alias.to_str().unwrap()), "{error}");
+    assert!(error.contains(inside.to_str().unwrap()), "{error}");
+    assert_eq!(fs::read_dir(&inside).unwrap().count(), 0);
+    let (_owner, workspace) = external_workspace(&checkout_alias, &outside_alias).unwrap();
+    assert_eq!(workspace.parent(), Some(outside.canonicalize().unwrap().as_path()));
+}
+
 /// Cargo's receipt must name the normal native cdylib; examples and metadata cannot mask a missing library.
 #[test]
 fn normal_platform_artifact_is_required() {
@@ -33,6 +80,9 @@ fn extracted_build_directories_are_explicit_overrides() {
     let env: BTreeMap<_, _> = command.get_envs().collect();
     assert_eq!(env[std::ffi::OsStr::new("CARGO_TARGET_DIR")], Some(target.as_os_str()));
     assert_eq!(env[std::ffi::OsStr::new("CARGO_BUILD_BUILD_DIR")], Some(target.join("build").as_os_str()));
+    for key in TEMP_DIRECTORY_KEYS {
+        assert_eq!(env[std::ffi::OsStr::new(key)], workspace.parent().map(Path::as_os_str));
+    }
 }
 
 /// The shim receipt binds the private output to the exact package source selected by this Cargo.

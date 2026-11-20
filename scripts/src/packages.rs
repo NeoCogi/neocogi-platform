@@ -246,6 +246,11 @@ fn extracted_cargo(toolchain: &str, workspace: &Path, target: &Path) -> std::pro
         .env("CARGO_BUILD_BUILD_DIR", target.join("build"))
         // Qualification must not require a desktop audio daemon or microphone.
         .env("SDL_AUDIODRIVER", "dummy");
+    // Resource staging also checks ancestors of temporary inputs created by the tests.
+    let temporary_parent = workspace.parent().expect("the extracted workspace has a temporary parent");
+    for key in TEMP_DIRECTORY_KEYS {
+        command.env(key, temporary_parent);
+    }
     command
 }
 
@@ -293,9 +298,61 @@ fn qualified_library(output: &[u8], target: &Path, shim_id: &str, shim_manifest:
     Ok(artifact)
 }
 
+/// Name the environment setting Rust uses when it selects the OS temporary directory.
+#[cfg(windows)]
+const TEMP_DIRECTORY_SETTING: &str = "TMP or TEMP";
+/// Name the environment setting Rust uses when it selects the OS temporary directory.
+#[cfg(not(windows))]
+const TEMP_DIRECTORY_SETTING: &str = "TMPDIR";
+/// Temporary directory environment keys of the extracted child processes.
+#[cfg(windows)]
+const TEMP_DIRECTORY_KEYS: &[&str] = &["TMP", "TEMP"];
+/// Temporary directory environment keys of the extracted child processes.
+#[cfg(not(windows))]
+const TEMP_DIRECTORY_KEYS: &[&str] = &["TMPDIR"];
+
+/// Check a resolved location by path component so a sibling may share the checkout's name prefix.
+fn verify_external_path(checkout: &Path, requested: &Path, resolved: &Path) -> Result<()> {
+    ensure!(
+        !resolved.starts_with(checkout),
+        "package qualification temporary location {} resolves inside checkout {} (resolved location {}). Set {TEMP_DIRECTORY_SETTING} to a directory outside the checkout",
+        requested.display(),
+        checkout.display(),
+        resolved.display(),
+    );
+    Ok(())
+}
+
+/// Own a fresh workspace under the canonical OS temporary parent and verify its created location.
+fn external_workspace(checkout: &Path, parent: &Path) -> Result<(tempfile::TempDir, PathBuf)> {
+    let checkout = checkout.canonicalize().with_context(|| format!("resolve checkout {}", checkout.display()))?;
+    let resolved_parent = parent.canonicalize().with_context(|| {
+        format!(
+            "resolve package qualification temporary parent {}. Set {TEMP_DIRECTORY_SETTING} to an existing directory outside the checkout",
+            parent.display(),
+        )
+    })?;
+    verify_external_path(&checkout, parent, &resolved_parent)?;
+    let outside = tempfile::Builder::new()
+        .prefix("neocogi-package-check-")
+        .tempdir_in(&resolved_parent)
+        .with_context(|| {
+            format!(
+                "create package qualification workspace under {}. Set {TEMP_DIRECTORY_SETTING} to a writable directory outside the checkout",
+                resolved_parent.display(),
+            )
+        })?;
+    let workspace = outside.path().canonicalize().with_context(|| {
+        format!("resolve created package qualification workspace {}", outside.path().display())
+    })?;
+    verify_external_path(&checkout, parent, &workspace)?;
+    Ok((outside, workspace))
+}
+
 /// Construct, inspect and exercise actual Cargo archives from an isolated temporary workspace.
 pub(crate) fn qualify(allow_dirty: bool, offline: bool, stable: Option<&str>) -> Result<()> {
     use crate::process::{capture, cargo, run};
+    let (_outside, workspace) = external_workspace(crate::root(), &std::env::temp_dir())?;
     let flags = if offline { vec!["--offline"] } else { vec![] };
     let metadata: Metadata = serde_json::from_slice(&capture(cargo(None).args(["metadata", "--locked", "--format-version=1"]).args(&flags))?)?;
     let selected = published_packages(&metadata)?;
@@ -315,8 +372,7 @@ pub(crate) fn qualify(allow_dirty: bool, offline: bool, stable: Option<&str>) ->
     let target = tempfile::Builder::new()
         .prefix("neocogi-qualification-")
         .tempdir_in(&metadata.target_directory)?;
-    let outside = tempfile::Builder::new().prefix("neocogi-package-check-").tempdir()?;
-    let packages = outside.path().join("packages");
+    let packages = workspace.join("packages");
     fs::create_dir(&packages)?;
     let mut members = vec!["consumer".to_owned(), "local-consumer".to_owned()];
     let mut excluded = Vec::new();
@@ -355,13 +411,13 @@ pub(crate) fn qualify(allow_dirty: bool, offline: bool, stable: Option<&str>) ->
         "patch".into(),
         toml::Value::Table(toml::map::Map::from_iter([("crates-io".into(), toml::Value::Table(patches))])),
     );
-    fs::write(outside.path().join("Cargo.toml"), toml::to_string(&manifest)?)?;
-    copy_tree(&crate::root().join("scripts/package-consumer"), &outside.path().join("consumer"))?;
-    copy_tree(&crate::root().join("scripts/package-local-consumer"), &outside.path().join("local-consumer"))?;
-    fs::copy(crate::root().join("Cargo.lock"), outside.path().join("Cargo.lock"))?;
+    fs::write(workspace.join("Cargo.toml"), toml::to_string(&manifest)?)?;
+    copy_tree(&crate::root().join("scripts/package-consumer"), &workspace.join("consumer"))?;
+    copy_tree(&crate::root().join("scripts/package-local-consumer"), &workspace.join("local-consumer"))?;
+    fs::copy(crate::root().join("Cargo.lock"), workspace.join("Cargo.lock"))?;
     let resolve = |toolchain: &str, lock: &[&str]| -> Result<String> {
         let metadata: Metadata = serde_json::from_slice(&capture(
-            extracted_cargo(toolchain, outside.path(), target.path())
+            extracted_cargo(toolchain, &workspace, target.path())
                 .args(["metadata", "--format-version=1"])
                 .args(&flags)
                 .args(lock),
@@ -375,7 +431,7 @@ pub(crate) fn qualify(allow_dirty: bool, offline: bool, stable: Option<&str>) ->
     let execute = |toolchain: &str, arguments: &[&str]| -> Result<()> {
         // Cargo options must precede the executable's argument separator.
         let (cargo_arguments, executable_arguments) = arguments.split_at(arguments.iter().position(|argument| *argument == "--").unwrap_or(arguments.len()));
-        run(extracted_cargo(toolchain, outside.path(), target.path())
+        run(extracted_cargo(toolchain, &workspace, target.path())
             .args(cargo_arguments)
             .args(&flags)
             .arg("--locked")
@@ -425,7 +481,7 @@ pub(crate) fn qualify(allow_dirty: bool, offline: bool, stable: Option<&str>) ->
     let library = |toolchain: &str, shim_id: &str| -> Result<PathBuf> {
         qualified_library(
             &capture(
-                extracted_cargo(toolchain, outside.path(), target.path())
+                extracted_cargo(toolchain, &workspace, target.path())
                     .args(["build", "--locked", "--lib", "-p", SHIM, "--message-format=json"])
                     .args(&flags),
             )?,
@@ -456,9 +512,9 @@ pub(crate) fn qualify(allow_dirty: bool, offline: bool, stable: Option<&str>) ->
         )
     };
     local_consumer(toolchain, &platform)?;
-    fs::remove_file(outside.path().join("consumer/staged/asset.txt"))?;
+    fs::remove_file(workspace.join("consumer/staged/asset.txt"))?;
     execute(toolchain, &consumer)?;
-    fs::write(outside.path().join("consumer/asset.txt"), b"changed packaged staging input\n")?;
+    fs::write(workspace.join("consumer/asset.txt"), b"changed packaged staging input\n")?;
     execute(toolchain, &consumer)?;
     if let Some((stable, shim_id)) = stable.zip(stable_shim) {
         // Qualify the actual stable-built plugin as well as the stable-built caller.
@@ -476,7 +532,7 @@ pub(crate) fn qualify(allow_dirty: bool, offline: bool, stable: Option<&str>) ->
         local_consumer(stable, &platform)?;
     }
     ensure!(
-        !outside.path().join("target").exists(),
+        !workspace.join("target").exists(),
         "package qualification created a second target directory"
     );
     println!(
