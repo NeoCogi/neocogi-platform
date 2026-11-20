@@ -172,6 +172,16 @@ impl From<FrameError> for RenderError {
     }
 }
 
+impl From<RenderError> for FrameError {
+    /// Carries an owned operation diagnostic across typed frame admission.
+    fn from(error: RenderError) -> Self {
+        Self {
+            status: error.status,
+            message: error.message,
+        }
+    }
+}
+
 impl From<String> for FrameError {
     fn from(message: String) -> Self {
         Self::new(message)

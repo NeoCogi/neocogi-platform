@@ -4,25 +4,35 @@ use super::*;
 /// SDL video lifetime is process-global even though each renderer is thread-local.
 pub(crate) static NATIVE_SESSION: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-/// Observes real WSI dispatches and scopes one alternate format and rejection.
+/// Observes real WSI dispatches and controls reported outcomes on the owner thread.
 #[derive(Default)]
 pub(crate) struct WindowProbe {
     /// Records format selected for each native swapchain creation attempt.
     pub(crate) formats: Vec<vk::Format>,
     /// Counts native acquire calls, including failures before a valid token.
     pub(crate) acquires: usize,
+    /// Rejects before the next acquire dispatch to model a call that granted no token.
+    pub(crate) reject_acquire: bool,
     /// Excludes the original format from the next real advertised list.
     pub(crate) exclude_format: Option<vk::Format>,
     /// Reports rejection after a real successful present has queued its wait.
     pub(crate) reject_present: bool,
     /// Reports a terminal presentation error after a real accepted submission.
     pub(crate) fail_present: bool,
+    /// Reports an uncertain submit error after a real accepted submission.
+    pub(crate) fail_submit: bool,
     /// Arms one retirement poll error after the next real accepted presentation call.
     pub(crate) fail_retirement: bool,
     /// A present call queued work, so the next fence observation may be replaced.
     retirement_pending: bool,
     /// Number of completed substitutions at the actual fence observation boundary.
     pub(crate) retirement_errors: usize,
+    /// Keeps native owners in the ledger until the selected slot is explicitly waited.
+    defer_retirement: bool,
+    /// Fails the first observation of a previously submitted, waited slot before acquiring.
+    fail_before_acquire: bool,
+    /// The real waited fence, cleared before dispatch or on a failed final observation.
+    waited_slot: Option<vk::Fence>,
 }
 
 /// Clears test observations even after panic or an early assertion failure.
@@ -61,13 +71,49 @@ pub(super) fn surface_formats(mut formats: Vec<vk::SurfaceFormatKHR>) -> Vec<vk:
     formats
 }
 
+/// Records completion of the real slot wait, before ledger collection.
+pub(super) fn record_waited_slot(fence: vk::Fence) {
+    WINDOW_PROBE.with_borrow_mut(|slot| {
+        if let Some(probe) = slot {
+            probe.waited_slot = Some(fence);
+        }
+    });
+}
+
+/// Models a rejection that returns no image and never signals the acquire semaphore.
+pub(super) fn reject_acquire() -> bool {
+    WINDOW_PROBE.with_borrow_mut(|slot| {
+        slot.as_mut().is_some_and(|probe| {
+            let reject = std::mem::take(&mut probe.reject_acquire);
+            if reject {
+                probe.waited_slot = None;
+            }
+            reject
+        })
+    })
+}
+
 /// Counts acquisition at the dispatch boundary.
 pub(super) fn record_acquire() {
     WINDOW_PROBE.with_borrow_mut(|slot| {
         if let Some(probe) = slot {
+            probe.waited_slot = None;
             probe.acquires += 1;
         }
     });
+}
+
+/// Preserves actual native work while exercising failure propagation from queue submission.
+pub(super) fn submit_result(actual: std::result::Result<(), vk::Result>) -> std::result::Result<(), vk::Result> {
+    WINDOW_PROBE.with_borrow_mut(|slot| {
+        let Some(probe) = slot else { return actual };
+        if actual.is_ok() && std::mem::take(&mut probe.fail_submit) {
+            probe.retirement_pending = std::mem::take(&mut probe.fail_retirement);
+            Err(vk::Result::ERROR_OUT_OF_DEVICE_MEMORY)
+        } else {
+            actual
+        }
+    })
 }
 
 /// Vulkan queues the wait on actual out-of-date errors. Substituting rejection
@@ -89,16 +135,21 @@ pub(super) fn present_result(actual: std::result::Result<bool, vk::Result>) -> s
 }
 
 /// Reports one transient host allocation failure after observing a real submitted fence.
-pub(super) fn fence_result(actual: std::result::Result<bool, vk::Result>) -> std::result::Result<bool, vk::Result> {
+pub(super) fn fence_result(fence: vk::Fence, actual: std::result::Result<bool, vk::Result>) -> std::result::Result<bool, vk::Result> {
     WINDOW_PROBE.with_borrow_mut(|slot| {
-        if let Some(probe) = slot
-            && actual.is_ok()
-            && std::mem::take(&mut probe.retirement_pending)
-        {
+        let Some(probe) = slot else { return actual };
+        let signaled = actual?;
+        let waited = probe.waited_slot == Some(fence);
+        if waited && std::mem::take(&mut probe.fail_before_acquire) {
+            assert!(signaled, "the selected slot has completed its real wait");
+            probe.waited_slot = None;
+            probe.retirement_errors += 1;
+            Err(vk::Result::ERROR_OUT_OF_HOST_MEMORY)
+        } else if std::mem::take(&mut probe.retirement_pending) {
             probe.retirement_errors += 1;
             Err(vk::Result::ERROR_OUT_OF_HOST_MEMORY)
         } else {
-            actual
+            Ok(signaled && (!probe.defer_retirement || waited))
         }
     })
 }
@@ -156,6 +207,120 @@ fn rust_frame_reports_first_fence_observation_and_keeps_primary_failure() {
     assert!(primary.to_string().contains("queue_present"));
     assert!(primary.to_string().contains("ERROR_SURFACE_LOST_KHR"));
     WINDOW_PROBE.with_borrow(|slot| assert_eq!(slot.as_ref().unwrap().retirement_errors, 2));
+}
+
+/// Reuse waits and retires the previous snapshot before a slot's fence can identify new work.
+#[test]
+#[ignore = "requires an SDL native display and Vulkan surface"]
+fn window_slots_retire_before_acquire_and_keep_uncertain_submit_owners() {
+    use neocogi_platform::render::abi::{RENDER_E_BACKEND, RENDER_E_WINDOW_RETRY, Rect, RenderGroupPermissions, RenderSurfaceKind};
+
+    let _session = NATIVE_SESSION.lock().unwrap_or_else(|error| error.into_inner());
+    let _scope = WindowScope::start();
+    let sdl = sdl2::init().unwrap();
+    let video = sdl.video().unwrap();
+    let window = video.window("Vulkan slot retirement", 64, 64).vulkan().hidden().build().unwrap();
+    let mut renderer = VulkanRenderer::new(&window, 64, 64).unwrap();
+    let size = renderer.drawable_size().unwrap();
+    let info = FrameInfo::try_new(Dimensioni::new(size.width, size.height), color(0, 0, 0, 255)).unwrap();
+    let stale = FrameInfo::try_new(Dimensioni::new(size.width - 1, size.height), info.clear()).unwrap();
+    let stale = renderer.frame(stale).err().unwrap();
+    assert_eq!(stale.status(), NC_E_INVALID_ARG);
+    assert!(stale.to_string().contains("size changed during Vulkan frame preparation"));
+
+    let gpu = crate::gpu::GpuDevice::new(renderer.core()).unwrap();
+    let group = gpu
+        .create_group(
+            Default::default(),
+            gpu.surface_target(RenderSurfaceKind::Framebuffer).unwrap(),
+            RenderGroupPermissions::default(),
+        )
+        .unwrap();
+    let resources = group.resources().unwrap();
+    let bounds = Rect {
+        x: 0,
+        y: 0,
+        width: size.width,
+        height: size.height,
+    };
+    let block = sampled::block(&gpu, &resources, bounds, Size { width: 1, height: 1 }, &[137, 31, 67, 255]);
+    let snapshot = gpu.block_snapshot(block.as_com_ref()).unwrap();
+    let first = renderer.prepare_block(&snapshot, false).unwrap();
+    let second = renderer.prepare_block(&snapshot, false).unwrap();
+    let uncertain = renderer.prepare_block(&snapshot, false).unwrap();
+    drop((snapshot, block, resources, group, gpu));
+
+    WINDOW_PROBE.with_borrow_mut(|slot| slot.as_mut().unwrap().defer_retirement = true);
+    let submit = |renderer: &mut VulkanRenderer, commands: &PreparedBlock| {
+        let mut frame = renderer.frame(info).unwrap();
+        frame.execute_block(commands);
+        frame.finish()
+    };
+    let first_slot = renderer.context.current_frame;
+    submit(&mut renderer, &first).unwrap();
+    assert_eq!(first.owners(), 2);
+    // Rotate through other slots without completing the first through a nonblocking observation.
+    for _ in 1..renderer.context.max_frames_in_flight {
+        renderer.frame(info).unwrap().finish().unwrap();
+    }
+    assert_eq!(renderer.context.current_frame, first_slot);
+    assert_eq!(first.owners(), 2);
+
+    let acquires = WINDOW_PROBE.with_borrow_mut(|slot| {
+        let probe = slot.as_mut().unwrap();
+        probe.fail_before_acquire = true;
+        probe.acquires
+    });
+    let failure = submit(&mut renderer, &second).err().unwrap();
+    assert_eq!(failure.status(), RENDER_E_BACKEND);
+    assert!(failure.to_string().contains("observe graphics completion: ERROR_OUT_OF_HOST_MEMORY"));
+    assert_eq!(renderer.context.presentation, PresentationState::Ready);
+    assert_eq!(renderer.context.current_frame, first_slot);
+    assert_eq!(first.owners(), 2);
+    assert_eq!(second.owners(), 1);
+    WINDOW_PROBE.with_borrow(|slot| {
+        let probe = slot.as_ref().unwrap();
+        assert_eq!(probe.acquires, acquires);
+        assert_eq!(probe.retirement_errors, 1);
+    });
+
+    submit(&mut renderer, &second).unwrap();
+    assert_eq!(first.owners(), 1, "old owners must retire before the reused fence represents new work");
+    assert_eq!(second.owners(), 2);
+    WINDOW_PROBE.with_borrow_mut(|slot| {
+        let probe = slot.as_mut().unwrap();
+        assert_eq!(probe.acquires, acquires + 1);
+        probe.defer_retirement = false;
+        probe.reject_acquire = true;
+    });
+
+    let rejected = submit(&mut renderer, &uncertain).err().unwrap();
+    assert_eq!(rejected.status(), RENDER_E_WINDOW_RETRY);
+    assert_eq!(renderer.context.presentation, PresentationState::Ready);
+    assert_eq!(uncertain.owners(), 1);
+    submit(&mut renderer, &second).unwrap();
+
+    WINDOW_PROBE.with_borrow_mut(|slot| {
+        let probe = slot.as_mut().unwrap();
+        probe.defer_retirement = true;
+        probe.fail_submit = true;
+        probe.fail_retirement = true;
+    });
+    let primary = submit(&mut renderer, &uncertain).err().unwrap();
+    assert_eq!(primary.status(), RENDER_E_BACKEND);
+    assert!(primary.to_string().contains("queue_submit") && primary.to_string().contains("ERROR_OUT_OF_DEVICE_MEMORY"));
+    assert_eq!(renderer.context.presentation, PresentationState::Unavailable);
+    assert_eq!(uncertain.owners(), 2, "uncertain work retains the exact prepared owner");
+    assert!(renderer.frame(info).is_err());
+    WINDOW_PROBE.with_borrow_mut(|slot| {
+        let probe = slot.as_mut().unwrap();
+        assert_eq!(probe.acquires, acquires + 3);
+        assert_eq!(probe.retirement_errors, 2);
+        probe.defer_retirement = false;
+    });
+    renderer.context.core.wait_idle();
+    renderer.maintain().unwrap();
+    assert_eq!(uncertain.owners(), 1);
 }
 
 /// A one-shot query override and observation of the actual native dispatch boundary.

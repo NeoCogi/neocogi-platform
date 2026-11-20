@@ -731,6 +731,13 @@ impl DescriptorPools {
 /// Native blocks retain no domain/COM authority and can survive CPU/public owner expiry.
 #[derive(Clone)]
 pub struct PreparedBlock(Rc<PreparedData>);
+#[cfg(test)]
+impl PreparedBlock {
+    /// Counts real owners of this exact prepared snapshot for submission-lifetime assertions.
+    pub(super) fn owners(&self) -> usize {
+        Rc::strong_count(&self.0)
+    }
+}
 /// Exact native snapshots and original logical capacity receipts share a completion lifetime.
 struct PreparedData {
     /// Native core also identifies the device for checked host-side replay.
@@ -892,7 +899,7 @@ impl Executor {
             // SAFETY: Each submitted record refers to this context's live slot fence.
             let status = unsafe { self.core.device.get_fence_status(entry.fence) };
             #[cfg(test)]
-            let status = super::surface_tests::fence_result(status);
+            let status = super::surface_tests::fence_result(entry.fence, status);
             match status {
                 Ok(true) => false,
                 Ok(false) => true,
@@ -927,7 +934,6 @@ impl Executor {
             return Err("Vulkan graphics executor is unavailable after a native submission failure".into());
         }
         self.collect()?;
-        self.submitted.try_reserve(1).map_err(|error| error.to_string())?;
         let pool = self.pool(block)?;
         let mut commands = Vec::new();
         commands.try_reserve_exact(block.commands().len()).map_err(|error| error.to_string())?;
@@ -1742,9 +1748,17 @@ impl Executor {
         Ok(())
     }
 
-    /// Keeps snapshots through the context-owned completion fence, including later presentation failure.
+    /// Reserves a submission entry for a nonempty batch before acquiring a swapchain image.
+    pub(in crate::gpu::backends::vulkan) fn reserve_submission(&mut self) -> Result<(), String> {
+        self.submitted.try_reserve(1).map_err(|error| error.to_string())
+    }
+
+    /// Moves the recorded owners into previously reserved storage before native submission.
+    /// The caller has retired any earlier entry for this same context-owned fence.
     pub(in crate::gpu::backends::vulkan) fn submitted(&mut self, fence: vk::Fence, blocks: Vec<PreparedBlock>) {
         if !blocks.is_empty() {
+            debug_assert!(self.submitted.len() < self.submitted.capacity());
+            debug_assert!(self.submitted.iter().all(|entry| entry.fence != fence));
             self.submitted.push(Submitted { fence, _blocks: blocks });
         }
     }

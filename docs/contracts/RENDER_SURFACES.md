@@ -68,8 +68,13 @@ Vulkan window and framebuffer queries use the surface's fixed extent when
 specified. Variable extents clamp SDL's physical size to the advertised range.
 After the last stream callback, the renderer selects that extent and completes
 any swapchain replacement before specializing pipelines for its attachments.
-The acquired image belongs to that prepared generation. WSI rejection of the
-frame returns an owned `RENDER_E_WINDOW_RETRY` when subsequent frames can use a
+The renderer waits for the selected slot, retires prior submissions and
+reserves completion storage before acquiring an image from that generation.
+A failed observation of prior work leaves acquisition untouched unless it also
+reports a terminal device failure. The already-prepared command owners move
+into the reserved ledger before submission and remain there until completion.
+The direct Rust frame API preserves the typed stale-extent error.
+WSI rejection of the frame returns an owned `RENDER_E_WINDOW_RETRY` when subsequent frames can use a
 recovered generation. Query the current extent and record a fresh frame. Zero
 drawable dimensions defer reconstruction until the window can present again.
 An accepted suboptimal present can complete successfully. Device or surface

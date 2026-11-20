@@ -289,6 +289,7 @@ impl Target {
         unsafe {
             self.core.device.wait_for_fences(&[self.fence], true, u64::MAX).unwrap();
             executor.collect().unwrap();
+            executor.reserve_submission().unwrap();
             self.core.device.reset_command_pool(self.pool, vk::CommandPoolResetFlags::empty()).unwrap();
             self.core
                 .device
@@ -351,12 +352,12 @@ impl Target {
             );
             self.core.device.end_command_buffer(self.command).unwrap();
             self.core.device.reset_fences(&[self.fence]).unwrap();
+            executor.submitted(self.fence, blocks);
             self.core
                 .device
                 .queue_submit(self.core.queue, &[vk::SubmitInfo::default().command_buffers(&[self.command])], self.fence)
                 .unwrap();
         }
-        executor.submitted(self.fence, blocks);
     }
 
     /// Host reads happen only after completion and explicit noncoherent visibility handling.

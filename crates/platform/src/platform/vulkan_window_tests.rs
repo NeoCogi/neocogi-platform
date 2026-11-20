@@ -103,8 +103,8 @@ impl IRenderStream for Stream {
     }
 }
 
-/// Verifies final size admission, pipeline preparation using the selected generation,
-/// and a rejected present that returns an owned retry outcome with a usable next frame.
+/// Verifies final size admission, preparation for the selected generation and the
+/// different owned outcomes of recoverable rejection and uncertain submission.
 #[test]
 #[ignore = "requires an SDL native display and Vulkan surface with two advertised color formats"]
 fn vulkan_com_window_prepares_the_selected_generation_and_retries_rejected_present() {
@@ -220,5 +220,41 @@ fn vulkan_com_window_prepares_the_selected_generation_and_retries_rejected_prese
     renderer
         .render(RenderInfo { size: current, invocation: 8, ..info }, retry.as_com_ref())
         .unwrap();
+
+    let acquires = WINDOW_PROBE.with_borrow_mut(|slot| {
+        let probe = slot.as_mut().unwrap();
+        probe.reject_acquire = true;
+        probe.acquires
+    });
+    let rejected = renderer
+        .render(RenderInfo { size: current, invocation: 9, ..info }, retry.as_com_ref())
+        .unwrap_err();
+    assert_eq!(rejected.status, RENDER_E_WINDOW_RETRY);
+    assert!(rejected.message.contains("Vulkan swapchain changed during frame acquisition"));
+    WINDOW_PROBE.with_borrow(|slot| assert_eq!(slot.as_ref().unwrap().acquires, acquires));
+    renderer
+        .render(RenderInfo { size: current, invocation: 10, ..info }, retry.as_com_ref())
+        .unwrap();
+
+    WINDOW_PROBE.with_borrow_mut(|slot| {
+        let probe = slot.as_mut().unwrap();
+        probe.fail_submit = true;
+        probe.fail_retirement = true;
+    });
+    let terminal = renderer
+        .render(RenderInfo { size: current, invocation: 11, ..info }, retry.as_com_ref())
+        .unwrap_err();
+    assert_eq!(terminal.status, RENDER_E_BACKEND);
+    assert!(terminal.message.contains("queue_submit") && terminal.message.contains("ERROR_OUT_OF_DEVICE_MEMORY"));
+    let later = renderer
+        .render(RenderInfo { size: current, invocation: 12, ..info }, retry.as_com_ref())
+        .unwrap_err();
+    assert_eq!(later.status, RENDER_E_BACKEND);
+    assert!(later.message.contains("unavailable"));
+    WINDOW_PROBE.with_borrow(|slot| {
+        let probe = slot.as_ref().unwrap();
+        assert_eq!(probe.acquires, acquires + 2);
+        assert_eq!(probe.retirement_errors, 2);
+    });
     check_surface_loss_input(&device, &window);
 }

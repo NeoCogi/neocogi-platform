@@ -417,8 +417,7 @@ impl VulkanRenderer {
         }
     }
 
-    /// Admits every prepared block before acquiring. The public Rust frame
-    /// path can receive blocks prepared before a native format change.
+    /// Admits prepared blocks, retires prior uses and reserves completion storage before acquiring.
     fn finish_window(&mut self) -> std::result::Result<(), FrameError> {
         let mut commands = std::mem::take(&mut self.commands);
         let result = (|| {
@@ -434,11 +433,18 @@ impl VulkanRenderer {
             if selected != size || self.context.reconfigure || self.context.extent.width != self.width || self.context.extent.height != self.height {
                 return Err(FrameError::window_retry("Vulkan drawable changed before acquisition"));
             }
+            // Fence reuse is exclusive to the context. Collect the old owner after waiting for
+            // this slot and before acquiring or resetting its fence for a different submission.
+            self.context.wait_for_frame_slot()?;
+            self.generic.collect()?;
+            if !commands.is_empty() {
+                self.generic.reserve_submission()?;
+            }
             let acquired = self.context.acquire_frame()?;
             self.context
                 .draw_frame(acquired, Self::color_to_vk_clear(self.clear_color), &mut commands, &mut self.generic)
         })();
-        // Reuse the allocation after either an early admission error or acquired finalization.
+        // Reuse command storage only if no submission took ownership of it.
         commands.clear();
         self.commands = commands;
         result
@@ -531,7 +537,7 @@ impl RendererBackend for VulkanRenderer {
             width: dimensions.width,
             height: dimensions.height,
         })
-        .map_err(|error| FrameError::new(error.message))?;
+        .map_err(FrameError::from)?;
         self.window_frame(info)
     }
 
@@ -1313,8 +1319,8 @@ impl VulkanContext {
         }
     }
 
-    /// Acquires one swapchain image before higher-level display-list execution begins.
-    fn acquire_frame(&mut self) -> std::result::Result<AcquiredVulkanFrame, FrameError> {
+    /// Waits for the current slot so its submitted owners can retire before acquiring a new image.
+    fn wait_for_frame_slot(&mut self) -> Result<()> {
         if self.core.check().is_err() {
             return Err("device is lost; VulkanContext is disabled".into());
         }
@@ -1322,16 +1328,28 @@ impl VulkanContext {
         // post-acquire failure. The fatal policy makes this check finite instead of waiting on an
         // unsignaled fence that was reset but never submitted.
         self.presentation.ensure_ready()?;
-        let frame = self.current_frame;
-        let fence = self.in_flight_fences[frame];
+        let fence = self.in_flight_fences[self.current_frame];
+        // SAFETY: This context owns the live slot fence and has no outstanding acquisition.
         unsafe {
             self.device
                 .wait_for_fences(&[fence], true, u64::MAX)
                 .map_err(|err| self.handle_vk_error("wait_for_fences", err))?;
         }
+        #[cfg(test)]
+        surface_tests::record_waited_slot(fence);
+        Ok(())
+    }
 
+    /// Acquires from the slot whose prior work the caller has just waited for and collected.
+    fn acquire_frame(&mut self) -> std::result::Result<AcquiredVulkanFrame, FrameError> {
+        let frame = self.current_frame;
+        #[cfg(test)]
+        if surface_tests::reject_acquire() {
+            return self.recover_acquisition();
+        }
         #[cfg(test)]
         surface_tests::record_acquire();
+        // SAFETY: The ready slot belongs to this generation and owns an unused acquire semaphore.
         match unsafe {
             self.swapchain_loader
                 .acquire_next_image(self.swapchain, u64::MAX, self.image_available_semaphores[frame], vk::Fence::null())
@@ -1390,14 +1408,6 @@ impl VulkanContext {
         debug_assert_eq!(frame, self.current_frame);
         let fence = self.in_flight_fences[frame];
 
-        generic.collect()?;
-        let mut submitted = Vec::new();
-        submitted.try_reserve_exact(commands.len()).map_err(|error| error.to_string())?;
-        submitted.extend(commands.iter().cloned());
-
-        // Reset per-frame upload cursors only after the frame fence signaled. Retired GPU buffers
-        // are likewise only reclaimed once this frame slot is no longer in flight.
-
         // UI drawing and custom rendering share one graphics command buffer per acquired image.
         let command_buffer = self.command_buffers[frame];
         self.record_command_buffer(command_buffer, image_index, clear_value, commands, generic)?;
@@ -1413,7 +1423,9 @@ impl VulkanContext {
             .signal_semaphores(&signal_semaphores);
         let submit_infos = [submit_info];
 
-        unsafe {
+        // SAFETY: Recording has completed on the waited slot. The acquired transaction owns
+        // its fence and semaphore until successful presentation or terminal failure.
+        let submit_result = unsafe {
             // Keep the fence signaled throughout every fallible CPU recording and transfer-submit
             // step. Reset it only when the graphics submission is fully assembled. If reset or
             // queue submission fails, the outer acquired-frame transaction becomes fatal and no
@@ -1421,11 +1433,12 @@ impl VulkanContext {
             self.device.reset_fences(&[fence]).map_err(|err| self.handle_vk_error("reset_fences", err))?;
             // Install native owners before the driver can observe this submission. An error
             // leaves them retained under the terminal acquired-frame state until idle/teardown.
-            generic.submitted(fence, submitted);
-            self.device
-                .queue_submit(self.graphics_queue, &submit_infos, fence)
-                .map_err(|err| self.handle_vk_error("queue_submit", err))?;
-        }
+            generic.submitted(fence, std::mem::take(commands));
+            self.device.queue_submit(self.graphics_queue, &submit_infos, fence)
+        };
+        #[cfg(test)]
+        let submit_result = surface_tests::submit_result(submit_result);
+        submit_result.map_err(|err| self.handle_vk_error("queue_submit", err))?;
 
         let swapchains = [self.swapchain];
         let image_indices = [image_index];
@@ -1460,15 +1473,11 @@ impl VulkanContext {
         command_buffer: vk::CommandBuffer,
         image_index: u32,
         clear_value: vk::ClearValue,
-        commands: &mut Vec<PreparedBlock>,
-        generic: &mut generic::Executor,
+        commands: &[PreparedBlock],
+        generic: &generic::Executor,
     ) -> Result<()> {
-        // GPU command recording is intentionally linear: begin render pass, replay the queued UI /
-        // custom jobs in order, then end the pass. The `commands` vec is drained here so the
-        // higher-level renderer can reuse its allocation next frame.
-        for block in commands.iter() {
-            generic.admit(block, self.signature())?;
-        }
+        // The caller retains the command owners during replay and moves them into the ledger
+        // only after this command buffer is ready to submit.
         let begin_info = vk::CommandBufferBeginInfo::default();
         unsafe {
             self.device
@@ -1498,8 +1507,8 @@ impl VulkanContext {
             width: self.extent.width as i32,
             height: self.extent.height as i32,
         };
-        for block in commands.drain(..) {
-            generic.record(command_buffer, &block, extent, extent, self.signature())?;
+        for block in commands {
+            generic.record(command_buffer, block, extent, extent, self.signature())?;
         }
 
         unsafe {
