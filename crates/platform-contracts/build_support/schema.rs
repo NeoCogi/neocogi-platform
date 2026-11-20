@@ -94,7 +94,19 @@ fn prune(root: &Path, directory: &Path) -> Result<(), BuildError> {
 /// mtimes and pruning removed declarations so old files cannot reenter resolution.
 fn materialize(output: &Path) -> Result<PathBuf, BuildError> {
     let root = output.join("neocogi-shared-sources");
-    fs::create_dir_all(&root).map_err(|error| io_error("create generated sources", &root, error))?;
+    fs::create_dir_all(output).map_err(|error| io_error("prepare consumer output", output, error))?;
+    match fs::create_dir(&root) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            // The caller selects the outer path. Only a real directory at its reserved
+            // child grants pruning authority, so inspect that entry without following it.
+            let kind = fs::symlink_metadata(&root).map_err(|error| io_error("inspect generated sources", &root, error))?.file_type();
+            if !kind.is_dir() {
+                return Err(io_error("admit generated sources directory", &root, error));
+            }
+        }
+        Err(error) => return Err(io_error("create generated sources", &root, error)),
+    }
     prune(&root, &root)?;
     for (name, contents) in SOURCES {
         let path = root.join(name);
@@ -120,6 +132,8 @@ fn materialize(output: &Path) -> Result<PathBuf, BuildError> {
 /// Embedded inputs are materialized under the calling build script's OUT_DIR;
 /// missing environment or filesystem failures return before generation. Cached
 /// helpers never depend on their original downloaded source path remaining live.
+/// The caller may select an aliased OUT_DIR. The reserved `neocogi-shared-sources`
+/// entry must be a real directory whenever it already exists.
 pub fn sources(local: &[(Module, &str)]) -> Result<SharedSources, BuildError> {
     let output = std::env::var_os("OUT_DIR").ok_or(BuildError::MissingEnvironment("OUT_DIR"))?;
     let mut request = SharedSources::new(materialize(Path::new(&output))?);
@@ -213,5 +227,46 @@ mod tests {
         let second = tempfile::tempdir().unwrap();
         let root = materialize(second.path()).unwrap();
         assert!(SOURCES.iter().all(|(name, _)| root.join(name).is_file()));
+    }
+
+    /// An existing file at the reserved entry remains caller-owned.
+    #[test]
+    fn materialization_rejects_a_file_at_the_reserved_entry() {
+        let output = tempfile::tempdir().unwrap();
+        let root = output.path().join("neocogi-shared-sources");
+        fs::write(&root, b"caller data").unwrap();
+        assert!(matches!(materialize(output.path()), Err(BuildError::Io { path, .. }) if path == root));
+        assert_eq!(fs::read(root).unwrap(), b"caller data");
+    }
+
+    /// A borrowed output path is supported, while an aliased generated child has no deletion authority.
+    #[cfg(unix)]
+    #[test]
+    fn materialization_admits_outer_alias_but_rejects_the_reserved_child_alias() {
+        use std::os::unix::fs::symlink;
+
+        let fixture = tempfile::tempdir().unwrap();
+        let output = fixture.path().join("output");
+        let alias = fixture.path().join("alias");
+        fs::create_dir(&output).unwrap();
+        symlink(&output, &alias).unwrap();
+        let root = materialize(&alias).unwrap();
+        assert_eq!(fs::read(root.join(SOURCES[0].0)).unwrap(), SOURCES[0].1);
+        fs::remove_dir_all(&root).unwrap();
+
+        let sibling = fixture.path().join("caller-owned");
+        fs::create_dir(&sibling).unwrap();
+        let sentinel = sibling.join("application-data.txt");
+        fs::write(&sentinel, b"caller data").unwrap();
+        symlink(&sibling, &root).unwrap();
+        assert!(matches!(materialize(&alias), Err(BuildError::Io { path, .. }) if path == root));
+        assert_eq!(fs::read(&sentinel).unwrap(), b"caller data");
+        assert_eq!(fs::read_dir(&sibling).unwrap().count(), 1);
+
+        fs::remove_file(&sentinel).unwrap();
+        fs::remove_dir(&sibling).unwrap();
+        assert!(matches!(materialize(&alias), Err(BuildError::Io { path, .. }) if path == root));
+        assert!(fs::symlink_metadata(root).unwrap().is_symlink());
+        assert!(!sibling.exists());
     }
 }
