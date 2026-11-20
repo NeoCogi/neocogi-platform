@@ -236,6 +236,34 @@ impl Writer<'_> {
         });
         id
     }
+    /// Emits remainder on unsigned lane magnitudes so ES300 never sees a signed
+    /// negative operand and both languages compute a defined result for all inputs.
+    fn signed_remainder(&mut self, ty: &Ty, left: &str, right: &str) -> String {
+        let unsigned = if ty.lanes() == 1 {
+            Ty::Scalar(Scalar::Uint)
+        } else {
+            Ty::Vector(Scalar::Uint, ty.lanes())
+        };
+        let u = self.ty(&unsigned);
+        let i = self.ty(ty);
+        // ES300 signed/unsigned constructors and WGSL bitcasts preserve the bits.
+        let (to_unsigned, to_signed) = if self.gl {
+            (u.clone(), i)
+        } else {
+            (format!("bitcast<{u}>"), format!("bitcast<{i}>"))
+        };
+        let left = self.snapshot(&unsigned, &format!("{to_unsigned}({left})"));
+        let right = self.snapshot(&unsigned, &format!("{to_unsigned}({right})"));
+        // All-ones sign masks yield the unsigned magnitude under XOR and subtraction.
+        // This retains the magnitude of i32::MIN exactly and never negates it as i32.
+        let left_sign = self.snapshot(&unsigned, &format!("({u}(0u) - ({left} >> {u}(31u)))"));
+        let right_sign = self.snapshot(&unsigned, &format!("({u}(0u) - ({right} >> {u}(31u)))"));
+        let rem = self.snapshot(
+            &unsigned,
+            &format!("(({left} ^ {left_sign}) - {left_sign}) % max(({right} ^ {right_sign}) - {right_sign}, {u}(1u))"),
+        );
+        format!("{to_signed}(({rem} ^ {left_sign}) - {left_sign})")
+    }
     /// Interface qualifiers are emitted only on WGSL entry parameters and structure members.
     fn attribute(&self, binding: &Option<Binding>) -> String {
         match binding {
@@ -662,7 +690,9 @@ impl Writer<'_> {
                 if matches!(b.ty, Ty::Scalar(_)) && a.ty.lanes() > 1 {
                     right = format!("{}({right})", self.ty(&a.ty));
                 }
-                if self.gl && matches!(e.ty, Ty::Vector(Scalar::Bool, _)) {
+                if *op == Binary::Remainder && e.ty.scalar() == Some(Scalar::Sint) {
+                    self.signed_remainder(&e.ty, &left, &right)
+                } else if self.gl && matches!(e.ty, Ty::Vector(Scalar::Bool, _)) {
                     format!(
                         "{}({left}, {right})",
                         match op {

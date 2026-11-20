@@ -154,7 +154,8 @@ pub(crate) enum Binary {
     Multiply,
     /// Numeric quotient, with matrix/scalar division lowered by columns.
     Divide,
-    /// Numeric remainder; floating-point lowering uses truncation.
+    /// Numeric remainder using truncation. Signed lanes return zero for a zero
+    /// divisor and for the minimum signed value with divisor minus one.
     Remainder,
     /// Componentwise equality, producing the corresponding boolean shape.
     Equal,
@@ -1457,11 +1458,12 @@ fn binary_type(op: Binary, a: &Ty, b: &Ty) -> Option<Ty> {
     if matches!(a, Ty::Scalar(Float)) && matches!(b, Ty::Matrix(..)) {
         return (op == Multiply).then(|| b.clone());
     }
-    if matches!(op, Add | Subtract | Multiply | Divide) && matches!(a, Ty::Vector(..)) && matches!(b, Ty::Scalar(_)) {
-        return Some(a.clone());
-    }
-    if matches!(op, Add | Subtract | Multiply | Divide) && matches!(b, Ty::Vector(..)) && matches!(a, Ty::Scalar(_)) {
-        return Some(b.clone());
+    if matches!(op, Add | Subtract | Multiply | Divide) || (op == Remainder && a.scalar() == Some(Sint)) {
+        return match (a, b) {
+            (Ty::Vector(..), Ty::Scalar(_)) => Some(a.clone()),
+            (Ty::Scalar(_), Ty::Vector(..)) => Some(b.clone()),
+            _ => None,
+        };
     }
     None
 }

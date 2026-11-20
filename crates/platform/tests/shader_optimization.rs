@@ -50,6 +50,23 @@ fn wgsl_shift_helpers_follow_the_entry_and_quota() {
     assert!(matches!(compiler.compile(stage, source, "fs", full.byte_len() - 1), Err(CompileError::Limit)));
 }
 
+/// Every emitted remainder lowering is charged to its selected artifact's byte limit.
+#[test]
+fn signed_remainder_charges_the_selected_artifact_quota() {
+    for case in optimization::cases().into_iter().filter(|case| case.name.ends_with("signed_remainder")) {
+        for target in targets() {
+            let stage = GpuShaderStage::Fragment;
+            let shader = compile(target, stage, &case.source, "fs");
+            let compiler = Compiler::new(target).unwrap();
+            assert!(compiler.compile(stage, &case.source, "fs", shader.byte_len()).is_ok());
+            assert!(matches!(
+                compiler.compile(stage, &case.source, "fs", shader.byte_len() - 1),
+                Err(CompileError::Limit)
+            ));
+        }
+    }
+}
+
 /// Constant failures must return zero without a runtime check or an indexed parent copy.
 #[test]
 fn constant_indices_do_not_generate_bounds_branches() {

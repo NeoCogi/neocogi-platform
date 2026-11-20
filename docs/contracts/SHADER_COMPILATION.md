@@ -139,6 +139,11 @@ helpers and paths following a possibly divergent return. Use explicit mip-zero
 sampling in conditional helpers. This conservative rule is deliberate, not a claim
 of a general uniformity analysis.
 
+Signed 32-bit remainder uses a quotient truncated toward zero. A nonzero
+remainder carries the dividend's sign. A zero divisor yields zero, as does
+`i32::MIN % -1`. The rule applies independently to each scalar or vector lane
+in both frontends, including scalar broadcasts and eager selections.
+
 `(sample IMAGE UV)` and `(sample-level IMAGE UV 0.0)` use the declaration's paired
 sampler. `(load IMAGE INTEGER_VEC2)` and `(dimensions IMAGE)` operate at mip zero;
 other levels and count queries reject. Every used image must also be sampled by

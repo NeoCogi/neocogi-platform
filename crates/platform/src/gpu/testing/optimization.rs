@@ -234,6 +234,29 @@ pub fn cases() -> Vec<Case> {
             SHIFT_PIXELS,
             false,
         ),
+        (
+            "signed_remainder",
+            "(fn remainder ((a i32) (b i32)) (returns i32) (return (% a b)))",
+            r#"(let one (i32 (. (index (. data colors) 0) x)))
+              (let seven (+ 6 one))
+              (let four (+ 3 one))
+              (let zero (- one 1))
+              (let signs (&& (== (remainder seven four) 3) (&& (== (% -7 four) -3)
+                            (&& (== (% seven (- four)) 3) (== (% -7 -4) -3)))))
+              (let endpoints (&& (== (% -2147483648 -1) 0) (&& (== (% -2147483648 2147483647) -1)
+                                (&& (== (% 2147483647 -2147483648) 2147483647) (== (% 7 0) 0)))))
+              (let eager (== (select (% seven zero) (% -7 0) false) 0))
+              (let vector (% (ivec4 seven -7 -2147483648 2147483647) (ivec4 four -4 2147483647 -2147483648)))
+              (let mixed (% (ivec4 -2147483648 seven -7 -7) (ivec4 -1 zero four (- four))))
+              (let left (% -7 (ivec2 four (- four))))
+              (let right (% (ivec3 seven -7 -2147483648) four))
+              (let vectors (&& (all (== vector (ivec4 3 -3 -1 2147483647))) (all (== mixed (ivec4 0 0 -3 -3)))))
+              (let broadcast (&& (all (== left (ivec2 -3 -3))) (all (== right (ivec3 3 -3 0)))))
+              (return (vec4 (select 0.0 1.0 (&& signs (&& endpoints eager)))
+                            (select 0.0 1.0 vectors) (select 0.0 1.0 broadcast) 1.0))"#,
+            [[255; 4]; 8],
+            true,
+        ),
     ];
     let cases: Vec<_> = definitions
         .into_iter()

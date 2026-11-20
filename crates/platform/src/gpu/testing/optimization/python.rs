@@ -149,6 +149,27 @@ def modify(Value: Value) -> vec4:
             SHIFT_PIXELS,
             false,
         ),
+        (
+            "python_signed_remainder",
+            "def remainder(a: i32, b: i32) -> i32:\n    return a % b\n",
+            r#"    one = i32(data.colors[0].x)
+    seven = 6 + one
+    four = 3 + one
+    zero = one - 1
+    signs = remainder(seven, four) == 3 and -7 % four == -3 and seven % -four == 3 and -7 % -4 == -3
+    endpoints = -2147483648 % -1 == 0 and -2147483648 % 2147483647 == -1 and 2147483647 % -2147483648 == 2147483647 and 7 % 0 == 0
+    eager = select(seven % zero, -7 % 0, False) == 0
+    vector = ivec4(seven, -7, -2147483648, 2147483647) % ivec4(four, -4, 2147483647, -2147483648)
+    mixed = ivec4(-2147483648, seven, -7, -7) % ivec4(-1, zero, four, -four)
+    left = -7 % ivec2(four, -four)
+    right = ivec3(seven, -7, -2147483648) % four
+    vectors = all(vector == ivec4(3, -3, -1, 2147483647)) and all(mixed == ivec4(0, 0, -3, -3))
+    broadcast = all(left == ivec2(-3, -3)) and all(right == ivec3(3, -3, 0))
+    return vec4(select(0.0, 1.0, signs and endpoints and eager), select(0.0, 1.0, vectors), select(0.0, 1.0, broadcast), 1.0)
+"#,
+            [[255; 4]; 8],
+            true,
+        ),
     ];
     definitions
         .into_iter()

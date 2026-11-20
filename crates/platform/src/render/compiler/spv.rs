@@ -872,6 +872,19 @@ impl Writer<'_> {
     fn splat(&mut self, b: &mut Body, value: u32, ty: &Ty) -> u32 {
         self.value(b, Op::CompositeConstruct, ty, &vec![value; ty.lanes() as usize])
     }
+    /// Replaces zero and minus one divisors before the signed remainder instruction.
+    /// Every dividend has zero remainder with divisor one, including the signed minimum.
+    fn remainder_divisor(&mut self, b: &mut Body, ty: &Ty, divisor: u32) -> u32 {
+        let [zero, negative_one, one] = [0, u32::MAX, 1].map(|bits| {
+            let value = self.constant(&Ty::Scalar(Scalar::Sint), bits);
+            if ty.lanes() == 1 { value } else { self.splat(b, value, ty) }
+        });
+        let boolean = ty.boolean();
+        let zero = self.value(b, Op::IEqual, &boolean, &[divisor, zero]);
+        let negative_one = self.value(b, Op::IEqual, &boolean, &[divisor, negative_one]);
+        let replace = self.value(b, Op::LogicalOr, &boolean, &[zero, negative_one]);
+        self.value(b, Op::Select, ty, &[replace, one, divisor])
+    }
     /// Matrix addition/subtraction and scaling are lowered by columns; native products stay native.
     fn binary(&mut self, b: &mut Body, op: Binary, result: &Ty, left: (&Ty, u32), right: (&Ty, u32)) -> u32 {
         let (at, mut a) = left;
@@ -949,7 +962,10 @@ impl Writer<'_> {
             },
             Remainder => match family {
                 Float => Op::FRem,
-                Sint => Op::SRem,
+                Sint => {
+                    c = self.remainder_divisor(b, result, c);
+                    Op::SRem
+                }
                 _ => Op::UMod,
             },
             Equal => match family {
