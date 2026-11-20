@@ -68,12 +68,16 @@ before it invokes Cargo. If the temporary parent is inside the checkout, set
 `TMPDIR` on Unix or `TMP`/`TEMP` on Windows to a directory outside it.
 The extracted Cargo commands use that same canonical parent for temporary files.
 The checker retains inherited Cargo registry, cache and toolchain configuration.
-It checks the effective Cargo resolution under
+Each run packages the entire release set in one Cargo command with a private
+target and build directory. It reads each compressed archive once and inspects
+and unpacks those owned bytes. The run keeps its build outputs under Cargo's
+configured target in a private directory and removes that directory and the
+extracted workspace when it finishes. It checks the effective Cargo resolution under
 each qualification toolchain before compiling the extracted workspace and
 rejects any internal package selected from another manifest, including
 same-version developer overlays. The resolved lockfile is used for every build.
-It builds the extracted workspace targets in a
-disposable target and intermediate directory owned by the qualification run,
+It builds the extracted workspace targets in separate disposable target and
+intermediate directories owned by the qualification run,
 runs the contracts and focused SDK tests, and executes independent generated COM
 consumers. The mixed-projection fixture tests retained shader exports and
 real build-script resource staging, including restoration of deleted outputs and

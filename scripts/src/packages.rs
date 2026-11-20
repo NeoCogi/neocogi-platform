@@ -45,7 +45,7 @@ struct Metadata {
     workspace_members: HashSet<String>,
     /// Cargo's resolved packages and declared publication policy.
     packages: Vec<Package>,
-    /// Development Cargo target containing the release archives.
+    /// The final target configured for the developer, which selects the build volume.
     target_directory: PathBuf,
 }
 
@@ -121,10 +121,10 @@ fn registry_dependencies(manifest: &toml::Value) -> Result<()> {
     Ok(())
 }
 
-/// Inspect every member before extraction: only unique regular files/directories beneath one root.
-fn inspect_archive(archive: &Path, package: &Package) -> Result<String> {
+/// Inspect an owned archive snapshot for unique regular files and directories beneath one root.
+fn inspect_archive(bytes: &[u8], package: &Package) -> Result<String> {
     let prefix = format!("{}-{}", package.name, package.version);
-    let mut archive = tar::Archive::new(GzDecoder::new(fs::File::open(archive)?));
+    let mut archive = tar::Archive::new(GzDecoder::new(bytes));
     let mut names = HashSet::new();
     let mut files = HashSet::new();
     let mut manifest = None;
@@ -183,6 +183,13 @@ fn inspect_archive(archive: &Path, package: &Package) -> Result<String> {
     Ok(prefix)
 }
 
+/// Inspect and unpack the same compressed bytes into the run's fresh package directory.
+fn inspect_and_unpack_archive(bytes: &[u8], package: &Package, destination: &Path) -> Result<String> {
+    let prefix = inspect_archive(bytes, package)?;
+    tar::Archive::new(GzDecoder::new(bytes)).unpack(destination)?;
+    Ok(prefix)
+}
+
 /// Copy the authored consumer fixture without retaining a checkout dependency or target cache.
 fn copy_tree(source: &Path, destination: &Path) -> Result<()> {
     fs::create_dir_all(destination)?;
@@ -236,16 +243,38 @@ pub(crate) fn platform_artifact(output: &[u8]) -> Result<PlatformArtifact> {
     artifact.context("Cargo did not produce the normal platform cdylib")
 }
 
-/// All commands in the extracted workspace share private output and intermediate directories.
-/// Explicit environment overrides also supersede paths inherited from the developer.
-fn extracted_cargo(toolchain: &str, workspace: &Path, target: &Path) -> std::process::Command {
-    let mut command = crate::process::cargo(Some(toolchain));
+/// Own this run's artifacts on Cargo's configured build volume, separate from the extracted sources.
+fn private_cargo_artifacts(configured_target: &Path) -> Result<tempfile::TempDir> {
+    fs::create_dir_all(configured_target).with_context(|| format!("prepare configured Cargo target {}", configured_target.display()))?;
+    tempfile::Builder::new()
+        .prefix("neocogi-qualification-")
+        .tempdir_in(configured_target)
+        .with_context(|| format!("create private qualification artifacts in {}", configured_target.display()))
+}
+
+/// Pre-create one phase's final and intermediate Cargo directories within the owned run.
+fn create_cargo_target(artifacts: &Path, name: &str) -> Result<PathBuf> {
+    let target = artifacts.join(name);
+    fs::create_dir(&target).with_context(|| format!("create Cargo target {}", target.display()))?;
+    let build = target.join("build");
+    fs::create_dir(&build).with_context(|| format!("create Cargo build directory {}", build.display()))?;
+    Ok(target)
+}
+
+/// Select explicit run-owned Cargo output paths while inheriting other Cargo configuration.
+fn qualification_cargo(toolchain: Option<&str>, workspace: &Path, target: &Path) -> std::process::Command {
+    let mut command = crate::process::cargo(toolchain);
     command
         .current_dir(workspace)
         .env("CARGO_TARGET_DIR", target)
-        .env("CARGO_BUILD_BUILD_DIR", target.join("build"))
-        // Qualification must not require a desktop audio daemon or microphone.
-        .env("SDL_AUDIODRIVER", "dummy");
+        .env("CARGO_BUILD_BUILD_DIR", target.join("build"));
+    command
+}
+
+/// Build and test the extracted workspace with a canonical temporary parent and no audio device.
+fn extracted_cargo(toolchain: &str, workspace: &Path, target: &Path) -> std::process::Command {
+    let mut command = qualification_cargo(Some(toolchain), workspace, target);
+    command.env("SDL_AUDIODRIVER", "dummy");
     // Resource staging also checks ancestors of temporary inputs created by the tests.
     let temporary_parent = workspace.parent().expect("the extracted workspace has a temporary parent");
     for key in TEMP_DIRECTORY_KEYS {
@@ -342,9 +371,10 @@ fn external_workspace(checkout: &Path, parent: &Path) -> Result<(tempfile::TempD
                 resolved_parent.display(),
             )
         })?;
-    let workspace = outside.path().canonicalize().with_context(|| {
-        format!("resolve created package qualification workspace {}", outside.path().display())
-    })?;
+    let workspace = outside
+        .path()
+        .canonicalize()
+        .with_context(|| format!("resolve created package qualification workspace {}", outside.path().display()))?;
     verify_external_path(&checkout, parent, &workspace)?;
     Ok((outside, workspace))
 }
@@ -356,9 +386,13 @@ pub(crate) fn qualify(allow_dirty: bool, offline: bool, stable: Option<&str>) ->
     let flags = if offline { vec!["--offline"] } else { vec![] };
     let metadata: Metadata = serde_json::from_slice(&capture(cargo(None).args(["metadata", "--locked", "--format-version=1"]).args(&flags))?)?;
     let selected = published_packages(&metadata)?;
+    let artifacts = private_cargo_artifacts(&metadata.target_directory)?;
+    let package_target = create_cargo_target(artifacts.path(), "package-target")?;
+    let target = create_cargo_target(artifacts.path(), "consumer-target")?;
     let toolchain: toml::Value = toml::from_str(&fs::read_to_string(crate::root().join("rust-toolchain.toml"))?)?;
     let toolchain = toolchain["toolchain"]["channel"].as_str().context("missing workspace toolchain channel")?;
-    let mut package = cargo(None);
+    // Package together so Cargo resolves the unpublished release chain in this run's package index.
+    let mut package = qualification_cargo(None, crate::root(), &package_target);
     package.args(["package", "--locked", "--no-verify"]).args(&flags);
     if allow_dirty {
         package.arg("--allow-dirty");
@@ -367,11 +401,6 @@ pub(crate) fn qualify(allow_dirty: bool, offline: bool, stable: Option<&str>) ->
         package.args(["-p", name]);
     }
     run(&mut package)?;
-    // Cargo normalizes archive mtimes. A fresh target certifies current archive bytes
-    // and keeps the extracted shim from overwriting the developer's chosen backend.
-    let target = tempfile::Builder::new()
-        .prefix("neocogi-qualification-")
-        .tempdir_in(&metadata.target_directory)?;
     let packages = workspace.join("packages");
     fs::create_dir(&packages)?;
     let mut members = vec!["consumer".to_owned(), "local-consumer".to_owned()];
@@ -380,11 +409,9 @@ pub(crate) fn qualify(allow_dirty: bool, offline: bool, stable: Option<&str>) ->
     let mut patches = toml::map::Map::new();
     let mut expected = BTreeMap::new();
     for (name, package) in &selected {
-        let archive = metadata.target_directory.join("package").join(format!("{name}-{}.crate", package.version));
-        let prefix = inspect_archive(&archive, package)?;
-        // The destination is newly created, and inspection rejects symlinks, links,
-        // duplicate members and parent traversal before any archive bytes are unpacked.
-        tar::Archive::new(GzDecoder::new(fs::File::open(&archive)?)).unpack(&packages)?;
+        let archive = package_target.join("package").join(format!("{name}-{}.crate", package.version));
+        let bytes = fs::read(&archive).with_context(|| format!("read Cargo archive {}", archive.display()))?;
+        let prefix = inspect_and_unpack_archive(&bytes, package, &packages).with_context(|| format!("qualify Cargo archive {}", archive.display()))?;
         expected.insert(*name, packages.join(&prefix).join("Cargo.toml").canonicalize()?);
         let path = format!("packages/{prefix}");
         if *name == SHIM {
@@ -417,7 +444,7 @@ pub(crate) fn qualify(allow_dirty: bool, offline: bool, stable: Option<&str>) ->
     fs::copy(crate::root().join("Cargo.lock"), workspace.join("Cargo.lock"))?;
     let resolve = |toolchain: &str, lock: &[&str]| -> Result<String> {
         let metadata: Metadata = serde_json::from_slice(&capture(
-            extracted_cargo(toolchain, &workspace, target.path())
+            extracted_cargo(toolchain, &workspace, &target)
                 .args(["metadata", "--format-version=1"])
                 .args(&flags)
                 .args(lock),
@@ -431,7 +458,7 @@ pub(crate) fn qualify(allow_dirty: bool, offline: bool, stable: Option<&str>) ->
     let execute = |toolchain: &str, arguments: &[&str]| -> Result<()> {
         // Cargo options must precede the executable's argument separator.
         let (cargo_arguments, executable_arguments) = arguments.split_at(arguments.iter().position(|argument| *argument == "--").unwrap_or(arguments.len()));
-        run(extracted_cargo(toolchain, &workspace, target.path())
+        run(extracted_cargo(toolchain, &workspace, &target)
             .args(cargo_arguments)
             .args(&flags)
             .arg("--locked")
@@ -481,11 +508,11 @@ pub(crate) fn qualify(allow_dirty: bool, offline: bool, stable: Option<&str>) ->
     let library = |toolchain: &str, shim_id: &str| -> Result<PathBuf> {
         qualified_library(
             &capture(
-                extracted_cargo(toolchain, &workspace, target.path())
+                extracted_cargo(toolchain, &workspace, &target)
                     .args(["build", "--locked", "--lib", "-p", SHIM, "--message-format=json"])
                     .args(&flags),
             )?,
-            target.path(),
+            &target,
             shim_id,
             &expected[SHIM],
         )
@@ -531,10 +558,7 @@ pub(crate) fn qualify(allow_dirty: bool, offline: bool, stable: Option<&str>) ->
         )?;
         local_consumer(stable, &platform)?;
     }
-    ensure!(
-        !workspace.join("target").exists(),
-        "package qualification created a second target directory"
-    );
+    ensure!(!workspace.join("target").exists(), "package qualification created a second target directory");
     println!(
         "PASS: {} archives and both external consumers; internal sources came only from extracted archives",
         selected.len()

@@ -70,18 +70,40 @@ fn normal_platform_artifact_is_required() {
     assert!(platform_artifact(b"not JSON").is_err());
 }
 
-/// Extracted commands select one owned output and build directory on all toolchains.
+/// Each phase selects pre-created output paths distinct from the other phase and any concurrent run.
 #[test]
-fn extracted_build_directories_are_explicit_overrides() {
-    let workspace = Path::new("/extract");
-    let target = Path::new("/qualification/target");
-    let command = extracted_cargo("stable", workspace, target);
-    assert_eq!(command.get_current_dir(), Some(workspace));
-    let env: BTreeMap<_, _> = command.get_envs().collect();
-    assert_eq!(env[std::ffi::OsStr::new("CARGO_TARGET_DIR")], Some(target.as_os_str()));
-    assert_eq!(env[std::ffi::OsStr::new("CARGO_BUILD_BUILD_DIR")], Some(target.join("build").as_os_str()));
-    for key in TEMP_DIRECTORY_KEYS {
-        assert_eq!(env[std::ffi::OsStr::new(key)], workspace.parent().map(Path::as_os_str));
+fn qualification_directories_are_explicit_private_overrides() {
+    let checkout = tempfile::tempdir().unwrap();
+    let parent = tempfile::tempdir().unwrap();
+    let configured_target = checkout.path().join("developer-target");
+    let mut roots = HashSet::new();
+    for _ in 0..2 {
+        let (_run, workspace) = external_workspace(checkout.path(), parent.path()).unwrap();
+        let artifacts = private_cargo_artifacts(&configured_target).unwrap();
+        assert_eq!(artifacts.path().parent(), Some(configured_target.as_path()));
+        for (toolchain, cwd, name) in [
+            (None, checkout.path(), "package-target"),
+            (Some("stable"), workspace.as_path(), "consumer-target"),
+        ] {
+            let target = create_cargo_target(artifacts.path(), name).unwrap();
+            let build = target.join("build");
+            assert!(roots.insert(target.clone()));
+            assert!(roots.insert(build.clone()));
+            assert!(target.is_dir());
+            assert!(build.is_dir());
+            let command = qualification_cargo(toolchain, cwd, &target);
+            assert_eq!(command.get_current_dir(), Some(cwd));
+            let env: BTreeMap<_, _> = command.get_envs().collect();
+            assert_eq!(env[std::ffi::OsStr::new("CARGO_TARGET_DIR")], Some(target.as_os_str()));
+            assert_eq!(env[std::ffi::OsStr::new("CARGO_BUILD_BUILD_DIR")], Some(build.as_os_str()));
+            if let Some(toolchain) = toolchain {
+                let command = extracted_cargo(toolchain, cwd, &target);
+                let env: BTreeMap<_, _> = command.get_envs().collect();
+                for key in TEMP_DIRECTORY_KEYS {
+                    assert_eq!(env[std::ffi::OsStr::new(key)], workspace.parent().map(Path::as_os_str));
+                }
+            }
+        }
     }
 }
 
@@ -163,7 +185,7 @@ fn package(name: &str) -> Package {
 }
 
 /// Build an archive with selectable missing inputs, dependency tables and raw malformed members.
-fn archive(directory: &Path, owner: &str, omitted: &[&str], dependency: &str, extra: Option<(&str, tar::EntryType)>) -> PathBuf {
+fn archive(directory: &Path, owner: &str, omitted: &[&str], dependency: &str, extra: Option<(&str, tar::EntryType)>) -> Vec<u8> {
     let package = package(owner);
     let prefix = format!("{owner}-{}", package.version);
     let mut files = BTreeMap::from([
@@ -196,7 +218,7 @@ fn archive(directory: &Path, owner: &str, omitted: &[&str], dependency: &str, ex
         append(&mut archive, &format!("{prefix}/{name}"), kind, b"");
     }
     archive.into_inner().unwrap().finish().unwrap();
-    path
+    fs::read(path).unwrap()
 }
 
 /// Raw headers let traversal tests exercise inspection instead of the builder's path rejection.
@@ -217,6 +239,24 @@ fn normalized_registry_inputs() {
     let directory = tempfile::tempdir().unwrap();
     let archive = archive(directory.path(), "library", &[], "[dependencies.helper]\nversion='=0.1.0-alpha.1'\n", None);
     assert_eq!(inspect_archive(&archive, &package("library")).unwrap(), "library-0.1.0-alpha.2");
+}
+
+/// Replacing the original path after intake cannot change the archive admitted or unpacked.
+#[test]
+fn qualification_uses_the_same_owned_bytes_for_admission_and_unpacking() {
+    let directory = tempfile::tempdir().unwrap();
+    let source = directory.path().join("release.crate");
+    let destination = directory.path().join("packages");
+    fs::create_dir(&destination).unwrap();
+    fs::write(&source, archive(directory.path(), "library", &[], "", None)).unwrap();
+    let snapshot = fs::read(&source).unwrap();
+    fs::write(&source, archive(directory.path(), "replacement", &[], "", None)).unwrap();
+
+    let prefix = inspect_and_unpack_archive(&snapshot, &package("library"), &destination).unwrap();
+    assert_eq!(prefix, "library-0.1.0-alpha.2");
+    let manifest = fs::read_to_string(destination.join(prefix).join("Cargo.toml")).unwrap();
+    assert!(manifest.contains("name=\"library\""));
+    assert_eq!(fs::read_dir(&destination).unwrap().count(), 1);
 }
 
 /// All release notices and the normalized manifest are required independently of Cargo's success.
@@ -329,7 +369,7 @@ fn identity_mismatch() {
             );
         }
         writer.into_inner().unwrap().finish().unwrap();
-        assert!(inspect_archive(&path, &package("library")).is_err());
+        assert!(inspect_archive(&fs::read(path).unwrap(), &package("library")).is_err());
     }
 }
 
