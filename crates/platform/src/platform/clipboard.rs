@@ -1,12 +1,27 @@
 //! Platform clipboard transfer with copied completion facts and no retained UI borrows.
 use super::*;
 
+#[cfg(target_os = "linux")]
+mod x11;
+#[cfg(target_os = "linux")]
+pub(super) use x11::X11Clipboard;
+
+/// Native text service retained independently of the app's visible window and event route.
+#[cfg(not(target_arch = "wasm32"))]
+enum Backend {
+    /// SDL video lifetime for the active non-X11 driver.
+    Sdl(sdl2::clipboard::ClipboardUtil),
+    /// Independent X11 responder and requestor connections shared by the host's projections.
+    #[cfg(target_os = "linux")]
+    X11(Rc<X11Clipboard>),
+}
+
 #[com_object(interfaces(ITextClipboard))]
 /// Delegable clipboard with no renderer, factory, or window interface on its COM identity.
 pub(super) struct Clipboard {
-    /// Keeps SDL video services alive after the public window and platform root are released.
+    /// Keeps the selected native clipboard service alive after window/root release.
     #[cfg(not(target_arch = "wasm32"))]
-    clipboard: sdl2::clipboard::ClipboardUtil,
+    backend: Backend,
     /// SDL2's Win32 writes require a live HWND even after the last public window goes away.
     #[cfg(windows)]
     _owner: Rc<gpu::Window>,
@@ -15,9 +30,16 @@ pub(super) struct Clipboard {
 impl Clipboard {
     /// Retains clipboard services independently of the application window and graphics objects.
     #[cfg(not(target_arch = "wasm32"))]
-    pub(super) fn for_host(host: &NativeHost) -> Result<ComPtr<ITextClipboardAbi>, NcStatus> {
+    pub(super) fn for_host(host: &NativeHost, _window: &gpu::Window) -> Result<ComPtr<ITextClipboardAbi>, NcStatus> {
+        #[cfg(target_os = "linux")]
+        if host.video.current_video_driver() == "x11" {
+            return Self::from_value(Self {
+                backend: Backend::X11(host.x11_clipboard(_window)?),
+            })
+            .query();
+        }
         Self::from_value(Self {
-            clipboard: host.video.clipboard(),
+            backend: Backend::Sdl(host.video.clipboard()),
             #[cfg(windows)]
             _owner: host.clipboard_window()?,
         })
@@ -93,14 +115,22 @@ fn read_sdl_text(_video: &sdl2::clipboard::ClipboardUtil) -> Result<String, NcSt
 impl ITextClipboard for Clipboard {
     /// SDL completes synchronously, but uses the same copied receipt as asynchronous platforms.
     fn read(&self, completion: ComRef<'_, IClipboardCompletionAbi>) -> Result<(), NcStatus> {
-        let result = read_sdl_text(&self.clipboard);
+        let result = match &self.backend {
+            Backend::Sdl(service) => read_sdl_text(service),
+            #[cfg(target_os = "linux")]
+            Backend::X11(service) => service.read(),
+        };
         complete(completion, result)
     }
     /// Never acknowledge a cut until the OS accepted the entire validated selection.
     fn write(&self, input: NcCopyFromBufferOffset<'_, u8>, completion: ComRef<'_, IClipboardCompletionAbi>) -> Result<(), NcStatus> {
         let text = text(input)?;
-        let result = self.clipboard.set_clipboard_text(text).map(|_| String::new()).map_err(|_| PLATFORM_E_BACKEND);
-        complete(completion, result)
+        let result = match &self.backend {
+            Backend::Sdl(service) => service.set_clipboard_text(text).map_err(|_| PLATFORM_E_BACKEND),
+            #[cfg(target_os = "linux")]
+            Backend::X11(service) => service.write(text),
+        };
+        complete(completion, result.map(|()| String::new()))
     }
 }
 

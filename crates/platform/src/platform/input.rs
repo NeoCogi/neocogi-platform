@@ -183,7 +183,7 @@ impl IPlatformWindow for WindowObject {
 
     /// Returns only the separate delegable clipboard identity.
     fn clipboard(&self) -> Result<ComPtr<ITextClipboardAbi>, NcStatus> {
-        clipboard::Clipboard::for_host(&self.device.host)
+        clipboard::Clipboard::for_host(&self.device.host, &self.device.window)
     }
 
     /// Reports drawable pixels, which are also the coordinates used by every delivered pointer.

@@ -59,7 +59,7 @@ fn retained_clipboard_survives_application_window_destruction() {
     drop(platform);
     assert!(device.upgrade().is_none());
     assert!(host.upgrade().is_none());
-    // SAFETY: SDL stays initialized through the retained clipboard's VideoSubsystem.
+    // SAFETY: SDL's lookup may return null for an unknown ID or an inactive video service.
     // The returned pointer is only checked for existence and never dereferenced.
     assert!(unsafe { sdl2::sys::SDL_GetWindowFromID(id) }.is_null());
     #[cfg(windows)]
@@ -85,6 +85,51 @@ fn retained_clipboard_survives_application_window_destruction() {
         drop(second);
         assert!(unsafe { sdl2::sys::SDL_GetWindowFromID(private_id) }.is_null());
     }
+}
+
+/// A separate SDL X11 client can paste after the Platform and every public window are gone.
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore = "set NEOCOGI_TEST_ISOLATED_X11=1 on a private X11 server with no clipboard manager"]
+fn retained_x11_clipboard_serves_an_external_client_without_application_pumping() {
+    use x11rb::protocol::xproto::ConnectionExt;
+
+    if std::env::var_os("NEOCOGI_TEST_ISOLATED_X11").as_deref() != Some("1".as_ref()) {
+        return;
+    }
+    let _session = native_session();
+    let platform = PlatformObject::new();
+    let native = platform.window("clipboard responder lifetime", SIZE).unwrap();
+    assert_eq!(native.device.host.video.current_video_driver(), "x11");
+    let host = Rc::downgrade(&native.device.host);
+    let gpu = Rc::downgrade(&native.device);
+    let window = WindowObject::from_value(native).query::<IPlatformWindowAbi>().unwrap();
+    let writer = window.clipboard().unwrap();
+    let retained = window.clipboard().unwrap();
+    drop(window);
+    drop(platform);
+    assert!(host.upgrade().is_none() && gpu.upgrade().is_none());
+
+    let results = Rc::new(RefCell::new(Vec::new()));
+    let receipt = ClipboardReceipt::from_value(ClipboardReceipt { results: results.clone() })
+        .query::<IClipboardCompletionAbi>()
+        .unwrap();
+    let value = "NeoCogi retained text é☃";
+    writer.write(NcCopyFromBufferOffset::new(0, value.as_bytes()), receipt.as_com_ref()).unwrap();
+    assert_eq!(results.borrow().as_slice(), [(0, String::new())]);
+    drop(writer);
+
+    let (peer, _) = x11rb::connect(None).unwrap();
+    let selection = peer.intern_atom(false, b"CLIPBOARD").unwrap().reply().unwrap().atom;
+    assert_ne!(peer.get_selection_owner(selection).unwrap().reply().unwrap().owner, x11rb::NONE);
+    let external = sdl2::init().unwrap();
+    let video = external.video().unwrap();
+    assert_eq!(video.current_video_driver(), "x11");
+    assert_eq!(video.clipboard().clipboard_text().unwrap(), value);
+
+    drop(retained);
+    assert_eq!(peer.get_selection_owner(selection).unwrap().reply().unwrap().owner, x11rb::NONE);
+    assert_eq!(results.borrow().len(), 1);
 }
 
 /// The X11 test runs this in a separate process so no owner event pump can answer the query.

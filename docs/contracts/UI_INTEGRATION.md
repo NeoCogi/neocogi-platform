@@ -57,6 +57,21 @@ follows the page's clipboard permissions. A successful read can contain empty
 text. When SDL reports a read failure, including a selection timeout, the
 failed receipt carries empty text.
 
+On Linux with SDL's X11 driver, a successful write confirms X11 selection
+ownership and a live responder holding the complete text on SDL's actual
+display. The responder serves paste requests while a clipboard projection is
+retained, including after release of the application window and its SDL event
+pump. It serves a selection until another client replaces it or the service
+ends. Persistence
+after final release depends on an external clipboard manager. Reads use a
+separate requestor connection. Both directions support bounded UTF-8 and X11
+incremental transfers up to 1 MiB. A read with a stalled owner or a failed
+text conversion delivers a failed receipt. Socket and protocol waits are
+bounded. The configured display's non-loopback name resolution and ordinary
+Xauthority file reads use the operating system. An expired setup cannot publish
+a selection. X11 loads the system `libxcb.so.1` on demand. The Wayland driver
+uses its SDL clipboard service.
+
 ## Asset and paint lifetime
 
 Appearance publication retains the immutable `IAssetBundle::image()` identity.
