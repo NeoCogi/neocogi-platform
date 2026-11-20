@@ -90,7 +90,8 @@ output directory. The
 consumer then loads the library and uses a second handle to the linked host
 to acquire its root and call the built-in compiler. Both consumers also call the
 packaged Platform audio service. The mixed caller uses canonical audio types and
-the build-only caller uses three local namespaces with custom Rust locators.
+the build-only caller uses three local namespaces with custom Rust locators and
+two consumer-owned namespaces with distinct include aliases.
 The optional stable run builds the shim and both callers without repository
 nightly configuration. The matrix covers the packaged native Glow provider.
 

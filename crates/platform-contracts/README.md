@@ -32,6 +32,29 @@ out of the selection use their canonical Rust definitions and require Contracts
 as a regular dependency. Platform imports its audio service types from the audio
 namespace in either case.
 
+`build` publishes `IDL_NEOCOGI_RENDERER`, `IDL_NEOCOGI_AUDIO` and
+`IDL_NEOCOGI_PLATFORM` for the corresponding canonical modules when generated.
+For a consumer-owned module, look up its exact dotted name in the returned
+`BuildOutput` values and publish `include` with an alias chosen by the consumer.
+This build-script example defines an include for a module with no shared imports.
+
+```rust
+use neocogi_platform_contracts::build::{build, sources};
+
+fn main() {
+    let request = sources(&[]).unwrap()
+        .include_root("schemas")
+        .module("app.widgets", "app_projection::widgets");
+    let outputs = build(request).unwrap();
+    let widgets = outputs.iter().find(|output| output.module_name == "app.widgets").unwrap();
+    println!("cargo::rustc-env=APP_WIDGETS_IDL={}", widgets.include.display());
+}
+```
+
+Declare `extern crate self as app_projection` in the consumer and use
+`include!(env!("APP_WIDGETS_IDL"))` inside its `widgets` module. The dotted IDL
+name determines its identities independently of the include alias and Rust path.
+
 Generated data values implement `ComSerialize` and `ComDeserialize` when their
 fields support persistence. Live COM capabilities cannot be reconstructed
 automatically. Callers select a format through `neocogi_com_sdk::serialization::Format`.

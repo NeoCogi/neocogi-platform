@@ -150,21 +150,27 @@ pub fn sources(local: &[(Module, &str)]) -> Result<SharedSources, BuildError> {
     Ok(request)
 }
 
-/// Generates requested bindings, then publishes their paths to this consumer.
+/// Generates requested bindings, then publishes stable include aliases for canonical modules.
 ///
-/// No include-path environment variables are emitted unless generation succeeds.
+/// When generated, `neocogi.renderer`, `neocogi.audio` and `neocogi.platform`
+/// publish `IDL_NEOCOGI_RENDERER`, `IDL_NEOCOGI_AUDIO` and `IDL_NEOCOGI_PLATFORM`
+/// respectively. Consumers select additional modules by exact name in the result
+/// and publish [`BuildOutput::include`] under their own include aliases.
+/// No include aliases are emitted unless generation succeeds.
 /// Source admission, output ownership and filesystem failures retain the IDL
 /// toolchain's typed error. Each caller owns its generated files and must handle
 /// failure in its build script; no shared process state or Cargo `links` registry
 /// is introduced.
 pub fn build(request: SharedSources) -> Result<Vec<BuildOutput>, BuildError> {
     let modules = request.build()?;
-    for module in &modules {
-        println!(
-            "cargo::rustc-env=IDL_{}={}",
-            module.module_name.replace('.', "_").to_uppercase(),
-            module.include.display()
-        );
+    for (canonical, alias) in [
+        (Module::Renderer, "IDL_NEOCOGI_RENDERER"),
+        (Module::Audio, "IDL_NEOCOGI_AUDIO"),
+        (Module::Platform, "IDL_NEOCOGI_PLATFORM"),
+    ] {
+        if let Some(output) = modules.iter().find(|output| output.module_name == canonical.name()) {
+            println!("cargo::rustc-env={alias}={}", output.include.display());
+        }
     }
     Ok(modules)
 }

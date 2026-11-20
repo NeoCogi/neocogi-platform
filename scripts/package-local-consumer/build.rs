@@ -13,14 +13,21 @@ fn main() {
     let names: Vec<_> = graph["modules"].as_object().unwrap().keys().map(String::as_str).collect();
     assert_eq!(names, [Module::Audio.name()]);
 
-    let modules = sources(&[
+    let request = sources(&[
         (Module::Renderer, "local_projection::graphics"),
         (Module::Audio, "local_projection::sound"),
         (Module::Platform, "local_projection::host"),
     ])
-    .and_then(build)
-    .expect("generate build-only Platform projections");
+    .expect("prepare shared Platform sources")
+    .include_root("schemas")
+    .module("sample.a_b", "local_projection::first")
+    .module("sample_a.b", "local_projection::second");
+    let modules = build(request).expect("generate build-only projections");
     let audio = modules.iter().find(|module| module.module_name == Module::Audio.name()).unwrap();
     assert_eq!(audio.module_id, audio_only[0].module_id);
     assert_eq!(audio.abi_fingerprint, audio_only[0].abi_fingerprint);
+    for (name, alias) in [("sample.a_b", "LOCAL_FIRST_IDL"), ("sample_a.b", "LOCAL_SECOND_IDL")] {
+        let output = modules.iter().find(|module| module.module_name == name).unwrap();
+        println!("cargo::rustc-env={alias}={}", output.include.display());
+    }
 }

@@ -113,8 +113,9 @@ LLDB arguments; control characters and unsupported/corrupt metadata reject
 before output. This replaces the former Python debugger import hook.
 
 `package-consumer/` exercises local generation with a canonical import.
-`package-local-consumer/` generates all three namespaces with Contracts as a
-build-only dependency. Qualification copies both fixtures outside the checkout
+`package-local-consumer/` generates all three canonical namespaces with Contracts
+as a build-only dependency and includes two additional namespaces under explicit
+aliases. Qualification copies both fixtures outside the checkout
 before invoking Cargo there. `com_dependencies.rs` remains a Rust
 source helper for repository fixtures.
 

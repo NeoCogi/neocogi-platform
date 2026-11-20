@@ -11,6 +11,7 @@ fn main() {
     )
     .unwrap();
     let module = modules.iter().find(|module| module.module_name == "tests.typed_buffer").unwrap();
+    println!("cargo::rustc-env=IDL_TYPED_BUFFER_CONTRACTS={}", module.include.display());
     let syntax = syn::parse_file(&std::fs::read_to_string(&module.bindings).unwrap()).unwrap();
     let name = syntax
         .items

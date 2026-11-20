@@ -1,0 +1,8 @@
+/// Value owned by the second consumer module.
+struct SecondValue {
+    /// Sample payload.
+    value: u32,
+}
+
+/// Sample interface owned by this exact authored module.
+interface ISample {}

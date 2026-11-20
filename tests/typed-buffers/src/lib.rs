@@ -12,7 +12,7 @@ mod tests {
     /// Independently generated application definitions import the driver's existing Rust ABI.
     #[allow(dead_code)]
     pub(crate) mod typed_contracts {
-        include!(env!("IDL_TESTS_TYPED_BUFFER"));
+        include!(env!("IDL_TYPED_BUFFER_CONTRACTS"));
     }
     use typed_contracts::{IPoints, IPointsAbi, IPointsVtblFor, Point};
     include!(env!("IDL_TYPED_BUFFER_TRAIT"));

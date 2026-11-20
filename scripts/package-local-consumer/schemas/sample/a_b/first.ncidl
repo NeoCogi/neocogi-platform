@@ -1,0 +1,8 @@
+/// Value owned by the first consumer module.
+struct FirstValue {
+    /// Sample payload.
+    value: u32,
+}
+
+/// Sample interface owned by this exact authored module.
+interface ISample {}

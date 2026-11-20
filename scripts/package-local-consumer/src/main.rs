@@ -1,5 +1,5 @@
 //! Exercised on each qualified toolchain against the archived v3 provider.
-use neocogi_com_sdk::ComPtr;
+use neocogi_com_sdk::{ComInterface, ComPtr};
 
 extern crate self as local_projection;
 
@@ -21,9 +21,29 @@ mod host {
     include!(env!("IDL_NEOCOGI_PLATFORM"));
 }
 
+/// Consumer-owned declarations from `sample.a_b`.
+#[allow(dead_code)]
+mod first {
+    include!(env!("LOCAL_FIRST_IDL"));
+}
+
+/// Consumer-owned declarations from `sample_a.b`.
+#[allow(dead_code)]
+mod second {
+    include!(env!("LOCAL_SECOND_IDL"));
+}
+
 /// Loads only the trusted library supplied by the archive qualifier, then
 /// acquires the generated root and decodes data through its local audio ABI.
 fn main() {
+    assert!(option_env!("IDL_SAMPLE_A_B").is_none());
+    assert_eq!(first::MODULE_NAME, "sample.a_b");
+    assert_eq!(second::MODULE_NAME, "sample_a.b");
+    assert_ne!(first::MODULE_ID, second::MODULE_ID);
+    assert_ne!(first::ISampleAbi::IID, second::ISampleAbi::IID);
+    assert_eq!(first::FirstValue { value: 7 }.value, 7);
+    assert_eq!(second::SecondValue { value: 8 }.value, 8);
+
     let library = std::path::PathBuf::from(std::env::args_os().nth(1).expect("qualified platform library"));
     let runtime = neocogi_com_host::initialize_runtime();
     // SAFETY: The archive qualifier passes the library it built from the inspected shim.
