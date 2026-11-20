@@ -6,7 +6,7 @@ use neocogi_com_sdk::{ComRef, NcCopyFromBufferOffset, NcStatus};
 use wasm_bindgen::{JsCast, JsValue, closure::Closure};
 use web_sys::{Event, EventTarget, FocusEvent, HtmlCanvasElement, HtmlTextAreaElement, KeyboardEvent, PointerEvent, WheelEvent};
 use neocogi_platform::platform::wheel::{WheelAccumulator, WheelUnit};
-use super::gpu;
+use super::{browser::CanvasContent, gpu};
 
 /// One FIFO entry, including refusal at the position of a complete oversized commit.
 enum PendingInput {
@@ -160,11 +160,20 @@ impl BrowserInputHost {
                 if queue.borrow().pointer.is_some_and(|id| id != pointer.pointer_id()) {
                     return;
                 }
-                let Ok(coordinates) = CanvasCoordinates::observe(&canvas, &drawable) else {
+                let Ok(Some(coordinates)) = CanvasCoordinates::observe(&canvas, &drawable) else {
                     return;
                 };
-                let x = ((f64::from(pointer.client_x()) - coordinates.bounds.left()) * coordinates.scale[0]).round() as i32;
-                let y = ((f64::from(pointer.client_y()) - coordinates.bounds.top()) * coordinates.scale[1]).round() as i32;
+                // The pinned stable web-sys getter narrows the browser's viewport doubles to i32.
+                let [Some(client_x), Some(client_y)] = ["clientX", "clientY"].map(|property| {
+                    js_sys::Reflect::get(pointer.as_ref(), &JsValue::from_str(property))
+                        .ok()?
+                        .as_f64()
+                        .filter(|coordinate| coordinate.is_finite())
+                }) else {
+                    return;
+                };
+                let x = ((client_x - coordinates.origin[0]) * coordinates.scale[0]).round() as i32;
+                let y = ((client_y - coordinates.origin[1]) * coordinates.scale[1]).round() as i32;
                 if name == "pointerdown" {
                     if canvas.set_pointer_capture(pointer.pointer_id()).is_err() {
                         queue.borrow_mut().cancel();
@@ -226,7 +235,7 @@ impl BrowserInputHost {
                     2 => WheelUnit::Page,
                     _ => WheelUnit::Pixel,
                 };
-                let Ok(coordinates) = CanvasCoordinates::observe(&canvas, &drawable) else {
+                let Ok(Some(coordinates)) = CanvasCoordinates::observe(&canvas, &drawable) else {
                     return;
                 };
                 let mut queue = queue.borrow_mut();
@@ -350,10 +359,12 @@ impl BrowserInputHost {
             return Ok(());
         }
         if let Some(area) = area {
-            let coordinates = CanvasCoordinates::observe(canvas, &self.drawable)?;
+            let Some(coordinates) = CanvasCoordinates::observe(canvas, &self.drawable)? else {
+                return Ok(());
+            };
             let style = self.text.style();
-            let _ = style.set_property("left", &format!("{}px", coordinates.bounds.left() + f64::from(area.x) / coordinates.scale[0]));
-            let _ = style.set_property("top", &format!("{}px", coordinates.bounds.top() + f64::from(area.y) / coordinates.scale[1]));
+            let _ = style.set_property("left", &format!("{}px", coordinates.origin[0] + f64::from(area.x) / coordinates.scale[0]));
+            let _ = style.set_property("top", &format!("{}px", coordinates.origin[1] + f64::from(area.y) / coordinates.scale[1]));
             let _ = style.set_property("height", &format!("{}px", f64::from(area.height) / coordinates.scale[1]));
             if !on_text {
                 let _ = self.text.focus();
@@ -367,10 +378,10 @@ impl BrowserInputHost {
     }
 }
 
-/// One observation pairs the CSS bounding rectangle with the actual drawable.
+/// One observation pairs the visible CSS content with the actual drawable.
 struct CanvasCoordinates {
-    /// CSS position and dimensions used for both directions of conversion.
-    bounds: web_sys::DomRect,
+    /// Viewport CSS origin used for both directions of conversion.
+    origin: [f64; 2],
     /// Width and height in drawing-buffer pixels, also used for page scrolling.
     extent: [f64; 2],
     /// Physical pixels per CSS pixel on the two axes.
@@ -379,15 +390,18 @@ struct CanvasCoordinates {
 
 impl CanvasCoordinates {
     /// Reads both coordinate spaces without resizing or acquiring the drawable.
-    fn observe(canvas: &HtmlCanvasElement, drawable: &gpu::Core) -> Result<Self, NcStatus> {
+    /// An empty or unavailable content box has no position conversion.
+    fn observe(canvas: &HtmlCanvasElement, drawable: &gpu::Core) -> Result<Option<Self>, NcStatus> {
         let size = drawable.drawable_size().map_err(|_| PLATFORM_E_BACKEND)?;
         if size.width <= 0 || size.height <= 0 {
             return Err(PLATFORM_E_BACKEND);
         }
         let extent = [f64::from(size.width), f64::from(size.height)];
-        let bounds = canvas.get_bounding_client_rect();
-        let scale = [extent[0] / bounds.width().max(1.0), extent[1] / bounds.height().max(1.0)];
-        Ok(Self { bounds, extent, scale })
+        let Some(content) = CanvasContent::measure(canvas).filter(|content| !content.extent.contains(&0.0)) else {
+            return Ok(None);
+        };
+        let scale = [extent[0] / content.extent[0], extent[1] / content.extent[1]];
+        Ok(Some(Self { origin: content.origin, extent, scale }))
     }
 }
 

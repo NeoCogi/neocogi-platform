@@ -46,10 +46,23 @@ returns an owned `NC_E_INVALID_ARG` failure before its clear/draw. Recording is
 never reinterpreted at a substituted extent. The callback's own resize is not
 rolled back; the next submission uses the new size. Unchanged-size queries remain
 available during preparation.
-On WebGL, CSS size and device scale set the requested canvas attributes.
+On WebGL, the displayed canvas content box and device scale set the requested
+canvas attributes. Browser input uses that box's viewport origin and fractional
+extent. The host accounts for CSS border, padding, box sizing, scroll, and
+positive axis-aligned scaling and translation when measuring the content.
+Keep both CSS layout dimensions independent of the backing attributes so a
+backing resize cannot change the next layout measurement. This mapping assumes
+content that fills the box and a viewport-fixed textarea. Rotation, skew, and
+alternate object fitting require different geometry. An empty content box
+skips positional conversion. A captured pointer can report signed positions
+outside a nonempty box, and fractional viewport coordinates are kept until
+conversion to drawing-buffer pixels.
+
 The context's actual drawing buffer governs window and framebuffer size,
 submission, and browser pointer, wheel, and text-input coordinates. An allocation
 clamped by the browser keeps all of those operations in the same pixel space.
+Pointer, wheel, and text-input placement observe layout without resizing the
+drawing buffer.
 
 Vulkan window and framebuffer queries use the surface's fixed extent when
 specified. Variable extents clamp SDL's physical size to the advertised range.

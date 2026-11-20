@@ -1,7 +1,7 @@
 //! DOM construction and input implement the same platform contracts as the native SDL assembly.
 use super::*;
 use wasm_bindgen::JsCast;
-use web_sys::HtmlCanvasElement;
+use web_sys::{CssStyleDeclaration, HtmlCanvasElement};
 
 impl PlatformObject {
     /// Allocates an independent canvas for each COM window; no two devices accidentally share
@@ -103,12 +103,62 @@ impl IPlatformWindow for WindowObject {
     }
 }
 
-/// Updates requested canvas attributes from CSS and device scale. The active
-/// WebGL context independently reports what drawing buffer it could allocate.
+/// Visible canvas content measured in fractional viewport CSS pixels.
+pub(super) struct CanvasContent {
+    /// Viewport location of the top-left content edge.
+    pub(super) origin: [f64; 2],
+    /// Displayed content size after axis-aligned translation and positive scaling.
+    pub(super) extent: [f64; 2],
+}
+
+impl CanvasContent {
+    /// Observes the layout and viewport boxes without changing the canvas backing.
+    pub(super) fn measure(canvas: &HtmlCanvasElement) -> Option<Self> {
+        let bounds = canvas.get_bounding_client_rect();
+        let mut content = Self {
+            origin: [bounds.left(), bounds.top()],
+            extent: [bounds.width(), bounds.height()],
+        };
+        if content.extent == [0.0, 0.0] {
+            return Some(content);
+        }
+        let style = web_sys::window()?.get_computed_style(canvas).ok()??;
+        let border_box = style.get_property_value("box-sizing").ok()? == "border-box";
+        for (axis, [size, start_border, start_padding, end_border, end_padding]) in [
+            ["width", "border-left-width", "padding-left", "border-right-width", "padding-right"],
+            ["height", "border-top-width", "padding-top", "border-bottom-width", "padding-bottom"],
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let start = css_pixels(&style, start_border)? + css_pixels(&style, start_padding)?;
+            let end = css_pixels(&style, end_border)? + css_pixels(&style, end_padding)?;
+            let used = css_pixels(&style, size)?;
+            let layout_content = if border_box { (used - start - end).max(0.0) } else { used };
+            let layout_border = start + layout_content + end;
+            // The border rectangle includes ancestor scaling. Apply its axis ratio to the insets
+            // and content size together so they share the pointer and textarea's viewport space.
+            let scale = if layout_border > 0.0 { content.extent[axis] / layout_border } else { 0.0 };
+            content.origin[axis] += start * scale;
+            content.extent[axis] = layout_content * scale;
+        }
+        Some(content)
+    }
+}
+
+/// Reads one resolved, nonnegative layout length in CSS pixels.
+fn css_pixels(style: &CssStyleDeclaration, property: &str) -> Option<f64> {
+    let value = style.get_property_value(property).ok()?;
+    let pixels = value.strip_suffix("px")?.parse::<f64>().ok()?;
+    (pixels.is_finite() && pixels >= 0.0).then_some(pixels)
+}
+
+/// Requests a backing from the displayed content and device scale. The WebGL
+/// context independently reports the drawing-buffer size it could allocate.
 pub(super) fn resize(canvas: &HtmlCanvasElement) {
+    let Some(content) = CanvasContent::measure(canvas) else { return };
     let scale = web_sys::window().map(|window| window.device_pixel_ratio()).unwrap_or(1.0);
-    let width = (f64::from(canvas.client_width()) * scale).round().clamp(1.0, f64::from(i32::MAX)) as u32;
-    let height = (f64::from(canvas.client_height()) * scale).round().clamp(1.0, f64::from(i32::MAX)) as u32;
+    let [width, height] = content.extent.map(|extent| (extent * scale).round().clamp(1.0, f64::from(i32::MAX)) as u32);
     if canvas.width() != width {
         canvas.set_width(width);
     }

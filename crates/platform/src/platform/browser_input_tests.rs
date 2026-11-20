@@ -13,6 +13,9 @@ use wasm_bindgen::prelude::*;
 
 use neocogi_platform::gpu::testing::{derivatives, sampled};
 
+#[path = "browser_geometry_tests.rs"]
+mod geometry_tests;
+
 #[com_object(interfaces(IRenderStream))]
 /// Browser-owned sealed contributions exercise the same generated COM path as native applications.
 struct SurfaceBlocks {
@@ -171,7 +174,10 @@ fn clamped_drawing_buffer_uses_physical_coordinates() {
     let mut limits = [0; 2];
     // SAFETY: This test reads the viewport limits of the live owning context.
     unsafe { gl.get_parameter_i32_slice(glow::MAX_VIEWPORT_DIMS, &mut limits) };
-    canvas.style().set_css_text(&format!("width:64px;height:{}px", limits[1] + 8));
+    let content_height = limits[1] + 8;
+    canvas
+        .style()
+        .set_css_text(&format!("width:64px;height:{content_height}px;border:3px solid black;padding:9px"));
     let window: ComPtr<IPlatformWindowAbi> = WindowObject::from_value(object).query().unwrap();
     let actual = core.drawable_size().unwrap();
     let size = window.size().unwrap();
@@ -223,12 +229,13 @@ fn clamped_drawing_buffer_uses_physical_coordinates() {
     observations.borrow_mut().clear();
     let bounds = canvas.get_bounding_client_rect();
     let pointer_y = (bounds.top() + bounds.height() * 0.75).round();
-    let scale = f64::from(size.height) / bounds.height();
+    let content_top = bounds.top() + 12.0;
+    let scale = f64::from(size.height) / f64::from(content_height);
     exercise(canvas.unchecked_ref(), "scaled-drawable");
     while window.poll(sink.as_com_ref()).unwrap() == PollStatus::Event {}
     assert!(matches!(observations.borrow().as_slice(), [
         (UiInput::Pointer(Point { y, .. }), _), (UiInput::Scroll(Point { x: 0, y: scroll }), _),
-    ] if *y == ((pointer_y - bounds.top()) * scale).round() as i32 && *scroll == size.height));
+    ] if *y == ((pointer_y - content_top) * scale).round() as i32 && *scroll == size.height));
 
     canvas.focus().unwrap();
     let height = size.height / 2;
@@ -236,6 +243,8 @@ fn clamped_drawing_buffer_uses_physical_coordinates() {
     let applied = text.style().get_property_value("height").unwrap();
     let applied = applied.trim_end_matches("px").parse::<f64>().unwrap();
     assert!((applied - f64::from(height) / scale).abs() < 0.02);
+    let top = text.style().get_property_value("top").unwrap();
+    assert!((top.trim_end_matches("px").parse::<f64>().unwrap() - content_top).abs() < 0.02);
 }
 
 #[com_object(interfaces(IRenderStream))]
@@ -980,6 +989,7 @@ pub async fn run_platform_input_tests() {
     browser_text_commit_limit_through_com();
     canonical_browser_derivatives().await;
     browser_surface_targets();
+    geometry_tests::canvas_content_coordinates_through_com();
     clamped_drawing_buffer_uses_physical_coordinates();
     drawable_loss_keeps_render_diagnostics();
     restoration_requires_a_fresh_driver().await;
