@@ -151,7 +151,8 @@ fn store_source(value: StoreValue, target: StoreTarget, conditional: bool) -> St
         "(struct Row (values (array vec4 1)))
          (fn later ((unused (array vec4 1)) (x f32)) (returns i32)
            (let width (fwidth x))
-           (return (i32 width)))".into()
+           (return (i32 width)))"
+            .into()
     } else {
         String::new()
     };
@@ -163,7 +164,11 @@ fn store_source(value: StoreValue, target: StoreTarget, conditional: bool) -> St
         StoreTarget::Folded(_) => "(index slots (pick slots (. p x)))".into(),
         StoreTarget::Nested | StoreTarget::InvalidAncestor => {
             locals = "(var slots (array Row 1)) (var arg (array vec4 1))";
-            let first = if matches!(target, StoreTarget::Nested) { "(i32 (dpdy (. p y)))" } else { "-1" };
+            let first = if matches!(target, StoreTarget::Nested) {
+                "(i32 (dpdy (. p y)))"
+            } else {
+                "-1"
+            };
             format!("(index (. (index slots {first}) values) (later arg (. p x)))")
         }
     };
@@ -171,9 +176,11 @@ fn store_source(value: StoreValue, target: StoreTarget, conditional: bool) -> St
     if conditional {
         statement = format!("(if (> (. p x) 0.0) (then {statement}))");
     }
-    format!("(module {value_declarations} {path_declarations}
+    format!(
+        "(module {value_declarations} {path_declarations}
       (fragment fs ((p vec4 (builtin position))) (returns vec4 (location 0))
-        {locals} {statement} (return (vec4 0.0))))")
+        {locals} {statement} (return (vec4 0.0))))"
+    )
 }
 
 /// Includes the concrete fast path, two dynamic failure boundaries and a statically failed ancestor.
@@ -195,7 +202,10 @@ fn compile_store(target: ShaderTarget, source: &str) -> ComPtr<IShaderCompilatio
         .create(target)
         .unwrap()
         .compile_result(
-            ShaderCompileRequest { stage: GpuShaderStage::Fragment, max_output_bytes: MAX_SHADER_ARTIFACT_BYTES as u64 },
+            ShaderCompileRequest {
+                stage: GpuShaderStage::Fragment,
+                max_output_bytes: MAX_SHADER_ARTIFACT_BYTES as u64,
+            },
             NcCopyFromBufferOffset::new(0, source.as_bytes()),
             NcCopyFromBufferOffset::new(0, b"fs"),
         )
@@ -361,7 +371,11 @@ fn helper_boundaries_pass_native_wgsl_validation() {
 #[test]
 #[ignore = "requires a native WGPU adapter"]
 fn indexed_stores_pass_native_wgsl_validation() {
-    validate_native_wgsl(STORE_CASES.into_iter().map(|(value, path)| store_artifact(ShaderTarget::Wgsl, &store_source(value, path, false))));
+    validate_native_wgsl(
+        STORE_CASES
+            .into_iter()
+            .map(|(value, path)| store_artifact(ShaderTarget::Wgsl, &store_source(value, path, false))),
+    );
 }
 
 #[cfg(feature = "vulkan")]
@@ -399,13 +413,20 @@ mod spv {
         let code = instructions(words);
         let entry = code.iter().find(|instruction| instruction.op == Op::EntryPoint as u32).unwrap().args[1];
         let function = |id| {
-            let start = code.iter().position(|instruction| instruction.op == Op::Function as u32 && instruction.args[1] == id).unwrap();
+            let start = code
+                .iter()
+                .position(|instruction| instruction.op == Op::Function as u32 && instruction.args[1] == id)
+                .unwrap();
             let len = code[start..].iter().position(|instruction| instruction.op == Op::FunctionEnd as u32).unwrap();
             &code[start..start + len]
         };
         // The native entry wrapper calls the selected source function. Check there so a call
         // inside a transitively derivative-dependent helper cannot satisfy the RHS assertion.
-        let source = function(entry).iter().find(|instruction| instruction.op == Op::FunctionCall as u32).unwrap().args[2];
+        let source = function(entry)
+            .iter()
+            .find(|instruction| instruction.op == Op::FunctionCall as u32)
+            .unwrap()
+            .args[2];
         let code = function(source);
         let position = |op: Op| code.iter().position(|instruction| instruction.op == op as u32);
         let rhs_op = match value {
@@ -435,7 +456,10 @@ mod spv {
                 assert_eq!(code[guard + 1].op, Op::Label as u32);
                 assert_eq!(code[guard + 1].args[0], code[guard].args[1]);
                 let merge = code[guard].args[2];
-                let end = code.iter().position(|instruction| instruction.op == Op::Label as u32 && instruction.args[0] == merge).unwrap();
+                let end = code
+                    .iter()
+                    .position(|instruction| instruction.op == Op::Label as u32 && instruction.args[0] == merge)
+                    .unwrap();
                 assert!(pointer + 1 < end);
             }
         }

@@ -339,7 +339,11 @@ impl Rewrite<'_> {
                 let (prefix, index) = self.expression(index, scope);
                 output.extend(prefix);
                 // A helper may leave a constant after its required prefix has run.
-                let index = if access::constant_index(&index).is_some() { index } else { self.capture(index, output) };
+                let index = if access::constant_index(&index).is_some() {
+                    index
+                } else {
+                    self.capture(index, output)
+                };
                 ExprKind::Index(Box::new(base), Box::new(index), *count)
             }
             _ => unreachable!("validated mutable declaration path"),
@@ -379,7 +383,11 @@ impl Rewrite<'_> {
                     let (before, value) = self.expression(value, scope);
                     output.extend(before);
                     let path = access::path(target).expect("validated mutable declaration path");
-                    let value = if path.needs_store_preparation() { self.capture(value, &mut output) } else { value };
+                    let value = if path.needs_store_preparation() {
+                        self.capture(value, &mut output)
+                    } else {
+                        value
+                    };
                     let target = self.lvalue(target, scope, &mut output);
                     output.push(Stmt::Store(target, value));
                 }
