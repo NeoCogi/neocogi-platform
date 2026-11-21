@@ -8,7 +8,7 @@ use sdl2::{
     mouse::{MouseButton, MouseWheelDirection},
 };
 
-/// One native transition, with owned text only for an actual SDL text commit.
+/// One native transition, with owned text only for an actual SDL text packet.
 enum Transition {
     /// A copied input event plus its complete UTF-8 argument.
     Input(UiInput, String),
@@ -114,8 +114,7 @@ impl InputState {
                 }
                 return Ok(Transition::Input(UiInput::Text, text));
             }
-            // TextEditing is a composition preview, never committed editor content. SDL owns it
-            // until TextInput; forwarding both would duplicate or prematurely publish IME text.
+            // SDL owns its preedit preview. TextInput supplies the committed UTF-8 packets.
             _ => return Ok(Transition::Ignore),
         };
         Ok(Transition::Input(input, String::new()))

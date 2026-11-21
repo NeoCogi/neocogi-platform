@@ -26,8 +26,11 @@ scalar/function values and unknown modifier bits return `NC_E_INVALID_ARG`
 before input delivery. Key identity describes shortcuts; committed text still
 arrives separately through `UiInput::Text`, including IME and paste.
 
-The platform admits up to 4 MiB of UTF-8 per complete commit. A larger commit
-is discarded as a unit. Its position in the input queue returns
+Each text event atomically carries a complete UTF-8 payload of up to 4 MiB.
+Browser input can deliver a complete DOM insertion. SDL2 delivers individual
+text packets of at most 31 bytes, with no grouping for an original native IME
+insertion. Each packet is admitted independently. A larger payload is discarded
+as a unit. Its position in the input queue returns
 `PLATFORM_E_INPUT_LIMIT` (`-1008`) from `window.poll()` without invoking the
 input sink. Continue polling to receive subsequent transitions.
 
@@ -42,7 +45,7 @@ The delivered key and modifier snapshot remain logical. Presses and releases
 with no physical identity may still deliver logical input. They cannot authorize
 repeats during recovery, and a suppressed browser repeat loses its text default.
 The Platform resets its wheel state and any active browser composition before
-the callback. SDL owns native IME preedit. Complete SDL commits delivered after
+the callback. SDL owns native IME preedit. SDL text packets delivered after
 recovery are admitted as new standalone transitions.
 An attempted cancel is consumed even if the input sink reports failure. The
 entry and byte limits cover Platform queues, with one detached transition in delivery.

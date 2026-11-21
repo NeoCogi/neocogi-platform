@@ -100,13 +100,15 @@ enum UiInput: u8 {
     Scroll(Point),
     /// Complete key identity, state, and modifiers.
     Key(KeyStroke),
-    /// Complete UTF-8 commit of at most 4 MiB in the accompanying text argument.
+    /// Complete UTF-8 payload of at most 4 MiB in the accompanying text argument.
+    /// SDL2 sends one text packet without the original IME transaction boundary.
+    /// The browser can send a complete DOM commit.
     Text,
 }
 
 /// Synchronous normalized-input destination implemented by a UI runtime or application adapter.
 interface IInputSink {
-    /// Copies one ordered event. Text requires at most 4 MiB of complete UTF-8 at offset zero. Every other event
+    /// Copies one ordered event. Text carries at most 4 MiB of complete UTF-8 at offset zero. Every other event
     /// requires an empty text argument. The platform borrows this interface only during polling.
     fn input(&self, event: UiInput, text: &[u8]) -> Result<()>;
 }

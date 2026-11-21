@@ -15,8 +15,10 @@ interface IPlatformWindow {
     /// Removes one relevant transition and borrows the destination for synchronous delivery.
     /// A failed delivery consumes the attempted event; later events remain queued. Recursive
     /// polling of this window returns Busy. The destination is never retained by the platform.
-    /// A text commit over 4 MiB returns PLATFORM_E_INPUT_LIMIT at its queue position without
+    /// A UTF-8 text payload over 4 MiB returns PLATFORM_E_INPUT_LIMIT at its queue position without
     /// calling the destination. Later transitions remain available on subsequent polls.
+    /// Each SDL2 text packet is admitted separately, with no native IME transaction grouping.
+    /// A complete browser DOM commit can be admitted as one event.
     /// The per-window backlog admits 4096 entries and up to 8 MiB of owned text payload.
     /// Overflow retains the queued prefix and discards incoming input until an ordered UiInput::Cancel.
     /// Native close and quit preserve their position even when ordinary input is full.

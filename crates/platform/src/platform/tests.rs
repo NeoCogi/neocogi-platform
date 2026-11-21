@@ -4,6 +4,7 @@ use super::*;
 use neocogi_com_sdk::ComBox;
 use neocogi_platform::gpu::source::{Bytes, PipelineDesc};
 
+mod input_text;
 mod keyboard;
 mod owned_errors;
 mod surface_targets;
@@ -22,7 +23,7 @@ pub(super) fn native_session() -> std::sync::MutexGuard<'static, ()> {
     NATIVE_SESSION.lock().expect("earlier native fixture panicked")
 }
 
-/// Submit one complete short UTF-8 commit through SDL's real process event queue.
+/// Submit one bounded UTF-8 text packet through SDL's real process event queue.
 fn push_sdl_text(window_id: u32, value: &str) {
     assert!(value.len() < 32);
     let mut bytes = [0; 32];

@@ -5,7 +5,7 @@ use std::collections::VecDeque;
 
 /// Maximum queued ordinary entries, excluding the reserved overflow and native close signals.
 pub(super) const MAX_ENTRIES: usize = 4096;
-/// Maximum retained text storage. Two maximum complete commits can be queued at once.
+/// Maximum retained text storage. Two maximum text payloads can be queued at once.
 const MAX_TEXT_BYTES: usize = 2 * MAX_TEXT_INPUT_BYTES;
 /// Maximum simultaneous fresh keys remembered for repeat recovery.
 const MAX_TRACKED_KEYS: usize = 256;
