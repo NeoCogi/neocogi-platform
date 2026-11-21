@@ -65,13 +65,14 @@ All four are below 512 KiB. Source-archive screenshots do not enter the native l
 
 ## Build as a dependency
 
-Declare the deployment artifact from a Platform checkout that pins COM
+Declare the Platform `0.4.0-alpha.1` deployment artifact, which uses COM
 `0.4.0-alpha.2`. Use a separate build package when the application's graph
-should contain only contracts:
+should contain only contracts. For a source build, use the matching Platform
+checkout as a path dependency at `crates/platform-dylib`.
 
 ```toml
 [dependencies]
-neocogi-platform-dylib = { path = "../neocogi-platform/crates/platform-dylib" }
+neocogi-platform-dylib = "=0.4.0-alpha.1"
 ```
 
 Then build the dependency's normal library and deploy it:
@@ -88,11 +89,13 @@ with `-p` as above and choose the target and profile for your deployment.
 ## Load it from an application
 
 The dynamic host needs the shared contracts and COM host, with no renderer SDK
-dependency. For the default Glow library built above:
+dependency. For a source build, use the same Platform checkout as a path
+dependency at `crates/platform-contracts`. The default Glow library built above
+uses the following registry dependencies.
 
 ```toml
 [dependencies]
-neocogi-platform-contracts = { path = "../neocogi-platform/crates/platform-contracts", default-features = false }
+neocogi-platform-contracts = { version = "=0.4.0-alpha.1", default-features = false }
 neocogi-com-sdk = { version = "=0.4.0-alpha.2", default-features = false, features = ["std", "runtime"] }
 neocogi-com-host = { version = "=0.4.0-alpha.2", default-features = false }
 ```

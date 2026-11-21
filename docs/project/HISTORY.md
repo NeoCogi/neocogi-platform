@@ -1,4 +1,12 @@
-# Unreleased
+# 0.4.0-alpha.1
+
+The contracts, renderer SDK and shared-library shim advance together to
+`0.4.0-alpha.1`. The tag `v0.4.0-alpha.1` identifies the source release.
+
+Renderer resource ownership is now explicit in `IRenderResourceGroup` and
+`IRenderResourceGroupFactory::create_group`. These replace the render client
+domain and factory. View coordinates now use `RenderViewRoot.local` and
+`RenderViewInfo.root`.
 
 ## COM/IDL 0.4.0-alpha.2
 
@@ -15,6 +23,27 @@ exports `nc_get_plugin_descriptor_v3`. Provisional ABI v3 uses core generation
 the complete composition. IDL encoding v14 and NCB documents at wire version 1
 retain their formats. Host snapshot/restore still requires an explicitly
 registered or loaded `nc.serialization` provider.
+
+## Input and clipboard
+
+Text commits carry at most four MiB of UTF-8. The native host delivers each SDL2
+text packet independently. Each window has a bounded input queue and reports an
+ordered cancel after overflow so consumers can reset held input.
+
+Retained clipboard capabilities release application windows independently.
+X11 can service clipboard transfers independently of SDL event polling, and
+Win32 receipts report native Unicode text transfer results before delivering
+completion. SDL2 Wayland writes fail explicitly because the backend cannot
+confirm publication.
+
+## Rendering and tools
+
+Shader writes preserve operand evaluation order across indexed stores.
+Backends report frame retirement failures, and WebGL context loss retires
+its device generation. The glTF examples validate finite camera and scene
+samples and honor mirrored transforms and opaque double-sided materials.
+Archive qualification builds independent COM callers from the extracted
+packages, and the native profiler verifies the artifacts it measures.
 
 # 0.3.0-alpha.2
 
