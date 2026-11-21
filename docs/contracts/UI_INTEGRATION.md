@@ -35,8 +35,12 @@ Each Platform window route can retain 4,096 ordinary transitions and 8 MiB of ow
 queued text. The first overflow reserves one `UiInput::Cancel` after the admitted
 prefix. Input arriving before that cancellation is dequeued is discarded on that
 route. Native close and quit keep their insertion position in reserved storage.
-On cancellation, clear held input and resume admitting new transitions. Pointer
-gestures need a fresh down and keyboard repeats need a fresh press of that key.
+On overflow cancellation, clear held input and resume admitting new transitions.
+Pointer gestures need a fresh down. A repeat needs a fresh admitted press of the
+same physical key, identified by SDL's scancode or the browser's bounded DOM code.
+The delivered key and modifier snapshot remain logical. Presses and releases
+with no physical identity may still deliver logical input. They cannot authorize
+repeats during recovery, and a suppressed browser repeat loses its text default.
 The Platform resets its wheel state and any active browser composition before
 the callback. SDL owns native IME preedit. Complete SDL commits delivered after
 recovery are admitted as new standalone transitions.

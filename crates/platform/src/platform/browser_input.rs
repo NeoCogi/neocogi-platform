@@ -47,19 +47,14 @@ struct InputQueue {
     wheel: WheelAccumulator,
     /// Composition owns the textarea until its final DOM value is available.
     composition: Composition,
-    /// Records fresh logical presses only after backlog loss.
-    keys: KeyRecovery,
+    /// Bounded DOM physical key identities admitted since backlog loss.
+    keys: KeyRecovery<Box<str>>,
 }
 
 impl InputQueue {
     /// Reports admission. Adjacent pointer positions can share one slot within an uninterrupted run.
     fn push(&mut self, event: UiInput) -> bool {
         if self.events.saturated() {
-            return false;
-        }
-        if let UiInput::Key(stroke) = event
-            && !self.keys.accepts(stroke)
-        {
             return false;
         }
         if matches!(event, UiInput::Pointer(_))
@@ -71,9 +66,27 @@ impl InputQueue {
         self.events.push(PendingInput::Event { event, text: Box::default() }, 0)
     }
 
+    /// Admits logical key input and records a down only if it reached the queue.
+    fn push_key(&mut self, stroke: KeyStroke, physical: Option<Box<str>>) -> bool {
+        if matches!(stroke.action, KeyAction::Pressed { repeat: true }) && !self.keys.allows_repeat(physical.as_ref()) {
+            return false;
+        }
+        let admitted = self.push(UiInput::Key(stroke));
+        if admitted && matches!(stroke.action, KeyAction::Pressed { repeat: false }) {
+            self.keys.press(physical);
+        }
+        admitted
+    }
+
     /// Revokes local gesture state and appends an ordered core cancellation.
     fn cancel(&mut self) {
-        if !self.events.push(PendingInput::Event { event: UiInput::Cancel, text: Box::default() }, 0) {
+        if !self.events.push(
+            PendingInput::Event {
+                event: UiInput::Cancel,
+                text: Box::default(),
+            },
+            0,
+        ) {
             return;
         }
         self.pointer = None;
@@ -99,6 +112,20 @@ impl InputQueue {
     }
 }
 
+/// Reads a bounded DOM physical key code before converting it to Rust-owned storage.
+fn physical_code(keyboard: &KeyboardEvent) -> Option<Box<str>> {
+    const MAX_CODE_BYTES: u32 = 64;
+    let value = js_sys::Reflect::get(keyboard.as_ref(), &JsValue::from_str("code"))
+        .ok()?
+        .dyn_into::<js_sys::JsString>()
+        .ok()?;
+    if !(1..=MAX_CODE_BYTES).contains(&value.length()) {
+        return None;
+    }
+    let code = value.as_string()?;
+    (code != "Unidentified" && code.bytes().all(|byte| byte.is_ascii_alphanumeric())).then(|| code.into_boxed_str())
+}
+
 /// Transfer a complete DOM commit with bounded retained storage and no queue borrow across JS.
 fn commit_text(queue: &RefCell<InputQueue>, text: &HtmlTextAreaElement) {
     if queue.borrow().events.saturated() {
@@ -120,7 +147,13 @@ fn commit_text(queue: &RefCell<InputQueue>, text: &HtmlTextAreaElement) {
         queue.borrow_mut().events.push(PendingInput::TextLimit, 0);
     } else if !value.is_empty() {
         let size = value.len();
-        queue.borrow_mut().events.push(PendingInput::Event { event: UiInput::Text, text: value.into_boxed_str() }, size);
+        queue.borrow_mut().events.push(
+            PendingInput::Event {
+                event: UiInput::Text,
+                text: value.into_boxed_str(),
+            },
+            size,
+        );
     }
 }
 
@@ -317,17 +350,23 @@ impl BrowserInputHost {
                 let text = host.text.clone();
                 host.listen(&target, name, move |event| {
                     let Some(keyboard) = event.dyn_ref::<KeyboardEvent>() else { return };
+                    let pressed = name == "keydown";
+                    let recovering = queue.borrow().keys.recovering();
+                    let physical = if recovering { physical_code(keyboard) } else { None };
+                    if !pressed {
+                        // A composition-suppressed or unmappable release still ends the physical hold.
+                        queue.borrow_mut().keys.release(physical.as_ref());
+                    }
                     if keyboard.is_composing() || keyboard.key_code() == 229 || queue.borrow().composition == Composition::Active {
                         return;
                     }
                     if let Some(key) = map_key(&keyboard.key()) {
-                        let pressed = name == "keydown";
                         let transition = KeyStroke {
                             key,
                             action: if pressed { KeyAction::Pressed { repeat: keyboard.repeat() } } else { KeyAction::Released },
                             modifiers: map_modifiers(keyboard),
                         };
-                        let admitted = queue.borrow_mut().push(UiInput::Key(transition));
+                        let admitted = queue.borrow_mut().push_key(transition, physical);
                         let editable = event.target().is_some_and(|target| target == EventTarget::from(text.clone()));
                         let printable = matches!(key, KeyCode::Character(_) | KeyCode::Space);
                         // Clipboard and history shortcuts belong to the retained editor. Suppress
@@ -439,7 +478,10 @@ impl BrowserInputHost {
             let _ = self.canvas.release_pointer_capture(pointer);
         }
         self.text.set_value("");
-        Some(PendingInput::Event { event: UiInput::Cancel, text: Box::default() })
+        Some(PendingInput::Event {
+            event: UiInput::Cancel,
+            text: Box::default(),
+        })
     }
 
     /// Test observations consume the same ordered queue used by COM polling.

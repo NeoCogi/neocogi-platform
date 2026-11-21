@@ -1,6 +1,6 @@
 //! Fixed admission policy for retained per-window delivery.
 
-use neocogi_platform::render::platform::{KeyAction, KeyCode, KeyStroke, MAX_TEXT_INPUT_BYTES};
+use neocogi_platform::render::platform::MAX_TEXT_INPUT_BYTES;
 use std::collections::VecDeque;
 
 /// Maximum queued ordinary entries, excluding the reserved overflow and native close signals.
@@ -30,7 +30,11 @@ pub(super) struct Backlog<T> {
 
 impl<T> Default for Backlog<T> {
     fn default() -> Self {
-        Self { entries: VecDeque::new(), text_bytes: 0, saturated: false }
+        Self {
+            entries: VecDeque::new(),
+            text_bytes: 0,
+            saturated: false,
+        }
     }
 }
 
@@ -76,36 +80,50 @@ impl<T> Backlog<T> {
 }
 
 /// Once history was lost, only repeats paired with a new admitted press reach the input sink.
-#[derive(Default)]
-pub(super) struct KeyRecovery {
-    /// Absent on the ordinary path. The fixed limit also bounds synthetic distinct logical keys.
-    fresh: Option<Vec<KeyCode>>,
+pub(super) struct KeyRecovery<K> {
+    /// Absent on the ordinary path. The fixed limit bounds distinct physical identities.
+    fresh: Option<Vec<K>>,
 }
 
-impl KeyRecovery {
+impl<K> Default for KeyRecovery<K> {
+    fn default() -> Self {
+        Self { fresh: None }
+    }
+}
+
+impl<K: Eq> KeyRecovery<K> {
     /// Forget every press from the discarded input history.
     pub(super) fn reset(&mut self) {
         self.fresh.get_or_insert_default().clear();
     }
 
-    /// Admit a key or suppress a repeat belonging to history before the last reset.
-    pub(super) fn accepts(&mut self, stroke: KeyStroke) -> bool {
-        let Some(fresh) = &mut self.fresh else { return true };
-        let index = fresh.iter().position(|key| *key == stroke.key);
-        match stroke.action {
-            KeyAction::Pressed { repeat: true } => index.is_some(),
-            KeyAction::Pressed { repeat: false } => {
-                if index.is_none() && fresh.len() < MAX_TRACKED_KEYS {
-                    fresh.push(stroke.key);
-                }
-                true
-            }
-            KeyAction::Released => {
-                if let Some(index) = index {
-                    fresh.swap_remove(index);
-                }
-                true
-            }
+    /// Whether the adapter needs to acquire a physical identity for the next key event.
+    #[cfg(target_arch = "wasm32")]
+    pub(super) fn recovering(&self) -> bool {
+        self.fresh.is_some()
+    }
+
+    /// Only an admitted fresh press can authorize a repeat after reset.
+    pub(super) fn allows_repeat(&self, key: Option<&K>) -> bool {
+        self.fresh.as_ref().is_none_or(|fresh| key.is_some_and(|key| fresh.contains(key)))
+    }
+
+    /// Records a known physical down after it is admitted to the logical delivery path.
+    pub(super) fn press(&mut self, key: Option<K>) {
+        if let (Some(fresh), Some(key)) = (&mut self.fresh, key)
+            && fresh.len() < MAX_TRACKED_KEYS
+            && !fresh.contains(&key)
+        {
+            fresh.push(key);
+        }
+    }
+
+    /// Forgets the physical key even when the adapter cannot produce a logical release.
+    pub(super) fn release(&mut self, key: Option<&K>) {
+        if let (Some(fresh), Some(key)) = (&mut self.fresh, key)
+            && let Some(index) = fresh.iter().position(|candidate| candidate == key)
+        {
+            fresh.swap_remove(index);
         }
     }
 }
@@ -113,6 +131,28 @@ impl KeyRecovery {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Overflow recovery stays bounded and permits repeats only while a tracked key is held.
+    #[test]
+    fn physical_repeat_recovery_stays_bounded() {
+        let mut keys = KeyRecovery::default();
+        assert!(keys.allows_repeat(None));
+        keys.reset();
+        keys.press(None);
+        assert!(!keys.allows_repeat(None));
+        for key in 0..MAX_TRACKED_KEYS {
+            keys.press(Some(key));
+            assert!(keys.allows_repeat(Some(&key)));
+        }
+        keys.press(Some(MAX_TRACKED_KEYS));
+        assert!(!keys.allows_repeat(Some(&MAX_TRACKED_KEYS)));
+        keys.release(Some(&1));
+        assert!(!keys.allows_repeat(Some(&1)));
+        keys.press(Some(MAX_TRACKED_KEYS));
+        assert!(keys.allows_repeat(Some(&MAX_TRACKED_KEYS)));
+        keys.reset();
+        assert!(!keys.allows_repeat(Some(&MAX_TRACKED_KEYS)));
+    }
 
     /// Each budget preserves the admitted prefix and one marker, then accepts new work.
     #[test]

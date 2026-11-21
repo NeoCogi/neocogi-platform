@@ -4,7 +4,7 @@ use super::{input_backlog::KeyRecovery, native::RoutedInput};
 use neocogi_platform::platform::wheel::{WheelAccumulator, WheelUnit};
 use sdl2::{
     event::{Event, WindowEvent},
-    keyboard::{Keycode, Mod},
+    keyboard::{Keycode, Mod, Scancode},
     mouse::{MouseButton, MouseWheelDirection},
 };
 
@@ -23,8 +23,8 @@ enum Transition {
 pub(super) struct InputState {
     /// Fractions accumulate independently on each axis until a whole pixel is available.
     wheel: WheelAccumulator,
-    /// Reject stale native repeats after backlog loss.
-    keys: KeyRecovery,
+    /// Physical SDL keys that can authorize repeats after backlog loss.
+    keys: KeyRecovery<Scancode>,
 }
 
 impl InputState {
@@ -78,16 +78,30 @@ impl InputState {
                 }
                 UiInput::Scroll(Point { x: delta[0], y: delta[1] })
             }
-            Event::KeyDown { keycode: Some(code), keymod, repeat, .. } => {
+            Event::KeyDown {
+                keycode: Some(code),
+                scancode,
+                keymod,
+                repeat,
+                ..
+            } => {
                 let Some(key) = key(code) else { return Ok(Transition::Ignore) };
+                if repeat {
+                    if !self.keys.allows_repeat(scancode.as_ref()) {
+                        return Ok(Transition::Ignore);
+                    }
+                } else {
+                    self.keys.press(scancode);
+                }
                 UiInput::Key(KeyStroke {
                     key,
                     action: KeyAction::Pressed { repeat },
                     modifiers: modifiers(keymod),
                 })
             }
-            Event::KeyUp { keycode: Some(code), keymod, .. } => {
-                let Some(key) = key(code) else { return Ok(Transition::Ignore) };
+            Event::KeyUp { keycode, scancode, keymod, .. } => {
+                self.keys.release(scancode.as_ref());
+                let Some(key) = keycode.and_then(key) else { return Ok(Transition::Ignore) };
                 UiInput::Key(KeyStroke {
                     key,
                     action: KeyAction::Released,
@@ -104,11 +118,6 @@ impl InputState {
             // until TextInput; forwarding both would duplicate or prematurely publish IME text.
             _ => return Ok(Transition::Ignore),
         };
-        if let UiInput::Key(stroke) = input
-            && !self.keys.accepts(stroke)
-        {
-            return Ok(Transition::Ignore);
-        }
         Ok(Transition::Input(input, String::new()))
     }
 }

@@ -864,8 +864,11 @@ export function exercise_shortcut(target, key, code, location, modifiers) {
     target.dispatchEvent(new KeyboardEvent('keydown', {...init, repeat:true}));
     target.dispatchEvent(new KeyboardEvent('keyup', init));
 }
-export function keyboard_test_event(target, key, repeat) {
-    const event = new KeyboardEvent('keydown', {key, repeat, cancelable:true});
+export function keyboard_test_event(target, key, code, flags) {
+    const event = new KeyboardEvent(flags & 1 ? 'keyup' : 'keydown', {
+        key, code, repeat:!!(flags & 2), shiftKey:!!(flags & 4),
+        isComposing:!!(flags & 8), cancelable:true,
+    });
     target.dispatchEvent(event);
     return event.defaultPrevented;
 }
@@ -910,6 +913,8 @@ export function exercise(target, name) {
         target.dispatchEvent(new KeyboardEvent('keyup', {key:'Tab'}));
     } else if (name === 'key') {
         target.dispatchEvent(new KeyboardEvent('keydown', {key:'F'}));
+    } else if (name === 'blur') {
+        target.dispatchEvent(new FocusEvent('blur'));
     } else if (name === 'half-wheel') {
         target.dispatchEvent(new WheelEvent('wheel', {deltaY:0.5, deltaMode:0}));
     } else if (name === 'wheel') {
@@ -943,8 +948,8 @@ extern "C" {
     fn exercise(target: &EventTarget, name: &str);
     /// Dispatches press/repeat/release with an explicit logical key, physical location and modifiers.
     fn exercise_shortcut(target: &EventTarget, key: &str, code: &str, location: u32, modifiers: u8);
-    /// Dispatches a single keydown to test restarts and stale repeats independently.
-    fn keyboard_test_event(target: &EventTarget, key: &str, repeat: bool) -> bool;
+    /// Dispatches one key. Flags represent release, repeat, Shift and IME composition.
+    fn keyboard_test_event(target: &EventTarget, key: &str, code: &str, flags: u8) -> bool;
     /// Drives either actual textarea composition or full-value paste events using browser strings.
     fn boundary_text(target: &EventTarget, mode: &str, limit: u32);
     fn next_test_task() -> js_sys::Promise;
@@ -1053,7 +1058,7 @@ impl IInputSink for OverflowSink {
     fn input(&self, event: UiInput, text: NcCopyFromBufferOffset<'_, u8>) -> Result<(), NcStatus> {
         assert_eq!(event, UiInput::Cancel);
         assert!(text.as_slice().is_empty());
-        keyboard_test_event(self.canvas.unchecked_ref(), "n", false);
+        keyboard_test_event(self.canvas.unchecked_ref(), "n", "KeyN", 0);
         assert_eq!(self.window.poll(self.ordinary.as_com_ref()), Err(PLATFORM_E_BUSY));
         Err(NC_E_INVALID_ARG)
     }
@@ -1061,14 +1066,22 @@ impl IInputSink for OverflowSink {
 
 /// Reserves one cancellation on aggregate byte loss and resumes DOM/COM delivery in order.
 fn browser_text_backlog_recovers_through_com() {
-    let object = PlatformObject::new().window("bounded browser input", Size { width: 8, height: 8 }).unwrap();
+    let platform = PlatformObject::new();
+    let object = platform.window("bounded browser input", Size { width: 8, height: 8 }).unwrap();
+    let sibling = platform.window("unaffected browser input", Size { width: 8, height: 8 }).unwrap();
+    let sibling_canvas = sibling.device.window.clone();
+    let sibling = WindowObject::from_value(sibling).query::<IPlatformWindowAbi>().unwrap();
     let text = object.input.text.clone();
     let canvas = object.device.window.clone();
     let window = WindowObject::from_value(object).query::<IPlatformWindowAbi>().unwrap();
     window.text_input(TextInputArea::Area(Rect { x: 0, y: 0, width: 1, height: 1 })).unwrap();
     let received = Rc::new(RefCell::new(Vec::new()));
-    let sink = ShortcutSink::from_value(ShortcutSink { received: received.clone() }).query::<IInputSinkAbi>().unwrap();
+    let sink = ShortcutSink::from_value(ShortcutSink { received: received.clone() })
+        .query::<IInputSinkAbi>()
+        .unwrap();
     while window.poll(sink.as_com_ref()).unwrap() == PollStatus::Event {}
+    while sibling.poll(sink.as_com_ref()).unwrap() == PollStatus::Event {}
+    received.borrow_mut().clear();
 
     exercise(canvas.unchecked_ref(), "down");
     while window.poll(sink.as_com_ref()).unwrap() == PollStatus::Event {}
@@ -1083,6 +1096,10 @@ fn browser_text_backlog_recovers_through_com() {
     }
     dispatch("aggregate overflow");
     assert_eq!(window.poll(sink.as_com_ref()), Ok(PollStatus::Event));
+    assert!(
+        keyboard_test_event(text.unchecked_ref(), "z", "KeyZ", 0),
+        "a full route rejects the attempted down"
+    );
     dispatch("drop until cancel");
     exercise(text.unchecked_ref(), "compose-start");
     assert_eq!(window.poll(sink.as_com_ref()), Ok(PollStatus::Event));
@@ -1092,9 +1109,29 @@ fn browser_text_backlog_recovers_through_com() {
         assert!(events.iter().all(|(event, text)| *event == UiInput::Text && text.len() == MAX_TEXT_INPUT_BYTES));
     }
 
-    let cancellation = OverflowSink::from_value(OverflowSink { window: window.clone(), ordinary: sink.clone(), canvas: canvas.clone() })
-        .query::<IInputSinkAbi>().unwrap();
+    let cancellation = OverflowSink::from_value(OverflowSink {
+        window: window.clone(),
+        ordinary: sink.clone(),
+        canvas: canvas.clone(),
+    })
+    .query::<IInputSinkAbi>()
+    .unwrap();
     assert_eq!(window.poll(cancellation.as_com_ref()), Err(NC_E_INVALID_ARG));
+    let sibling_events = Rc::new(RefCell::new(Vec::new()));
+    let sibling_sink = ShortcutSink::from_value(ShortcutSink { received: sibling_events.clone() })
+        .query::<IInputSinkAbi>()
+        .unwrap();
+    // Focusing the main editor can enqueue a normal blur on its sibling.
+    while sibling.poll(sibling_sink.as_com_ref()).unwrap() == PollStatus::Event {}
+    sibling_events.borrow_mut().clear();
+    keyboard_test_event(sibling_canvas.unchecked_ref(), "q", "", 2);
+    while sibling.poll(sibling_sink.as_com_ref()).unwrap() == PollStatus::Event {}
+    let sibling_events = sibling_events.borrow();
+    assert!(
+        matches!(sibling_events.as_slice(), [(UiInput::Key(stroke), _)]
+            if stroke.key == KeyCode::Character(u32::from('q')) && stroke.action == KeyAction::Pressed { repeat: true }),
+        "unexpected sibling events after primary overflow: {sibling_events:?}"
+    );
     assert_eq!(window.poll(sink.as_com_ref()), Ok(PollStatus::Event));
     assert_eq!(window.poll(sink.as_com_ref()), Ok(PollStatus::Idle));
     assert!(matches!(received.borrow().last(), Some((UiInput::Key(stroke), _)) if stroke.key == KeyCode::Character(u32::from('n'))));
@@ -1104,16 +1141,82 @@ fn browser_text_backlog_recovers_through_com() {
     text.set_value("stale composition");
     exercise(text.unchecked_ref(), "compose-end");
     dispatch("late-composition-input");
-    assert!(keyboard_test_event(text.unchecked_ref(), "x", true), "stale repeats must suppress DOM text insertion");
-    assert!(!keyboard_test_event(text.unchecked_ref(), "n", true), "fresh repeats must retain editable defaults");
+    let key = |logical, physical, flags| keyboard_test_event(text.unchecked_ref(), logical, physical, flags);
+    assert!(key("x", "KeyX", 2), "stale repeats must suppress DOM text insertion");
+    assert!(key("z", "KeyZ", 2), "an unadmitted press cannot authorize a repeat");
+    assert!(!key("n", "KeyN", 2), "fresh repeats must retain editable defaults");
     exercise(canvas.unchecked_ref(), "half-wheel");
     exercise(canvas.unchecked_ref(), "chord");
     while window.poll(sink.as_com_ref()).unwrap() == PollStatus::Event {}
-    assert!(matches!(
-        received.borrow().as_slice(),
-        [(UiInput::Key(stroke), _), (UiInput::Pointer(_), _)] if stroke.key == KeyCode::Character(u32::from('n'))
-    ), "unexpected events after overflow recovery: {:?}", *received.borrow());
+    assert!(
+        matches!(
+            received.borrow().as_slice(),
+            [(UiInput::Key(stroke), _), (UiInput::Pointer(_), _)] if stroke.key == KeyCode::Character(u32::from('n'))
+        ),
+        "unexpected events after overflow recovery: {:?}",
+        *received.borrow()
+    );
     received.borrow_mut().clear();
+
+    assert!(!key("!", "Digit1", 4));
+    assert!(!key("1", "Digit1", 2), "the same physical key repeats after Shift is released");
+    assert!(key("1", "Numpad1", 2), "a logical alias cannot authorize a repeat");
+    key("Dead", "Digit1", 1);
+    assert!(key("1", "Digit1", 2), "an unmappable release ends freshness");
+    assert!(!key("a", "KeyA", 0));
+    key("a", "KeyA", 1 | 8);
+    assert!(key("a", "KeyA", 2), "a release suppressed during composition ends freshness");
+    let overlong = "X".repeat(65);
+    for (character, anonymous) in [("b", ""), ("c", "Unidentified"), ("d", &overlong)] {
+        assert!(!key(character, anonymous, 0));
+        assert!(key(character, anonymous, 2));
+    }
+    while window.poll(sink.as_com_ref()).unwrap() == PollStatus::Event {}
+    let strokes = std::mem::take(&mut *received.borrow_mut());
+    assert_eq!(strokes.len(), 6);
+    for ((event, _), (character, repeat, modifiers)) in strokes.iter().zip([
+        ('!', false, 4),
+        ('1', true, 0),
+        ('a', false, 0),
+        ('b', false, 0),
+        ('c', false, 0),
+        ('d', false, 0),
+    ]) {
+        assert_eq!(
+            *event,
+            UiInput::Key(KeyStroke {
+                key: KeyCode::Character(u32::from(character)),
+                action: KeyAction::Pressed { repeat },
+                modifiers
+            })
+        );
+    }
+    assert!(!key("e", "KeyE", 0));
+    exercise(text.unchecked_ref(), "blur");
+    assert!(!key("e", "KeyE", 2), "ordinary focus cancellation leaves the overflow policy unchanged");
+    key("e", "KeyE", 1);
+    assert!(key("e", "KeyE", 2), "a mapped physical release ends repeat eligibility");
+    while window.poll(sink.as_com_ref()).unwrap() == PollStatus::Event {}
+    let strokes = std::mem::take(&mut *received.borrow_mut());
+    let e = |action| {
+        (
+            UiInput::Key(KeyStroke {
+                key: KeyCode::Character(u32::from('e')),
+                action,
+                modifiers: 0,
+            }),
+            String::new(),
+        )
+    };
+    assert_eq!(
+        strokes,
+        [
+            e(KeyAction::Pressed { repeat: false }),
+            (UiInput::Cancel, String::new()),
+            e(KeyAction::Pressed { repeat: true }),
+            e(KeyAction::Released),
+        ]
+    );
     exercise(canvas.unchecked_ref(), "down");
     exercise(canvas.unchecked_ref(), "up");
     dispatch("preedit");

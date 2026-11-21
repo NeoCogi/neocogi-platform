@@ -2,7 +2,7 @@
 use super::*;
 use sdl2::{
     event::Event,
-    keyboard::{Keycode, Mod},
+    keyboard::{Keycode, Mod, Scancode},
 };
 
 /// Drains bounded fixture input through public polling, rejecting unexpected window closure.
@@ -107,9 +107,14 @@ fn dormant_route_bounds_input_and_preserves_close_through_com() {
     let a = WindowObject::from_value(a).query::<IPlatformWindowAbi>().unwrap();
     let b = WindowObject::from_value(b).query::<IPlatformWindowAbi>().unwrap();
     let received = Rc::new(RefCell::new(Vec::new()));
-    let sink = InputProbe::from_value(InputProbe { window: None, empty: None, received: received.clone(), fail: Cell::new(false) })
-        .query::<IInputSinkAbi>()
-        .unwrap();
+    let sink = InputProbe::from_value(InputProbe {
+        window: None,
+        empty: None,
+        received: received.clone(),
+        fail: Cell::new(false),
+    })
+    .query::<IInputSinkAbi>()
+    .unwrap();
     drain(&a, &sink);
     drain(&b, &sink);
     received.borrow_mut().clear();
@@ -118,7 +123,7 @@ fn dormant_route_bounds_input_and_preserves_close_through_com() {
         timestamp: 0,
         window_id,
         keycode: Some(keycode),
-        scancode: None,
+        scancode: Scancode::from_keycode(keycode),
         keymod: Mod::NOMOD,
         repeat,
     };
@@ -155,7 +160,14 @@ fn dormant_route_bounds_input_and_preserves_close_through_com() {
         assert_eq!(received[0], (UiInput::Text, "before é".to_owned()));
         for (index, (event, _)) in received[1..MAX_ENTRIES].iter().enumerate() {
             let key = KeyCode::Character(u32::from(if index % 2 == 0 { 'a' } else { 'b' }));
-            assert_eq!(*event, UiInput::Key(KeyStroke { key, action: KeyAction::Pressed { repeat: false }, modifiers: 0 }));
+            assert_eq!(
+                *event,
+                UiInput::Key(KeyStroke {
+                    key,
+                    action: KeyAction::Pressed { repeat: false },
+                    modifiers: 0
+                })
+            );
         }
         assert_eq!(received[MAX_ENTRIES].0, UiInput::Cancel);
     }
@@ -165,10 +177,45 @@ fn dormant_route_bounds_input_and_preserves_close_through_com() {
     }
     push_sdl_text(a_id, "after 🦀");
     drain(&a, &sink);
-    let received = received.borrow();
-    assert_eq!(received.len(), 3);
-    assert_eq!(received[2], (UiInput::Text, "after 🦀".to_owned()));
-    for ((event, _), repeat) in received.iter().zip([false, true]) {
-        assert_eq!(*event, UiInput::Key(KeyStroke { key: KeyCode::Character(u32::from('b')), action: KeyAction::Pressed { repeat }, modifiers: 0 }));
+    let after = std::mem::take(&mut *received.borrow_mut());
+    assert_eq!(after.len(), 3);
+    assert_eq!(after[2], (UiInput::Text, "after 🦀".to_owned()));
+    for ((event, _), repeat) in after.iter().zip([false, true]) {
+        assert_eq!(
+            *event,
+            UiInput::Key(KeyStroke {
+                key: KeyCode::Character(u32::from('b')),
+                action: KeyAction::Pressed { repeat },
+                modifiers: 0
+            })
+        );
     }
+    // The two physical Enter keys share their logical value. A stale keypad repeat
+    // cannot borrow the fresh main Enter, which itself must retain ordinary repeats.
+    for (code, repeat) in [(Keycode::Return, false), (Keycode::KpEnter, true), (Keycode::Return, true)] {
+        events.push_event(down(a_id, code, repeat)).unwrap();
+    }
+    events
+        .push_event(Event::KeyUp {
+            timestamp: 0,
+            window_id: a_id,
+            keycode: None,
+            scancode: Some(Scancode::Return),
+            keymod: Mod::NOMOD,
+            repeat: false,
+        })
+        .unwrap();
+    events.push_event(down(a_id, Keycode::Return, true)).unwrap();
+    drain(&a, &sink);
+    assert_eq!(
+        received.borrow().as_slice(),
+        [false, true].map(|repeat| (
+            UiInput::Key(KeyStroke {
+                key: KeyCode::Enter,
+                action: KeyAction::Pressed { repeat },
+                modifiers: 0
+            }),
+            String::new()
+        ))
+    );
 }
