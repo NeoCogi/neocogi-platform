@@ -616,12 +616,12 @@ impl SelectionOwner {
         }
         let Some(pairs) = reply.value32() else { return false };
         let mut pairs: Vec<_> = pairs.collect();
-        if !pairs.len().is_multiple_of(2) {
+        let (atom_pairs, remainder) = pairs.as_chunks_mut::<2>();
+        if !remainder.is_empty() {
             return false;
         }
         let mut destinations = Vec::new();
-        for pair in pairs.chunks_exact_mut(2) {
-            let [target, destination] = pair else { unreachable!("an exact atom pair") };
+        for [target, destination] in atom_pairs {
             if *target == self.window.atoms.MULTIPLE
                 || *destination == NONE
                 || *destination == property
