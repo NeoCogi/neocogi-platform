@@ -1,6 +1,8 @@
 //! Platform clipboard transfer with copied completion facts and no retained UI borrows.
 use super::*;
 
+#[cfg(windows)]
+mod windows;
 #[cfg(target_os = "linux")]
 mod x11;
 #[cfg(target_os = "linux")]
@@ -18,6 +20,9 @@ enum Backend {
         /// Observes the current public route without keeping the host or window alive.
         host: Weak<NativeHost>,
     },
+    /// Native Win32 clipboard with a private owner and checked transfer receipts.
+    #[cfg(windows)]
+    Win32(windows::Win32Clipboard),
     /// Independent X11 responder and requestor connections shared by the host's projections.
     #[cfg(target_os = "linux")]
     X11(Rc<X11Clipboard>),
@@ -29,9 +34,6 @@ pub(super) struct Clipboard {
     /// Keeps the selected native clipboard service alive after window/root release.
     #[cfg(not(target_arch = "wasm32"))]
     backend: Backend,
-    /// SDL2's Win32 writes require a live HWND even after the last public window goes away.
-    #[cfg(windows)]
-    _owner: Rc<gpu::Window>,
 }
 
 impl Clipboard {
@@ -45,14 +47,11 @@ impl Clipboard {
                 service: host.video.clipboard(),
                 host: Rc::downgrade(host),
             },
+            #[cfg(windows)]
+            "windows" => Backend::Win32(windows::Win32Clipboard::new(host.clipboard_window()?)?),
             _ => Backend::Sdl(host.video.clipboard()),
         };
-        Self::from_value(Self {
-            backend,
-            #[cfg(windows)]
-            _owner: host.clipboard_window()?,
-        })
-        .query()
+        Self::from_value(Self { backend }).query()
     }
 
     /// Browser clipboard operations resolve the navigator service without a canvas owner.
@@ -62,7 +61,7 @@ impl Clipboard {
     }
 }
 
-/// Validates copied text before an OS call; SDL requires strings without interior NUL bytes.
+/// Validates bounded UTF-8 before handing text to a native or browser clipboard.
 fn text(input: NcCopyFromBufferOffset<'_, u8>) -> Result<&str, NcStatus> {
     if input.offset() != 0 || input.as_slice().len() > MAX_CLIPBOARD_BYTES {
         return Err(NC_E_INVALID_ARG);
@@ -139,11 +138,13 @@ fn read_wayland_text(service: &sdl2::clipboard::ClipboardUtil, host: &Weak<Nativ
 
 #[cfg(not(target_arch = "wasm32"))]
 impl ITextClipboard for Clipboard {
-    /// SDL completes synchronously, but uses the same copied receipt as asynchronous platforms.
+    /// Native drivers complete synchronously with a detached copied receipt.
     fn read(&self, completion: ComRef<'_, IClipboardCompletionAbi>) -> Result<(), NcStatus> {
         let result = match &self.backend {
             Backend::Sdl(service) => read_sdl_text(service),
             Backend::Wayland { service, host } => read_wayland_text(service, host),
+            #[cfg(windows)]
+            Backend::Win32(service) => service.read(),
             #[cfg(target_os = "linux")]
             Backend::X11(service) => service.read(),
         };
@@ -156,6 +157,8 @@ impl ITextClipboard for Clipboard {
             Backend::Sdl(service) => service.set_clipboard_text(text).map_err(|_| PLATFORM_E_BACKEND),
             // SDL2 cannot acknowledge compositor ownership. Avoid even a deferred SDL offer.
             Backend::Wayland { .. } => Err(PLATFORM_E_BACKEND),
+            #[cfg(windows)]
+            Backend::Win32(service) => service.write(text),
             #[cfg(target_os = "linux")]
             Backend::X11(service) => service.write(text),
         };

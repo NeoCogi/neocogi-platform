@@ -132,8 +132,8 @@ impl NativeHost {
         Ok(service)
     }
 
-    /// SDL2 uses a live HWND when publishing clipboard data. This hidden owner
-    /// keeps that service usable without keeping a graphics window or input route.
+    /// The Win32 clipboard uses this hidden SDL window as its owner. It contains
+    /// no graphics and remains live independently of application input routes.
     #[cfg(windows)]
     pub(super) fn clipboard_window(&self) -> Result<Rc<gpu::Window>, NcStatus> {
         if let Some(owner) = self.clipboard_window.borrow().upgrade() {

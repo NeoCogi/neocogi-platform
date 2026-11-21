@@ -1251,6 +1251,7 @@ dependencies = [
  "wasm-bindgen-futures",
  "web-sys",
  "wgpu",
+ "windows-sys 0.61.2",
  "x11rb",
  "x11rb-protocol",
 ]

@@ -70,12 +70,33 @@ UIs have updated; an embedded host translates preview coordinates into its
 pane's committed screen rectangle. Neither operation belongs inside painting.
 
 A retained clipboard keeps its host service available according to the active
-driver's lifetime rules. SDL on Windows uses a private hidden owner for clipboard
-writes. It has no renderer or application input route. Browser access
-follows the page's clipboard permissions. A successful read can contain empty
-text. A fresh SDL error, including a selection timeout after bytes arrived,
-produces a failed receipt with empty text. The SDL adapter can report the
-transfer status SDL exposes.
+driver's lifetime rules. Browser access follows the page's clipboard
+permissions. A successful read can contain empty text. A fresh SDL error,
+including a selection timeout after bytes arrived, produces a failed receipt
+with empty text. The SDL adapter can report the transfer status SDL exposes.
+
+With SDL2's Windows driver, the clipboard uses the private hidden SDL window's
+Win32 HWND. The window has no renderer or application input route. A native read
+opens the clipboard with bounded retries and copies validated `CF_UNICODETEXT`
+into owned UTF-8, preserving CRLF. The decoded UTF-8 read is capped at 1 MiB.
+Missing and empty text both succeed with empty bytes. A blocked open or malformed
+native text produces a failed receipt.
+
+A write prepares unlocked movable memory before emptying the clipboard. The
+payload converts lone LF to CRLF and retains existing CRLF. Win32 takes ownership
+of the memory when `SetClipboardData` succeeds. A failed publication can leave
+the clipboard empty after `EmptyClipboard`. The editor keeps its cut source
+on failure. Both operations release native locks and close the clipboard before
+invoking completion.
+
+Run the independent-process receipt and publication checks on an isolated,
+interactive Windows desktop with SDL2 development and runtime libraries. Use a
+working Platform renderer for the application window. For example, with WGPU
+and `SDL_VIDEODRIVER=windows`, run the following from the workspace.
+
+```powershell
+cargo test --locked -p neocogi-platform --no-default-features --features wgpu --lib windows_clipboard_native -- --include-ignored --test-threads=1
+```
 
 On Linux with SDL's X11 driver, a successful write confirms X11 selection
 ownership and a live responder holding the complete text on SDL's actual

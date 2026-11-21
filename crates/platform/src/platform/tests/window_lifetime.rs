@@ -48,12 +48,14 @@ fn retained_clipboard_survives_application_window_destruction() {
     assert!(clipboard.query::<IPlatformWindowAbi>().is_err());
     assert!(clipboard.query::<IRendererAbi>().is_err());
     #[cfg(windows)]
-    let (private_id, _video, second) = {
+    let private_owner = {
         let host = host.upgrade().unwrap();
-        let owner = host.clipboard_window().unwrap();
-        assert_ne!(owner.id(), id);
-        assert!(!host.queues.borrow().contains_key(&owner.id()));
-        (owner.id(), host.video.clone(), window.clipboard().unwrap())
+        (host.video.current_video_driver() == "windows").then(|| {
+            let owner = host.clipboard_window().unwrap();
+            assert_ne!(owner.id(), id);
+            assert!(!host.queues.borrow().contains_key(&owner.id()));
+            (owner.id(), host.video.clone(), window.clipboard().unwrap())
+        })
     };
     drop(window);
     drop(platform);
@@ -63,7 +65,10 @@ fn retained_clipboard_survives_application_window_destruction() {
     // The returned pointer is only checked for existence and never dereferenced.
     assert!(unsafe { sdl2::sys::SDL_GetWindowFromID(id) }.is_null());
     #[cfg(windows)]
-    assert!(!unsafe { sdl2::sys::SDL_GetWindowFromID(private_id) }.is_null());
+    if let Some((private_id, _, _)) = &private_owner {
+        // SAFETY: A projection retains the private window while checking its registration.
+        assert!(!unsafe { sdl2::sys::SDL_GetWindowFromID(*private_id) }.is_null());
+    }
 
     let results = Rc::new(RefCell::new(Vec::new()));
     let receipt = ClipboardReceipt::from_value(ClipboardReceipt { results: results.clone() })
@@ -78,7 +83,7 @@ fn retained_clipboard_survives_application_window_destruction() {
     clipboard.read(receipt.as_com_ref()).unwrap();
     assert_eq!(results.borrow().as_slice()[2..], [(0, String::new()), (0, String::new())]);
     #[cfg(windows)]
-    {
+    if let Some((private_id, _video, second)) = private_owner {
         drop(clipboard);
         // SAFETY: The fixture retains the video subsystem for both handle existence queries.
         assert!(!unsafe { sdl2::sys::SDL_GetWindowFromID(private_id) }.is_null());

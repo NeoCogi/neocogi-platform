@@ -1,7 +1,7 @@
 name: Rust
 on:
   push:
-    branches: ["master"]
+    branches: ["master", "release/*"]
   pull_request:
 permissions:
   contents: read
@@ -17,6 +17,24 @@ jobs:
       - name: Owned process scopes and total output deadlines
         run: |
           cargo test --locked -p neocogi-platform-tools process::tests::
+  windows-clipboard:
+    runs-on: windows-2025
+    env:
+      SDL_VIDEODRIVER: windows
+    steps:
+      - uses: actions/checkout@v6
+      - name: SDL2 for the MSVC linker and test processes
+        shell: pwsh
+        run: |
+          vcpkg install sdl2:x64-windows
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $sdl = Join-Path $env:VCPKG_INSTALLATION_ROOT 'installed/x64-windows'
+          "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS=-Lnative=$(Join-Path $sdl 'lib')" >> $env:GITHUB_ENV
+          (Join-Path $sdl 'bin') >> $env:GITHUB_PATH
+      - name: Win32 text conversion boundaries
+        run: cargo test --locked --target x86_64-pc-windows-msvc -p neocogi-platform --no-default-features --features wgpu --lib windows_text_conversion_boundaries -- --test-threads=1
+      - name: Native Win32 clipboard receipts and independent peer
+        run: cargo test --locked --target x86_64-pc-windows-msvc -p neocogi-platform --no-default-features --features wgpu --lib windows_clipboard_native -- --include-ignored --test-threads=1
   packages:
     runs-on: ubuntu-latest
     steps:
