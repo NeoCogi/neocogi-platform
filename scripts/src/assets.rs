@@ -55,7 +55,7 @@ pub(crate) fn require_gltf_downloads(directory: &Path) -> Result<()> {
 }
 
 /// Hash a stream without retaining another full model/HDR allocation.
-fn digest(reader: impl io::Read) -> Result<String> {
+pub(crate) fn digest(reader: impl io::Read) -> Result<String> {
     let mut hash = Sha256::new();
     io::copy(&mut io::BufReader::new(reader), &mut hash)?;
     Ok(format!("{:x}", hash.finalize()))

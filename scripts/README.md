@@ -16,7 +16,7 @@ work outside a workspace without Cargo discovery.
 
 | Command | Behavior |
 | --- | --- |
-| `cargo tools profile-shaders --backend vulkan --output DIR [--reference DIR] [--perf] [--intel-stats]` | Validate every production shader and aggregate workload, build the normal min-size library and applications, then measure repeated fixed-frame native runs. Retains artifacts, raw logs and a JSON report outside Cargo targets. |
+| `cargo tools profile-shaders --backend vulkan --output DIR [--reference DIR] [--perf] [--intel-stats]` | Validate every production shader and aggregate workload, build the normal min-size library and applications, then measure repeated fixed-frame native runs. Retains artifacts, raw logs and a JSON report outside Cargo's build directories. |
 | `cargo tools fetch-gltf-examples [--output DIR]` | Download the pinned models/HDR over Rust HTTPS, verify SHA-256, then atomically install each file. Verified cached files need no network. |
 | `cargo tools check-packages [--offline] [--allow-dirty] [--stable-toolchain stable]` | Construct and inspect the three release archives, extract outside the checkout, and test them with two independent generated COM consumers and a normally built and dynamically loaded platform library. Never publishes. |
 | `cargo tools install-wasm-bindgen` | Install `wasm-bindgen-cli` at the exact workspace pin using Cargo. |
@@ -54,13 +54,24 @@ The optional reference must be a trusted deployment of the same three programs,
 including its matching `lib/libnc_platform.so` and assets. Runs alternate reference
 and candidate. A candidate/reference median elapsed-time ratio above 1.2 fails;
 `--max-slowdown`, `--frames` and `--runs` set explicit qualification conditions.
-The report directory must be new or empty and outside Cargo targets. Qualification
-checks the three authored downloads before preparing shaders or building the
-candidate. The native build scripts stage the provider and artwork directly into
-a fresh `candidate/` directory under the report, using the final Cargo library
-receipt to find the provider with either combined or split Cargo directories.
-The report measures that staged library. The deployment, logs, emitted shader
-artifacts and individual samples survive `cargo clean`.
+The report directory must be new or empty and disjoint from both effective Cargo
+directories, including the final target and intermediate build directories.
+This check covers nesting in either direction and resolves aliases and missing
+path components before creating the report. Qualification then uses
+private final and intermediate directories for the corpus, provider and three
+explicitly named applications. Each receipt must match the selected package,
+manifest, target kind and features and point to a file in that run's final
+directory. The native build scripts use the selected library receipt to stage
+the provider and artwork. Qualification copies the three executable receipts
+into the same private draft and checks the SHA-256 of each staged file against
+its source before publishing `candidate/`.
+
+The report records the selected compiler, workload options, producing receipts,
+asset and deployment hashes and warmed environment caches where available.
+A trusted prior deployment may come from an earlier report format. Temporary
+Cargo and draft deployment directories are cleaned up on failure, and build
+diagnostics remain in `build-logs/`. The candidate deployment, logs, emitted
+shader artifacts and individual samples survive developer `cargo clean`.
 
 `--perf` requires Linux perf permissions and records task-clock/context switches
 for each timed run. `--intel-stats` requires an Intel Mesa driver providing

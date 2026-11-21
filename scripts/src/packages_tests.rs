@@ -52,22 +52,31 @@ fn qualification_checks_the_targets_of_temporary_directory_aliases() {
 /// Cargo's receipt must name the normal native cdylib; examples and metadata cannot mask a missing library.
 #[test]
 fn normal_platform_artifact_is_required() {
-    let path = format!("/output/{}nc_platform.{}", std::env::consts::DLL_PREFIX, std::env::consts::DLL_EXTENSION);
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory
+        .path()
+        .join(format!("{}nc_platform.{}", std::env::consts::DLL_PREFIX, std::env::consts::DLL_EXTENSION));
+    let manifest = directory.path().join("Cargo.toml");
+    fs::write(&path, []).unwrap();
+    fs::write(&manifest, []).unwrap();
+    let manifest = manifest.canonicalize().unwrap();
+    let id = "platform-shim 0.3.0-alpha.2";
     let receipt = serde_json::json!({
         "reason": "compiler-artifact",
-        "package_id": "platform-shim 0.3.0-alpha.2",
-        "manifest_path": "/extract/shim/Cargo.toml",
+        "package_id": id,
+        "manifest_path": manifest,
         "target": { "name": "nc_platform", "kind": ["cdylib"] },
-        "filenames": ["/output/libnc_platform.rmeta", path]
+        "filenames": [directory.path().join("libnc_platform.rmeta"), path]
     });
+    let qualify = |json: &[u8]| qualified_library(json, directory.path(), id, &manifest);
     let output = format!("{{\"reason\":\"build-finished\",\"success\":true}}\n{receipt}\n");
-    assert_eq!(platform_artifact(output.as_bytes()).unwrap().path, PathBuf::from(&path));
-    assert!(platform_artifact(format!("{receipt}\n{receipt}\n").as_bytes()).is_err());
+    assert_eq!(qualify(output.as_bytes()).unwrap(), path.canonicalize().unwrap());
+    assert!(qualify(format!("{receipt}\n{receipt}\n").as_bytes()).is_err());
     let mut example = receipt.clone();
     example["target"]["kind"] = serde_json::json!(["example"]);
-    assert!(platform_artifact(example.to_string().as_bytes()).is_err());
-    assert!(platform_artifact(b"").is_err());
-    assert!(platform_artifact(b"not JSON").is_err());
+    assert!(qualify(example.to_string().as_bytes()).is_err());
+    assert!(qualify(b"").is_err());
+    assert!(qualify(b"not JSON").is_err());
 }
 
 /// Each phase selects pre-created output paths distinct from the other phase and any concurrent run.
@@ -85,19 +94,19 @@ fn qualification_directories_are_explicit_private_overrides() {
             (None, checkout.path(), "package-target"),
             (Some("stable"), workspace.as_path(), "consumer-target"),
         ] {
-            let target = create_cargo_target(artifacts.path(), name).unwrap();
-            let build = target.join("build");
+            let outputs = CargoDirectories::create(artifacts.path(), name).unwrap();
+            let (target, build) = (&outputs.target, &outputs.build);
             assert!(roots.insert(target.clone()));
             assert!(roots.insert(build.clone()));
             assert!(target.is_dir());
             assert!(build.is_dir());
-            let command = qualification_cargo(crate::process::cargo(cwd, toolchain), &target);
+            let command = outputs.command(crate::process::cargo(cwd, toolchain));
             assert_eq!(command.get_current_dir(), Some(cwd));
             let env: BTreeMap<_, _> = command.get_envs().collect();
             assert_eq!(env[std::ffi::OsStr::new("CARGO_TARGET_DIR")], Some(target.as_os_str()));
             assert_eq!(env[std::ffi::OsStr::new("CARGO_BUILD_BUILD_DIR")], Some(build.as_os_str()));
             if let Some(toolchain) = toolchain {
-                let command = extracted_cargo(toolchain, cwd, &target);
+                let command = extracted_cargo(toolchain, cwd, &outputs);
                 let env: BTreeMap<_, _> = command.get_envs().collect();
                 for key in TEMP_DIRECTORY_KEYS {
                     assert_eq!(env[std::ffi::OsStr::new(key)], workspace.parent().map(Path::as_os_str));

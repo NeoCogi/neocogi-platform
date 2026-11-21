@@ -128,3 +128,67 @@ fn discovery_rejects_wrong_member_path_and_explicit_nonroot() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("--workspace must name the Cargo workspace root"), "{stderr}");
 }
+
+/// Admission uses both developer directories, and ordinary Cargo cleanup preserves the retained paths.
+#[test]
+fn profiler_rejects_split_cargo_roots_before_creation() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    workspace(root, "scripts", "0.2.101");
+    let final_dir = root.join("developer-final");
+    let build_dir = root.join("developer-build");
+    let caller = root.join("scripts/src");
+    let command = |program: &str| {
+        let mut command = Command::new(program);
+        command
+            .current_dir(&caller)
+            .env("CARGO_TARGET_DIR", &final_dir)
+            .env("CARGO_BUILD_BUILD_DIR", &build_dir)
+            .env("CARGO_NET_OFFLINE", "true");
+        command
+    };
+    for (directory, kind) in [(&final_dir, "target"), (&build_dir, "build")] {
+        let output = command(BINARY)
+            .args(["profile-shaders", "--output"])
+            .arg(directory.join("report"))
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains(&format!("overlaps Cargo's {kind} directory")), "{stderr}");
+        assert!(!directory.exists());
+    }
+    // A future Cargo directory inside a report can cover files the tool will publish there.
+    let report = root.join("missing-report");
+    for (key, child, kind) in [("CARGO_TARGET_DIR", "build-logs", "target"), ("CARGO_BUILD_BUILD_DIR", "candidate", "build")] {
+        let output = command(BINARY)
+            .env(key, report.join(child))
+            .args(["profile-shaders", "--output"])
+            .arg(&report)
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains(&format!("overlaps Cargo's {kind} directory")), "{stderr}");
+        assert!(!report.exists());
+    }
+    // Build in the original Cargo configuration so cleanup has real final and intermediate outputs.
+    let output = command("cargo").arg("build").output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    for directory in [&final_dir, &build_dir] {
+        fs::write(directory.join("build-sentinel"), b"managed").unwrap();
+    }
+    for name in ["report", "reference"] {
+        let retained = root.join(name);
+        fs::create_dir(&retained).unwrap();
+        fs::write(retained.join("retained-sentinel"), b"retained").unwrap();
+    }
+    let output = command("cargo").arg("clean").output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    for directory in [&final_dir, &build_dir] {
+        assert!(!directory.join("build-sentinel").exists());
+    }
+    for name in ["report", "reference"] {
+        assert_eq!(fs::read(root.join(name).join("retained-sentinel")).unwrap(), b"retained");
+    }
+}

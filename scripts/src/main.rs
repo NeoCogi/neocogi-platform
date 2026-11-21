@@ -7,6 +7,7 @@
 mod artwork;
 mod assets;
 mod browser;
+mod cargo_artifacts;
 mod local_sources;
 mod packages;
 mod process;
@@ -42,7 +43,7 @@ enum Operation {
         /// Explicitly include the optional Python frontend and select Python-like Triangle source.
         #[arg(long)]
         shader_python: bool,
-        /// Fresh report/deployment directory outside Cargo targets.
+        /// Fresh report/deployment directory separate from both Cargo build directories.
         #[arg(long)]
         output: PathBuf,
         /// Optional prior deployment containing the same three applications and lib/nc_platform.

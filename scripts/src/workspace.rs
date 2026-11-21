@@ -1,4 +1,5 @@
 //! Runtime Cargo workspace selection for commands that use checkout files.
+use crate::cargo_artifacts::CargoDirectories;
 use anyhow::{Context, Result, ensure};
 use serde::Deserialize;
 use std::{
@@ -20,17 +21,21 @@ struct Discovery {
     workspace_members: HashSet<String>,
     /// Package records carrying source locations.
     packages: Vec<Member>,
+    /// Effective final target directory from the selected Cargo configuration.
+    target_directory: PathBuf,
+    /// Effective intermediate build directory, reported by Cargo with split-directory support.
+    build_directory: Option<PathBuf>,
 }
 
 /// Concrete package source used to validate the tools member.
 #[derive(Deserialize)]
-struct Member {
+pub(crate) struct Member {
     /// Cargo identity shared with its workspace membership list.
-    id: String,
+    pub(crate) id: String,
     /// Published or private Cargo package name.
-    name: String,
+    pub(crate) name: String,
     /// Manifest for this concrete source.
-    manifest_path: PathBuf,
+    pub(crate) manifest_path: PathBuf,
 }
 
 /// A validated checkout and the separate directory used to resolve Cargo configuration.
@@ -39,6 +44,8 @@ pub(crate) struct Workspace {
     root: PathBuf,
     /// Original invocation directory or explicitly selected root for Cargo.
     cargo_directory: PathBuf,
+    /// The resolved member set and active Cargo artifact configuration.
+    metadata: Discovery,
 }
 
 impl Workspace {
@@ -60,18 +67,45 @@ impl Workspace {
         if explicit.is_some() {
             ensure!(root == cargo_directory, "--workspace must name the Cargo workspace root: {}", root.display());
         }
-        let expected_manifest = root.join("scripts/Cargo.toml");
+        let workspace = Self { root, cargo_directory, metadata };
+        workspace.member(TOOLS_PACKAGE, "scripts/Cargo.toml")?;
+        Ok(workspace)
+    }
+
+    /// Verify that Cargo selected the named workspace member at its authored checkout location.
+    pub(crate) fn member(&self, name: &str, manifest: &str) -> Result<&Member> {
+        let expected_manifest = self.root.join(manifest);
+        let mut matches = self
+            .metadata
+            .packages
+            .iter()
+            .filter(|package| package.name == name && self.metadata.workspace_members.contains(&package.id));
+        let package = matches.next().with_context(|| {
+            format!(
+                "Cargo workspace {} must contain the {name} member at {}",
+                self.root.display(),
+                expected_manifest.display()
+            )
+        })?;
         ensure!(
-            metadata.packages.iter().any(|package| {
-                package.name == TOOLS_PACKAGE
-                    && metadata.workspace_members.contains(&package.id)
-                    && package.manifest_path.canonicalize().is_ok_and(|path| path == expected_manifest)
-            }),
-            "Cargo workspace {} must contain the {TOOLS_PACKAGE} member at {}",
-            root.display(),
+            matches.next().is_none() && package.manifest_path.canonicalize()? == expected_manifest,
+            "Cargo workspace {} must contain the {name} member at {}",
+            self.root.display(),
             expected_manifest.display(),
         );
-        Ok(Self { root, cargo_directory })
+        Ok(package)
+    }
+
+    /// The original Cargo-managed roots, before any private qualification overrides.
+    pub(crate) fn developer_directories(&self) -> Result<CargoDirectories> {
+        Ok(CargoDirectories {
+            target: self.metadata.target_directory.clone(),
+            build: self
+                .metadata
+                .build_directory
+                .clone()
+                .context("Cargo metadata must report its effective build directory")?,
+        })
     }
 
     /// Resolve authored, repository-relative source paths against the physical workspace.

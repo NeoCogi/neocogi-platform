@@ -1,10 +1,12 @@
 //! Reproducible native shader qualification, outside product startup and build scripts.
-use crate::artwork::{DOWNLOADS, LICENSES, STAGED_DIR};
+mod deployment;
+
+use crate::artwork::STAGED_DIR;
 use crate::workspace::Workspace;
 use anyhow::{Context, Result, ensure};
 use serde::Serialize;
 use std::{
-    ffi::OsStr,
+    collections::BTreeMap,
     fs,
     path::{Path, PathBuf},
     process::Command,
@@ -56,6 +58,10 @@ pub(crate) struct Options {
 const APPLICATIONS: [&str; 3] = ["triangle", "gltf_damaged_helmet", "gltf_brainstem"];
 /// A stalled shader or driver must not leave an unbounded process tree behind.
 const DEADLINE: Duration = Duration::from_secs(120);
+/// Each variant renders this many guard frames before its timed samples.
+const WARMUP_FRAMES: u32 = 3;
+/// The deterministic animation pose used in both glTF workloads.
+const GLTF_TIME: u32 = 1;
 
 /// One actual child-process run; FPS intentionally includes startup and teardown.
 #[derive(Serialize)]
@@ -110,125 +116,37 @@ struct Report {
     frames: u32,
     /// Number of repeated samples per variant.
     runs: u32,
+    /// Profile used for the candidate provider and executables.
+    profile: &'static str,
+    /// Frames rendered by every untimed warmup.
+    warmup_frames: u32,
+    /// Fixed animation timestamp for glTF.
+    gltf_time: u32,
+    /// Maximum candidate/reference median elapsed-time ratio.
+    max_slowdown: f64,
+    /// Whether timed workloads collected Linux perf counters.
+    perf: bool,
+    /// Whether the run required native Intel compilation diagnostics.
+    intel_stats: bool,
+    /// Optional trusted prior deployment, which can predate provenance reports.
+    reference: Option<PathBuf>,
+    /// Copies and digests verified before exposing the candidate.
+    deployment: deployment::Deployment,
+    /// The actual candidate/reference caches following glTF warmup, when caching succeeded.
+    warmed_ibl_sha256: BTreeMap<&'static str, String>,
     /// Complete platform cdylib bytes, including its built-in compiler.
     library_bytes: u64,
     /// Concrete measurements and shader compilation costs for every application.
     applications: Vec<Application>,
 }
 
-/// Read only actual Cargo compiler-artifact executable receipts; no hash/profile guesses.
-fn executables(bytes: &[u8]) -> Result<std::collections::BTreeMap<String, PathBuf>> {
-    let mut result = std::collections::BTreeMap::new();
-    for line in bytes.split(|b| *b == b'\n').filter(|line| !line.is_empty()) {
-        let message: serde_json::Value = serde_json::from_slice(line)?;
-        if message["reason"] == "compiler-artifact"
-            && let Some(path) = message["executable"].as_str()
-        {
-            let name = message["target"]["name"].as_str().context("Cargo executable has no name")?;
-            result.insert(name.to_owned(), PathBuf::from(path));
-        }
-    }
-    Ok(result)
-}
-/// Verify that native build scripts supplied the full deployment and measure its staged library.
-fn staged_library_bytes(candidate: &Path, library_name: &OsStr) -> Result<u64> {
-    let artwork = candidate.join(STAGED_DIR);
-    for name in DOWNLOADS.into_iter().chain(LICENSES) {
-        let file = artwork.join(name);
-        ensure!(file.is_file(), "staged artwork file is missing or not regular: {}", file.display());
-    }
-    let library = candidate.join("lib").join(library_name);
-    let metadata = fs::metadata(&library).with_context(|| format!("inspect staged library {}", library.display()))?;
-    ensure!(
-        metadata.is_file() && metadata.len() > 0,
-        "staged library is not a nonempty regular file: {}",
-        library.display()
-    );
-    Ok(metadata.len())
-}
-/// Build/validate before timing, using the same normal library assembly as end users.
-fn prepare(workspace: &Workspace, options: &Options, output: &Path) -> Result<(PathBuf, u64)> {
-    use crate::process::{capture, run};
-    let authored = crate::assets::gltf_download_directory(workspace.root());
-    crate::assets::require_gltf_downloads(&authored)?;
-    let candidate = output.join("candidate");
-    fs::create_dir(&candidate).with_context(|| format!("create fresh candidate at {}", candidate.display()))?;
-
-    let corpus = output.join("corpus");
-    let backend_features = format!("{}{}", options.backend.name(), if options.shader_python { ",shader-python" } else { "" });
-    let application_features = if options.shader_python { "dynamic,shader-python" } else { "dynamic" };
-    // The static corpus reads authored sources and never uses deployed artwork.
-    let corpus_stage = tempfile::tempdir_in(output).context("create isolated corpus staging directory")?;
-    run(workspace
-        .cargo_workspace("test")
-        .args(["--locked", "-p", "neocogi-platform-examples", "--no-default-features", "--features"])
-        .arg(format!("static,{},test-support", backend_features))
-        .args(["--test", "shader_corpus"])
-        .env_remove("NEOCOGI_CARGO_PROFILE_DIR")
-        .env("NEOCOGI_NATIVE_OUTPUT_DIR", corpus_stage.path())
-        .env("NEOCOGI_SHADER_ARTIFACT_DIR", &corpus)
-        .env("NEOCOGI_SHADER_VALIDATORS", "1"))?;
-    corpus_stage.close().context("remove unused corpus staging files")?;
-    let library = crate::packages::platform_artifact(&capture(
-        workspace
-            .cargo_workspace("build")
-            .args([
-                "--locked",
-                "--profile",
-                "min-size",
-                "-p",
-                "neocogi-platform-dylib",
-                "--no-default-features",
-                "--features",
-            ])
-            .arg(&backend_features)
-            .args(["--lib", "--message-format=json"])
-            .env_remove("NEOCOGI_NATIVE_OUTPUT_DIR"),
-    )?)?
-    .path;
-    let built = executables(&capture(
-        workspace
-            .cargo_workspace("build")
-            .args([
-                "--locked",
-                "--profile",
-                "min-size",
-                "-p",
-                "neocogi-platform-examples",
-                "--no-default-features",
-                "--features",
-            ])
-            .arg(application_features)
-            .args(["--bins", "--message-format=json"])
-            .env(
-                "NEOCOGI_CARGO_PROFILE_DIR",
-                library.parent().context("library is missing a Cargo profile directory")?,
-            )
-            .env("NEOCOGI_NATIVE_OUTPUT_DIR", &candidate),
-    )?)?;
-    let bytes = staged_library_bytes(&candidate, library.file_name().context("library filename")?)?;
-    if matches!(options.backend, Backend::Vulkan) {
-        ensure!(bytes < 524_288, "complete Vulkan platform exceeds its byte cap: {bytes}");
-    }
-    for name in APPLICATIONS {
-        let binary = built.get(name).with_context(|| format!("Cargo did not build {name}"))?;
-        fs::copy(binary, candidate.join(binary.file_name().context("executable filename")?))?;
-    }
-    // A checked source-keyed cache avoids rebaking after each clean output tree;
-    // the viewer still validates it normally before reuse.
-    let cache = authored.join("Cannon_Exterior.ibl");
-    if cache.is_file() {
-        fs::copy(cache, candidate.join(STAGED_DIR).join("Cannon_Exterior.ibl"))?;
-    }
-    Ok((candidate, bytes))
-}
 /// Correct application arguments, with runtime backend verification on both compared deployments.
 fn arguments(command: &mut Command, name: &str, backend: Backend, frames: u32) {
     command.args(["--backend", backend.name()]);
     if name == "triangle" {
         command.arg(frames.to_string());
     } else {
-        command.args(["--frames", &frames.to_string(), "--time", "1"]);
+        command.args(["--frames", &frames.to_string(), "--time", &GLTF_TIME.to_string()]);
     }
 }
 /// Return the exact executable in a trusted prepared deployment, without searching PATH.
@@ -318,36 +236,35 @@ pub(crate) fn run(workspace: &Workspace, options: Options) -> Result<()> {
         options.max_slowdown.is_finite() && options.max_slowdown > 0.0,
         "max-slowdown must be finite and positive"
     );
-    let output = if options.output.is_absolute() {
-        options.output.clone()
-    } else {
-        std::env::current_dir()?.join(&options.output)
-    };
+    let output = workspace.developer_directories()?.report_path(&std::path::absolute(&options.output)?)?;
     ensure!(
         !output.exists() || fs::read_dir(&output)?.next().is_none(),
         "report output must be new or empty: {}",
         output.display()
     );
-    let metadata: serde_json::Value = serde_json::from_slice(&crate::process::capture(
-        workspace.cargo_workspace("metadata").args(["--no-deps", "--format-version=1"]),
-    )?)?;
-    let target = Path::new(metadata["target_directory"].as_str().context("Cargo target directory")?);
-    fs::create_dir_all(&output)?;
-    let output = output.canonicalize()?;
-    ensure!(!output.starts_with(target.canonicalize()?), "keep qualification reports outside Cargo targets");
     let reference = options.reference.as_ref().map(|path| path.canonicalize()).transpose()?;
-    let (candidate, bytes) = prepare(workspace, &options, &output)?;
-    let rustc = String::from_utf8(crate::process::capture(Command::new("rustc").arg("--version"))?)?
-        .trim()
-        .to_owned();
+    fs::create_dir_all(&output)?;
+    let logs = output.join("build-logs");
+    // Claim the directory even if another process concurrently observed an empty report.
+    fs::create_dir(&logs).with_context(|| format!("claim shader qualification report {}", output.display()))?;
+    let deployment::Prepared { candidate, rustc, deployment } = deployment::prepare(workspace, &options, &output, &logs)?;
     let mut report = Report {
-        version: 1,
+        version: 2,
         backend: options.backend.name().into(),
         shader_python: options.shader_python,
         rustc,
         frames: options.frames,
         runs: options.runs,
-        library_bytes: bytes,
+        profile: deployment::PROFILE,
+        warmup_frames: WARMUP_FRAMES,
+        gltf_time: GLTF_TIME,
+        max_slowdown: options.max_slowdown,
+        perf: options.perf,
+        intel_stats: options.intel_stats,
+        reference: reference.clone(),
+        library_bytes: deployment.provider.file.bytes,
+        deployment,
+        warmed_ibl_sha256: BTreeMap::new(),
         applications: Vec::new(),
     };
     let mut failures = Vec::new();
@@ -358,7 +275,21 @@ pub(crate) fn run(workspace: &Workspace, options: Options) -> Result<()> {
             .chain(std::iter::once(("candidate", candidate.as_path())))
             .collect();
         for (variant, root) in &variants {
-            execute(&options, root, name, 3, &output.join(format!("{name}-{variant}-warmup.log")), false, false)?;
+            execute(
+                &options,
+                root,
+                name,
+                WARMUP_FRAMES,
+                &output.join(format!("{name}-{variant}-warmup.log")),
+                false,
+                false,
+            )?;
+            if name == "gltf_damaged_helmet" {
+                let cache = root.join(STAGED_DIR).join("Cannon_Exterior.ibl");
+                if cache.is_file() {
+                    report.warmed_ibl_sha256.insert(variant, crate::assets::digest(fs::File::open(cache)?)?);
+                }
+            }
         }
         let mut samples = Vec::new();
         for run in 0..options.runs {
@@ -442,32 +373,6 @@ pub(crate) fn run(workspace: &Workspace, options: Options) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    /// Qualification requires each staged file and reports the bytes of the deployed library.
-    #[test]
-    fn measures_complete_candidate_staging() {
-        let directory = tempfile::tempdir().unwrap();
-        let root = directory.path();
-        let artwork = root.join(STAGED_DIR);
-        let library_name = OsStr::new("libnc_platform.so");
-        let library = root.join("lib").join(library_name);
-        fs::create_dir_all(&artwork).unwrap();
-        fs::create_dir_all(library.parent().unwrap()).unwrap();
-        for name in DOWNLOADS.into_iter().chain(LICENSES) {
-            fs::write(artwork.join(name), b"fixture").unwrap();
-        }
-        let error = staged_library_bytes(root, library_name).unwrap_err().to_string();
-        assert!(error.contains(&library.display().to_string()), "{error}");
-        fs::write(&library, b"library bytes").unwrap();
-        assert_eq!(staged_library_bytes(root, library_name).unwrap(), 13);
-        for name in DOWNLOADS.into_iter().chain(LICENSES) {
-            let path = artwork.join(name);
-            fs::remove_file(&path).unwrap();
-            let error = staged_library_bytes(root, library_name).unwrap_err().to_string();
-            assert!(error.contains(&path.display().to_string()), "{error}");
-            fs::write(path, b"fixture").unwrap();
-        }
-    }
-
     /// Missing/partial diagnostics cannot accidentally become zero-cost successful shaders.
     #[test]
     fn intel_costs_keep_spills_and_every_simd_variant() {

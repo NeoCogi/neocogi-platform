@@ -1,4 +1,5 @@
 //! Release-set policy, archive inspection and external consumer qualification, without publication.
+use crate::cargo_artifacts::{CargoDirectories, owned_artifact, receipts};
 use crate::workspace::Workspace;
 use anyhow::{Context, Result, ensure};
 use flate2::read::GzDecoder;
@@ -209,42 +210,6 @@ fn copy_tree(source: &Path, destination: &Path) -> Result<()> {
     Ok(())
 }
 
-/// A normal platform cdylib receipt tying a final library to Cargo's selected package source.
-#[derive(Debug)]
-pub(crate) struct PlatformArtifact {
-    /// Cargo package identity from the producing toolchain's build.
-    package_id: String,
-    /// Manifest of the package that produced the library.
-    manifest_path: PathBuf,
-    /// Final library path reported by Cargo for this profile and target.
-    pub(crate) path: PathBuf,
-}
-
-/// Read Cargo's artifact receipt for the one normal platform cdylib, without assuming a profile path.
-/// Library-example targets and intermediate metadata cannot satisfy the packaged-library check.
-pub(crate) fn platform_artifact(output: &[u8]) -> Result<PlatformArtifact> {
-    let mut artifact = None;
-    for line in output.split(|byte| *byte == b'\n').filter(|line| !line.is_empty()) {
-        let message: serde_json::Value = serde_json::from_slice(line).context("invalid Cargo JSON message")?;
-        if message["reason"] != "compiler-artifact" || message["target"]["name"] != "nc_platform" || message["target"]["kind"] != serde_json::json!(["cdylib"])
-        {
-            continue;
-        }
-        for filename in message["filenames"].as_array().context("missing Cargo artifact filenames")? {
-            let filename = PathBuf::from(filename.as_str().context("artifact filename is not a string")?);
-            if filename.extension().and_then(|value| value.to_str()) == Some(std::env::consts::DLL_EXTENSION) {
-                let receipt = PlatformArtifact {
-                    package_id: message["package_id"].as_str().context("missing platform artifact package ID")?.into(),
-                    manifest_path: message["manifest_path"].as_str().context("missing platform artifact manifest path")?.into(),
-                    path: filename,
-                };
-                ensure!(artifact.replace(receipt).is_none(), "multiple normal platform libraries in Cargo output");
-            }
-        }
-    }
-    artifact.context("Cargo did not produce the normal platform cdylib")
-}
-
 /// Own this run's artifacts on Cargo's configured build volume, separate from the extracted sources.
 fn private_cargo_artifacts(configured_target: &Path) -> Result<tempfile::TempDir> {
     fs::create_dir_all(configured_target).with_context(|| format!("prepare configured Cargo target {}", configured_target.display()))?;
@@ -254,24 +219,9 @@ fn private_cargo_artifacts(configured_target: &Path) -> Result<tempfile::TempDir
         .with_context(|| format!("create private qualification artifacts in {}", configured_target.display()))
 }
 
-/// Pre-create one phase's final and intermediate Cargo directories within the owned run.
-fn create_cargo_target(artifacts: &Path, name: &str) -> Result<PathBuf> {
-    let target = artifacts.join(name);
-    fs::create_dir(&target).with_context(|| format!("create Cargo target {}", target.display()))?;
-    let build = target.join("build");
-    fs::create_dir(&build).with_context(|| format!("create Cargo build directory {}", build.display()))?;
-    Ok(target)
-}
-
-/// Select explicit run-owned Cargo output paths while inheriting other Cargo configuration.
-fn qualification_cargo(mut command: Command, target: &Path) -> Command {
-    command.env("CARGO_TARGET_DIR", target).env("CARGO_BUILD_BUILD_DIR", target.join("build"));
-    command
-}
-
 /// Build and test the extracted workspace with a canonical temporary parent and no audio device.
-fn extracted_cargo(toolchain: &str, workspace: &Path, target: &Path) -> Command {
-    let mut command = qualification_cargo(crate::process::cargo(workspace, Some(toolchain)), target);
+fn extracted_cargo(toolchain: &str, workspace: &Path, outputs: &CargoDirectories) -> Command {
+    let mut command = outputs.command(crate::process::cargo(workspace, Some(toolchain)));
     command.env("SDL_AUDIODRIVER", "dummy");
     // Resource staging also checks ancestors of temporary inputs created by the tests.
     let temporary_parent = workspace.parent().expect("the extracted workspace has a temporary parent");
@@ -313,16 +263,18 @@ fn extracted_shim_id(metadata: &Metadata, expected: &BTreeMap<&str, PathBuf>) ->
 
 /// Verify both ends of the receipt against this resolution and this run's output directory.
 fn qualified_library(output: &[u8], target: &Path, shim_id: &str, shim_manifest: &Path) -> Result<PathBuf> {
-    let receipt = platform_artifact(output)?;
-    ensure!(receipt.package_id == shim_id, "unexpected platform artifact package ID: {}", receipt.package_id);
-    let manifest = receipt.manifest_path.canonicalize()?;
-    ensure!(manifest == shim_manifest, "unexpected platform artifact manifest: {}", manifest.display());
-    let artifact = receipt.path.canonicalize()?;
-    ensure!(
-        artifact.starts_with(target.canonicalize()?),
-        "platform library is outside the qualification target"
-    );
-    Ok(artifact)
+    let mut artifact = None;
+    for receipt in receipts(output)? {
+        if receipt.target.name == "nc_platform" && receipt.target.kind == ["cdylib"] {
+            receipt.require_source(shim_id, shim_manifest)?;
+            for filename in receipt.filenames {
+                if filename.extension().and_then(|value| value.to_str()) == Some(std::env::consts::DLL_EXTENSION) {
+                    ensure!(artifact.replace(filename).is_none(), "multiple normal platform libraries in Cargo output");
+                }
+            }
+        }
+    }
+    owned_artifact(&artifact.context("Cargo did not produce the normal platform cdylib")?, &target.canonicalize()?)
 }
 
 /// Name the environment setting Rust uses when it selects the OS temporary directory.
@@ -388,12 +340,12 @@ pub(crate) fn qualify(source: &Workspace, allow_dirty: bool, offline: bool, stab
     )?)?;
     let selected = published_packages(&metadata)?;
     let artifacts = private_cargo_artifacts(&metadata.target_directory)?;
-    let package_target = create_cargo_target(artifacts.path(), "package-target")?;
-    let target = create_cargo_target(artifacts.path(), "consumer-target")?;
+    let package_outputs = CargoDirectories::create(artifacts.path(), "package-target")?;
+    let outputs = CargoDirectories::create(artifacts.path(), "consumer-target")?;
     let toolchain: toml::Value = toml::from_str(&fs::read_to_string(root.join("rust-toolchain.toml"))?)?;
     let toolchain = toolchain["toolchain"]["channel"].as_str().context("missing workspace toolchain channel")?;
     // Package together so Cargo resolves the unpublished release chain in this run's package index.
-    let mut package = qualification_cargo(source.cargo_workspace("package"), &package_target);
+    let mut package = package_outputs.command(source.cargo_workspace("package"));
     package.args(["--locked", "--no-verify"]).args(&flags);
     if allow_dirty {
         package.arg("--allow-dirty");
@@ -410,7 +362,7 @@ pub(crate) fn qualify(source: &Workspace, allow_dirty: bool, offline: bool, stab
     let mut patches = toml::map::Map::new();
     let mut expected = BTreeMap::new();
     for (name, package) in &selected {
-        let archive = package_target.join("package").join(format!("{name}-{}.crate", package.version));
+        let archive = package_outputs.target.join("package").join(format!("{name}-{}.crate", package.version));
         let bytes = fs::read(&archive).with_context(|| format!("read Cargo archive {}", archive.display()))?;
         let prefix = inspect_and_unpack_archive(&bytes, package, &packages).with_context(|| format!("qualify Cargo archive {}", archive.display()))?;
         expected.insert(*name, packages.join(&prefix).join("Cargo.toml").canonicalize()?);
@@ -445,7 +397,7 @@ pub(crate) fn qualify(source: &Workspace, allow_dirty: bool, offline: bool, stab
     fs::copy(root.join("Cargo.lock"), workspace.join("Cargo.lock"))?;
     let resolve = |toolchain: &str, lock: &[&str]| -> Result<String> {
         let metadata: Metadata = serde_json::from_slice(&capture(
-            extracted_cargo(toolchain, &workspace, &target)
+            extracted_cargo(toolchain, &workspace, &outputs)
                 .args(["metadata", "--format-version=1"])
                 .args(&flags)
                 .args(lock),
@@ -459,7 +411,7 @@ pub(crate) fn qualify(source: &Workspace, allow_dirty: bool, offline: bool, stab
     let execute = |toolchain: &str, arguments: &[&str]| -> Result<()> {
         // Cargo options must precede the executable's argument separator.
         let (cargo_arguments, executable_arguments) = arguments.split_at(arguments.iter().position(|argument| *argument == "--").unwrap_or(arguments.len()));
-        run(extracted_cargo(toolchain, &workspace, &target)
+        run(extracted_cargo(toolchain, &workspace, &outputs)
             .args(cargo_arguments)
             .args(&flags)
             .arg("--locked")
@@ -509,11 +461,11 @@ pub(crate) fn qualify(source: &Workspace, allow_dirty: bool, offline: bool, stab
     let library = |toolchain: &str, shim_id: &str| -> Result<PathBuf> {
         qualified_library(
             &capture(
-                extracted_cargo(toolchain, &workspace, &target)
+                extracted_cargo(toolchain, &workspace, &outputs)
                     .args(["build", "--locked", "--lib", "-p", SHIM, "--message-format=json"])
                     .args(&flags),
             )?,
-            &target,
+            &outputs.target,
             shim_id,
             &expected[SHIM],
         )
