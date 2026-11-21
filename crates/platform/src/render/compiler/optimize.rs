@@ -43,7 +43,7 @@ fn block_cost(statements: &[Stmt], calls: &mut BTreeSet<usize>) -> usize {
         .map(|statement| {
             1 + match statement {
                 Stmt::Let(_, value) | Stmt::Return(value) => value.as_ref().map_or(0, |value| expression_cost(value, calls)),
-                Stmt::Borrow(_, value) => expression_cost(value, calls),
+                Stmt::Borrow(_, value) | Stmt::Capture(_, value) => expression_cost(value, calls),
                 Stmt::Store(target, value) => expression_cost(target, calls) + expression_cost(value, calls),
                 Stmt::If(condition, yes, no) => expression_cost(condition, calls) + block_cost(yes, calls) + block_cost(no, calls),
                 Stmt::While(condition, body) => expression_cost(condition, calls) + block_cost(body, calls),
@@ -319,28 +319,32 @@ impl Rewrite<'_> {
         self.depth -= 1;
         (body, result)
     }
-    /// Lvalue roots must remain the original mutable declaration. Only index
-    /// expressions expand; capturing an aggregate base would redirect the write.
-    fn lvalue(&mut self, value: &Expr, scope: &Scope<'_>) -> (Vec<Stmt>, Expr) {
-        let (before, kind) = match &value.kind {
-            ExprKind::Local(i) => (Vec::new(), ExprKind::Local(scope.ids[*i])),
-            ExprKind::Field(base, i) => {
-                let (before, base) = self.lvalue(base, scope);
-                (before, ExprKind::Field(Box::new(base), *i))
-            }
-            ExprKind::Swizzle(base, lanes) => {
-                let (before, base) = self.lvalue(base, scope);
-                (before, ExprKind::Swizzle(Box::new(base), lanes.clone()))
-            }
+    /// Snapshot a store operand, leaving an immutable reference for the writers.
+    fn capture(&mut self, value: Expr, output: &mut Vec<Stmt>) -> Expr {
+        let id = self.new_local(value.ty.clone(), false);
+        let result = local(id, &value.ty);
+        output.push(Stmt::Capture(id, value));
+        result
+    }
+
+    /// Preserve the mutable root. Capture each dynamic index immediately after
+    /// its expansion, before visiting the next projection, even through invalid ancestors.
+    fn lvalue(&mut self, value: &Expr, scope: &Scope<'_>, output: &mut Vec<Stmt>) -> Expr {
+        let kind = match &value.kind {
+            ExprKind::Local(i) => ExprKind::Local(scope.ids[*i]),
+            ExprKind::Field(base, i) => ExprKind::Field(Box::new(self.lvalue(base, scope, output)), *i),
+            ExprKind::Swizzle(base, lanes) => ExprKind::Swizzle(Box::new(self.lvalue(base, scope, output)), lanes.clone()),
             ExprKind::Index(base, index, count) => {
-                let (mut before, base) = self.lvalue(base, scope);
+                let base = self.lvalue(base, scope, output);
                 let (prefix, index) = self.expression(index, scope);
-                before.extend(prefix);
-                (before, ExprKind::Index(Box::new(base), Box::new(index), *count))
+                output.extend(prefix);
+                // A helper may leave a constant after its required prefix has run.
+                let index = if access::constant_index(&index).is_some() { index } else { self.capture(index, output) };
+                ExprKind::Index(Box::new(base), Box::new(index), *count)
             }
             _ => unreachable!("validated mutable declaration path"),
         };
-        (before, Expr { ty: value.ty.clone(), kind })
+        Expr { ty: value.ty.clone(), kind }
     }
     /// Keep lexical suffixes together after an early return. Loop conditions and
     /// their expanded calls remain inside the loop, including across continue.
@@ -370,13 +374,13 @@ impl Rewrite<'_> {
                         Stmt::Let(scope.ids[*index], value)
                     });
                 }
-                Stmt::Borrow(_, _) => unreachable!("source validation never creates optimizer views"),
+                Stmt::Borrow(..) | Stmt::Capture(..) => unreachable!("only the optimizer creates operand bindings"),
                 Stmt::Store(target, value) => {
                     let (before, value) = self.expression(value, scope);
                     output.extend(before);
-                    // The RHS must finish before any writable-path index helper runs.
-                    let (before, target) = self.lvalue(target, scope);
-                    output.extend(before);
+                    let path = access::path(target).expect("validated mutable declaration path");
+                    let value = if path.needs_store_preparation() { self.capture(value, &mut output) } else { value };
+                    let target = self.lvalue(target, scope, &mut output);
                     output.push(Stmt::Store(target, value));
                 }
                 Stmt::Return(value) => {

@@ -328,9 +328,13 @@ All writers share the decomposition of local/uniform member and index paths.
 An addressable read checks the complete path and loads its selected leaf; it does
 not copy an array or structure merely to select one element. Proven integer
 indices omit runtime bounds branches. Dynamic indices evaluate once, including
-when an earlier projection is invalid. Constant invalid reads return typed zero
-and invalid writes are skipped. No floating-point algebra is reassociated or
-folded by this optimization.
+when an earlier projection is invalid. Indexed stores evaluate the complete
+right-hand value once in its source control region, then evaluate dynamic
+indices once from root to leaf. Expanded helper statements run immediately
+before their captured operand. A generated bounds guard encloses only native
+index or pointer formation and the leaf write. A proven invalid store still
+evaluates its operands and skips the write. Constant invalid reads return typed
+zero. No floating-point algebra is reassociated or folded by this optimization.
 
 Immutable uniform views retain their declaration-time index values. Immutable
 locals can share stable storage, while mutable locals and snapshots of mutable

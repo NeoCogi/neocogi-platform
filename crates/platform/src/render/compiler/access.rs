@@ -21,7 +21,7 @@ pub(super) enum Step<'a> {
     },
     /// Array, matrix-column or vector-element selection with read-zero/skip-write semantics.
     Index {
-        /// Evaluated exactly once, before any generated bounds branch.
+        /// Evaluated exactly once, before the generated bounds branch for this path.
         value: &'a Expr,
         /// Authoritative finite element count.
         count: u32,
@@ -36,6 +36,16 @@ pub(super) struct Path<'a> {
     pub root: Root,
     /// Ordered from the root toward the selected leaf.
     pub steps: Vec<Step<'a>>,
+}
+
+impl Path<'_> {
+    /// A store that could skip the write needs eager operands outside the guard.
+    pub(super) fn needs_store_preparation(&self) -> bool {
+        self.steps.iter().any(|step| match step {
+            Step::Index { value, count, .. } => constant_index(value).is_none_or(|index| index >= *count),
+            Step::Member { .. } => false,
+        })
+    }
 }
 
 /// Classifies the complete expression before writers evaluate indices, so a failed

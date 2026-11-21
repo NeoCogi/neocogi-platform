@@ -322,7 +322,11 @@ pub(crate) enum Stmt {
     /// A view retains its origin's stability so escaping values still snapshot
     /// mutable storage instead of accidentally aliasing it.
     Borrow(usize, Expr),
-    /// Validated mutable local path and same-typed value; invalid indices skip the store.
+    /// Optimizer-only capture of one complete store operand at this program point.
+    /// It owns a typed value even when the expression could alias stable storage.
+    Capture(usize, Expr),
+    /// Validated mutable path and same-typed value. After lowering, a store that
+    /// can skip its write references a captured RHS and captured dynamic indices.
     Store(Expr, Expr),
     /// Scalar condition and two lexical branches.
     If(Expr, Vec<Stmt>, Vec<Stmt>),
@@ -832,7 +836,7 @@ impl Module {
                         return (false, exits);
                     }
                 }
-                Stmt::Borrow(_, value) => {
+                Stmt::Borrow(_, value) | Stmt::Capture(_, value) => {
                     if !self.uniform_expression(value, conditional) {
                         return (false, exits);
                     }

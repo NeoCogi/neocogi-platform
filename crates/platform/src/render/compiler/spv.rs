@@ -497,6 +497,16 @@ impl Writer<'_> {
                         b.op(Op::Store, &[pointer, value]);
                     }
                 }
+                Stmt::Capture(i, expression) => {
+                    let value = self.expr(b, expression);
+                    // A capture is consumed whole. Even aggregate RHS values can stay in SSA.
+                    b.locals[*i] = LocalValue::Bound(Access {
+                        origin: Origin::Value(value),
+                        projections: Vec::new(),
+                        guard: Guard::Always,
+                        stable: true,
+                    });
+                }
                 Stmt::Store(target, value) => {
                     let value = self.expr(b, value);
                     let path = self.access(b, target).expect("validated local write path");

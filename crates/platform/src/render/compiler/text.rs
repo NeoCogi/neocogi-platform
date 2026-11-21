@@ -228,13 +228,14 @@ impl Writer<'_> {
     fn snapshot(&mut self, t: &Ty, value: &str) -> String {
         let id = format!("nc_t{}", self.temp);
         self.temp += 1;
-        let declaration = self.decl(t, &id);
-        self.line(if self.gl {
-            format!("{declaration} = {value};")
-        } else {
-            format!("let {declaration} = {value};")
-        });
+        self.immutable(t, &id, value);
         id
+    }
+    /// Declare a typed immutable value using the target's local declaration syntax.
+    fn immutable(&mut self, ty: &Ty, name: &str, value: &str) {
+        let declaration = self.decl(ty, name);
+        let qualifier = if self.gl { "" } else { "let " };
+        self.line(format!("{qualifier}{declaration} = {value};"));
     }
     /// Emits remainder on unsigned lane magnitudes so ES300 never sees a signed
     /// negative operand and both languages compute a defined result for all inputs.
@@ -429,7 +430,7 @@ impl Writer<'_> {
         for statement in statements {
             match statement {
                 Stmt::Borrow(i, expression) => {
-                    if let Some(path) = self.read_path(expression) {
+                    if let Some(path) = self.read_path(expression, true) {
                         self.aliases[*i] = Some(path);
                     } else {
                         let value = self.expr(expression);
@@ -445,7 +446,7 @@ impl Writer<'_> {
                     let local = &self.m.functions[self.function].locals[*i];
                     if !local.mutable
                         && let Some(expression) = value
-                        && let Some(path) = self.read_path(expression)
+                        && let Some(path) = self.read_path(expression, true)
                     {
                         if path.stable {
                             self.aliases[*i] = Some(path);
@@ -468,9 +469,13 @@ impl Writer<'_> {
                         format!("{} {decl} = {value};", if local.mutable { "var" } else { "let" })
                     });
                 }
+                Stmt::Capture(i, expression) => {
+                    let value = self.expr(expression);
+                    self.immutable(&expression.ty, &format!("v{i}"), &value);
+                }
                 Stmt::Store(target, value) => {
                     let value = self.expr(value);
-                    let path = self.read_path(target).expect("validated writable local path");
+                    let path = self.read_path(target, false).expect("validated writable local path");
                     match path.bounds {
                         Bounds::Never => {}
                         Bounds::Always => self.line(format!("{} = {value};", path.value)),
@@ -503,13 +508,14 @@ impl Writer<'_> {
             }
         }
     }
-    /// Index guards use unsigned comparisons to reject negative and oversized indices together.
-    fn index(&mut self, index: &Expr, count: u32) -> (String, Bounds) {
+    /// Index guards use unsigned comparisons to reject negatives and oversized indices together.
+    /// Store indices have already been captured in typed IR.
+    fn index(&mut self, index: &Expr, count: u32, snapshot: bool) -> (String, Bounds) {
         if let Some(index) = access::constant_index(index) {
             return (format!("{index}u"), if index < count { Bounds::Always } else { Bounds::Never });
         }
         let value = self.expr(index);
-        let value = self.snapshot(&index.ty, &value);
+        let value = if snapshot { self.snapshot(&index.ty, &value) } else { value };
         let cast = if self.gl { "uint" } else { "u32" };
         (value.clone(), Bounds::Dynamic(format!("{cast}({value}) < {count}u")))
     }
@@ -523,7 +529,8 @@ impl Writer<'_> {
     }
     /// Capture every nested index before guarding one leaf access. Aliases reuse
     /// their declaration-time indices, including when the source index later changes.
-    fn read_path(&mut self, expression: &Expr) -> Option<ReadPath> {
+    /// Prepared store paths can reuse their captured values directly.
+    fn read_path(&mut self, expression: &Expr, snapshot_indices: bool) -> Option<ReadPath> {
         let path = access::path(expression)?;
         let (mut result, mut parent) = match path.root {
             access::Root::Local(i) => (
@@ -554,7 +561,7 @@ impl Writer<'_> {
                     parent = ty;
                 }
                 access::Step::Index { value, count, ty } => {
-                    let (index, bounds) = self.index(value, count);
+                    let (index, bounds) = self.index(value, count, snapshot_indices);
                     result.bounds = Self::and_bounds(result.bounds, bounds);
                     result.value = format!("({})[{index}]", result.value);
                     parent = ty;
@@ -581,7 +588,7 @@ impl Writer<'_> {
     }
     /// Emits pure expressions, materializing guards before any unsafe native indexing/load.
     fn expr(&mut self, e: &Expr) -> String {
-        if let Some(path) = self.read_path(e) {
+        if let Some(path) = self.read_path(e, true) {
             return self.read(path, &e.ty);
         }
         match &e.kind {
@@ -619,7 +626,7 @@ impl Writer<'_> {
                 // A computed base may be expensive (including a helper call).
                 // Evaluate it once, before index calls and the bounds branch.
                 let base_value = self.snapshot(&base.ty, &base_value);
-                let (index, bounds) = self.index(index, *count);
+                let (index, bounds) = self.index(index, *count, true);
                 self.read(
                     ReadPath {
                         value: format!("({base_value})[{index}]"),

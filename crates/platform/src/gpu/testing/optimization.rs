@@ -23,6 +23,8 @@ const TYPES: &str = r#"(struct Record (matrix mat4) (color vec4))
 const COLORS: [[u8; 4]; 4] = [[255, 0, 0, 255], [0, 255, 0, 255], [0, 0, 255, 255], [255; 4]];
 /// No valid value is selected outside the four-element color bank.
 const STRIPE: [[u8; 4]; 8] = [[0; 4], COLORS[0], COLORS[1], COLORS[2], COLORS[3], [0; 4], [0; 4], [0; 4]];
+/// Every derivative quad has one admitted store and one skipped store.
+const INDEXED_STORE_PIXELS: [[u8; 4]; 8] = [[255; 4], [0; 4], [255; 4], [0; 4], [255; 4], [0; 4], [255; 4], [0; 4]];
 /// Red and green encode the scalar and vector controls. Blue encodes a dynamic power of two per column.
 const SHIFT_PIXELS: [[u8; 4]; 8] = [
     [255, 255, 2, 255],
@@ -142,6 +144,25 @@ pub fn cases() -> Vec<Case> {
               (return (index values (- (i32 (. p x)) 1)))"#,
             [[0; 4], [255, 255, 0, 255], COLORS[1], COLORS[2], COLORS[3], [0; 4], [0; 4], [0; 4]],
             true,
+        ),
+        (
+            "indexed_store_derivative",
+            "",
+            r#"(var slots (array vec4 1))
+              (set (index slots (& (i32 (. p x)) 1)) (vec4 (dpdx (. p x))))
+              (return (index slots 0))"#,
+            INDEXED_STORE_PIXELS,
+            false,
+        ),
+        (
+            "indexed_store_explicit_rhs",
+            "",
+            r#"(var slots (array vec4 1))
+              (let value (vec4 (dpdx (. p x))))
+              (set (index slots (& (i32 (. p x)) 1)) value)
+              (return (index slots 0))"#,
+            INDEXED_STORE_PIXELS,
+            false,
         ),
         (
             "helper_short_circuit",
