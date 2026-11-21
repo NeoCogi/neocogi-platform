@@ -28,9 +28,14 @@ For shared-library loading use the [native assembly guide](../README.md). Both
 models use the same scene/render loop in static and dynamic mode.
 
 Both cameras initially fit the model's world-space bounds. Resize updates the
-projection without resetting orientation or pan. Focus loss and resize end active
-drags, so returning to a window cannot continue an old gesture. Each viewer stays
-open by default; `--frames N` exits after a positive number of rendered frames.
+projection without resetting orientation or pan. Focus loss and resize end
+active drags. A zero-size drawable suspends rendering while input remains active.
+Each drawable frame computes its projection, world-space eye and sky basis
+together, using wide intermediates for fitting, movement and projection.
+Before graphics maintenance or recording, the viewer checks that every value
+fits a finite `f32` GPU uniform. It returns an out-of-range diagnostic if the
+camera exceeds that range. Each viewer stays open by default, and `--frames N`
+exits after a positive number of rendered frames.
 `--time SECONDS` fixes the animation pose for repeatable inspection. `--asset PATH`
 loads a local compatible asset, and `--help` lists options without creating a window.
 `--environment PATH.hdr` selects another Radiance panorama. `--exposure MULTIPLIER`
@@ -151,6 +156,10 @@ It also verifies HDR illumination independently of skybox visibility, exposure
 changes, skybox rotation and invariance under pan/zoom. Numerical regressions
 cover HDR encoding, convolution energy, BRDF bounds, material packing/AO and
 source-keyed cache corruption/bounds handling.
+The camera fixture renders the same imported triangle at unit scale and at
+`2e36` through native COM and compares their pixel coverage. A separate fixture
+uses a finite scene at scale `1e38` to verify that an out-of-range fitted eye
+returns an owned diagnostic before maintenance, recording, upload or rendering.
 An actual fragment probe checks that the midpoint of RGBE-encoded radiance 1 and
 8 is 4.5, catching incorrect interpolation of the encoded exponent bytes.
 Set `NEOCOGI_GLTF_CAPTURE=/tmp/gltf-captures` to save documentation PNGs from

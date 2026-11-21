@@ -1,9 +1,11 @@
 //! Viewer command-line and optional real software-GPU qualification.
 use super::*;
+#[cfg(feature = "test-support")]
+use neocogi_com_sdk::{ComRef, NcOutputWriter, NC_E_OUT_OF_RANGE};
 
 /// SDL permits one event-pump owner per process. Native cases hold this permit until
 /// every window/context/resource drops, while CPU-only scene tests remain independent.
-#[cfg(all(feature = "test-support", feature = "glow"))]
+#[cfg(feature = "test-support")]
 static NATIVE_SESSION: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// Writes and loads an actual tiny glTF with external mesh bytes and an optional PNG.
@@ -47,6 +49,203 @@ fn triangle_scene(factor: Option<[f32; 3]>, pixel: Option<[u8; 4]>, customize: i
     let path = root.join("scene.gltf");
     std::fs::write(&path, serde_json::to_vec(&document).unwrap()).unwrap();
     Scene::load(&path).unwrap()
+}
+
+/// Reimports the same authored triangle with scaled binary positions and accessor bounds.
+#[cfg(feature = "test-support")]
+fn camera_triangle(scale: f32) -> Scene {
+    triangle_scene(Some([1., 0., 0.]), None, |_, document, bytes| {
+        let mut positions = Vec::new();
+        floats(&mut positions, [-scale, -scale, 0., scale, -scale, 0., 0., scale, 0.]);
+        bytes[..36].copy_from_slice(&positions);
+        document["accessors"][0]["min"] = serde_json::json!([-scale, -scale, 0.]);
+        document["accessors"][0]["max"] = serde_json::json!([scale, scale, 0.]);
+    })
+}
+
+/// Emission isolates rasterized coverage from lighting at very large coordinates.
+#[cfg(feature = "test-support")]
+fn camera_lighting(background: Background) -> Lighting {
+    let region = environment::Region { x: 0, y: 0, width: 1, height: 1 };
+    Lighting {
+        environment: Environment {
+            width: 1,
+            height: 1,
+            pixels: vec![128, 0, 0, 129],
+            regions: [region; environment::REGION_COUNT],
+        },
+        exposure: 1.,
+        intensity: 0.,
+        background,
+    }
+}
+
+/// The same finite silhouette reaches native pixels even when its far plane exceeds f32.
+#[cfg(all(feature = "test-support", feature = "glow"))]
+#[test]
+#[ignore = "requires a native SDL GL driver; SDL_VIDEODRIVER=offscreen is sufficient"]
+fn large_finite_camera_frame_retains_native_triangle_coverage() {
+    let _native = NATIVE_SESSION.lock().unwrap();
+    let _runtime = neocogi_com_host::initialize_runtime();
+    let lighting = camera_lighting(Background::Hidden);
+    let native = neocogi_platform_examples::sdk::platform::testing::window("finite glTF camera", Size { width: 64, height: 64 }).unwrap();
+    let target = Target::new(native.window).unwrap();
+    let size = target.window.size().unwrap();
+    assert_eq!(size.width, size.height);
+    let coverage = [(1, 1.0), (2, 2e36)].map(|(invocation, scale)| {
+        let scene = camera_triangle(scale);
+        let (center, radius) = scene.bounds();
+        assert!(radius.is_finite() && center.iter().all(|value| value.is_finite()));
+        let camera = Camera::new(center, radius, size);
+        let mut graphics = Graphics::new(&scene, prepare_materials(&scene).unwrap(), &lighting.environment, &target.resources).unwrap();
+        target.render(&scene, &mut graphics, &camera, 0., &lighting, invocation).unwrap();
+        let pixels = native.probe.pixels().unwrap();
+        assert_eq!(pixels.len(), (size.width * size.height * 4) as usize);
+        let offset = ((size.height / 2 * size.width + size.width / 2) * 4) as usize;
+        assert!(pixels[offset] > 180, "scale {scale:e} center pixel {:?}", &pixels[offset..offset + 4]);
+        assert_ne!(&pixels[offset..offset + 4], &pixels[..4], "scale {scale:e} must draw a silhouette");
+        pixels.chunks_exact(4).map(|pixel| pixel != &pixels[..4]).collect::<Vec<_>>()
+    });
+    assert_eq!(coverage[0], coverage[1]);
+}
+
+/// Records any attempted frame-side effect through the generated COM calls.
+#[cfg(feature = "test-support")]
+#[com_object(interfaces(IRenderHost, IRenderer))]
+struct FrameEntryProbe {
+    /// Shared with the upload capabilities and retained after fixture teardown.
+    entries: Rc<RefCell<Vec<&'static str>>>,
+}
+
+#[cfg(feature = "test-support")]
+impl FrameEntryProbe {
+    /// Refuses the operation after observing entry, so a regression cannot render through the fixture.
+    fn reject<T>(&self, operation: &'static str) -> Result<T, NcStatus> {
+        self.entries.borrow_mut().push(operation);
+        Err(neocogi_com_sdk::NC_E_INVALID_ARG)
+    }
+}
+
+#[cfg(feature = "test-support")]
+impl IRenderDriverBound for FrameEntryProbe {
+    /// A skipped frame needs no driver identity.
+    fn driver_identity(&self) -> Result<ComPtr<IRenderDriverIdentityAbi>, NcStatus> {
+        self.reject("driver identity")
+    }
+}
+
+#[cfg(feature = "test-support")]
+impl IRenderHost for FrameEntryProbe {
+    /// Captures maintenance entry before any provider work.
+    fn maintain_result(&self) -> Result<ComPtr<IRenderOutcomeAbi>, NcStatus> {
+        self.reject("maintenance")
+    }
+
+    /// Rejected frames must never import a texture.
+    fn import_texture_result(&self, _: ComRef<'_, IRenderResourcesAbi>, _: ComRef<'_, ITextureAbi>) -> Result<ComBox<ITextureImportResultAbi>, NcStatus> {
+        self.reject("texture import")
+    }
+
+    /// Rejected frames must never prepare a texture.
+    fn prepare_texture_result(&self, _: ComRef<'_, IRenderResourcesAbi>, _: ComRef<'_, IGpuBufferAbi>) -> Result<ComPtr<IRenderOutcomeAbi>, NcStatus> {
+        self.reject("texture preparation")
+    }
+
+    /// Captures recording admission before any native recorder exists.
+    fn recording_broker(&self) -> Result<ComPtr<IRenderViewBrokerAbi>, NcStatus> {
+        self.reject("recording broker")
+    }
+}
+
+#[cfg(feature = "test-support")]
+impl IRenderer for FrameEntryProbe {
+    /// Captures entry before any renderer work.
+    fn render_result(&self, _: RenderInfo, _: ComRef<'_, IRenderStreamAbi>) -> Result<ComPtr<IRenderOutcomeAbi>, NcStatus> {
+        self.reject("renderer")
+    }
+}
+
+/// Replaces a single frame uniform with the same declared shape and observable upload entry.
+#[cfg(feature = "test-support")]
+#[com_object(interfaces(IGpuBuffer), ownership = exclusive)]
+struct UploadEntryProbe {
+    /// Exact metadata from the production buffer replaced by this fixture.
+    info: GpuBufferInfo,
+    /// Reports through the same owned trace as the host and renderer.
+    entries: Rc<RefCell<Vec<&'static str>>>,
+}
+
+#[cfg(feature = "test-support")]
+impl IRenderDriverBound for UploadEntryProbe {
+    /// These test buffers never pretend to belong to the window's driver.
+    fn driver_identity(&self) -> Result<ComPtr<IRenderDriverIdentityAbi>, NcStatus> {
+        Err(neocogi_com_sdk::NC_E_INVALID_ARG)
+    }
+}
+
+#[cfg(feature = "test-support")]
+impl IGpuBuffer for UploadEntryProbe {
+    /// Permits the typed wrapper's setup-time shape check.
+    fn info(&self) -> Result<GpuBufferInfo, NcStatus> {
+        Ok(self.info)
+    }
+
+    /// Records even uploads that would leave identical bytes in the original buffer.
+    fn upload(&mut self, _: NcCopyFromBufferOffset<'_, u8>) -> Result<(), NcStatus> {
+        self.entries.borrow_mut().push("uniform upload");
+        Err(neocogi_com_sdk::NC_E_INVALID_ARG)
+    }
+
+    /// No application frame reads uniform contents back.
+    fn read(&self, _: NcOutputWriter<'_, u8>) -> Result<(), NcStatus> {
+        Err(neocogi_com_sdk::NC_E_INVALID_ARG)
+    }
+}
+
+/// A finite imported sphere whose fitted eye exceeds f32 fails before the complete frame boundary.
+#[cfg(feature = "test-support")]
+#[test]
+#[ignore = "requires a native SDL display; Glow also permits SDL_VIDEODRIVER=offscreen"]
+fn unrepresentable_camera_frame_returns_owned_error_before_frame_entry() {
+    let _native = NATIVE_SESSION.lock().unwrap();
+    let _runtime = neocogi_com_host::initialize_runtime();
+    let entries = Rc::new(RefCell::new(Vec::new()));
+    let error = {
+        let scene = camera_triangle(1e38);
+        let (center, radius) = scene.bounds();
+        assert!(radius.is_finite() && center.iter().all(|value| value.is_finite()));
+        let lighting = camera_lighting(Background::Environment);
+        let native = neocogi_platform_examples::sdk::platform::testing::window("out of range glTF camera", Size { width: 64, height: 64 }).unwrap();
+        let mut target = Target::new(native.window).unwrap();
+        let size = target.window.size().unwrap();
+        assert_eq!(size.width, size.height);
+        let camera = Camera::new(center, radius, size);
+        let mut graphics = Graphics::new(&scene, prepare_materials(&scene).unwrap(), &lighting.environment, &target.resources).unwrap();
+        let probe = FrameEntryProbe::from_value(FrameEntryProbe { entries: entries.clone() });
+        target.host = probe.query().unwrap();
+        target.renderer = probe.query().unwrap();
+        for uniform in [&mut graphics.camera, &mut graphics.sky, &mut graphics.lighting]
+            .into_iter()
+            .chain(&mut graphics.skins)
+            .chain(&mut graphics.parameters)
+        {
+            let buffer = UploadEntryProbe::into_box(UploadEntryProbe {
+                entries: entries.clone(),
+                info: uniform.info(),
+            })
+            .query()
+            .unwrap();
+            *uniform = TypedGpuBuffer::wrap(buffer).unwrap();
+        }
+        target.render(&scene, &mut graphics, &camera, 0., &lighting, 1).unwrap_err()
+    };
+    assert!(
+        entries.borrow().is_empty(),
+        "graphics work entered before camera validation: {:?}",
+        entries.borrow()
+    );
+    assert_eq!(error.status, NC_E_OUT_OF_RANGE);
+    assert_eq!(error.message, "glTF camera eye is outside the finite f32 upload range");
 }
 
 /// Positive and negative sampled world determinants must keep the authored front face visible.
@@ -681,8 +880,9 @@ fn models_render_animate_and_respond_to_arcball_pan_zoom() {
         }
         let mut sky_only = |camera: &Camera| {
             invocation += 1;
+            let camera = camera.frame().unwrap();
             target
-                .submit(camera.drawable_size(), invocation, |view| graphics.record_sky(camera, &lighting, view))
+                .submit(camera.drawable_size(), invocation, |view| graphics.record_sky(&camera, &lighting, view))
                 .unwrap();
             native.probe.pixels().unwrap()
         };

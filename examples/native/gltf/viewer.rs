@@ -10,7 +10,7 @@ mod material;
 #[path = "scene.rs"]
 mod scene;
 
-use camera::Camera;
+use camera::{Camera, FrameCamera};
 use environment::Environment;
 use material::{MaterialAtlas, Tile};
 use neocogi_com_sdk::{ComBox, ComPtr, NcCopyFromBufferOffset, NcStatus, com_object};
@@ -296,7 +296,7 @@ impl Graphics {
     }
 
     /// Copies this frame's camera/material/palette uniforms and records indexed depth-tested draws.
-    fn record(&mut self, scene: &Scene, camera: &Camera, seconds: f32, lighting: &Lighting, view: &mut ComBox<IRenderViewAbi>) -> Result<(), NcStatus> {
+    fn record(&mut self, scene: &Scene, camera: &FrameCamera, seconds: f32, lighting: &Lighting, view: &mut ComBox<IRenderViewAbi>) -> Result<(), NcStatus> {
         if lighting.background == Background::Environment {
             self.record_sky(camera, lighting, view)?;
         } else {
@@ -308,6 +308,7 @@ impl Graphics {
         matrix_bytes(&mut frame, camera.view_projection());
         self.camera.upload(0, &frame)?;
         view.bind_uniform_buffer(GpuShaderStage::Vertex, 0, self.camera.as_gpu_buffer(), 0, 64)?;
+        let eye = camera.eye();
         for (index, (primitive, mesh)) in scene.primitives.iter().zip(&self.meshes).enumerate() {
             let palette = scene.palette(primitive, &pose);
             let mirrored = primitive.skin.is_none() && mirrored_basis(&palette[0]);
@@ -337,7 +338,7 @@ impl Graphics {
                     if material.double_sided { 1.0 } else { 0.0 },
                 ],
             );
-            floats(&mut parameters, camera.eye().into_iter().chain([0.]));
+            floats(&mut parameters, eye.into_iter().chain([0.]));
             let gpu_material = &self.materials[primitive.material];
             for tile in gpu_material.tiles {
                 floats(&mut parameters, [tile.x as f32, tile.y as f32, tile.width as f32, tile.height as f32]);
@@ -380,10 +381,10 @@ impl Graphics {
     }
 
     /// Draws a depth-preserving full-screen environment at infinity, before mesh geometry.
-    fn record_sky(&mut self, camera: &Camera, lighting: &Lighting, view: &mut ComBox<IRenderViewAbi>) -> Result<(), NcStatus> {
+    fn record_sky(&mut self, camera: &FrameCamera, lighting: &Lighting, view: &mut ComBox<IRenderViewAbi>) -> Result<(), NcStatus> {
         self.lighting.upload(0, &lighting.environment.uniforms(lighting.exposure, lighting.intensity))?;
         let mut rays = Vec::with_capacity(64);
-        matrix_bytes(&mut rays, camera.sky_matrix());
+        matrix_bytes(&mut rays, camera.sky_basis());
         self.sky.upload(0, &rays)?;
         view.bind_pipeline(self.sky_pipeline.as_com_ref())?;
         self.bind_environment(lighting, view)?;
@@ -439,10 +440,11 @@ impl Target {
         })
     }
 
-    /// Records one complete contribution and synchronously submits through public contracts.
+    /// Validates one camera snapshot before the host, recorder or GPU receives any work.
     fn render(&self, scene: &Scene, graphics: &mut Graphics, camera: &Camera, seconds: f32, lighting: &Lighting, invocation: u64) -> Result<(), RenderError> {
+        let camera = camera.frame()?;
         self.submit(camera.drawable_size(), invocation, |view| {
-            graphics.record(scene, camera, seconds, lighting, view)
+            graphics.record(scene, &camera, seconds, lighting, view)
         })
     }
 
