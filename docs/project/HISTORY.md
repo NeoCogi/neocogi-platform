@@ -1,3 +1,14 @@
+# 0.4.0-alpha.2
+
+The contracts, renderer SDK and shared-library shim advance together to
+`0.4.0-alpha.2`. The tag `v0.4.0-alpha.2` identifies the source release.
+
+Synchronous Vulkan COM submissions use the surface generation selected after
+the final foreign callback through native preparation and acquisition. This
+avoids a redundant surface capability query on each window frame. Direct
+Rust frames still check the surface at finish to detect resizes made while
+the frame is open. COM and IDL dependencies remain at `0.4.0-alpha.2`.
+
 # 0.4.0-alpha.1
 
 The contracts, renderer SDK and shared-library shim advance together to

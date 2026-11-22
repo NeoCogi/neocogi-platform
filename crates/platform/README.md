@@ -24,13 +24,13 @@ Images, credits and license notices are included in this crate archive.
 ## Static Rust integration
 
 Audio, window hosting and shader compilation are built in. **Glow is the default
-renderer**. The registry setup below uses Platform `0.4.0-alpha.1` with COM
+renderer**. The registry setup below uses Platform `0.4.0-alpha.2` with COM
 `0.4.0-alpha.2`. To build from source, use the matching Platform checkout as a
 path dependency at `crates/platform`.
 
 ```toml
 [dependencies]
-neocogi-platform = "=0.4.0-alpha.1"
+neocogi-platform = "=0.4.0-alpha.2"
 neocogi-com-sdk = { version = "=0.4.0-alpha.2", default-features = false, features = ["std", "runtime"] }
 neocogi-com-host = { version = "=0.4.0-alpha.2", default-features = false }
 ```
@@ -71,7 +71,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 For Vulkan or WGPU, replace the SDK dependency with an explicit renderer selection:
 
 ```toml
-neocogi-platform = { version = "=0.4.0-alpha.1", default-features = false, features = ["vulkan"] }
+neocogi-platform = { version = "=0.4.0-alpha.2", default-features = false, features = ["vulkan"] }
 ```
 
 Use `ShaderTarget::SpirV` for Vulkan and `ShaderTarget::Wgsl` for WGPU.
