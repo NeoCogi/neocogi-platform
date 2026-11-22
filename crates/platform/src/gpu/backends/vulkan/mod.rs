@@ -106,7 +106,7 @@ impl SurfaceObserver {
         let caps = unsafe { self.loader.get_physical_device_surface_capabilities(self.physical, self.raw) }
             .map_err(|error| self.failure("get_surface_capabilities", error))?;
         #[cfg(test)]
-        let caps = surface_tests::composition_capabilities(caps);
+        let caps = surface_tests::observe_capabilities(caps);
         Ok(caps)
     }
 
@@ -153,8 +153,9 @@ struct AcquiredVulkanFrame {
 
 /// Which target the borrowed frame will finish against.
 enum FrameTarget {
-    /// The selected generation is ready. Finish authenticates blocks before acquiring an image.
-    Window,
+    /// The selected generation is ready. Open Rust frames reobserve the surface at finish
+    /// because callers can resize the window while holding the frame.
+    Window { reobserve_extent: bool },
     /// Device images are selected without touching any swapchain synchronization slot.
     Texture(Rc<OutputState>),
 }
@@ -337,15 +338,20 @@ impl VulkanRenderer {
         Ok(())
     }
 
-    /// Opens a frame against the completed generation already used for preparation.
-    /// The borrowed frame keeps that generation fixed until finish or drop.
-    pub(crate) fn window_frame(&mut self, info: FrameInfo) -> std::result::Result<VulkanFrame<'_>, FrameError> {
+    /// Opens a frame against the generation selected after the final foreign callback.
+    /// The synchronous COM path runs only native preparation and submission from here.
+    pub(crate) fn prepared_window_frame(&mut self, info: FrameInfo) -> std::result::Result<VulkanFrame<'_>, FrameError> {
+        self.window_frame(info, false)
+    }
+
+    /// The borrowed frame keeps the selected generation fixed until finish or drop.
+    fn window_frame(&mut self, info: FrameInfo, reobserve_extent: bool) -> std::result::Result<VulkanFrame<'_>, FrameError> {
         self.ensure_usable().map_err(FrameError::new)?;
         let dimensions = info.dimensions();
         self.begin(dimensions.width, dimensions.height, info.clear()).map_err(FrameError::new)?;
         Ok(VulkanFrame {
             backend: Some(self),
-            target: Some(FrameTarget::Window),
+            target: Some(FrameTarget::Window { reobserve_extent }),
         })
     }
 
@@ -401,7 +407,7 @@ impl VulkanRenderer {
     /// Finalizes the frame by submitting the queued generic blocks to Vulkan.
     fn finish(&mut self, target: FrameTarget) -> std::result::Result<Option<Rc<Image>>, FrameError> {
         match target {
-            FrameTarget::Window => self.finish_window().map(|_| None),
+            FrameTarget::Window { reobserve_extent } => self.finish_window(reobserve_extent).map(|_| None),
             FrameTarget::Texture(output) => {
                 let result = self.offscreen.as_mut().ok_or("offscreen execution was not initialized")?.render(
                     &self.generic,
@@ -418,7 +424,7 @@ impl VulkanRenderer {
     }
 
     /// Admits prepared blocks, retires prior uses and reserves completion storage before acquiring.
-    fn finish_window(&mut self) -> std::result::Result<(), FrameError> {
+    fn finish_window(&mut self, reobserve_extent: bool) -> std::result::Result<(), FrameError> {
         let mut commands = std::mem::take(&mut self.commands);
         let result = (|| {
             self.ensure_usable()?;
@@ -429,8 +435,13 @@ impl VulkanRenderer {
                 width: self.width as i32,
                 height: self.height as i32,
             };
-            let selected = self.context.surface.size()?;
-            if selected != size || self.context.reconfigure || self.context.extent.width != self.width || self.context.extent.height != self.height {
+            // COM has already selected the actual surface after callbacks. Acquisition
+            // and presentation still handle WSI invalidation after that observation.
+            if (reobserve_extent && self.context.surface.size()? != size)
+                || self.context.reconfigure
+                || self.context.extent.width != self.width
+                || self.context.extent.height != self.height
+            {
                 return Err(FrameError::window_retry("Vulkan drawable changed before acquisition"));
             }
             // Fence reuse is exclusive to the context. Collect the old owner after waiting for
@@ -538,7 +549,7 @@ impl RendererBackend for VulkanRenderer {
             height: dimensions.height,
         })
         .map_err(FrameError::from)?;
-        self.window_frame(info)
+        self.window_frame(info, true)
     }
 
     /// Constructs one private target aggregate. It can be consumed exactly once before publication.

@@ -154,9 +154,11 @@ fn vulkan_com_window_prepares_the_selected_generation_and_retries_rejected_prese
         invocation: 1,
         block_count: 1,
     };
+    let queries_before = WINDOW_PROBE.with_borrow(|slot| slot.as_ref().unwrap().capability_queries);
     renderer.render(info, previous.as_com_ref()).unwrap();
     let (mut acquires, format) = WINDOW_PROBE.with_borrow(|slot| {
         let probe = slot.as_ref().unwrap();
+        assert_eq!(probe.capability_queries - queries_before, 2, "COM observes before and after callbacks");
         (probe.acquires, *probe.formats.last().unwrap())
     });
 

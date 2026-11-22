@@ -236,7 +236,7 @@ impl Gpu {
         let offscreen = target.is_some();
         let mut frame = match target {
             #[cfg(feature = "vulkan")]
-            None => self.renderer.window_frame(frame_info),
+            None => self.renderer.prepared_window_frame(frame_info),
             #[cfg(not(feature = "vulkan"))]
             None => self.renderer.frame(frame_info),
             Some(output) => self.renderer.texture_frame(frame_info, output),

@@ -541,8 +541,12 @@ precheck failures preserve a complete existing assembly and return errors.
 Vulkan selects a complete swapchain generation before specializing window blocks.
 Native Rust callers use `drawable_size()` and `prepare_window(size)` before
 `prepare_block`. Finish checks each prepared block's device and attachment
-signature before acquiring, and checks the latest extent against the recording.
-An unfinished window frame can drop before acquisition without consuming an image.
+signature before acquiring. The open Rust frame also reobserves the surface at
+finish because the caller can resize the window while holding the frame. The
+synchronous COM path selects its extent after the last foreign callback and
+uses that generation through native preparation and acquisition. Acquisition
+and presentation handle subsequent WSI invalidation. An unfinished window
+frame can drop before acquisition without consuming an image.
 
 Destructive reconstruction marks presentation unavailable before waiting or
 replacing resources. Complete success restores Ready or Acquired, whichever

@@ -7,6 +7,8 @@ pub(crate) static NATIVE_SESSION: std::sync::Mutex<()> = std::sync::Mutex::new((
 /// Observes real WSI dispatches and controls reported outcomes on the owner thread.
 #[derive(Default)]
 pub(crate) struct WindowProbe {
+    /// Number of successful native surface-capability queries.
+    pub(crate) capability_queries: usize,
     /// Records format selected for each native swapchain creation attempt.
     pub(crate) formats: Vec<vk::Format>,
     /// Counts native acquire calls, including failures before a valid token.
@@ -365,7 +367,7 @@ fn surface_extent_uses_fixed_or_clamped_physical_size() {
 #[test]
 #[ignore = "requires an SDL native display and Vulkan surface with two advertised color formats"]
 fn rust_window_rejects_stale_prepared_blocks_before_acquiring() {
-    use neocogi_platform::render::abi::{Rect, RenderGroupPermissions, RenderSurfaceKind};
+    use neocogi_platform::render::abi::{RENDER_E_WINDOW_RETRY, Rect, RenderGroupPermissions, RenderSurfaceKind};
     let _session = NATIVE_SESSION.lock().unwrap_or_else(|error| error.into_inner());
     let _scope = WindowScope::start();
     let sdl = sdl2::init().unwrap();
@@ -409,6 +411,13 @@ fn rust_window_rejects_stale_prepared_blocks_before_acquiring() {
     frame.execute_block(&prepared);
     assert!(frame.finish().unwrap().is_none());
     WINDOW_PROBE.with_borrow(|slot| assert_eq!(slot.as_ref().unwrap().acquires, 1));
+
+    let frame = renderer.frame(info).unwrap();
+    window.set_size(96, 64).unwrap();
+    let error = frame.finish().err().expect("open Rust frame must reobserve a resize");
+    assert_eq!(error.status(), RENDER_E_WINDOW_RETRY);
+    assert!(error.to_string().contains("drawable changed before acquisition"));
+    WINDOW_PROBE.with_borrow(|slot| assert_eq!(slot.as_ref().unwrap().acquires, 1));
 }
 
 /// Owns the bounded constructor/rebuild seam; never changes production renderer state.
@@ -440,8 +449,13 @@ impl Drop for CompositionScope {
     }
 }
 
-/// Replace only the advertised composition mask, after querying the actual surface.
-pub(super) fn composition_capabilities(mut caps: vk::SurfaceCapabilitiesKHR) -> vk::SurfaceCapabilitiesKHR {
+/// Count successful native queries and apply the optional composition override.
+pub(super) fn observe_capabilities(mut caps: vk::SurfaceCapabilitiesKHR) -> vk::SurfaceCapabilitiesKHR {
+    WINDOW_PROBE.with_borrow_mut(|slot| {
+        if let Some(probe) = slot {
+            probe.capability_queries += 1;
+        }
+    });
     COMPOSITION.with_borrow_mut(|slot| {
         if let Some(requested) = slot.as_mut().and_then(|probe| probe.requested.take()) {
             // Negative controls bypass admission and dispatch OPAQUE. Require real
