@@ -1,7 +1,7 @@
 # Preparing and publishing Platform packages
 
-The source release is **0.4.0-alpha.2**. Its predecessor on crates.io is
-**0.4.0-alpha.1**. The release set contains three publishable packages.
+The source release is **0.4.0-alpha.3**. Its predecessor on crates.io is
+**0.4.0-alpha.2**. The release set contains three publishable packages.
 
 1. `neocogi-platform-contracts`: schemas, generated bindings, shared types, limits, validation and build support.
 2. `neocogi-platform`: renderer SDK with optional backends, owned compiler and hosting.
@@ -13,7 +13,7 @@ modules belong to the SDK archive. There are no private path
 or Git dependencies hidden behind a facade. All internal registry requirements
 pin the same exact release version.
 
-Platform `0.4.0-alpha.2` uses COM/IDL `0.4.0-alpha.2`. Upgrade contracts, SDK and shims
+Platform `0.4.0-alpha.3` uses COM/IDL `0.4.0-alpha.2`. Upgrade contracts, SDK and shims
 together, regenerate consumers against `neocogi-com-sdk` and rebuild all hosts
 and providers. The platform shim exports `nc_get_plugin_descriptor_v3`, and
 the linked host checks the descriptor family and core generation before

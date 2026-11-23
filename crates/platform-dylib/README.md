@@ -65,14 +65,14 @@ All four are below 512 KiB. Source-archive screenshots do not enter the native l
 
 ## Build as a dependency
 
-Declare the Platform `0.4.0-alpha.2` deployment artifact, which uses COM
+Declare the Platform `0.4.0-alpha.3` deployment artifact, which uses COM
 `0.4.0-alpha.2`. Use a separate build package when the application's graph
 should contain only contracts. For a source build, use the matching Platform
 checkout as a path dependency at `crates/platform-dylib`.
 
 ```toml
 [dependencies]
-neocogi-platform-dylib = "=0.4.0-alpha.2"
+neocogi-platform-dylib = "=0.4.0-alpha.3"
 ```
 
 Then build the dependency's normal library and deploy it:
@@ -95,7 +95,7 @@ uses the following registry dependencies.
 
 ```toml
 [dependencies]
-neocogi-platform-contracts = { version = "=0.4.0-alpha.2", default-features = false }
+neocogi-platform-contracts = { version = "=0.4.0-alpha.3", default-features = false }
 neocogi-com-sdk = { version = "=0.4.0-alpha.2", default-features = false, features = ["std", "runtime"] }
 neocogi-com-host = { version = "=0.4.0-alpha.2", default-features = false }
 ```

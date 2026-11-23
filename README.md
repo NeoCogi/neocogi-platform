@@ -107,7 +107,7 @@ Left-drag rotates, right/middle-drag pans, and the wheel zooms. Press R to reset
 Space to pause animation, B to toggle the skybox, or Escape to close. See the [example guide](examples/native/gltf/README.md)
 for backend selection, bounded headless runs, supported glTF features and asset licenses.
 
-Platform `0.4.0-alpha.2` pins the COM base, SDK, host, serialization and IDL compiler to
+Platform `0.4.0-alpha.3` pins the COM base, SDK, host, serialization and IDL compiler to
 `0.4.0-alpha.2` and uses provisional COM ABI v3, core generation 21. Rebuild
 the host, providers and generated consumers together. Shared dependencies
 participate in one application Cargo graph.

@@ -1,3 +1,13 @@
+# 0.4.0-alpha.3
+
+The contracts, renderer SDK, and shared-library shim advance together. The tag
+`v0.4.0-alpha.3` identifies the source release.
+
+Native SDL and browser windows deliver the ordered `UiInput::PointerLeft`
+transition when the pointer exits. Consumers can clear hover while keeping
+keyboard focus, held buttons, and capture. Rebuild generated input consumers
+and providers together. COM and IDL remain on `0.4.0-alpha.2`.
+
 # 0.4.0-alpha.2
 
 The contracts, renderer SDK and shared-library shim advance together to
