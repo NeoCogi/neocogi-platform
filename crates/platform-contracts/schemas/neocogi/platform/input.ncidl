@@ -104,6 +104,8 @@ enum UiInput: u8 {
     /// SDL2 sends one text packet without the original IME transaction boundary.
     /// The browser can send a complete DOM commit.
     Text,
+    /// The pointer left the drawable. Keyboard focus and captured button state are preserved.
+    PointerLeft,
 }
 
 /// Synchronous normalized-input destination implemented by a UI runtime or application adapter.

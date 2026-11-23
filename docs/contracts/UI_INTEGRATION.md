@@ -26,6 +26,11 @@ scalar/function values and unknown modifier bits return `NC_E_INVALID_ARG`
 before input delivery. Key identity describes shortcuts; committed text still
 arrives separately through `UiInput::Text`, including IME and paste.
 
+`UiInput::PointerLeft` reports that the pointer left the native drawable or
+browser canvas. Clear hover while keeping the last position, held buttons,
+capture, and keyboard focus. The exit is ordered with motion and button
+transitions. Focus and capture loss still use `UiInput::Cancel`.
+
 Each text event atomically carries a complete UTF-8 payload of up to 4 MiB.
 Browser input can deliver a complete DOM insertion. SDL2 delivers individual
 text packets of at most 31 bytes, with no grouping for an original native IME

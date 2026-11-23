@@ -932,6 +932,10 @@ export function exercise(target, name) {
     } else if (name === 'up') {
         target.dispatchEvent(new PointerEvent('pointerup', {pointerId:7, isPrimary:true, buttons:0}));
         target.dispatchEvent(new PointerEvent('lostpointercapture', {pointerId:7, isPrimary:true}));
+    } else if (name === 'leave') {
+        target.dispatchEvent(new PointerEvent('pointerleave', {pointerId:7, isPrimary:true, buttons:1}));
+    } else if (name === 'foreign-leave') {
+        target.dispatchEvent(new PointerEvent('pointerleave', {pointerId:8, isPrimary:true, pointerType:'pen'}));
     } else if (name === 'cancel') {
         target.dispatchEvent(new PointerEvent('pointercancel', {pointerId:7, isPrimary:true}));
     }
@@ -1299,6 +1303,10 @@ pub async fn run_platform_input_tests() {
             PendingInput::Event { event: UiInput::Down { .. }, .. }
         ]
     ));
+    exercise(canvas.unchecked_ref(), "foreign-leave");
+    assert!(host.drain().is_empty());
+    exercise(canvas.unchecked_ref(), "leave");
+    assert!(matches!(host.drain().as_slice(), [PendingInput::Event { event: UiInput::PointerLeft, .. }]));
     exercise(canvas.unchecked_ref(), "chord");
     assert!(matches!(
         host.drain().as_slice(),

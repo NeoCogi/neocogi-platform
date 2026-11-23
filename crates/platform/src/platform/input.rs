@@ -43,6 +43,7 @@ impl InputState {
                 self.wheel = WheelAccumulator::default();
                 UiInput::Cancel
             }
+            Event::Window { win_event: WindowEvent::Leave, .. } => UiInput::PointerLeft,
             Event::Window { .. } => return Ok(Transition::Changed),
             Event::MouseMotion { x, y, .. } => UiInput::Pointer(pointer(x, y, logical, drawable()?)),
             Event::MouseButtonDown { mouse_btn, x, y, .. } => {
@@ -355,6 +356,11 @@ mod tests {
             Event::Window {
                 timestamp: 0,
                 window_id: 1,
+                win_event: WindowEvent::Leave,
+            },
+            Event::Window {
+                timestamp: 0,
+                window_id: 1,
                 win_event: WindowEvent::FocusLost,
             },
         ];
@@ -372,7 +378,8 @@ mod tests {
         assert!(press.action == KeyAction::Pressed { repeat: true } && press.modifiers == 2);
         assert!(release.action == KeyAction::Released && release.modifiers == 0);
         assert_eq!(translated[2], (UiInput::Text, "é☃".to_owned()));
-        assert_eq!(translated[3], (UiInput::Cancel, String::new()));
+        assert_eq!(translated[3], (UiInput::PointerLeft, String::new()));
+        assert_eq!(translated[4], (UiInput::Cancel, String::new()));
     }
 
     /// Independent SDL axis semantics survive normal/flipped direction and unequal drawable scales.

@@ -315,6 +315,16 @@ impl BrowserInputHost {
         }
         {
             let queue = host.queue.clone();
+            host.listen(canvas.unchecked_ref(), "pointerleave", move |event| {
+                let Some(pointer) = event.dyn_ref::<PointerEvent>() else { return };
+                let mut queue = queue.borrow_mut();
+                if pointer.is_primary() && queue.pointer.is_none_or(|id| id == pointer.pointer_id()) {
+                    queue.push(UiInput::PointerLeft);
+                }
+            })?;
+        }
+        {
+            let queue = host.queue.clone();
             let canvas = canvas.clone();
             let target = canvas.clone().into();
             let drawable = host.drawable.clone();
