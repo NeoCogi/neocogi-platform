@@ -25,8 +25,8 @@ Images, credits and license notices are included in this crate archive.
 
 Audio, window hosting and shader compilation are built in. **Glow is the default
 renderer**. The registry setup below uses Platform `0.4.0-alpha.3` with COM
-`0.4.0-alpha.2`. To build from source, use the matching Platform checkout as a
-path dependency at `crates/platform`.
+`0.4.0-alpha.2`. For this checkout, use a path dependency at `crates/platform`
+and set both COM dependencies to `=0.4.0`.
 
 ```toml
 [dependencies]
@@ -137,7 +137,7 @@ glTF run at a fixed animation pose. Add `shader-python` to use Python-like Trian
 `neocogi-platform-contracts` owns the canonical schemas, generated ABI and shared
 validation; `render` reexports those exact types. Build scripts depend on that
 crate with `build-support` for schema generation and native resource staging.
-This source uses COM/IDL `0.4.0-alpha.2`. Rebuild the linked host, providers and
+This source uses COM/IDL `0.4.0`. Rebuild the linked host, providers and
 generated consumers together for provisional ABI v3, core generation 21.
 Exact derived interface identities and signatures still govern individual calls.
 

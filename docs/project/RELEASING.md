@@ -1,7 +1,7 @@
 # Preparing and publishing Platform packages
 
-The source release is **0.4.0-alpha.3**. Its predecessor on crates.io is
-**0.4.0-alpha.2**. The release set contains three publishable packages.
+The current Platform workspace version is **0.4.0-alpha.3**. The release set
+contains three publishable packages.
 
 1. `neocogi-platform-contracts`: schemas, generated bindings, shared types, limits, validation and build support.
 2. `neocogi-platform`: renderer SDK with optional backends, owned compiler and hosting.
@@ -13,12 +13,14 @@ modules belong to the SDK archive. There are no private path
 or Git dependencies hidden behind a facade. All internal registry requirements
 pin the same exact release version.
 
-Platform `0.4.0-alpha.3` uses COM/IDL `0.4.0-alpha.2`. Upgrade contracts, SDK and shims
-together, regenerate consumers against `neocogi-com-sdk` and rebuild all hosts
-and providers. The platform shim exports `nc_get_plugin_descriptor_v3`, and
+This checkout uses COM/IDL `0.4.0`. Upgrade contracts, SDK and shims together,
+regenerate consumers against `neocogi-com-sdk` and rebuild all hosts and
+providers. The platform shim exports `nc_get_plugin_descriptor_v3`, and
 the linked host checks the descriptor family and core generation before
 acquiring the root using its exact interface identity and signature.
-See the [release history](HISTORY.md) for the previous COM baseline.
+Published Platform `0.4.0-alpha.3` uses COM/IDL `0.4.0-alpha.2`. Publishing
+packages built with COM/IDL `0.4.0` requires a new Platform version. See the
+[release history](HISTORY.md) for previous COM baselines.
 
 ## Package inputs and verification
 
@@ -116,9 +118,8 @@ has no external compiler plugin dependency. See [native staging](../contracts/NA
 Run relevant native/browser acceptance and review the actual archives before
 publication. Publication remains a separate explicit action. Publish the contracts crate first, then the SDK, then the shim, waiting for each
 dependency version to appear in the crates.io index before publishing its consumer.
-COM/host/serialization/IDL dependencies use the published exact `0.4.0-alpha.2`
-versions. A successful
-`--list` or `--no-verify` alone is insufficient release evidence.
+COM, host, serialization and IDL dependencies pin the published `0.4.0`.
+A successful `--list` or `--no-verify` alone is insufficient release evidence.
 
 Shader qualification includes isolated `wgpu`, `vulkan` and `glow` renderer
 builds. The compiler is builtin; renderer features select their output writers.

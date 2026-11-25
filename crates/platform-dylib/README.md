@@ -65,10 +65,10 @@ All four are below 512 KiB. Source-archive screenshots do not enter the native l
 
 ## Build as a dependency
 
-Declare the Platform `0.4.0-alpha.3` deployment artifact, which uses COM
-`0.4.0-alpha.2`. Use a separate build package when the application's graph
-should contain only contracts. For a source build, use the matching Platform
-checkout as a path dependency at `crates/platform-dylib`.
+Declare the published Platform `0.4.0-alpha.3` deployment artifact, which uses
+COM `0.4.0-alpha.2`. Use a separate build package when the application's graph
+should contain only contracts. For this checkout, use a path dependency at
+`crates/platform-dylib`.
 
 ```toml
 [dependencies]
@@ -89,9 +89,10 @@ with `-p` as above and choose the target and profile for your deployment.
 ## Load it from an application
 
 The dynamic host needs the shared contracts and COM host, with no renderer SDK
-dependency. For a source build, use the same Platform checkout as a path
-dependency at `crates/platform-contracts`. The default Glow library built above
-uses the following registry dependencies.
+dependency. The published Glow library built above uses the registry dependencies
+below. For a library built from this checkout, use a path dependency at
+`crates/platform-contracts` from the same checkout and set both COM dependencies
+to `=0.4.0`.
 
 ```toml
 [dependencies]
@@ -138,7 +139,7 @@ compiler; requests contain only stage and output budget. S-expression and
 optional Python-like input share validation and the optimized backend writers.
 
 Rebuild the host, generated consumers and providers together for COM
-`0.4.0-alpha.2`, which uses provisional ABI v3, core generation 21.
+`0.4.0`, which uses provisional ABI v3, core generation 21.
 The loaded library selects the backend. An application's `--backend` option
 verifies that choice.
 

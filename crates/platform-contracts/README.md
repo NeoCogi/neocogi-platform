@@ -17,8 +17,8 @@ All ten authored schemas live in this archive, are embedded by the helper and
 are reconstructed in each consumer's own `OUT_DIR`. The helper maintains only
 the reserved `neocogi-shared-sources` directory. An alias for the outer
 `OUT_DIR` is supported. An existing file, link or junction at the reserved
-entry fails generation before any pruning. The pinned IDL compiler is
-`0.4.0-alpha.2` and generated Rust refers to the `neocogi_com_sdk` crate.
+entry fails generation before any pruning. This checkout pins the IDL compiler to
+`0.4.0`. Generated Rust refers to the `neocogi_com_sdk` crate.
 An independent generator consumer declares `neocogi-com-sdk` directly at the
 same version. Rebuild providers and generated consumers together when changing
 the toolchain. The schema determines declaration identities and exact signatures.
