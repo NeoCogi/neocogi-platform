@@ -1161,15 +1161,15 @@ dependencies = [
 
 [[package]]
 name = "neocogi-com"
-version = "0.4.0-alpha.2"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e9a50e191180bec96b13fb193fcfbb44fa2e2a154590d0916dc85b7ae631bc19"
+checksum = "61a0ef062ca1bdbe4cdef35922a99c009926401a5e68aecea016236493de9fe2"
 
 [[package]]
 name = "neocogi-com-host"
-version = "0.4.0-alpha.2"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a38d28264be96d6460ce5ca527fc7ece442df6b02fd549a81b1d357bc6d47a73"
+checksum = "af25d94fec3c7b82b118c53e518b4357123ee672e73b2d78068cbf1530a187c2"
 dependencies = [
  "neocogi-com",
  "neocogi-com-sdk",
@@ -1177,9 +1177,9 @@ dependencies = [
 
 [[package]]
 name = "neocogi-com-macros"
-version = "0.4.0-alpha.2"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ef618582b79a2432bad73fc4423c6aa75643775d5d6e7eebb733cae95c705547"
+checksum = "ca8370f03df2cd780ecd789ff78e7a9663fb489ae309bb948006de5068f0fbfc"
 dependencies = [
  "neocogi-idl",
  "syn 2.0.119",
@@ -1187,9 +1187,9 @@ dependencies = [
 
 [[package]]
 name = "neocogi-com-sdk"
-version = "0.4.0-alpha.2"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cd08e834776bf167da19dca0d18036830a4bd46aabc6a008146c213914913793"
+checksum = "cd0f51060795f3b1c3c34e8878a2e415fae0c23df452648e3796235bfad92074"
 dependencies = [
  "neocogi-com",
  "neocogi-com-macros",
@@ -1197,9 +1197,9 @@ dependencies = [
 
 [[package]]
 name = "neocogi-com-serialization"
-version = "0.4.0-alpha.2"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1b91489cefb199e7815bc49648d64a66822b05fc22482f559c91b272557d070a"
+checksum = "b180dfa2d301aa098eb8d8df4030e7e25d6e7bb079c1bd232dad7ffee5b67c17"
 dependencies = [
  "neocogi-com-sdk",
 ]
@@ -1215,9 +1215,9 @@ dependencies = [
 
 [[package]]
 name = "neocogi-idl"
-version = "0.4.0-alpha.2"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "40bc921cd1f51610a80ede02dcdf8a455c905c215228fc1a266061151c0ed193"
+checksum = "03dd30d2edcbc5e03cf69e01a94285887ca89f6826b730a33f83a5c4b63ec99b"
 dependencies = [
  "neocogi-com",
  "prettyplease",
