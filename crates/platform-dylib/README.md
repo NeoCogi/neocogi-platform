@@ -65,14 +65,14 @@ All four are below 512 KiB. Source-archive screenshots do not enter the native l
 
 ## Build as a dependency
 
-Declare the published Platform `0.4.0-alpha.3` deployment artifact, which uses
-COM `0.4.0-alpha.2`. Use a separate build package when the application's graph
-should contain only contracts. For this checkout, use a path dependency at
-`crates/platform-dylib`.
+Declare the Platform `0.4.0-alpha.4` deployment artifact, which uses COM
+`0.4.0`. Use a separate build package when the application's graph should
+contain only contracts. For a source build, use the matching Platform
+checkout as a path dependency at `crates/platform-dylib`.
 
 ```toml
 [dependencies]
-neocogi-platform-dylib = "=0.4.0-alpha.3"
+neocogi-platform-dylib = "=0.4.0-alpha.4"
 ```
 
 Then build the dependency's normal library and deploy it:
@@ -89,16 +89,15 @@ with `-p` as above and choose the target and profile for your deployment.
 ## Load it from an application
 
 The dynamic host needs the shared contracts and COM host, with no renderer SDK
-dependency. The published Glow library built above uses the registry dependencies
-below. For a library built from this checkout, use a path dependency at
-`crates/platform-contracts` from the same checkout and set both COM dependencies
-to `=0.4.0`.
+dependency. The default Glow library built above uses the registry dependencies
+below. For a source build, use a path dependency at `crates/platform-contracts`
+from the same checkout.
 
 ```toml
 [dependencies]
-neocogi-platform-contracts = { version = "=0.4.0-alpha.3", default-features = false }
-neocogi-com-sdk = { version = "=0.4.0-alpha.2", default-features = false, features = ["std", "runtime"] }
-neocogi-com-host = { version = "=0.4.0-alpha.2", default-features = false }
+neocogi-platform-contracts = { version = "=0.4.0-alpha.4", default-features = false }
+neocogi-com-sdk = { version = "=0.4.0", default-features = false, features = ["std", "runtime"] }
+neocogi-com-host = { version = "=0.4.0", default-features = false }
 ```
 
 ```rust

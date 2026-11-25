@@ -1,14 +1,14 @@
 [package]
 name = "neocogi-package-consumer"
-version = "0.4.0-alpha.3"
+version = "0.4.0-alpha.4"
 edition = "2024"
 publish = false
 [dependencies]
-neocogi-platform-contracts = { version = "=0.4.0-alpha.3", default-features = false }
+neocogi-platform-contracts = { version = "=0.4.0-alpha.4", default-features = false }
 neocogi-com-sdk = { version = "=0.4.0", features = ["std", "macros", "runtime"] }
 neocogi-com-host = "=0.4.0"
-neocogi-platform = { version = "=0.4.0-alpha.3", default-features = false, features = ["glow"] }
+neocogi-platform = { version = "=0.4.0-alpha.4", default-features = false, features = ["glow"] }
 # A deployment artifact selected with cargo build -p, never imported as a Rust API.
-neocogi-platform-dylib = { version = "=0.4.0-alpha.3", default-features = false, features = ["glow"] }
+neocogi-platform-dylib = { version = "=0.4.0-alpha.4", default-features = false, features = ["glow"] }
 [build-dependencies]
-neocogi-platform-contracts = { version = "=0.4.0-alpha.3", default-features = false, features = ["build-support"] }
+neocogi-platform-contracts = { version = "=0.4.0-alpha.4", default-features = false, features = ["build-support"] }

@@ -1,7 +1,7 @@
 # Preparing and publishing Platform packages
 
-The current Platform workspace version is **0.4.0-alpha.3**. The release set
-contains three publishable packages.
+The source release is **0.4.0-alpha.4**. Its predecessor on crates.io is
+**0.4.0-alpha.3**. The release set contains three publishable packages.
 
 1. `neocogi-platform-contracts`: schemas, generated bindings, shared types, limits, validation and build support.
 2. `neocogi-platform`: renderer SDK with optional backends, owned compiler and hosting.
@@ -13,14 +13,12 @@ modules belong to the SDK archive. There are no private path
 or Git dependencies hidden behind a facade. All internal registry requirements
 pin the same exact release version.
 
-This checkout uses COM/IDL `0.4.0`. Upgrade contracts, SDK and shims together,
+Platform `0.4.0-alpha.4` uses COM/IDL `0.4.0`. Upgrade contracts, SDK and shims together,
 regenerate consumers against `neocogi-com-sdk` and rebuild all hosts and
 providers. The platform shim exports `nc_get_plugin_descriptor_v3`, and
 the linked host checks the descriptor family and core generation before
 acquiring the root using its exact interface identity and signature.
-Published Platform `0.4.0-alpha.3` uses COM/IDL `0.4.0-alpha.2`. Publishing
-packages built with COM/IDL `0.4.0` requires a new Platform version. See the
-[release history](HISTORY.md) for previous COM baselines.
+See the [release history](HISTORY.md) for previous COM baselines.
 
 ## Package inputs and verification
 

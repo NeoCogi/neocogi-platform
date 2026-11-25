@@ -1151,7 +1151,7 @@ dependencies = [
 
 [[package]]
 name = "neocogi-browser-tests"
-version = "0.4.0-alpha.3"
+version = "0.4.0-alpha.4"
 dependencies = [
  "neocogi-com-host",
  "neocogi-platform",
@@ -1206,7 +1206,7 @@ dependencies = [
 
 [[package]]
 name = "neocogi-example-plugins"
-version = "0.4.0-alpha.3"
+version = "0.4.0-alpha.4"
 dependencies = [
  "neocogi-com-sdk",
  "neocogi-platform-contracts",
@@ -1230,7 +1230,7 @@ dependencies = [
 
 [[package]]
 name = "neocogi-platform"
-version = "0.4.0-alpha.3"
+version = "0.4.0-alpha.4"
 dependencies = [
  "ash",
  "ash-window",
@@ -1258,7 +1258,7 @@ dependencies = [
 
 [[package]]
 name = "neocogi-platform-contracts"
-version = "0.4.0-alpha.3"
+version = "0.4.0-alpha.4"
 dependencies = [
  "neocogi-com-host",
  "neocogi-com-sdk",
@@ -1275,7 +1275,7 @@ dependencies = [
 
 [[package]]
 name = "neocogi-platform-dylib"
-version = "0.4.0-alpha.3"
+version = "0.4.0-alpha.4"
 dependencies = [
  "neocogi-com",
  "neocogi-platform",
@@ -1283,7 +1283,7 @@ dependencies = [
 
 [[package]]
 name = "neocogi-platform-examples"
-version = "0.4.0-alpha.3"
+version = "0.4.0-alpha.4"
 dependencies = [
  "gltf",
  "image",
@@ -1300,7 +1300,7 @@ dependencies = [
 
 [[package]]
 name = "neocogi-platform-tools"
-version = "0.4.0-alpha.3"
+version = "0.4.0-alpha.4"
 dependencies = [
  "anyhow",
  "clap",
@@ -1321,7 +1321,7 @@ dependencies = [
 
 [[package]]
 name = "neocogi-typed-buffer-tests"
-version = "0.4.0-alpha.3"
+version = "0.4.0-alpha.4"
 dependencies = [
  "neocogi-com-sdk",
  "neocogi-platform",

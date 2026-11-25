@@ -1,10 +1,11 @@
-# Unreleased
+# 0.4.0-alpha.4
 
-Platform source builds and package qualification use the published COM/IDL
-`0.4.0` packages. Rebuild hosts and providers and regenerate Rust bindings from
-the same toolchain. COM `0.4.0` retains native plugin discovery family 3 and
-core generation 21. Published Platform `0.4.0-alpha.3` packages use COM/IDL
-`0.4.0-alpha.2`.
+The contracts, renderer SDK and shared-library shim advance together. The tag
+`v0.4.0-alpha.4` identifies the source release.
+
+Platform uses the published COM/IDL `0.4.0` packages. Rebuild hosts and
+providers and regenerate Rust bindings from the same toolchain. COM `0.4.0`
+uses native plugin discovery family 3 and core generation 21.
 
 # 0.4.0-alpha.3
 
